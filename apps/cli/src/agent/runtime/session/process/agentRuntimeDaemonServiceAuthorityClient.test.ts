@@ -555,6 +555,130 @@ describe('current Agent runtime daemon service authority client', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it('classifies a daemon-settled post-dispatch custody 503 as outcome unknown and keeps a quiescing 503 a proven pre-dispatch miss', async () => {
+    const happyHomeDir = await mkdtemp(
+      join(tmpdir(), 'happier-agent-service-client-'),
+    );
+    roots.push(happyHomeDir);
+    const command = 'happier runner';
+    const runner = {
+      pid: process.pid,
+      processStartTimeMs: 1_717_171_717_000,
+      processCommandHash: hashProcessCommand(command),
+      snapshotIdentity: 'snapshot:runner-a',
+    };
+    processIdentityMock.mockResolvedValue({
+      pid: process.pid,
+      processStartTimeMs: runner.processStartTimeMs,
+      command,
+    });
+    runnerIdentityMock.mockReturnValue({
+      status: 'known',
+      comparableId: runner.snapshotIdentity,
+    });
+    const authority = await createTestAuthority({ happyHomeDir, runner });
+    await publishAgentRuntimeDaemonServiceAuthority({
+      ...authority,
+      httpPort: 31_001,
+      capability: 'A'.repeat(43),
+    });
+    const custody503 = () => new Response(JSON.stringify({
+      ok: false,
+      error: {
+        code: 'agent_runtime_daemon_service_admission_custody_unavailable',
+        message:
+          'Agent runtime daemon service admission custody is unavailable',
+      },
+    }), { status: 503 });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(custody503())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: false,
+        error: {
+          code: 'agent_runtime_daemon_service_unavailable',
+          message: 'Agent runtime daemon service is unavailable',
+        },
+      }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: false,
+        errorCode: 'daemon_shutting_down',
+      }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const dispatch = (requestId: string) =>
+      dispatchCurrentAgentRuntimeDaemonServiceRequest({
+        authority,
+        timeoutMs: null,
+        createRequest: (capability) => ({
+          v: 1,
+          context: {
+            token: capability,
+            sessionId: 'session-1',
+          },
+          operation: {
+            kind: 'turn.admission.authorize',
+            requestId,
+            witness: {
+              turnId: 'turn-1',
+              inputId: 'input-1',
+              userMessageSeq: 7,
+              userMessageSeqs: [7],
+            },
+          },
+        }),
+      });
+
+    // The daemon settled the request after dispatch: the admission custody
+    // effect may already have been recorded, so the closed typed outcome is
+    // unknown — never "unavailable before dispatch".
+    await expect(dispatch('custody-503')).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'native_agent_privileged_effect_outcome_unknown',
+        message:
+          'Native Agent privileged effect outcome is unknown after dispatch',
+      },
+    });
+    // A merely typed 503 is not evidence that dispatch occurred.
+    await expect(dispatch('typed-predispatch-503')).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'native_agent_privileged_effect_authority_unavailable',
+        message:
+          'Native Agent privileged effect authority is unavailable before dispatch',
+      },
+    });
+    // The route refused before dispatch while quiescing: not attempted.
+    await expect(dispatch('quiescing-503')).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'native_agent_privileged_effect_authority_unavailable',
+        message:
+          'Native Agent privileged effect authority is unavailable before dispatch',
+      },
+    });
+
+    // The effectful Plugin Services client owner consumes the same closed
+    // distinction: a settled custody 503 is outcome unknown (never replayed),
+    // not a safe pre-service miss.
+    vi.stubGlobal('fetch', vi.fn(async () => custody503()));
+    await expect(dispatchCurrentRunnerDaemonPluginService({
+      authority,
+      timeoutMs: null,
+      operation: {
+        kind: 'plugin_storage.set_v1',
+        requestId: 'request-custody-503',
+        invocationId: 'invocation-1',
+        scope: 'daemonSession',
+        key: 'key',
+        value: { t: 'string', value: 'value' },
+      },
+    })).rejects.toMatchObject({
+      kind: 'outcome_unknown_after_dispatch',
+      retryable: false,
+    });
+  });
 });
 
 let requestSequence = 0;

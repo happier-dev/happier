@@ -30,15 +30,15 @@ describe('Agent contribution definition discriminants', () => {
         expect(readAgentExecutionRunCapabilities(auxiliaryOnly)).toBeNull();
     });
 
-    it('reads optional primary capabilities from the declared primary Agent shape', () => {
-        const primary = PluginAgentContributionV2Schema.parse({
+    it('rejects a Session-primary executionRuns block and derives Runs only from Session facts', () => {
+        const sessionPrimary = {
             id: 'primary-agent',
             title: 'Primary Agent',
             runtime: { kind: 'custom' },
             primary: 'sessions',
             capabilities: {
                 sessions: {
-                    open: ['create'],
+                    open: ['create', 'resume'],
                     delivery: ['newTurn'],
                     cancel: true,
                 },
@@ -48,10 +48,49 @@ describe('Agent contribution definition discriminants', () => {
                     stop: true,
                 },
             },
+        } as const;
+
+        expect(PluginAgentContributionV2Schema.safeParse(sessionPrimary).success).toBe(false);
+
+        const primary = PluginAgentContributionV2Schema.parse({
+            ...sessionPrimary,
+            capabilities: {
+                sessions: sessionPrimary.capabilities.sessions,
+            },
         });
 
         expect(readAgentPrimaryRuntime(primary)).toEqual({ kind: 'custom' });
-        expect(readAgentSessionCapabilities(primary)?.open).toEqual(['create']);
-        expect(readAgentExecutionRunCapabilities(primary)?.open).toEqual(['create']);
+        expect(readAgentSessionCapabilities(primary)?.open).toEqual(['create', 'resume']);
+        expect(readAgentExecutionRunCapabilities(primary)).toEqual({
+            open: ['create', 'resume'],
+            checkpoint: true,
+            stop: true,
+        });
+    });
+
+    it('does not mistake continuation verification for provider Session identity', () => {
+        const primary = PluginAgentContributionV2Schema.parse({
+            id: 'create-only-agent',
+            title: 'Create-only Agent',
+            runtime: { kind: 'custom' },
+            primary: 'sessions',
+            capabilities: {
+                sessions: {
+                    open: ['create'],
+                    delivery: ['newTurn'],
+                    cancel: false,
+                    continuationVerification: {
+                        intents: ['resume'],
+                        requirement: 'required',
+                    },
+                },
+            },
+        });
+
+        expect(readAgentExecutionRunCapabilities(primary)).toEqual({
+            open: ['create'],
+            checkpoint: false,
+            stop: false,
+        });
     });
 });

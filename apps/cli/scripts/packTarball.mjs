@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import fs, { cpSync, lstatSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import fs, { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { createRequire } from 'node:module';
 
 import { resolveWindowsCommandInvocation } from '../../../scripts/pipeline/lib/windows/resolveWindowsCommandInvocation.mjs';
 import { sanitizePackageArtifactEnv } from '../../../scripts/pipeline/npm/sanitize-package-artifact-env.mjs';
+import { assertCliManagedRuntimeTarballPublication } from '../../../scripts/pipeline/npm/cli-managed-runtime-tarball.mjs';
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../../stack/scripts/utils/proc/cli_runtime_inputs.mjs';
 import {
@@ -17,6 +19,9 @@ import { readCliDistBuildManifest } from './finalizeDist.mjs';
 import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
 import { resolveCliPackageRoot, syncPackageDist } from './syncPackageDist.mjs';
 
+const require = createRequire(import.meta.url);
+const { getCliRuntimeAssetArchiveManifest, RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME } = require('./unpack-tools.cjs');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_REPO_ROOT = resolve(__dirname, '..', '..', '..');
 
@@ -24,6 +29,130 @@ const MAX_CAPTURED_OUTPUT_CHARS = 4000;
 const DEFAULT_PACK_TARBALL_TIMEOUT_MS = 600_000;
 const NPM_CACHE_ENV_KEY = 'npm_config_cache';
 const IMPLICIT_NPM_PACKAGE_FILE_PATTERN = /^(?:changes|changelog|history|licen[cs]e|notice|readme)(?:[.-].*)?$/iu;
+const MANAGED_RUNTIME_ARCHIVE_PREFIX = 'happier-cliproxyapi-managed-';
+const MANAGED_RUNTIME_PUBLICATION_METADATA_VERSION = 1;
+
+/**
+ * Classifies the managed CLIProxyAPI runtime staging this pack will ship, from the
+ * one runtime-asset manifest owner (`unpack-tools.cjs`). A complete-installable pack
+ * binds the exact manifest set: every platform archive plus the runtime-asset
+ * checksum manifest, with no unknown managed archive. Partial staging fails closed
+ * here instead of advertising a managed launch path an install cannot satisfy; a
+ * source checkout with no runtime-asset staging at all stays a legitimate developer
+ * (source-only) pack and ships no managed runtime bytes or checksum manifest.
+ */
+export function resolveCliPackManagedRuntimeStaging({
+  archivesDir,
+  archiveManifest = getCliRuntimeAssetArchiveManifest(),
+  checksumManifestName = RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME,
+  exists = (candidatePath) => fs.existsSync(candidatePath),
+  readdir = (candidatePath) => fs.readdirSync(candidatePath),
+} = {}) {
+  const manifestArchiveNames = archiveManifest.map((entry) => String(entry.archiveName));
+  const stagedNames = exists(archivesDir) ? readdir(archivesDir) : [];
+  const stagedArchiveNames = new Set(stagedNames);
+  const stagedManagedArchiveNames = manifestArchiveNames.filter((archiveName) => stagedArchiveNames.has(archiveName));
+  const missingArchiveNames = manifestArchiveNames.filter((archiveName) => !stagedArchiveNames.has(archiveName));
+  const extraArchiveNames = stagedNames
+    .filter((name) => name.startsWith(MANAGED_RUNTIME_ARCHIVE_PREFIX) && !manifestArchiveNames.includes(name))
+    .sort();
+  const checksumManifestPresent = stagedArchiveNames.has(checksumManifestName);
+  const publicationClaimed = checksumManifestPresent
+    || stagedManagedArchiveNames.length > 0
+    || extraArchiveNames.length > 0;
+  if (!publicationClaimed) {
+    return {
+      mode: 'source-only',
+      missingArchiveNames: [...manifestArchiveNames],
+      extraArchiveNames,
+      checksumManifestPresent,
+    };
+  }
+  if (
+    missingArchiveNames.length > 0
+    || !checksumManifestPresent
+    || extraArchiveNames.length > 0
+  ) {
+    return {
+      mode: 'incomplete',
+      missingArchiveNames,
+      extraArchiveNames,
+      checksumManifestPresent,
+    };
+  }
+  return {
+    mode: 'complete',
+    missingArchiveNames: [],
+    extraArchiveNames: [],
+    checksumManifestPresent,
+  };
+}
+
+/**
+ * Binds the packer's classification into the artifact itself. Runtime manifest
+ * ingestion consumes this exact metadata, so a source-only developer tarball
+ * cannot retain a managed provider facet whose packaged executable is absent.
+ * Provider identity comes from the same runtime-asset manifest as the archive
+ * set; this packer is the only producer.
+ */
+export function writeCliPackManagedRuntimePublicationMetadata({
+  packageRoot,
+  mode,
+  archiveManifest = getCliRuntimeAssetArchiveManifest(),
+} = {}) {
+  if (mode !== 'source-only' && mode !== 'complete') {
+    throw new Error(`[pack-tarball] Cannot publish unknown managed runtime mode: ${String(mode)}`);
+  }
+  const unavailableProviderRefs = [];
+  if (mode === 'source-only') {
+    const seen = new Set();
+    for (const entry of archiveManifest) {
+      const pluginId = String(entry?.managedProviderRef?.pluginId ?? '').trim();
+      const providerId = String(entry?.managedProviderRef?.providerId ?? '').trim();
+      if (!pluginId || !providerId) {
+        throw new Error(
+          `[pack-tarball] Runtime asset '${String(entry?.asset ?? entry?.archiveName ?? '')}' has no managed provider reference`,
+        );
+      }
+      const key = `${pluginId}\u0000${providerId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unavailableProviderRefs.push(Object.freeze({ pluginId, providerId }));
+    }
+  }
+  const packageJsonPath = resolve(packageRoot, 'package.json');
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  const happier = packageJson?.happier && typeof packageJson.happier === 'object' && !Array.isArray(packageJson.happier)
+    ? packageJson.happier
+    : {};
+  const metadata = Object.freeze({
+    v: MANAGED_RUNTIME_PUBLICATION_METADATA_VERSION,
+    mode,
+    unavailableProviderRefs: Object.freeze(unavailableProviderRefs),
+  });
+  fs.writeFileSync(packageJsonPath, `${JSON.stringify({
+    ...packageJson,
+    happier: { ...happier, managedRuntimePublication: metadata },
+  }, null, 2)}\n`, 'utf8');
+  return metadata;
+}
+
+function formatCliPackManagedRuntimeStagingFailure(archivesDir, staging) {
+  return [
+    `[pack-tarball] Incomplete managed CLI runtime staging in ${archivesDir}: the package claims a managed `,
+    'CLIProxyAPI runtime, so the pack must bind the exact applicable archives and checksums.',
+    ...(staging.missingArchiveNames.length > 0
+      ? [`missing archives: ${staging.missingArchiveNames.join(', ')}`]
+      : []),
+    ...(staging.extraArchiveNames.length > 0
+      ? [`unexpected managed archives: ${staging.extraArchiveNames.join(', ')}`]
+      : []),
+    ...(!staging.checksumManifestPresent ? ['missing checksum manifest: checksums.runtime-assets.sha256'] : []),
+    '',
+    'Fix: stage the complete managed runtime through node scripts/stageManagedRuntimeArchives.mjs, or',
+    'remove the partial staging to produce a source-only developer pack without managed runtime bytes.',
+  ].join('\n');
+}
 
 function resolvePackTarballTimeoutMs(env, explicitTimeoutMs) {
   if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs)) {
@@ -770,6 +899,9 @@ export async function packTarball(options = {}) {
   setFunctionOption(syncPackageDistOptions, 'renameSync', options.renameSync);
   setFunctionOption(syncPackageDistOptions, 'rmSync', options.rmSync);
 
+  const assertManagedRuntimePublication =
+    options.assertCliManagedRuntimePublicationImpl ?? assertCliManagedRuntimeTarballPublication;
+  const resolveManagedRuntimeStaging = options.resolveCliPackManagedRuntimeStagingImpl ?? resolveCliPackManagedRuntimeStaging;
   const timeoutMs = resolvePackTarballTimeoutMs(env, options.timeoutMs);
   const explicitNpmCacheDirInput = String(options.npmCacheDir ?? '').trim();
   const explicitNpmCacheDir = explicitNpmCacheDirInput ? resolve(explicitNpmCacheDirInput) : '';
@@ -779,6 +911,7 @@ export async function packTarball(options = {}) {
   let packError;
   let snapshotContainer = '';
   let snapshotRoot = '';
+  let managedRuntimePublicationBound = false;
   try {
     // Source-dev publication and artifact sanitization share this canonical lock. Copy the complete
     // npm-visible tree while it is held, then release it before the slower compression subprocess.
@@ -810,6 +943,22 @@ export async function packTarball(options = {}) {
         env: heldLockEnv,
         loadCliCommonWorkspacesModuleImpl,
         ensureWorkspacePackagesBuiltByName: options.ensureWorkspacePackagesBuiltByName,
+      });
+      const staging = resolveManagedRuntimeStaging({
+        archivesDir: resolve(snapshotRoot, 'tools', 'archives'),
+      });
+      if (staging.mode === 'incomplete') {
+        throw new Error(formatCliPackManagedRuntimeStagingFailure(resolve(packageRoot, 'tools', 'archives'), staging));
+      }
+      // A source-only developer pack stays available: it ships no managed runtime
+      // bytes and no runtime-asset checksum manifest, so the installed CLI never
+      // advertises staged managed archives it does not carry.
+      if (staging.mode === 'complete') {
+        managedRuntimePublicationBound = true;
+      }
+      writeCliPackManagedRuntimePublicationMetadata({
+        packageRoot: snapshotRoot,
+        mode: staging.mode,
       });
       await assertInputCurrentness({ packageRoot });
     }, {
@@ -863,10 +1012,19 @@ export async function packTarball(options = {}) {
     }
     assertOwnedTarballArtifact(destDir, tarballName, tarballPath);
 
+    // The complete-installable claim is bound here, from the real packed bytes, by
+    // the one publication assertion release preparation and admission also consume:
+    // exact archives, exact checksums, no extra managed runtime bytes. There is no
+    // caller flag that skips it; the only way out is to not stage managed runtime.
+    if (managedRuntimePublicationBound) {
+      assertManagedRuntimePublication(tarballPath);
+    }
+
     return {
       packageRoot,
       tarballName,
       tarballPath,
+      managedRuntimePublication: managedRuntimePublicationBound ? 'complete' : 'source-only',
     };
   } catch (error) {
     packError = error;

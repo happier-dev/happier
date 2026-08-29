@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
@@ -13,6 +13,7 @@ import {
   type PluginInstallReviewPrincipalDigest,
   type PluginInstallReviewPrincipalPresentationV1,
 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { PluginUiArtifactsManifestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
 import { resolvePluginUiArtifactAvailabilityPlatform } from '../../availability/releaseFacts';
@@ -48,6 +49,7 @@ import {
   readPluginRegistryCommitInstallationAuthority,
   type OwnedPreparedImmutablePluginGeneration,
   type BundledImmutablePluginArtifact,
+  type BundledMaterializationEpochRecord,
   type PluginInstallationAvailabilityProjection,
   type PluginInstallationStateRevision,
   PluginInstallationAvailabilityProjectionSchema,
@@ -79,15 +81,53 @@ function createPluginMaterializationId(): string {
   return `materialization-${randomUUID()}`;
 }
 
+function digestAvailabilitySemanticMaterialization(
+  materialization: Omit<PluginMachineMaterializationV1, 'serverIdentityId' | 'machineId' | 'materializationId' | 'observedAt'>,
+): string {
+  return createHash('sha256')
+    .update(createCanonicalJsonSigningInput(materialization), 'utf8')
+    .digest('base64url');
+}
+
+function reconcileBundledMaterializationEpochs(params: Readonly<{
+  prior?: Record<string, BundledMaterializationEpochRecord>;
+  semanticMaterializations: readonly Omit<
+    PluginMachineMaterializationV1,
+    'serverIdentityId' | 'machineId' | 'materializationId' | 'observedAt'
+  >[];
+  observedAt: number;
+}>): Record<string, BundledMaterializationEpochRecord> {
+  return Object.fromEntries(params.semanticMaterializations.map((materialization) => {
+    const semanticKey = digestAvailabilitySemanticMaterialization(materialization);
+    const prior = params.prior?.[materialization.pluginId];
+    return [materialization.pluginId, Object.freeze({
+      materializationId: prior?.materializationId ?? createPluginMaterializationId(),
+      semanticKey,
+      observedAt: prior?.semanticKey === semanticKey
+        ? prior.observedAt
+        : params.observedAt,
+    })];
+  }));
+}
+
+function bundledMaterializationEpochsEqual(
+  left: Record<string, BundledMaterializationEpochRecord> | undefined,
+  right: Record<string, BundledMaterializationEpochRecord>,
+): boolean {
+  return createCanonicalJsonSigningInput(left ?? {}) === createCanonicalJsonSigningInput(right);
+}
+
 function createRevision(params: Readonly<{
   revisionId: string;
   createdAtMs: number;
   runtimeCatalog: PluginStateFileV1;
   prior?: PluginInstallationStateRevision;
+  bundledMaterializationEpochs?: Record<string, BundledMaterializationEpochRecord>;
 }>): PluginInstallationStateRevision {
   const runtimeCatalog = PluginStateFileV1Schema.parse(params.runtimeCatalog);
   const prior = params.prior;
   const priorPlugins = prior?.plugins ?? {};
+  const bundledMaterializationEpochs = params.bundledMaterializationEpochs ?? prior?.bundledMaterializationEpochs;
   const plugins = Object.fromEntries(Object.entries(runtimeCatalog.plugins).map(([pluginId, record]) => {
     const installation = priorPlugins[pluginId];
     if (!installation) {
@@ -110,6 +150,9 @@ function createRevision(params: Readonly<{
     rollbackRetention: prior?.rollbackRetention ?? [],
     ...(prior?.hardRevocationRevisions
       ? { hardRevocationRevisions: prior.hardRevocationRevisions }
+      : {}),
+    ...(bundledMaterializationEpochs
+      ? { bundledMaterializationEpochs }
       : {}),
     runtimeCatalog,
     retainedRuntimeCatalog: prior?.retainedRuntimeCatalog ?? {},
@@ -527,9 +570,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return await readCommittedState(commit);
   }
 
-  async function projectBundledAvailabilityMaterializations(): Promise<readonly Omit<
+  async function projectBundledAvailabilitySemanticMaterializations(): Promise<readonly Omit<
     PluginMachineMaterializationV1,
-    'serverIdentityId' | 'machineId'
+    'serverIdentityId' | 'machineId' | 'materializationId' | 'observedAt'
   >[]> {
     const bundledArtifacts = params?.bundledArtifacts ?? [];
     if (bundledArtifacts.length === 0) return Object.freeze([]);
@@ -583,11 +626,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           }))
         : [];
       return Object.freeze({
-        // The exact accepted custody occurrence is also the machine
-        // materialization occurrence. A replacement generation must never
-        // retain the predecessor's executable coordinate merely because the
-        // package name stayed stable.
-        materializationId: `bundled-first-party:${artifact.record.immutableGenerationId}`,
         pluginId: artifact.record.pluginId,
         version: packageMetadata.version,
         sourceClass: 'bundledFirstParty' as const,
@@ -595,10 +633,31 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         uiArtifacts: Object.freeze(uiArtifacts),
         enabled: true,
         trustState: 'trusted' as const,
-        observedAt: nowMs(),
       });
     }));
     return Object.freeze(materializations);
+  }
+
+  async function projectBundledAvailabilityMaterializations(
+    revision: PluginInstallationStateRevision,
+  ): Promise<readonly Omit<
+    PluginMachineMaterializationV1,
+    'serverIdentityId' | 'machineId'
+  >[]> {
+    const semanticMaterializations = await projectBundledAvailabilitySemanticMaterializations();
+    return Object.freeze(semanticMaterializations.map((materialization) => {
+      const epoch = revision.bundledMaterializationEpochs?.[materialization.pluginId];
+      if (!epoch || epoch.semanticKey !== digestAvailabilitySemanticMaterialization(materialization)) {
+        throw new Error(
+          `Bundled plugin '${materialization.pluginId}' availability projection requires migrated materialization facts`,
+        );
+      }
+      return Object.freeze({
+        materializationId: epoch.materializationId,
+        ...materialization,
+        observedAt: epoch.observedAt,
+      });
+    }));
   }
 
   async function projectAvailabilityInventory(
@@ -675,7 +734,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       ))),
       materializations: Object.freeze([
         ...installedMaterializations,
-        ...await projectBundledAvailabilityMaterializations(),
+        ...await projectBundledAvailabilityMaterializations(current.revision),
       ].sort((left, right) => (
         left.materializationId.localeCompare(right.materializationId)
       ))),
@@ -763,11 +822,21 @@ export function createPluginRegistryStateStore(params?: Readonly<{
   async function initialize(): Promise<PluginStateFileV1> {
     while (true) {
       const current = await readCurrent();
+      const bundledSemanticMaterializations = await projectBundledAvailabilitySemanticMaterializations();
+      const nextBundledMaterializationEpochs = reconcileBundledMaterializationEpochs({
+        prior: current.revision.bundledMaterializationEpochs,
+        semanticMaterializations: bundledSemanticMaterializations,
+        observedAt: nowMs(),
+      });
+      const requiresBundledAvailabilityMigration = !bundledMaterializationEpochsEqual(
+        current.revision.bundledMaterializationEpochs,
+        nextBundledMaterializationEpochs,
+      );
       const requiresAvailabilityMigration = Object.values(current.revision.plugins).some((installation) => (
         !installation.materializationId || !installation.availability
       ));
-      if (!requiresAvailabilityMigration) return current.catalog;
-      if (!runtimeLifecycle) {
+      if (!requiresAvailabilityMigration && !requiresBundledAvailabilityMigration) return current.catalog;
+      if (requiresAvailabilityMigration && !runtimeLifecycle) {
         // Read-only callers must not manufacture runtime adoption just to add
         // outbound-report facts. The daemon lifecycle performs this migration
         // before it asks for an Availability inventory.
@@ -785,6 +854,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         createdAtMs,
         runtimeCatalog: current.catalog,
         prior: current.revision,
+        bundledMaterializationEpochs: nextBundledMaterializationEpochs,
       });
       const installationState = await persistInstallationStateRevision({ paths, state: revision });
       const result = await coordinator.commit({
@@ -804,16 +874,6 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       if (result.status === 'conflict') continue;
       if (result.status === 'aborted') {
         throw new Error('Plugin registry availability migration was aborted');
-      }
-      if (result.status === 'committed') {
-        const reconciliation = await reconcileRecord(result.record);
-        if (reconciliation.status === 'retryable') {
-          reportPendingReconciliation(
-            'startup',
-            Object.freeze(['reconciliation']),
-            reconciliation.message,
-          );
-        }
       }
       return current.catalog;
     }
@@ -1708,7 +1768,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         : Object.freeze({
             revision: 0,
             releasePublications: Object.freeze([]),
-            materializations: await projectBundledAvailabilityMaterializations(),
+            materializations: Object.freeze([]),
           });
     },
     readAvailabilityInventoryForCommit: async (record) => (

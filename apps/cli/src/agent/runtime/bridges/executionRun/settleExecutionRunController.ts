@@ -16,11 +16,13 @@ export async function settleExecutionRunController(args: Readonly<{
         // Marker writes are best effort; the terminal waiter still has to settle.
       }
       if (args.controller.kind === 'backend') {
-        try {
-          await args.controller.backend.dispose();
-        } catch {
-          // Best effort: terminal settlement must not depend on backend disposal succeeding.
-        }
+        const backend = args.controller.backend;
+        // Plugin cleanup starts only after terminal-marker custody is settled,
+        // but is deliberately detached. A provider may never settle dispose;
+        // terminal waiters and controller retirement remain host-owned truth.
+        void Promise.resolve()
+          .then(async () => await backend.dispose())
+          .catch(() => undefined);
       }
       args.controller.resolveTerminal();
       if (args.controllers.get(args.runId) === args.controller) {

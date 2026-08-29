@@ -9,6 +9,7 @@ import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/rev
 import { createExecutionRunHostActionCurrentIntentAdapter } from '@/session/actions/approvals/executionRunHostActionCurrentIntent';
 import { requestReviewCommentDirectWriteGrant } from '@/agent/executionRuns/profiles/review/directWriteGrantRequester';
 import { resolveReviewCommentHostPluginAuthority } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
+import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 import type { ExecutionRunRpcApprovalDeps } from './dispatchExecutionRunRpcAction';
@@ -85,7 +86,18 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
     pluginPermissionGrantRequest: async ({ serverId: _serverId, ...input }) => {
       const credentials = await params.readCredentials();
       if (!credentials) throw new Error('plugin_permission_grant_credentials_unavailable');
-      return await requestReviewCommentDirectWriteGrant({ credentials, input });
+      // The exact current materialization provenance is host-resolved here so
+      // the server can bind the grant request to the proven caller; a
+      // caller-string alone is never admitted.
+      let caller: PluginMachineMaterializationRefV1 | undefined;
+      const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+      try {
+        const ref = lease?.registry.resolveCurrentPluginMaterializationRef?.(input.pluginId) ?? null;
+        if (ref && ref.pluginId === input.pluginId) caller = ref;
+      } finally {
+        void lease?.release();
+      }
+      return await requestReviewCommentDirectWriteGrant({ credentials, input: { ...input, ...(caller ? { caller } : {}) } });
     },
     approvalsList: async (args) => {
       const store = await resolveStore();

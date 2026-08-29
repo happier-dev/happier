@@ -11,7 +11,7 @@ describe('Agent Session runner binding', () => {
       v: 1,
       pluginId: 'acme.agent',
       pluginVersion: '1.0.0',
-      agentId: 'acme.agent/agents/main',
+      agentId: 'acme.agent/main',
       localAgentId: 'main',
       immutableGenerationId: 'generation-g',
       locator: {
@@ -27,7 +27,7 @@ describe('Agent Session runner binding', () => {
       v: 1,
       pluginId: 'acme.agent',
       pluginVersion: '1.0.0',
-      agentId: 'acme.agent/agents/main',
+      agentId: 'acme.agent/main',
       localAgentId: 'main',
       immutableGenerationId: 'generation-g',
       locator: {

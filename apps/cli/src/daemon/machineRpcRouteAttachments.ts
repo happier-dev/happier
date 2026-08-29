@@ -8,7 +8,6 @@ import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.t
 import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonLocalServices';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { ConnectedAccountDaemonRuntime } from './connectedServices/ConnectedAccountDaemonRuntime';
-import type { DaemonConnectedAccountPurposeBindingRuntime } from './connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 
 export type DaemonMachineRpcRouteRegistrar = Pick<
   ApiMachineClient,
@@ -23,6 +22,10 @@ export type DaemonMachineRpcRouteRegistrar = Pick<
   | 'registerConnectedAccountPurposeBindingRuntime'
 >;
 
+type DaemonMachineConnectedAccountPurposeBindingRuntime = Parameters<
+  DaemonMachineRpcRouteRegistrar['registerConnectedAccountPurposeBindingRuntime']
+>[0];
+
 export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachLocalServicesPreviewRoutes(routes: LocalServicePreviewRoutes): void;
   attachLocalServicesRoutes(routes: DaemonLocalServicesMachineRpcRoutes): void;
@@ -32,10 +35,9 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   attachBrowserRecordingRoutes(routes: BrowserRecordingRoutes): void;
   attachSimulatorPreviewRoutes(routes: SimulatorPreviewRoutes): void;
   attachConnectedAccountDaemonRuntime(runtime: ConnectedAccountDaemonRuntime): void;
-  attachConnectedAccountPurposeBindingRuntime(runtime: Pick<
-    DaemonConnectedAccountPurposeBindingRuntime,
-    'listActionFormConnectedAccountOptions'
-  >): void;
+  attachConnectedAccountPurposeBindingRuntime(
+    runtime: DaemonMachineConnectedAccountPurposeBindingRuntime,
+  ): void;
   prepareApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar): void;
   attachApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar | null): void;
 }>;
@@ -51,14 +53,12 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let browserRecordingRoutes: BrowserRecordingRoutes | null = null;
   let simulatorPreviewRoutes: SimulatorPreviewRoutes | null = null;
   let connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
-  let connectedAccountPurposeBindingRuntime: Pick<
-    DaemonConnectedAccountPurposeBindingRuntime,
-    'listActionFormConnectedAccountOptions'
-  > | null = null;
+  let connectedAccountPurposeBindingRuntime:
+    DaemonMachineConnectedAccountPurposeBindingRuntime | null = null;
   const connectedAccountRuntimeByRegistrar =
     new WeakMap<object, ConnectedAccountDaemonRuntime>();
   const connectedAccountPurposeRuntimeByRegistrar =
-    new WeakMap<object, Pick<DaemonConnectedAccountPurposeBindingRuntime, 'listActionFormConnectedAccountOptions'>>();
+    new WeakMap<object, DaemonMachineConnectedAccountPurposeBindingRuntime>();
 
   function registerConnectedAccountRuntime(
     registrar: DaemonMachineRpcRouteRegistrar,

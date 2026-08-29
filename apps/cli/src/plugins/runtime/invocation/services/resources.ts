@@ -729,9 +729,15 @@ async function verifyBytes(resource: AdmittedPackagedResource, maxBytes: number,
     return bytes;
 }
 
+function copyUint8ArrayAcrossRealm(value: unknown): Uint8Array | null {
+    if (!ArrayBuffer.isView(value) || Object.prototype.toString.call(value) !== '[object Uint8Array]') return null;
+    return Uint8Array.from(value as Uint8Array);
+}
+
 function normalizeProducedBytes(value: unknown): Uint8Array {
     if (typeof value === 'string') return new Uint8Array(Buffer.from(value, 'utf8'));
-    if (value instanceof Uint8Array) return new Uint8Array(value);
+    const bytes = copyUint8ArrayAcrossRealm(value);
+    if (bytes) return bytes;
     return fail('plugin_resource_producer_invalid', 'Dynamic resource producer returned unsupported bytes');
 }
 

@@ -96,9 +96,8 @@ function readCurrentCatalogStatus(input: AutomationEventSourceStatusReportV1): R
   ) return null;
   return {
     revision: input.observedRevision,
-    transport: input.scope.kind === 'checkpointedPull'
-      ? { kind: 'checkpointedPull' }
-      : { kind: 'durablePush' },
+    // The catalog scope kinds are exactly the source-list transports.
+    transport: { kind: input.scope.kind },
   };
 }
 
@@ -291,7 +290,10 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       : args.actionId === 'automation.event.admit'
         ? (webhookInvocationReference
           ? { kind: 'durablePush' as const }
-          : { kind: 'checkpointedPull' as const })
+          // Watcher-scope admits (checkpointed pull and session socket) carry
+          // no caller-selectable transport; the owning adopted set is resolved
+          // by deterministic selector membership in the admit branch below.
+          : null)
         : currentCatalogStatus?.transport ?? null;
     let adoptedDefinitionSet: AutomationEventAdoptedDefinitionSetV1 | null = null;
     if (adoptedTransport !== null) {
@@ -361,6 +363,50 @@ export function createAutomationEventActionExecutor(params: Readonly<{
     let admissionInput: ReturnType<typeof AutomationEventAdmitInputV1Schema.safeParse> | null = null;
     let admissionAccountId: string | null = null;
     if (args.actionId === 'automation.event.admit') {
+      admissionInput = AutomationEventAdmitInputV1Schema.safeParse(args.input);
+      if (!admissionInput.success) return admissionFailure('automation_event_host_evidence_unavailable');
+      if (adoptedDefinitionSet === null) {
+        // Exactly one watcher-scope generation-local adopted set can contain
+        // the requested selectors: a trigger persists exactly one observation
+        // transport. Membership in an available projection decides whenever it
+        // can; only when no projection can decide does the fixed watcher order
+        // fall back to the checkpointed-pull owner, whose prepareAdmission is
+        // the exact membership validator either way.
+        const selectorKeys = new Set(admissionInput.data.definitions.map(automationEventAdmissionSelectorKey));
+        const watcherCandidates: AutomationEventAdoptedDefinitionSetV1[] = [];
+        let resolved: AutomationEventAdoptedDefinitionSetV1 | null = null;
+        for (const watcherTransport of [
+          { kind: 'checkpointedPull' } as const,
+          { kind: 'socket' } as const,
+        ]) {
+          const candidate = params.resolveAdoptedDefinitionSet?.(
+            materialization.data,
+            immutableGenerationId,
+            watcherTransport,
+          ) ?? null;
+          if (!candidate) continue;
+          watcherCandidates.push(candidate);
+          let projection: ReturnType<AutomationEventAdoptedDefinitionSetV1['readPublicProjection']>;
+          try {
+            projection = candidate.readPublicProjection();
+          } catch {
+            return admissionFailure('automation_event_adopted_definitions_unavailable');
+          }
+          if (projection.kind !== 'available') continue;
+          const definitionKeys = new Set(projection.definitions.map((definition) => automationEventAdmissionSelectorKey({
+            automationId: definition.automationId,
+            triggerId: definition.triggerId,
+            triggerRevision: definition.triggerRevision,
+            sourceSelectorId: definition.sourceSelectorId,
+          })));
+          if (![...selectorKeys].every((key) => definitionKeys.has(key))) continue;
+          if (resolved !== null) return admissionFailure('automation_event_host_evidence_unavailable');
+          resolved = candidate;
+        }
+        adoptedDefinitionSet = resolved
+          ?? watcherCandidates[0]
+          ?? null;
+      }
       if (!adoptedDefinitionSet) {
         return admissionFailure('automation_event_host_evidence_unavailable');
       }
@@ -370,8 +416,6 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       } catch {
         return admissionFailure('automation_event_host_evidence_unavailable');
       }
-      admissionInput = AutomationEventAdmitInputV1Schema.safeParse(args.input);
-      if (!admissionInput.success) return admissionFailure('automation_event_host_evidence_unavailable');
       admissionAccountId = accountId;
     }
     try {

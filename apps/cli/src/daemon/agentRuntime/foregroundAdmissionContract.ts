@@ -6,7 +6,12 @@ import {
   ProviderErrorV1Schema,
   SessionModelSelectionV1Schema,
   SessionProviderBindingMetadataV1Schema,
+  StrictJsonValueSchema,
 } from '@happier-dev/protocol';
+import type {
+  AgentCliSessionCommandBuildInputV1,
+  AgentCliSessionCommandOptionsV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AgentRuntimeDaemonSessionDescriptorV1Schema } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 
@@ -20,6 +25,32 @@ export const HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY =
   'HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE';
 export const FOREGROUND_AGENT_RUNTIME_RELEASE_PATH =
   '/agent-runtime/foreground/release';
+export const FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH =
+  '/agent-runtime/foreground/session-options';
+
+const AgentCliSessionCommandParsedArgsV1Schema = z.object({
+  startingMode: z.string().optional(),
+  directory: z.string().optional(),
+  resume: z.string().optional(),
+  agentArgs: z.array(z.string()),
+}).strict();
+
+export const AgentCliSessionCommandBuildInputV1Schema: z.ZodType<AgentCliSessionCommandBuildInputV1> = z.object({
+  isExplicitCliSubcommand: z.boolean(),
+  parsed: AgentCliSessionCommandParsedArgsV1Schema,
+  settings: z.record(z.string(), StrictJsonValueSchema),
+  pluginSettings: z.object({
+    account: z.record(z.string(), StrictJsonValueSchema).optional(),
+    daemon: z.record(z.string(), StrictJsonValueSchema).optional(),
+  }).strict(),
+  environment: z.record(z.string(), z.string()),
+  startOrigin: z.enum(['terminal', 'daemon']),
+}).strict();
+
+export const AgentCliSessionCommandOptionsV1Schema: z.ZodType<AgentCliSessionCommandOptionsV1> = z.record(
+  z.string(),
+  StrictJsonValueSchema,
+);
 
 export const ForegroundAgentRuntimeAdmissionRequestV1Schema = z.object({
   v: z.literal(1),
@@ -139,3 +170,28 @@ export type ForegroundAgentRuntimeReleaseRequestV1 =
 export const ForegroundAgentRuntimeReleaseResponseV1Schema = z.object({
   ok: z.literal(true),
 }).strict();
+
+export const ForegroundAgentRuntimeSessionOptionsRequestV1Schema = z.object({
+  v: z.literal(1),
+  attemptId: BoundedIdSchema,
+  sessionId: BoundedIdSchema,
+  foregroundPid: z.number().int().positive(),
+  input: AgentCliSessionCommandBuildInputV1Schema,
+}).strict();
+
+export type ForegroundAgentRuntimeSessionOptionsRequestV1 =
+  z.infer<typeof ForegroundAgentRuntimeSessionOptionsRequestV1Schema>;
+
+export const ForegroundAgentRuntimeSessionOptionsResponseV1Schema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    options: AgentCliSessionCommandOptionsV1Schema,
+  }).strict(),
+  z.object({
+    ok: z.literal(false),
+    error: ProviderErrorV1Schema,
+  }).strict(),
+]);
+
+export type ForegroundAgentRuntimeSessionOptionsResponseV1 =
+  z.infer<typeof ForegroundAgentRuntimeSessionOptionsResponseV1Schema>;

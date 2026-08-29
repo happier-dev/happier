@@ -20,6 +20,7 @@ import {
   parseConnectedAccountServiceConfigurationsV1,
   parseQualifiedConnectedAccountCredentialPlaintextV1,
   openQualifiedConnectedAccountContentEnvelope,
+  isStoredJsonContentEnvelopeModeCompatible,
   projectQualifiedConnectedAccountCredentialPlaintextV1,
   sealQualifiedConnectedAccountContentEnvelope,
   type AccountScopedCryptoMaterial,
@@ -1192,6 +1193,14 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           return null;
         }
         const accountMode = await resolveAccountMode();
+        if (!isStoredJsonContentEnvelopeModeCompatible(
+          accountMode,
+          snapshot.configurationContent,
+        )) {
+          throw new Error(
+            'Connected-account configuration content does not match the persisted Account encryption mode',
+          );
+        }
         const opened = openContent({
           kind: 'configuration',
           accountMode,

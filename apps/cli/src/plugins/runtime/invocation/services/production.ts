@@ -88,6 +88,7 @@ import {
     createRoutedPluginSettingsRecordStore,
     createStablePluginSettingsHost,
     type PluginAccountSettingsRecordAdapter,
+    type PluginSettingsRollbackDeclarations,
 } from './settings';
 import { createAccountPluginSettingsRecordStorage } from '../../context/accountPluginSettingsRecordStorage';
 import {
@@ -217,6 +218,13 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         pluginId: string;
         contribution: PluginSettingsContributionV2;
     }>[];
+    /**
+     * The one supported rollback Settings declaration per (pluginId, scope),
+     * derived once per registry generation from the existing generation
+     * support state. Absent means the support state was not readable, so the
+     * Settings owner preserves every removed value instead of pruning.
+     */
+    settingsRollbackDeclarations?: PluginSettingsRollbackDeclarations;
     /**
      * Reports a plugin whose declared settings could not be modelled. The
      * declaration set spans every plugin, so the host isolates the offender and
@@ -358,6 +366,9 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
             declarations,
             ...(params?.onPluginSettingsUnavailable
                 ? { onPluginSettingsUnavailable: params.onPluginSettingsUnavailable }
+                : {}),
+            ...(params?.settingsRollbackDeclarations
+                ? { rollbackDeclarations: params.settingsRollbackDeclarations }
                 : {}),
             recordStore: createRoutedPluginSettingsRecordStore([
                 ...(storagePaths
@@ -922,6 +933,12 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
     };
     return Object.freeze({
         stableEventsBroker: broker,
+        async pruneRetiredPluginSettings(
+            previous: PluginSettingsRollbackDeclarations | undefined,
+        ) {
+            return await settingsHost?.pruneRetiredRollbackDeclarations?.(previous)
+                ?? Object.freeze([]);
+        },
         publishHostEvent(event: import('@happier-dev/protocol').HostSemanticEventV1): void {
             broker.publishHostEvent(event);
         },

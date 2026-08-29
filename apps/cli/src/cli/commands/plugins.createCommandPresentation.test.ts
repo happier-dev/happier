@@ -11,12 +11,14 @@ import {
 } from '@happier-dev/agents/process/shellCommand';
 import { describe, expect, it } from 'vitest';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+
 import { formatPluginCreateNextCommands } from './plugins';
 
 const execFileAsync = promisify(execFile);
 
-const nextCommandArgs = (targetDir: string): readonly string[] => [
-  'happier',
+const nextCommandArgs = (targetDir: string, invokerName = 'happier'): readonly string[] => [
+  invokerName,
   'plugins',
   'dev',
   targetDir,
@@ -26,7 +28,7 @@ describe('plugins create next-command presentation', () => {
   it('retains the POSIX command that changes into the scaffold directory before starting dev mode', () => {
     const targetDir = String.raw`/tmp/author space/$name/'quoted'`;
 
-    expect(formatPluginCreateNextCommands(targetDir, 'linux')).toEqual([
+    expect(formatPluginCreateNextCommands(targetDir, 'linux', 'happier')).toEqual([
       `cd ${buildPosixShellCommand([targetDir])} && happier plugins dev`,
     ]);
   });
@@ -34,9 +36,43 @@ describe('plugins create next-command presentation', () => {
   it('uses the canonical shell serializers and labels each supported Windows shell', () => {
     const targetDir = String.raw`C:\author space\$name\%name% & (plugin) 'quoted'`;
 
-    expect(formatPluginCreateNextCommands(targetDir, 'win32')).toEqual([
+    expect(formatPluginCreateNextCommands(targetDir, 'win32', 'happier')).toEqual([
       `PowerShell: ${buildPowerShellCommand(nextCommandArgs(targetDir))}`,
       `cmd.exe: ${buildWindowsCmdCommand(nextCommandArgs(targetDir))}`,
+    ]);
+  });
+
+  it('uses the canonical argv-derived invoker in default next-command presentation', () => {
+    const targetDir = String.raw`/tmp/author space/$name/'quoted'`;
+    const envScope = createEnvKeyScope(['HAPPIER_CLI_INVOKER_NAME']);
+    const originalArgv = [...process.argv];
+    envScope.patch({ HAPPIER_CLI_INVOKER_NAME: undefined });
+    process.argv[1] = '/opt/bin/acme-happier';
+
+    try {
+      expect(formatPluginCreateNextCommands(targetDir, 'linux')).toEqual([
+        `cd ${buildPosixShellCommand([targetDir])} && acme-happier plugins dev`,
+      ]);
+    } finally {
+      process.argv.splice(0, process.argv.length, ...originalArgv);
+      envScope.restore();
+    }
+  });
+
+  it('uses an explicit invoker name in POSIX next-command presentation', () => {
+    const targetDir = String.raw`/tmp/author space/$name/'quoted'`;
+
+    expect(formatPluginCreateNextCommands(targetDir, 'linux', 'hdev')).toEqual([
+      `cd ${buildPosixShellCommand([targetDir])} && hdev plugins dev`,
+    ]);
+  });
+
+  it('uses an explicit invoker name in Windows next-command presentation', () => {
+    const targetDir = String.raw`C:\author space\$name\%name% & (plugin) 'quoted'`;
+
+    expect(formatPluginCreateNextCommands(targetDir, 'win32', 'hdev')).toEqual([
+      `PowerShell: ${buildPowerShellCommand(nextCommandArgs(targetDir, 'hdev'))}`,
+      `cmd.exe: ${buildWindowsCmdCommand(nextCommandArgs(targetDir, 'hdev'))}`,
     ]);
   });
 
@@ -49,7 +85,7 @@ describe('plugins create next-command presentation', () => {
       const captureScriptPath = join(root, 'capture-argv.cjs');
       const happierShimPath = join(root, 'happier.cmd');
       const originalPath = process.env.PATH;
-      const commands = formatPluginCreateNextCommands(targetDir, 'win32');
+      const commands = formatPluginCreateNextCommands(targetDir, 'win32', 'happier');
 
       try {
         await writeFile(captureScriptPath, [

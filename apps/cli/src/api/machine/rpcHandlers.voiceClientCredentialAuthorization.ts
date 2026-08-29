@@ -2,9 +2,11 @@ import {
   DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema,
   DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema,
   DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema,
+  PluginMachineMaterializationRefV1Schema,
   type DaemonVoiceClientRawCredentialAuthorizationRequestV1,
   type DaemonVoiceClientRawCredentialReviewV1,
   type PluginContributionIdentityV1,
+  type PluginMachineMaterializationRefV1,
   type PluginPermissionGrantRequestV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -68,6 +70,7 @@ type AuthorizationServiceDependencies = Readonly<{
 
 type CurrentAuthorizationContext = VoiceRawCredentialAuthorizationReview & Readonly<{
   inspectAgain(): Promise<PluginRawCredentialAuthorizationInspection>;
+  readCurrentCaller(): PluginMachineMaterializationRefV1 | null;
 }>;
 
 function credentialUnavailable(): Error & { code: string } {
@@ -92,32 +95,6 @@ function contributionMatches(
 ): boolean {
   return candidate.identity.pluginId === contribution.pluginId
     && candidate.identity.localId === contribution.localId;
-}
-
-function representativeRawGrant(
-  contribution: ResolvedVoiceProviderContribution,
-): Readonly<{ realm: 'web' | 'ios' | 'android' | 'daemon'; phase: 'settings' | 'prepare' | 'connection' | 'speech' }> | null {
-  const grants: Array<Readonly<{
-    realm: 'web' | 'ios' | 'android' | 'daemon';
-    phase: 'settings' | 'prepare' | 'connection' | 'speech';
-    request: unknown;
-  }>> = [];
-  for (const source of contribution.definition.credentials?.sources ?? []) {
-    for (const grant of source.rawGrants ?? []) {
-      grants.push(Object.freeze({
-        realm: grant.realm,
-        phase: grant.phase,
-        request: grant.request,
-      }));
-    }
-  }
-  grants.sort((left, right) => {
-    const leftKey = JSON.stringify(left);
-    const rightKey = JSON.stringify(right);
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-  });
-  const grant = grants[0];
-  return grant ? Object.freeze({ realm: grant.realm, phase: grant.phase }) : null;
 }
 
 function reviewPresentation(
@@ -225,11 +202,11 @@ export function createMachineVoiceClientCredentialAuthorizationService(
       if (!provider || provider.pluginId !== input.contribution.pluginId) {
         throw credentialUnavailable();
       }
-      const rawGrant = representativeRawGrant(provider);
+      const rawGrant = input.rawGrant;
       const lifecycle = lease.registry.resolveVoiceProviderRuntimeLifecycle?.(
         provider.identity,
       ) ?? null;
-      if (!rawGrant || !lifecycle?.isCurrent()) throw credentialUnavailable();
+      if (!lifecycle?.isCurrent()) throw credentialUnavailable();
       const connectedAccounts = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
       const manifest = await readManifest({
         manifestPath: provider.manifestPath,
@@ -274,7 +251,7 @@ export function createMachineVoiceClientCredentialAuthorizationService(
           ? { ensureAccountSettingsSnapshot: dependencies.ensureAccountSettingsSnapshot }
           : {}),
       });
-      const authorization = await inspector.inspectAuthorization({ signal });
+      const authorization = await inspector.inspectAuthorization(rawGrant.request, { signal });
       const principal = await inspector.currentInstallReviewPrincipal.readCurrent({
         pluginId: provider.pluginId,
         signal,
@@ -290,7 +267,22 @@ export function createMachineVoiceClientCredentialAuthorizationService(
       return await use(Object.freeze({
         authorization,
         review,
-        inspectAgain: () => inspector.inspectAuthorization({ signal }),
+        inspectAgain: () => inspector.inspectAuthorization(rawGrant.request, { signal }),
+        readCurrentCaller: () => {
+          const caller = PluginMachineMaterializationRefV1Schema.safeParse(
+            lease?.registry.resolveCurrentPluginMaterializationRef?.(
+              authorization.pluginId,
+            ),
+          );
+          if (
+            !caller.success
+            || caller.data.pluginId !== authorization.pluginId
+            || !lifecycle.isCurrent()
+          ) {
+            return null;
+          }
+          return caller.data;
+        },
       }));
     } finally {
       await lease?.release();
@@ -312,6 +304,8 @@ export function createMachineVoiceClientCredentialAuthorizationService(
         const credentials = await readCredentials();
         signal.throwIfAborted();
         if (!credentials) throw requestFailed();
+        const caller = context.readCurrentCaller();
+        if (!caller) throw credentialUnavailable();
         let output;
         try {
           output = await createGrantRequester({ credentials }).request({
@@ -321,6 +315,7 @@ export function createMachineVoiceClientCredentialAuthorizationService(
             subject: context.authorization.subject,
             requester: { kind: 'plugin', pluginId: context.authorization.pluginId },
             reason: 'Voice provider raw credential access review',
+            caller,
           }, { signal });
         } catch (error) {
           signal.throwIfAborted();

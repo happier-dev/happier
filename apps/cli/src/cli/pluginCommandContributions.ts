@@ -274,6 +274,7 @@ export async function handlePluginCommandCliCommand(
     actionId: invocation.qualifiedActionId,
     input: invocation.input,
     surface: 'cli',
+    authority: 'present_user',
   });
   const result: PluginCommandExecutionResult = !attempt.matched
     ? {

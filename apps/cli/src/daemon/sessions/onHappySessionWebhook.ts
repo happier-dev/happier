@@ -1047,6 +1047,12 @@ export function createOnHappySessionWebhook(params: Readonly<{
       !requiresCanonicalMarkerAdoption
       && !trackedDaemonCanonicalSession
         ?.agentRuntimeDaemonServiceAuthorityFilePath
+      // Windows Terminal's exact accepted-marker callback is the sole writer
+      // for this startup. Letting the provisional PID webhook also start the
+      // ordinary writer can race after canonical admission and restore the
+      // PID placeholder over the accepted Session identity.
+      && !trackedForPid
+        ?.persistWindowsTerminalAcceptedAgentMarker
     ) {
       void startOrdinaryMarkerPersistence();
     }

@@ -62,6 +62,7 @@ import { resolveDirectCliConnectedServiceBindings } from '@/cli/connectedService
 import {
   admitDaemonForegroundAgentRuntime,
   releaseDaemonForegroundAgentRuntime,
+  resolveDaemonForegroundAgentRuntimeSessionOptions,
 } from '@/daemon/controlClient';
 import {
   claimDaemonForegroundAgentRuntimeEnvironment,
@@ -126,15 +127,14 @@ function passthroughProviderCliArgsAndExit(params: Parameters<typeof passthrough
   process.exit(0);
 }
 
-async function resolveProviderRunOptions(params: Readonly<{
-  agentId: AgentId;
+export function buildAgentCliSessionCommandBuildInput(params: Readonly<{
   settings: Readonly<Record<string, unknown>>;
-  processEnv: NodeJS.ProcessEnv;
+  processEnv: NodeJS.ProcessEnv | Readonly<Record<string, string | undefined>>;
   startedBy: 'terminal' | 'daemon';
   isExplicitCliSubcommand: boolean;
   parsed: ProviderSessionArgPartitionResult;
-}>): Promise<Readonly<Record<string, unknown>>> {
-  const buildInput: AgentCliSessionCommandBuildInputV1 = Object.freeze({
+}>): AgentCliSessionCommandBuildInputV1 {
+  return Object.freeze({
     isExplicitCliSubcommand: params.isExplicitCliSubcommand,
     parsed: Object.freeze({
       ...(params.parsed.startingMode === undefined
@@ -149,10 +149,20 @@ async function resolveProviderRunOptions(params: Readonly<{
       agentArgs: Object.freeze([...params.parsed.providerArgs]),
     }),
     settings: params.settings,
-    environment: Object.freeze({ ...params.processEnv }),
+    // The daemon/catalog owner resolves the exact scope-qualified Agent
+    // Settings immediately before invoking the Agent callback. The transport
+    // still carries the public shape so every realm validates one contract;
+    // this pre-resolution producer therefore contributes the truthful empty
+    // projection rather than an old flat or optional spelling.
+    pluginSettings: Object.freeze({}),
+    environment: Object.freeze(Object.fromEntries(
+      Object.entries(params.processEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    )),
     startOrigin: params.startedBy,
   });
-  const extras = await resolveProviderSessionRuntimePreferences(params.agentId, buildInput);
+}
+
+async function finalizeProviderRunOptions(extras: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>> {
   const environmentVariables = readProviderEnvironmentVariables(extras.environmentVariables);
   const unsetEnvironmentVariables = readUnsetEnvironmentVariables(extras.unsetEnvironmentVariables);
   return {
@@ -410,6 +420,7 @@ Provider CLI Options:
       authorityFilePath: string;
       sessionId: string;
       attemptId: string;
+      immutableGenerationId: string;
     }> | null = null;
     let admitForegroundRuntime:
       | (() => Promise<Readonly<{
@@ -484,6 +495,9 @@ Provider CLI Options:
               admission.capability.authorityFilePath,
             sessionId: providerSessionId,
             attemptId,
+            immutableGenerationId:
+              admission.capability.descriptor.immutableGenerationId
+              ?? admission.capability.descriptor.generation,
           }),
           reservedEnvironmentVariableNames:
             admission.launchPolicy.reservedEnvironmentVariableNames,
@@ -562,17 +576,39 @@ Provider CLI Options:
     const permissionModeUpdatedAt = resolved.permissionModeUpdatedAt ?? (permissionModeSeed ? Date.now() : undefined);
     const providerSpawnExtras =
       params.agentIdForAccountSettings && accountSettingsContext
-        ? await resolveProviderRunOptions({
-          agentId: params.agentIdForAccountSettings,
-          settings: accountSettingsContext.settings as Readonly<Record<string, unknown>>,
-          processEnv: buildScopedProcessEnv({
-            baseEnv: process.env,
-            explicitEnv: profileEnvironmentVariables,
-          }),
-          startedBy,
-          isExplicitCliSubcommand,
-          parsed,
-        })
+        ? await (async () => {
+          const buildInput = buildAgentCliSessionCommandBuildInput({
+            settings: accountSettingsContext.settings as Readonly<Record<string, unknown>>,
+            processEnv: buildScopedProcessEnv({
+              baseEnv: process.env,
+              explicitEnv: profileEnvironmentVariables,
+            }),
+            startedBy,
+            isExplicitCliSubcommand,
+            parsed,
+          });
+          if (foregroundAdmissionClaim) {
+            const resolved = await resolveDaemonForegroundAgentRuntimeSessionOptions({
+              v: 1,
+              attemptId: foregroundAdmissionClaim.attemptId,
+              sessionId: foregroundAdmissionClaim.sessionId,
+              foregroundPid: process.pid,
+              input: buildInput,
+            }, {
+              ...(params.context.signal ? { signal: params.context.signal } : {}),
+            });
+            if (!resolved.ok) {
+              throw new DirectProviderLaunchError(resolved.error);
+            }
+            return await finalizeProviderRunOptions(resolved.options);
+          }
+          return await finalizeProviderRunOptions(
+            await resolveProviderSessionRuntimePreferences(
+              params.agentIdForAccountSettings,
+              buildInput,
+            ),
+          );
+        })()
         : {};
     const providerEnvironmentVariablesRaw = readProviderEnvironmentVariables(
       (providerSpawnExtras as Readonly<Record<string, unknown>>).environmentVariables,
@@ -809,6 +845,8 @@ Provider CLI Options:
             )
             || foregroundNativeHomeSourceEnvironmentKey
               !== retryAdmission.nativeHomeSourceEnvironmentKey
+            || staleClaim?.immutableGenerationId
+              !== retryAdmission.claim.immutableGenerationId
           ) {
             await releaseDaemonForegroundAgentRuntime({
               v: 1,

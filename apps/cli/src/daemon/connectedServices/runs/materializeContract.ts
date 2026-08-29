@@ -40,6 +40,7 @@ export type ConnectedServiceRunReleaseRequest = z.infer<typeof ConnectedServiceR
 export const ConnectedServiceRunGenerationCurrentRequestSchema = z.object({
     runId: z.string().trim().min(1),
     runnerPid: z.number().int().positive(),
+    registration: ExecutionRunConnectedServicesRegistrationV1Schema.optional(),
 });
 export type ConnectedServiceRunGenerationCurrentRequest = z.infer<
     typeof ConnectedServiceRunGenerationCurrentRequestSchema

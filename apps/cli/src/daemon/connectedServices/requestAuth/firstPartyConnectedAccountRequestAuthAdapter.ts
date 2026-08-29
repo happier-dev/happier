@@ -1,4 +1,5 @@
 import {
+    buildQualifiedPluginContributionKey,
     ConnectedServiceCredentialRevisionV1Schema,
     readBuiltInLegacyConnectedAccountServiceKeyIngress,
     type ConnectedAccountPurposeDeclarationV1,
@@ -41,20 +42,19 @@ export function resolveFirstPartyConnectedAccountServiceId(
 }
 
 /**
- * The released Agent/session shape is service-keyed. During the compatibility window, translate
- * that already-selected intent into the manifest-declared qualified purpose namespace exactly
- * once. This is deliberately one-way: request-time consumers and binding persistence never write
- * the legacy shape, and native/missing/unsupported services mint no request-auth authority.
+ * Projects already-selected canonical qualified bindings into manifest-declared purposes. The
+ * released service-keyed Agent/session shape is accepted only as a one-way fallback at this same
+ * ingress; current consumers and persistence never write that scalar compatibility shape.
  */
-export function projectLegacyConnectedServiceBindingsToQualifiedPurposeBindings(input: Readonly<{
+export function projectConnectedServiceBindingsToQualifiedPurposeBindings(input: Readonly<{
     consumer: PluginContributionIdentityV1;
     declarations: readonly ConnectedAccountPurposeDeclarationV1[];
     bindings: ConnectedServiceBindingsV1;
 }>): readonly QualifiedConnectedAccountPurposeBindingV1[] {
-    return projectLegacyConnectedServiceBindingsToQualifiedPurposeBindingSnapshot(input).bindings;
+    return projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot(input).bindings;
 }
 
-export function projectLegacyConnectedServiceBindingsToQualifiedPurposeBindingSnapshot(input: Readonly<{
+export function projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot(input: Readonly<{
     consumer: PluginContributionIdentityV1;
     declarations: readonly ConnectedAccountPurposeDeclarationV1[];
     bindings: ConnectedServiceBindingsV1;
@@ -71,29 +71,32 @@ export function projectLegacyConnectedServiceBindingsToQualifiedPurposeBindingSn
                 localId: declaration.service,
             })
             : declaration.service;
-        const serviceId = resolveFirstPartyConnectedAccountServiceId(qualifiedService);
-        if (!serviceId) continue;
+        const qualifiedServiceKey = buildQualifiedPluginContributionKey(qualifiedService);
+        const legacyServiceId = resolveFirstPartyConnectedAccountServiceId(qualifiedService);
         const purpose = Object.freeze({
             consumer: Object.freeze({ ...input.consumer }),
             purpose: declaration.purpose,
         });
         purposes.push(purpose);
-        const legacyBinding = input.bindings.bindingsByServiceId[serviceId];
-        if (!legacyBinding || legacyBinding.source !== 'connected') continue;
+        const binding = input.bindings.bindingsByServiceId[qualifiedServiceKey]
+            ?? (legacyServiceId
+                ? input.bindings.bindingsByServiceId[legacyServiceId]
+                : undefined);
+        if (!binding || binding.source !== 'connected') continue;
 
         projected.push(Object.freeze({
             purpose,
-            target: legacyBinding.selection === 'group'
+            target: binding.selection === 'group'
                 ? Object.freeze({
                     kind: 'group' as const,
                     service: Object.freeze({ ...qualifiedService }),
-                    groupId: legacyBinding.groupId,
+                    groupId: binding.groupId,
                 })
                 : Object.freeze({
                     kind: 'account' as const,
                     account: Object.freeze({
                         service: Object.freeze({ ...qualifiedService }),
-                        accountId: legacyBinding.profileId,
+                        accountId: binding.profileId,
                     }),
                 }),
         }));

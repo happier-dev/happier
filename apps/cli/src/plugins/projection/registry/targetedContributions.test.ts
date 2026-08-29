@@ -622,9 +622,54 @@ describe('targeted contribution cold admission', () => {
 
         expect(catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })?.contributions)
             .toEqual([]);
-        expect(targetedDiagnosticCodes(catalog)).toEqual(['target_semantics_unavailable']);
+        expect(targetedDiagnosticCodes(catalog)).toEqual([
+            'target_semantics_unavailable',
+            'target_semantics_unavailable',
+        ]);
         expect(compilePluginJsonSchema).not.toHaveBeenCalled();
         expect(preparePluginJsonSchema).not.toHaveBeenCalled();
+    });
+
+    it('fans out one contributor-owned semantic diagnostic per rejected contribution', () => {
+        const descriptorProtocol: PluginContributionPointV1['protocols'][number] = {
+            ...protocol,
+            descriptor: {
+                type: 'object',
+                properties: { name: { type: 'string' } },
+                required: ['name'],
+                additionalProperties: false,
+            },
+            operations: point().protocols[0]!.operations,
+        };
+        const firstContributorPluginId = 'examples.contributor.first';
+        const secondContributorPluginId = 'examples.contributor.second';
+        const catalog = registry({
+            points: [{ pluginId: targetPluginId, definition: pointWith({ protocols: [descriptorProtocol] }) }],
+            contributions: [{
+                pluginId: firstContributorPluginId,
+                definition: { ...contribution({ id: 'provider-first' }), descriptor: { name: 'First provider' } },
+            }, {
+                pluginId: secondContributorPluginId,
+                definition: { ...contribution({ id: 'provider-second' }), descriptor: { name: 'Second provider' } },
+            }],
+            actions: [
+                action({ pluginId: firstContributorPluginId }),
+                action({ pluginId: secondContributorPluginId }),
+            ],
+            immutableGenerationIdsByPluginId: {
+                [targetPluginId]: 'target-generation-a',
+                [firstContributorPluginId]: 'first-generation-a',
+                [secondContributorPluginId]: 'second-generation-a',
+            },
+        });
+
+        expect(catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })?.contributions)
+            .toEqual([]);
+        expect(catalog.pluginDiagnosticsByPluginId[targetPluginId]).toBeUndefined();
+        expect(catalog.pluginDiagnosticsByPluginId[firstContributorPluginId])
+            .toEqual([expect.objectContaining({ code: 'target_semantics_unavailable' })]);
+        expect(catalog.pluginDiagnosticsByPluginId[secondContributorPluginId])
+            .toEqual([expect.objectContaining({ code: 'target_semantics_unavailable' })]);
     });
 
     it('rejects surface semantics from an external JSON target before structural schema preparation', () => {
@@ -670,7 +715,10 @@ describe('targeted contribution cold admission', () => {
 
         expect(catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })?.contributions)
             .toEqual([]);
-        expect(targetedDiagnosticCodes(catalog)).toEqual(['target_semantics_unavailable']);
+        expect(targetedDiagnosticCodes(catalog)).toEqual([
+            'target_semantics_unavailable',
+            'target_semantics_unavailable',
+        ]);
         expect(preparePluginJsonSchema).not.toHaveBeenCalled();
     });
 

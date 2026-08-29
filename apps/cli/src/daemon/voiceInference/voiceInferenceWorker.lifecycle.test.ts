@@ -6,6 +6,7 @@ import { getModelPackCatalogEntry, type ModelPackManifest } from '@happier-dev/p
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { hashVoiceModelPackManifest } from './voiceModelPackInstaller';
 
 const ZIPFORMER_PACK_ID = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
 const KOKORO_PACK_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
@@ -475,6 +476,45 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
     await lifecycle.stop();
   });
 
+  it('does not let a retained pack manifest overrule interrupted-install integrity reconciliation', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
+    const { manifest } = createZipformerCatalogManifest();
+    const paths = resolveVoiceInferencePaths();
+    const packDir = join(paths.packsRootDir, manifest.packId);
+    await mkdir(packDir, { recursive: true });
+    // Preserve the canonical manifest but omit every declared model byte. The
+    // startup verifier must reject this predecessor-owned partial install.
+    await writeFile(join(packDir, 'pack.json'), JSON.stringify(manifest), 'utf8');
+    await writeFile(paths.installsStateFilePath, JSON.stringify({
+      modelsById: {
+        [manifest.packId]: {
+          modelId: manifest.packId,
+          state: 'installing',
+          version: manifest.version,
+          manifestHash: hashVoiceModelPackManifest(manifest),
+          kind: manifest.kind,
+          model: manifest.model,
+          updatedAtMs: 1,
+          progress: { phase: 'installing', progress: 0.9 },
+          lastError: null,
+        },
+      },
+    }), 'utf8');
+
+    const lifecycle = createVoiceInferenceWorkerLifecycle();
+    await expect(lifecycle.getModelsStatus([manifest.packId])).resolves.toEqual([
+      expect.objectContaining({
+        packId: manifest.packId,
+        installState: 'error',
+        runtimeSupported: false,
+        lastError: 'inference_install_interrupted',
+      }),
+    ]);
+    await lifecycle.stop();
+  });
+
   it('clears failed warm readiness and exposes degraded service diagnostics before a retry', async () => {
     const homeDir = await createHomeDir();
     const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
@@ -865,6 +905,190 @@ describe('createVoiceInferenceWorkerLifecycle', () => {
       await stopLifecycle?.();
       vi.useRealTimers();
     }
+  });
+
+  it('retires a warmed public runtime when its owning plugin generation reloads', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const { resolveVoiceInferencePaths } = await import('./voiceInferencePaths');
+    const key = 'acme.voice/english-small';
+    const directoryKey = 'plugin-acme-voice-english-small';
+    const manifest: ModelPackManifest = {
+      packId: directoryKey,
+      kind: 'tts_sherpa',
+      model: 'kokoro',
+      version: '1',
+      files: [],
+    };
+    const packDir = join(resolveVoiceInferencePaths().packsRootDir, directoryKey);
+    await mkdir(packDir, { recursive: true });
+    await writeFile(join(packDir, 'pack.json'), JSON.stringify(manifest), 'utf8');
+    let invalidate: ((changedPluginIds: readonly string[]) => void) | null = null;
+    const releaseModel = vi.fn(async () => {});
+    const publicEntry = {
+      key,
+      identity: { pluginId: 'acme.voice', packId: 'english-small' },
+      directoryKey,
+      descriptor: {
+        loadable: true,
+        status: 'available',
+        contribution: {
+          manifest: {
+            kind: 'tts_sherpa',
+            model: 'kokoro',
+            version: '1',
+            files: [],
+            voices: [
+              { id: 'calm', title: 'Calm', sid: 4 },
+              { id: 'bright', title: 'Bright', subtitle: 'English', sid: 7 },
+            ],
+            defaultVoiceId: 'bright',
+            runtime: { family: 'sherpa_kokoro_offline', abiVersion: 1 },
+            license: {
+              id: 'fixture-license',
+              title: 'Fixture license',
+              url: 'https://example.invalid/license',
+              requiresAcceptance: false,
+            },
+          },
+        },
+      },
+      installedMetadata: null,
+      installedManifest: manifest,
+      runtimeDescriptor: { family: 'sherpa_kokoro_offline', abiVersion: 1 },
+      supportArtifacts: [],
+    } as const;
+    const listPublicEntries = vi.fn(async () => [publicEntry] as any);
+    const resolvePublicEntry = vi.fn(async (candidate: string) => candidate === key ? publicEntry as any : null);
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      publicModelPacks: {
+        ready: async () => {},
+        list: listPublicEntries,
+        resolve: resolvePublicEntry,
+        install: async () => { throw new Error('not exercised'); },
+        acceptLicense: async () => { throw new Error('not exercised'); },
+        remove: async () => {},
+        subscribeInvalidations: (listener) => {
+          invalidate = listener;
+          return () => { invalidate = null; };
+        },
+      },
+      runtimeLoader: async () => ({
+        warmModel: async () => {},
+        releaseModel,
+        synthesizeTts: async () => { throw new Error('not exercised'); },
+        transcribeAudio: async () => { throw new Error('not exercised'); },
+      }),
+    });
+
+    await lifecycle.warmModelPack(key);
+    listPublicEntries.mockClear();
+    resolvePublicEntry.mockClear();
+    await expect(lifecycle.getModelsStatus([key])).resolves.toEqual([
+      expect.objectContaining({
+        runtimeState: 'ready',
+        voices: [
+          { id: 'calm', title: 'Calm', sid: 4 },
+          { id: 'bright', title: 'Bright', subtitle: 'English', sid: 7 },
+        ],
+        defaultVoiceId: 'bright',
+      }),
+    ]);
+    expect(listPublicEntries).toHaveBeenCalledTimes(1);
+    expect(resolvePublicEntry).not.toHaveBeenCalled();
+
+    expect(invalidate).not.toBeNull();
+    (invalidate as unknown as (changedPluginIds: readonly string[]) => void)(['acme.voice']);
+    await vi.waitFor(() => expect(releaseModel).toHaveBeenCalledTimes(1));
+    await expect(lifecycle.getModelsStatus([key])).resolves.toEqual([
+      expect.objectContaining({ runtimeState: 'cold' }),
+    ]);
+
+    await lifecycle.warmModelPack(key);
+    expect(releaseModel).toHaveBeenCalledTimes(1);
+    await lifecycle.stop();
+    expect(releaseModel).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a public descriptor that resolves after its plugin was invalidated', async () => {
+    const homeDir = await createHomeDir();
+    const { createVoiceInferenceWorkerLifecycle } = await importLifecycleModuleForHome(homeDir);
+    const key = 'acme.voice/deferred';
+    const manifest: ModelPackManifest = {
+      packId: 'plugin-acme-voice-deferred',
+      kind: 'tts_sherpa',
+      model: 'kokoro',
+      version: '1',
+      files: [],
+    };
+    const publicEntry = {
+      key,
+      identity: { pluginId: 'acme.voice', packId: 'deferred' },
+      directoryKey: manifest.packId,
+      descriptor: {
+        loadable: true,
+        status: 'available',
+        contribution: {
+          manifest: {
+            kind: manifest.kind,
+            model: manifest.model,
+            version: manifest.version,
+            files: [],
+            runtime: { family: 'sherpa_kokoro_offline', abiVersion: 1 },
+            license: {
+              id: 'fixture-license', title: 'Fixture license',
+              url: 'https://example.invalid/license', requiresAcceptance: false,
+            },
+          },
+        },
+      },
+      installedMetadata: null,
+      installedManifest: manifest,
+      runtimeDescriptor: { family: 'sherpa_kokoro_offline', abiVersion: 1 },
+      supportArtifacts: [],
+    } as const;
+    const deferredResolve = deferred<typeof publicEntry>();
+    const resolve = vi.fn(async () => await deferredResolve.promise as any);
+    let invalidate: ((changedPluginIds: readonly string[]) => void) | null = null;
+    const warmModel = vi.fn(async () => {});
+    const runtimeLoader = vi.fn(async () => ({
+      warmModel,
+      releaseModel: vi.fn(async () => {}),
+      synthesizeTts: async () => { throw new Error('not exercised'); },
+      transcribeAudio: async () => { throw new Error('not exercised'); },
+    }));
+    const lifecycle = createVoiceInferenceWorkerLifecycle({
+      publicModelPacks: {
+        ready: async () => {},
+        list: async () => [publicEntry] as any,
+        resolve,
+        install: async () => { throw new Error('not exercised'); },
+        acceptLicense: async () => { throw new Error('not exercised'); },
+        remove: async () => {},
+        subscribeInvalidations: (listener) => {
+          invalidate = listener;
+          return () => { invalidate = null; };
+        },
+      },
+      runtimeLoader,
+    });
+
+    const warming = lifecycle.warmModelPack(key);
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalledWith(key));
+    expect(invalidate).not.toBeNull();
+    (invalidate as unknown as (changedPluginIds: readonly string[]) => void)(['acme.voice']);
+    deferredResolve.resolve(publicEntry);
+
+    await expect(warming).rejects.toMatchObject({
+      code: 'runtime_unavailable',
+      message: 'voice_inference_public_pack_generation_stale',
+    });
+    expect(runtimeLoader).not.toHaveBeenCalled();
+    expect(warmModel).not.toHaveBeenCalled();
+    await expect(lifecycle.getModelsStatus([key])).resolves.toEqual([
+      expect.objectContaining({ packId: key, runtimeState: 'cold' }),
+    ]);
+    await lifecycle.stop();
   });
 
   it('aborts a public warm during daemon stop and rejects a late native success before readiness publication', async () => {

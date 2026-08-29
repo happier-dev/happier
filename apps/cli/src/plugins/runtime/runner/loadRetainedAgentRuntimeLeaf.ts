@@ -19,7 +19,10 @@ import { resolveBundledImmutablePluginArtifact } from '../../store/registry/gene
 
 import type { PluginStorePaths } from '../../store/paths';
 import { readPluginManifest } from '../../manifest/read';
-import { resolveContributedAgentRoutingId } from '../../projection/registry/agentRoutingIdentity';
+import {
+    resolveAgentContributionQualifiedId,
+    resolveContributedAgentRoutingId,
+} from '../../projection/registry/agentRoutingIdentity';
 import {
     snapshotAgentExternalSessionsThroughRegistrationScope,
 } from '../api/registrationRightsHost';
@@ -263,8 +266,14 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             );
         }
         const expectedAgentIdentity = Object.freeze({
-            // `agentId` is the host routing id, which is qualified for an
-            // installed Agent; only `localAgentId` is the manifest-local id.
+            // The two qualified facts are distinct and must not be re-derived
+            // from each other: `agentId` is the canonical host routing id
+            // (unqualified for bundled first-party Agents), while
+            // `qualifiedAgentId` is the always-qualified contribution key
+            // used for activation and managed-service authority.
+            // `localAgentId` stays the manifest-local id for factory
+            // construction. `pluginId` + `localAgentId` carry the durable
+            // identity in structured form alongside both spellings.
             agentId: resolveContributedAgentRoutingId({
                 pluginId: manifest.manifest.id,
                 localId: declaredAgent.id,
@@ -272,8 +281,10 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
                     ? 'first_party'
                     : 'external',
             }),
-            qualifiedAgentId:
-                `${manifest.manifest.id}/agents/${declaredAgent.id}`,
+            qualifiedAgentId: resolveAgentContributionQualifiedId({
+                pluginId: manifest.manifest.id,
+                localId: declaredAgent.id,
+            }),
             localAgentId: declaredAgent.id,
         });
         const expectedBinding = createHostDeclarativeAcpRunnerBinding({

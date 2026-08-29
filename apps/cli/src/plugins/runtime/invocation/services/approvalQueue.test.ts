@@ -310,6 +310,63 @@ describe('stable plugin approval queue owner', () => {
         });
     });
 
+    it('rejects sparse arrays and nonordinary objects in projected approval payloads and freezes projected input', async () => {
+        const sparseArgs = [1, 3] as number[];
+        delete sparseArgs[1];
+        class NonordinaryArgs {
+            constructor(readonly sessionId: string) {}
+        }
+        let actionArgs: unknown = { sessionId: 'session-1' };
+        const execute = vi.fn(async (actionId: string) => (
+            actionId === 'approval.request.get'
+                ? { ok: true as const, result: { request: { ...request('open'), actionArgs } } }
+                : { ok: false as const, errorCode: 'unexpected', error: 'unexpected' }
+        ));
+        const queue = createStablePluginApprovalQueueOwner({
+            resolveExecutor: async () => ({ execute }),
+        }).bind(seed());
+
+        actionArgs = sparseArgs;
+        await expect(queue.get('approval-1')).rejects.toMatchObject({
+            code: 'plugin_approval_queue_invalid_response',
+        });
+        actionArgs = new NonordinaryArgs('session-1');
+        await expect(queue.get('approval-1')).rejects.toMatchObject({
+            code: 'plugin_approval_queue_invalid_response',
+        });
+        actionArgs = { sessionId: 'session-1' };
+        const approval = await queue.get('approval-1');
+        expect(approval?.input).toEqual({ sessionId: 'session-1' });
+        expect(Object.isFrozen(approval?.input)).toBe(true);
+    });
+
+    it('preserves canonical JSON null as an execution result', async () => {
+        const execute = vi.fn(async (actionId: string) => (
+            actionId === 'approval.request.get'
+                ? {
+                    ok: true as const,
+                    result: {
+                        request: {
+                            ...request('executed'),
+                            execution: {
+                                executedAtMs: 4,
+                                ok: true,
+                                result: null,
+                            },
+                        },
+                    },
+                }
+                : { ok: false as const, errorCode: 'unexpected', error: 'unexpected' }
+        ));
+        const queue = createStablePluginApprovalQueueOwner({
+            resolveExecutor: async () => ({ execute }),
+        }).bind(seed());
+
+        await expect(queue.get('approval-1')).resolves.toMatchObject({
+            execution: { ok: true, result: null },
+        });
+    });
+
     it('delivers one initial snapshot then serialized changed snapshots and disposes exactly', async () => {
         const coordinator = createBlockingApprovalCoordinator();
         let items: readonly ApprovalQueueListItemV1[] = [];

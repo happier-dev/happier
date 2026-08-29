@@ -16,7 +16,7 @@ import {
   type StoredCredentials,
 } from '@/persistence';
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
-import type { ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -48,6 +48,18 @@ export function createCredentialedTargetActionCurrentIntent(
     create: (request) => store.targetActionApprovalsCreate({ request }),
     read: (artifactId) => store.targetActionApprovalsGet({ artifactId }),
   });
+}
+
+export function resolveCliActionAuthority(
+  credentials: StoredCredentials | undefined,
+  explicitAuthority: ActionExecutorContext['authority'],
+): NonNullable<ActionExecutorContext['authority']> {
+  if (credentials === undefined || !hasStoredSessionCredentialProvenance(credentials)) {
+    return 'account_automation';
+  }
+  return explicitAuthority === 'account_automation'
+    ? 'account_automation'
+    : 'present_user';
 }
 
 export function createCliActionExecutor(
@@ -96,11 +108,10 @@ export function createCliActionExecutor(
   const resolveContext = (context: Parameters<typeof base.execute>[2]) => ({
     ...(context ?? {}),
     surface: context?.surface ?? 'cli',
-    // API Tokens and unprovenanced synthetic credentials cannot assert that a
-    // person is present merely by entering through the CLI surface.
-    ...(hasStoredSessionCredentialProvenance(params.credentials)
-      ? {}
-      : { authority: 'account_automation' as const }),
+    // Credential provenance, not the CLI surface, is the authority owner.
+    // Stored Session credentials represent the authenticated interactive user;
+    // PATs and synthetic credentials remain Account automation.
+    authority: resolveCliActionAuthority(params.credentials, context?.authority),
     actionsSettings: actionSettingsProvider.getActionsSettings(),
   });
   return {

@@ -35,7 +35,7 @@ describe('Agent provider CLI attach catalog projection', () => {
         expect(resolveManagedServiceSessionBaseUrl).toHaveBeenCalledWith({
             pluginId: 'happier.agent.opencode',
             sessionId: 'happier-session',
-            contributionId: 'happier.agent.opencode/agents/opencode',
+            contributionId: 'happier.agent.opencode/opencode',
         });
     });
 });

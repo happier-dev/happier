@@ -557,6 +557,10 @@ export function createForkedVoiceInferenceRuntimeClient(
       {
         signal: input.signal,
         terminateChannelOnAbort: true,
+        // Synchronous native generation has no cooperative progress boundary.
+        // Reuse the measured native-operation budget rather than interpreting
+        // the ordinary control-request deadline as evidence of a wedged child.
+        timeoutMs: warmPrimeRequestTimeoutMs,
       },
     );
   }
@@ -592,6 +596,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         // it returns. Retire this exact channel so cancellation settles now and the aborted
         // worker cannot serve the successor (its stale result is discarded on retirement).
         terminateChannelOnAbort: true,
+        timeoutMs: warmPrimeRequestTimeoutMs,
       },
     );
   }

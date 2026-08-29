@@ -34,6 +34,12 @@ function isTopLevelHelpRequest(args: readonly string[]): boolean {
   return args.length === 1 && (args[0] === '--help' || args[0] === '-h');
 }
 
+function isCredentialFreeInvocation(args: readonly string[]): boolean {
+  return args.some((arg) => arg === '--help' || arg === '-h')
+    || isTopLevelVersionRequest(args)
+    || args[0] === 'completion';
+}
+
 function applyCommandDaemonAutostartDefaultPolicy(params: Readonly<{
   args: readonly string[];
   env: NodeJS.ProcessEnv;
@@ -198,7 +204,13 @@ async function applyGlobalInvocationOptions(
 
   // Validate the env form at the same CLI boundary when it remains the selected
   // credential. A valid explicit flag deliberately wins over an irrelevant env value.
-  if (apiToken === null && ambientApiToken !== null) {
+  // Credential-free local information surfaces still consume and clear the ambient
+  // variable, but never need to parse it.
+  if (
+    apiToken === null
+    && ambientApiToken !== null
+    && !isCredentialFreeInvocation(args)
+  ) {
     apiToken = validateCliApiTokenEnvironment(ambientApiToken);
   }
 

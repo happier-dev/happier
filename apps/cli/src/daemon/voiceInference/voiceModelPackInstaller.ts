@@ -196,7 +196,12 @@ export async function removeInstalledVoiceModelPack(params: Readonly<{
   packId: string;
 }>): Promise<void> {
   const safePackId = assertVoiceInferencePackIdFilesystemSafe(params.packId);
-  await rm(join(params.packsRootDir, safePackId), { recursive: true, force: true });
+  await Promise.all([
+    rm(join(params.packsRootDir, safePackId), { recursive: true, force: true }),
+    // Failed/aborted installs deliberately retain this exact stable directory
+    // for resume. Explicit remove/discard is its user-owned reclamation path.
+    rm(join(params.packsRootDir, `.${safePackId}.scratch`), { recursive: true, force: true }),
+  ]);
 }
 
 export async function statInstalledVoiceModelPack(params: Readonly<{

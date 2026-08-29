@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 
 import * as tar from 'tar';
 import { describe, expect, it } from 'vitest';
+import { buildPowerShellCommand } from '@happier-dev/agents/process/shellCommand';
 import {
   bundleWorkspacePackageWithRuntimeDependencies,
   resolveInternalWorkspacePackageNameClosure,
@@ -37,6 +38,7 @@ import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChang
 import { createTestPluginSdkTarball } from '@/plugins/distribution/testkit/pluginSdkTarball';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
@@ -176,35 +178,45 @@ describe('CLI scaffold development flow', () => {
 
     try {
       const createOutput = captureConsoleText();
+      // The printed next command must name the invoker the author actually
+      // invoked, so pin the env-driven `hdev` invoker for the create run and
+      // prove below that the printed command selected it.
+      const invokerNameEnvScope = createEnvKeyScope(['HAPPIER_CLI_INVOKER_NAME']);
       try {
+        invokerNameEnvScope.patch({ HAPPIER_CLI_INVOKER_NAME: 'hdev' });
         await handlePluginsCommand(['create', targetDir]);
         const nextCommand = extractPrintedNextCommand(createOutput.text());
         if (process.platform === 'win32') {
-          expect(nextCommand).toBe(`happier plugins dev "${targetDir}"`);
+          expect(nextCommand).toBe(`PowerShell: ${buildPowerShellCommand(['hdev', 'plugins', 'dev', targetDir])}`);
         } else {
           const fakeBinDir = join(parentRoot, 'fake-bin');
           const invocationPath = join(parentRoot, 'printed-next-command.txt');
-          const fakeHappierPath = join(fakeBinDir, 'happier');
+          const fakeHdevPath = join(fakeBinDir, 'hdev');
           await mkdir(fakeBinDir, { recursive: true });
-          await writeFile(fakeHappierPath, [
+          await writeFile(fakeHdevPath, [
             '#!/bin/sh',
             'printf "%s\\n" "$PWD" > "$HAPPIER_PRINTED_NEXT_COMMAND_RECORD"',
             'printf "%s\\n" "$*" >> "$HAPPIER_PRINTED_NEXT_COMMAND_RECORD"',
             '',
           ].join('\n'), 'utf8');
-          await chmod(fakeHappierPath, 0o755);
+          await chmod(fakeHdevPath, 0o755);
 
+          // The PATH exposes only the `hdev` shim, so the printed command can
+          // run only when it selected that invoker; the shim itself relies on
+          // shell builtins alone.
           await execFileAsync('/bin/sh', ['-c', nextCommand], {
             cwd: parentRoot,
             env: {
               ...process.env,
-              PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
+              PATH: fakeBinDir,
+              HAPPIER_CLI_INVOKER_NAME: 'hdev',
               HAPPIER_PRINTED_NEXT_COMMAND_RECORD: invocationPath,
             },
           });
           await expect(readFile(invocationPath, 'utf8')).resolves.toBe(`${targetDir}\nplugins dev\n`);
         }
       } finally {
+        invokerNameEnvScope.restore();
         createOutput.restore();
       }
       await expect(lstat(join(targetDir, 'pnpm-lock.yaml'))).rejects.toMatchObject({ code: 'ENOENT' });

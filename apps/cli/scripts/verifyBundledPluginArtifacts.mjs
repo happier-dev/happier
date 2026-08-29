@@ -1,14 +1,18 @@
 // Pack-time proof that the bundled plugin package trees a tarball ships are the exact
-// bytes the generator's source-artifact integrity payload publishes beside them. That
-// payload belongs only to this packaging verifier; the adjacent runtime generation
-// record is deliberately structural and is never an artifact-digest authority.
+// bytes the generator's source-artifact integrity payload publishes beside it. That
+// payload is a build-owned generated artifact (apps/cli/scripts/build-owned/
+// generatedBundledPluginSourceIntegrities.json) emitted by the sole bundled publisher;
+// the adjacent runtime generation record is deliberately structural and is never an
+// artifact-digest authority.
 // A truncated `dist/index.js` and a missing runtime chunk shipped this way before this
 // assertion existed.
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 
-const INVENTORY_RELATIVE_PATH = 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts';
+import { readBundledPluginPackageNames } from './build-owned/bundledPluginMembership.ts';
+
+const INVENTORY_RELATIVE_PATH = 'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json';
 const SOURCE_ARTIFACT_INTEGRITIES_EXPORT = 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES';
 // Vendored runtime dependency trees are resolved per host install and are not part of
 // the plugin generation the inventory binds.
@@ -30,22 +34,24 @@ export function isBundledPluginPublishedRuntimeRelativePath(relativePath) {
  * Reads the generated pack-time source-artifact integrity inventory for a repository.
  * A repository that carries no such payload publishes no bundled package tree to bind;
  * `null` says exactly that. This reader deliberately does not consume the runtime
- * immutable-generation record.
+ * immutable-generation record: the runtime module carries structural generation facts
+ * only and is never a digest authority.
  */
 export function readBundledPluginArtifactInventory({ repoRoot, inventoryPath } = {}) {
   const path = inventoryPath ?? resolve(repoRoot, INVENTORY_RELATIVE_PATH);
   if (!existsSync(path)) return null;
-  const source = readFileSync(path, 'utf8');
-  const open = `export const ${SOURCE_ARTIFACT_INTEGRITIES_EXPORT} = Object.freeze(`;
-  const start = source.indexOf(open);
-  if (start < 0) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(`[verify-bundled-plugin-artifacts] Unreadable bundled plugin source-artifact integrity inventory: ${path} (${String(error)})`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || Object.keys(parsed).length !== 1
+    || parsed[SOURCE_ARTIFACT_INTEGRITIES_EXPORT] === undefined) {
     throw new Error(`[verify-bundled-plugin-artifacts] Unreadable bundled plugin source-artifact integrity inventory: ${path}`);
   }
-  const end = source.indexOf(' satisfies ', start + open.length);
-  if (end < 0) {
-    throw new Error(`[verify-bundled-plugin-artifacts] Unreadable bundled plugin source-artifact integrity inventory: ${path}`);
-  }
-  const artifacts = JSON.parse(source.slice(start + open.length, end));
+  const artifacts = parsed[SOURCE_ARTIFACT_INTEGRITIES_EXPORT];
   if (!Array.isArray(artifacts) || artifacts.length === 0) {
     throw new Error(`[verify-bundled-plugin-artifacts] Empty bundled plugin source-artifact integrity inventory: ${path}`);
   }
@@ -139,8 +145,51 @@ export function compareBundledPluginPackageTreeToInventory({ artifact, packageDi
   };
 }
 
-export function verifyBundledPluginArtifactsAgainstInventory({ repoRoot, resolvePackageDir, inventoryPath } = {}) {
+/**
+ * Reads the pack-time inventory, refusing to answer "nothing to bind" while the
+ * repository canonically carries bundled plugins. A missing inventory used to be
+ * indistinguishable from "no bundled plugins", so every downstream consumer (pack
+ * admission, daemon-readiness stamping) verified an empty set and shipped plugin
+ * bytes no producer had published. Canonical bundled membership comes from the
+ * one membership owner (`readBundledPluginPackageNames`), never a copied list;
+ * only a genuinely plugin-free repository may observe `null`.
+ */
+export function requireBundledPluginArtifactInventory({ repoRoot, inventoryPath } = {}) {
   const artifacts = readBundledPluginArtifactInventory({ repoRoot, inventoryPath });
+  const membershipPath = inventoryPath ?? resolve(repoRoot, INVENTORY_RELATIVE_PATH);
+  const bundledMembershipPackageNames = readBundledPluginPackageNames(repoRoot);
+  if (artifacts !== null) {
+    const inventoryPackageNames = artifacts.map((artifact) => String(artifact?.packageName ?? ''));
+    const inventoryMembership = new Set(inventoryPackageNames);
+    const canonicalMembership = new Set(bundledMembershipPackageNames);
+    const missing = bundledMembershipPackageNames.filter((packageName) => !inventoryMembership.has(packageName));
+    const extra = [...inventoryMembership].filter((packageName) => !canonicalMembership.has(packageName));
+    const duplicate = inventoryPackageNames.filter((packageName, index) => (
+      inventoryPackageNames.indexOf(packageName) !== index
+    ));
+    if (missing.length > 0 || extra.length > 0 || duplicate.length > 0) {
+      throw new Error([
+        `[verify-bundled-plugin-artifacts] Bundled plugin source-artifact inventory membership disagrees with canonical packages/plugins membership: ${membershipPath}`,
+        `missing: ${missing.length > 0 ? missing.join(', ') : '(none)'}`,
+        `extra: ${extra.length > 0 ? extra.map((name) => name || '(empty)').join(', ') : '(none)'}`,
+        `duplicate: ${duplicate.length > 0 ? duplicate.join(', ') : '(none)'}`,
+      ].join('\n'));
+    }
+    return artifacts;
+  }
+  if (bundledMembershipPackageNames.length === 0) return null;
+  throw new Error(
+    `[verify-bundled-plugin-artifacts] Missing bundled plugin source-artifact integrity inventory: ${membershipPath}\n`
+    + `${bundledMembershipPackageNames.length} bundled plugin workspaces are members of this repository `
+    + `(from packages/plugins/*), so a missing inventory is a fatal publication defect: the packed plugin `
+    + 'trees would ship without the producer-published byte binding.\n'
+    + 'Fix: rebuild the bundled plugin workspaces, then regenerate the inventory with\n'
+    + 'node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts --mode write',
+  );
+}
+
+export function verifyBundledPluginArtifactsAgainstInventory({ repoRoot, resolvePackageDir, inventoryPath } = {}) {
+  const artifacts = requireBundledPluginArtifactInventory({ repoRoot, inventoryPath });
   if (artifacts === null) return [];
   return artifacts.map((artifact) => compareBundledPluginPackageTreeToInventory({
     artifact,
@@ -158,7 +207,7 @@ export function formatBundledPluginArtifactVerification(results) {
   if (failed.length === 0) return null;
 
   const lines = [
-    '[verify-bundled-plugin-artifacts] Bundled plugin files disagree with generatedBundledPluginArtifacts.ts',
+    '[verify-bundled-plugin-artifacts] Bundled plugin files disagree with generatedBundledPluginSourceIntegrities.json',
   ];
   for (const result of failed) {
     lines.push(

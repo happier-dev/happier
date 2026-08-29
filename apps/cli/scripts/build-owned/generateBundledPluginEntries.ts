@@ -11,6 +11,7 @@
  * `apps/ui`, `packages/agents` and `packages/protocol`; these are the ones most
  * often reached for:
  *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts
+ *   - apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json
  *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts
  *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts
  *   - apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts{,.web,.ios,.android}.ts
@@ -60,6 +61,7 @@
  * this note points at it rather than restating a second copy.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -106,6 +108,34 @@ import {
 } from '../buildSharedDeps.mjs';
 
 type Mode = GeneratorMode;
+
+async function publishPluginSdkApiGovernanceOutputs(): Promise<void> {
+  const pluginSdkRoot = resolve(CANONICAL_GENERATOR_REPO_ROOT, 'packages/plugin-sdk');
+  // Reuse the package's sole prepared API-governance owner. It vendors the
+  // current workspace declarations into Plugin SDK's physical node_modules
+  // before API materialization, then performs the same materialize/build/
+  // governance sequence this generator previously duplicated incompletely.
+  const script = resolve(pluginSdkRoot, 'scripts/bundleWorkspaceDeps.mjs');
+  const args = ['--declarations', '--run-script=api-governance:prepared'] as const;
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      cwd: pluginSdkRoot,
+      env: process.env,
+      stdio: 'inherit',
+    });
+    child.once('error', reject);
+    child.once('close', (status, signal) => {
+      if (status === 0 && signal === null) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(
+        `Plugin SDK aggregate API publication failed: ${script} ${args.join(' ')} `
+        + `(code=${status ?? 'null'}, sig=${signal ?? 'null'})`,
+      ));
+    });
+  });
+}
 
 /**
  * `--mode check` answers two independent questions that used to share one name.
@@ -330,6 +360,16 @@ async function synchronizeGeneratorAuthoringRuntimeClosure(
   // present for publication and then disappear from the immediately following
   // drift projection through a stale materialized Plugin SDK parser.
   await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);
+  if (mode === 'write') {
+    // The Action map above is a compiler input for the Plugin SDK. Publish its
+    // canonical source barrels, rebuilt declarations and public API inventory
+    // before any bundled runtime is staged, then synchronize the resulting
+    // package bytes back into the CLI dependency closure. Without this order a
+    // new Action/Event can enter every bundled artifact while API.md and the
+    // declaration census still describe the predecessor surface.
+    await publishPluginSdkApiGovernanceOutputs();
+    await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);
+  }
   // Both write and check must stage under the exact same materialized runtime
   // closure. This second bounded pass preserves generator-owned plugin bundles
   // while synchronizing the host/runtime dependencies used by esbuild.
@@ -547,7 +587,6 @@ type PriorBundledImmutableArtifactIdentity = Readonly<{
   packageName: string;
   pluginId: string;
   immutableGenerationId: string;
-  sourceArtifactIntegrity: BundledFirstPartySourceArtifactIntegrity;
 }>;
 type BundledPluginUiAppArtifactPlatform = 'web' | 'ios' | 'android';
 type BundledPluginUiAppArtifactFileSource = Readonly<{
@@ -2853,7 +2892,6 @@ function readPriorBundledImmutableArtifactIdentity(
   value: unknown,
   sourcePath: string,
   index: number,
-  sourceArtifactIntegrity: BundledFirstPartySourceArtifactIntegrity,
 ): PriorBundledImmutableArtifactIdentity {
   if (!isRecord(value) || Array.isArray(value)) {
     throw new Error(`Invalid generated bundled artifact publication at ${sourcePath}: immutable artifact ${String(index)} must be an object`);
@@ -2874,7 +2912,7 @@ function readPriorBundledImmutableArtifactIdentity(
   if (typeof immutableGenerationId !== 'string' || immutableGenerationId.trim().length === 0) {
     throw new Error(`Invalid generated bundled artifact publication at ${sourcePath}: immutable artifact ${String(index)} has no immutableGenerationId`);
   }
-  return Object.freeze({ packageName, pluginId, immutableGenerationId, sourceArtifactIntegrity });
+  return Object.freeze({ packageName, pluginId, immutableGenerationId });
 }
 
 function readPriorBundledImmutableArtifactIdentities(
@@ -2887,42 +2925,15 @@ function readPriorBundledImmutableArtifactIdentities(
     'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS',
     artifactsOutPath,
   );
-  const rawIntegrities = readGeneratedJsonExportLiteral(
-    source,
-    'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES',
-    artifactsOutPath,
-  );
-  if (rawArtifacts === undefined && rawIntegrities === undefined) return new Map();
-  if (!Array.isArray(rawArtifacts) || !Array.isArray(rawIntegrities)) {
-    throw new Error(`Invalid generated bundled artifact publication at ${artifactsOutPath}: immutable artifacts and source integrities must both be arrays`);
-  }
-
-  const integrityByPackageName = new Map<string, BundledFirstPartySourceArtifactIntegrity>();
-  for (const [index, value] of rawIntegrities.entries()) {
-    const integrity = readPriorBundledSourceArtifactIntegrity(value, artifactsOutPath, index);
-    if (integrityByPackageName.has(integrity.packageName)) {
-      throw new Error(`Invalid generated bundled artifact publication at ${artifactsOutPath}: duplicate source integrity for '${integrity.packageName}'`);
-    }
-    integrityByPackageName.set(integrity.packageName, integrity);
+  if (rawArtifacts === undefined) return new Map();
+  if (!Array.isArray(rawArtifacts)) {
+    throw new Error(`Invalid generated bundled artifact publication at ${artifactsOutPath}: immutable artifacts must be an array`);
   }
 
   const identities = new Map<string, PriorBundledImmutableArtifactIdentity>();
   const seenGenerationIds = new Set<string>();
   for (const [index, value] of rawArtifacts.entries()) {
-    if (!isRecord(value) || Array.isArray(value) || typeof value.packageName !== 'string') {
-      throw new Error(`Invalid generated bundled artifact publication at ${artifactsOutPath}: immutable artifact ${String(index)} has no packageName`);
-    }
-    const sourceArtifactIntegrity = integrityByPackageName.get(value.packageName);
-    if (!sourceArtifactIntegrity) {
-      throw new Error(`Invalid generated bundled artifact publication at ${artifactsOutPath}: immutable artifact ${String(index)} has no matching source integrity`);
-    }
-    integrityByPackageName.delete(value.packageName);
-    const identity = readPriorBundledImmutableArtifactIdentity(
-      value,
-      artifactsOutPath,
-      index,
-      sourceArtifactIntegrity,
-    );
+    const identity = readPriorBundledImmutableArtifactIdentity(value, artifactsOutPath, index);
     const identityKey = bundledGenerationIdentityKey(identity.packageName, identity.pluginId);
     if (identities.has(identityKey)) {
       throw new Error(`Invalid generated bundled artifact publication at ${artifactsOutPath}: duplicate immutable artifact identity for '${identity.packageName}'`);
@@ -2933,9 +2944,6 @@ function readPriorBundledImmutableArtifactIdentities(
     identities.set(identityKey, identity);
     seenGenerationIds.add(identity.immutableGenerationId);
   }
-  // Every immutable artifact must retain one source integrity above. Additional
-  // entries bind bundled packages that do not own immutable runtime state, so
-  // they are valid and intentionally have no immutable-artifact counterpart.
   return identities;
 }
 
@@ -4896,8 +4904,12 @@ export function renderRetainedCliBundledPluginImplementationEntriesTs(entriesOut
 
 function renderCliBundledPluginArtifactRecordsTs(
   artifacts: readonly JsonValue[],
-  sourceArtifactIntegrities: readonly JsonValue[],
 ): string {
+  // The runtime module carries the structural immutable-artifact records only.
+  // The publisher's per-file source-integrity inventory is a build/pack fact;
+  // it is emitted beside this publisher instead, into
+  // apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json,
+  // so no shipped runtime module carries or reads a digest graph.
   return [
     '/** GENERATED FILE CONTRACT (WS4.T2/SVC11 bundled immutable artifacts). */',
     "import type { BundledImmutablePluginArtifact } from '../../../store/registry/generationStore';",
@@ -4905,26 +4917,25 @@ function renderCliBundledPluginArtifactRecordsTs(
     'export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(',
     `${renderJsonLiteral(artifacts as unknown as JsonValue)} satisfies readonly BundledImmutablePluginArtifact[]);`,
     '',
-    '/**',
-    ' * Publisher- and pack-time source-artifact integrity facts. The publisher',
-    ' * uses immutable-artifact entries only to retain or rotate its opaque',
-    ' * generation record; the verifier checks every bundled package entry.',
-    ' * apps/cli/scripts/verifyBundledPluginArtifacts.mjs verifies them. They are',
-    ' * not runtime generation/currentness authority.',
-    ' */',
-    'export type BundledFirstPartySourceArtifactIntegrity = Readonly<{',
-    '  packageName: string;',
-    '  files: readonly Readonly<{',
-    '    relativePath: string;',
-    '    byteLength: number;',
-    '    digest: string;',
-    '  }>[];',
-    '}>;',
-    '',
-    'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(',
-    `${renderJsonLiteral(sourceArtifactIntegrities as unknown as JsonValue)} satisfies readonly BundledFirstPartySourceArtifactIntegrity[]);`,
-    '',
   ].join('\n');
+}
+
+/**
+ * The build-owned generated artifact carrying the publisher- and pack-time
+ * source-artifact integrity facts. The publisher uses immutable-artifact
+ * entries only to retain or rotate its opaque generation record;
+ * apps/cli/scripts/verifyBundledPluginArtifacts.mjs is this inventory's only
+ * reader. It stays beside the publisher, outside shipped runtime source, so no
+ * runtime module carries or consumes these per-file digests.
+ */
+function renderBundledPluginSourceIntegritiesJson(
+  sourceArtifactIntegrities: readonly JsonValue[],
+): string {
+  return `${JSON.stringify(
+    { BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: sourceArtifactIntegrities },
+    null,
+    2,
+  )}\n`;
 }
 
 function requireBundledPluginSourceArtifactIntegrity(
@@ -4938,7 +4949,9 @@ function requireBundledPluginSourceArtifactIntegrity(
   return pluginPackage.sourceArtifactIntegrity;
 }
 
-function renderCliBundledPluginArtifactsTs(pluginPackages: readonly BundledPluginPackage[]): string {
+function renderCliBundledPluginArtifacts(
+  pluginPackages: readonly BundledPluginPackage[],
+): Readonly<{ artifactsTs: string; sourceIntegritiesJson: string }> {
   const artifacts = pluginPackages.flatMap((entry) => entry.immutableArtifact
     ? [{
       packageName: entry.packageName,
@@ -4948,16 +4961,53 @@ function renderCliBundledPluginArtifactsTs(pluginPackages: readonly BundledPlugi
     }]
     : []);
   const sourceArtifactIntegrities = pluginPackages.map(requireBundledPluginSourceArtifactIntegrity);
-  return renderCliBundledPluginArtifactRecordsTs(
-    artifacts as unknown as readonly JsonValue[],
-    sourceArtifactIntegrities as unknown as readonly JsonValue[],
-  );
+  return {
+    artifactsTs: renderCliBundledPluginArtifactRecordsTs(artifacts as unknown as readonly JsonValue[]),
+    sourceIntegritiesJson: renderBundledPluginSourceIntegritiesJson(
+      sourceArtifactIntegrities as unknown as readonly JsonValue[],
+    ),
+  };
 }
 
-function renderTargetedCliBundledPluginArtifactsTs(params: Readonly<{
+function readBundledPluginSourceIntegritiesJson(
+  sourceIntegritiesOutPath: string,
+): readonly BundledFirstPartySourceArtifactIntegrity[] {
+  if (!existsSync(sourceIntegritiesOutPath)) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(sourceIntegritiesOutPath, 'utf8'));
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : '';
+    throw new Error(`Invalid generated bundled artifact publication at ${sourceIntegritiesOutPath}: cannot parse source integrities${detail}`);
+  }
+  if (!isRecord(parsed) || Array.isArray(parsed)) {
+    throw new Error(`Invalid generated bundled artifact publication at ${sourceIntegritiesOutPath}: source integrities must be a JSON object`);
+  }
+  const keys = Object.keys(parsed);
+  if (keys.length !== 1 || keys[0] !== 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES') {
+    throw new Error(`Invalid generated bundled artifact publication at ${sourceIntegritiesOutPath}: source integrities must have exactly one canonical field`);
+  }
+  const integrities = parsed.BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES;
+  if (integrities === undefined) return [];
+  if (!Array.isArray(integrities)) {
+    throw new Error(`Invalid generated bundled artifact publication at ${sourceIntegritiesOutPath}: source integrities must be an array`);
+  }
+  const seenPackageNames = new Set<string>();
+  return Object.freeze(integrities.map((value, index) => {
+    const integrity = readPriorBundledSourceArtifactIntegrity(value, sourceIntegritiesOutPath, index);
+    if (seenPackageNames.has(integrity.packageName)) {
+      throw new Error(`Invalid generated bundled artifact publication at ${sourceIntegritiesOutPath}: duplicate source integrity for '${integrity.packageName}'`);
+    }
+    seenPackageNames.add(integrity.packageName);
+    return integrity;
+  }));
+}
+
+function renderTargetedCliBundledPluginArtifacts(params: Readonly<{
   artifactsOutPath: string;
+  sourceIntegritiesOutPath: string;
   selectedPluginPackages: readonly BundledPluginPackage[];
-}>): string {
+}>): Readonly<{ artifactsTs: string; sourceIntegritiesJson: string }> {
   const source = existsSync(params.artifactsOutPath)
     ? readFileSync(params.artifactsOutPath, 'utf8')
     : '';
@@ -4966,14 +5016,10 @@ function renderTargetedCliBundledPluginArtifactsTs(params: Readonly<{
     'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS',
     params.artifactsOutPath,
   ) ?? [];
-  const priorIntegrities = readGeneratedJsonExportLiteral(
-    source,
-    'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES',
-    params.artifactsOutPath,
-  ) ?? [];
-  if (!Array.isArray(priorArtifacts) || !Array.isArray(priorIntegrities)) {
+  const priorIntegrities = readBundledPluginSourceIntegritiesJson(params.sourceIntegritiesOutPath);
+  if (!Array.isArray(priorArtifacts)) {
     throw new Error(
-      `Invalid generated bundled artifact publication at ${params.artifactsOutPath}: immutable artifacts and source integrities must both be arrays`,
+      `Invalid generated bundled artifact publication at ${params.artifactsOutPath}: immutable artifacts must be an array`,
     );
   }
 
@@ -4983,19 +5029,19 @@ function renderTargetedCliBundledPluginArtifactsTs(params: Readonly<{
   const readPackageName = (value: unknown, label: string): string => {
     if (!isRecord(value) || Array.isArray(value) || typeof value.packageName !== 'string') {
       throw new Error(
-        `Invalid generated bundled artifact publication at ${params.artifactsOutPath}: ${label} has no packageName`,
+        `Invalid generated bundled artifact publication at ${params.sourceIntegritiesOutPath}: ${label} has no packageName`,
       );
     }
     return value.packageName;
   };
+  const retainedIntegrities = priorIntegrities.filter((integrity) => (
+    !selectedPackageNames.has(integrity.packageName)
+  ));
   const artifacts = priorArtifacts.filter((artifact, index) => (
     !selectedPackageNames.has(readPackageName(artifact, `immutable artifact ${String(index)}`))
   ));
-  const sourceArtifactIntegrities = priorIntegrities.filter((integrity, index) => (
-    !selectedPackageNames.has(readPackageName(integrity, `source integrity ${String(index)}`))
-  ));
   for (const pluginPackage of params.selectedPluginPackages) {
-    sourceArtifactIntegrities.push(requireBundledPluginSourceArtifactIntegrity(pluginPackage));
+    retainedIntegrities.push(requireBundledPluginSourceArtifactIntegrity(pluginPackage));
     if (pluginPackage.immutableArtifact) {
       artifacts.push({
         packageName: pluginPackage.packageName,
@@ -5009,11 +5055,27 @@ function renderTargetedCliBundledPluginArtifactsTs(params: Readonly<{
     readPackageName(left, 'record').localeCompare(readPackageName(right, 'record'))
   );
   artifacts.sort(comparePackageName);
-  sourceArtifactIntegrities.sort(comparePackageName);
-  return renderCliBundledPluginArtifactRecordsTs(
-    artifacts as readonly JsonValue[],
-    sourceArtifactIntegrities as readonly JsonValue[],
+  retainedIntegrities.sort((left, right) => left.packageName.localeCompare(right.packageName));
+  // The retained runtime records and retained pack-time integrity entries must
+  // cover the same bundled packages, or a retained plugin could silently lose
+  // its pack verification.
+  const retainedIntegrityPackageNames = new Set(
+    retainedIntegrities.map((integrity) => integrity.packageName),
   );
+  for (const artifact of artifacts) {
+    const packageName = readPackageName(artifact, 'retained immutable artifact');
+    if (!retainedIntegrityPackageNames.has(packageName)) {
+      throw new Error(
+        `Invalid generated bundled artifact publication at ${params.sourceIntegritiesOutPath}: retained immutable artifact '${packageName}' has no matching source integrity`,
+      );
+    }
+  }
+  return {
+    artifactsTs: renderCliBundledPluginArtifactRecordsTs(artifacts as readonly JsonValue[]),
+    sourceIntegritiesJson: renderBundledPluginSourceIntegritiesJson(
+      retainedIntegrities as unknown as readonly JsonValue[],
+    ),
+  };
 }
 
 function toAgentConstPrefix(agentId: string): string {
@@ -6038,6 +6100,10 @@ async function generateBundledPluginEntries(
       options.rootDir,
       'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
     );
+    const cliSourceIntegritiesOutPath = resolve(
+      options.rootDir,
+      'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
+    );
     const cliOutPath = resolve(
       options.rootDir,
       'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts',
@@ -6055,13 +6121,15 @@ async function generateBundledPluginEntries(
       priorIdentities: readPriorBundledImmutableArtifactIdentities(cliArtifactsOutPath),
     });
     if (selectedPluginPackages.length > 0) {
-      const cliArtifactsOut = renderTargetedCliBundledPluginArtifactsTs({
+      const cliArtifactsOut = renderTargetedCliBundledPluginArtifacts({
         artifactsOutPath: cliArtifactsOutPath,
+        sourceIntegritiesOutPath: cliSourceIntegritiesOutPath,
         selectedPluginPackages,
       });
       const cliOut = renderRetainedCliBundledPluginImplementationEntriesTs(cliOutPath);
       if (options.mode === 'check') {
-        assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut);
+        assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut.artifactsTs);
+        assertGeneratedOutputMatches(cliSourceIntegritiesOutPath, cliArtifactsOut.sourceIntegritiesJson);
         assertGeneratedOutputMatches(cliOutPath, cliOut);
       } else {
         const successfulWorkspaceNames = selectedPluginPackages.map((pluginPackage) => (
@@ -6071,7 +6139,8 @@ async function generateBundledPluginEntries(
           { ...options, workspaceNames: Object.freeze(successfulWorkspaceNames) },
           dependencies,
           [
-            { outPath: cliArtifactsOutPath, out: cliArtifactsOut },
+            { outPath: cliArtifactsOutPath, out: cliArtifactsOut.artifactsTs },
+            { outPath: cliSourceIntegritiesOutPath, out: cliArtifactsOut.sourceIntegritiesJson },
             { outPath: cliOutPath, out: cliOut },
           ],
         );
@@ -6150,6 +6219,10 @@ async function generateBundledPluginEntries(
   );
 
   const cliOutPath = resolve(options.rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
+  const cliSourceIntegritiesOutPath = resolve(
+    options.rootDir,
+    'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
+  );
   const cliManifestOutPath = resolve(
     options.rootDir,
     'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
@@ -6272,7 +6345,7 @@ async function generateBundledPluginEntries(
 
   const cliOut = renderCliBundledPluginEntriesTs({ pluginPackages });
   const cliManifestOut = renderCliBundledPluginManifestEntriesTs({ pluginPackages });
-  const cliArtifactsOut = renderCliBundledPluginArtifactsTs(pluginPackages);
+  const cliArtifactsOut = renderCliBundledPluginArtifacts(pluginPackages);
 
   const agentsOut = renderBundledAgentDefinitionsTs({ agentIds: bundledAgentDefinitionIds, agentDefinitionsById });
   const protocolSessionPresentationCompatV1Out =
@@ -6344,7 +6417,8 @@ async function generateBundledPluginEntries(
   if (options.mode === 'check') {
     assertGeneratedOutputMatches(cliOutPath, cliOut);
     assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
-    assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut);
+    assertGeneratedOutputMatches(cliArtifactsOutPath, cliArtifactsOut.artifactsTs);
+    assertGeneratedOutputMatches(cliSourceIntegritiesOutPath, cliArtifactsOut.sourceIntegritiesJson);
     assertGeneratedOutputMatches(agentsOutPath, agentsOut);
     assertGeneratedOutputMatches(agentIdsOutPath, agentIdsOut);
     assertGeneratedOutputMatches(runtimeDescriptorReadersOutPath, runtimeDescriptorReadersOut);
@@ -6383,7 +6457,8 @@ async function generateBundledPluginEntries(
   publishCoherentProjectionOutputs(options.rootDir, [
     { outPath: cliOutPath, out: cliOut },
     { outPath: cliManifestOutPath, out: cliManifestOut },
-    { outPath: cliArtifactsOutPath, out: cliArtifactsOut },
+    { outPath: cliArtifactsOutPath, out: cliArtifactsOut.artifactsTs },
+    { outPath: cliSourceIntegritiesOutPath, out: cliArtifactsOut.sourceIntegritiesJson },
     { outPath: agentsOutPath, out: agentsOut },
     { outPath: agentIdsOutPath, out: agentIdsOut },
     { outPath: runtimeDescriptorReadersOutPath, out: runtimeDescriptorReadersOut },
@@ -6438,12 +6513,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const options = parseGeneratorCliArgs(argv);
   const authorRuntimeLoadScope = resolvePluginAuthorRuntimeLoadScope(options);
   const inheritedLockValue = process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;
-  if (options.workspaceNames.length === 0 && !options.aggregateOnly) {
+  if (!options.aggregateOnly) {
     // Package compilation and app-local runtime materialization are reusable
     // preparation, not publication. Complete them before taking the short
-    // generator lock; only the final source read/validation/commit needs to
-    // exclude another publisher. A caller that already owns the canonical
-    // lock keeps passing its lease through for safe reentrancy.
+    // generator lock for full and scoped manifest publication alike; only the
+    // final source read/validation/commit needs to exclude another publisher.
+    // A caller that already owns the canonical lock keeps passing its lease
+    // through for safe reentrancy.
     await synchronizeGeneratorAuthoringRuntimeClosure(options.mode, inheritedLockValue);
     timing.phase('authoring-runtime-synchronization');
   }

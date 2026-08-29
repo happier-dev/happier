@@ -128,7 +128,11 @@ export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): Daem
     const cache = new Map<string, CacheEntry>();
     const inFlight = new Map<string, Promise<DaemonPatVerification>>();
 
-    const verifyMiss = async (token: string, cacheKey: string): Promise<DaemonPatVerification> => {
+    const verifyMiss = async (
+        token: string,
+        cacheKey: string,
+        cacheExpiresAtMonotonicMs: number,
+    ): Promise<DaemonPatVerification> => {
         let verified: DaemonPatVerification;
         try {
             // A caller's cancellation must not cancel a shared verification
@@ -148,7 +152,12 @@ export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): Daem
 
         const verifiedAtMs = now();
         if (patExpiresAtMs !== null && patExpiresAtMs <= verifiedAtMs) return invalidToken();
-        const cacheExpiresAtMonotonicMs = monotonicNow() + DAEMON_PAT_CACHE_MAX_AGE_MS;
+        // The grace window starts when the Account-server decision begins, not
+        // when a delayed response arrives. Otherwise introspection latency would
+        // silently extend the documented <=60s local revocation window.
+        if (monotonicNow() >= cacheExpiresAtMonotonicMs) {
+            return verificationFromServer(verified);
+        }
         cache.set(cacheKey, {
             accountId: verified.accountId,
             principalId: verified.principalId,
@@ -190,7 +199,8 @@ export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): Daem
             // keys coalesce above this check, so saturation never rejects a
             // caller already sharing an admitted verification.
             if (inFlight.size >= maxEntries) return unavailable();
-            pending = verifyMiss(token, cacheKey);
+            const cacheExpiresAtMonotonicMs = monotonicNow() + DAEMON_PAT_CACHE_MAX_AGE_MS;
+            pending = verifyMiss(token, cacheKey, cacheExpiresAtMonotonicMs);
             inFlight.set(cacheKey, pending);
             void pending.then(
                 () => {

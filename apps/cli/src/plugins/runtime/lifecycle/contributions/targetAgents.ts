@@ -66,8 +66,10 @@ import type { ResolvedAgentContribution } from '../../../projection/registry/typ
 import {
     indexAgentRoutingIdsByContributionIdentity,
     readAgentRoutingIdForContributionIdentity,
+    resolveAgentContributionQualifiedId,
 } from '../../../projection/registry/agentRoutingIdentity';
 import {
+    isPrimaryAgentContributionDefinition,
     readAgentPrimaryRuntime,
     readAgentSessionCapabilities,
 } from '../../../projection/registry/agentContributionDefinition';
@@ -414,7 +416,10 @@ function isAgentRegistration(
     return registration.family === 'agents';
 }
 
-function assertValidAgentRuntime(value: AgentRuntime): AgentRuntime {
+function assertValidAgentRuntime(
+    value: AgentRuntime,
+    declaredPrimary: 'sessions' | 'executionRuns' | null,
+): AgentRuntime {
     if (typeof value !== 'object' || value === null) {
         throw new Error('Agent factory returned an invalid Agent runtime');
     }
@@ -429,8 +434,18 @@ function assertValidAgentRuntime(value: AgentRuntime): AgentRuntime {
     if (!hasSessions && !hasExecutionRuns) {
         throw new Error('Agent factory returned an invalid Agent runtime without a session or execution-run factory');
     }
+    // The lazy validator compares the manifest primary to the returned
+    // runtime: a declared Session runtime must not lazily produce a
+    // competing execution-run lifecycle, and an execution-primary runtime
+    // must not lazily produce a session lifecycle.
     if (hasSessions && hasExecutionRuns) {
         throw new Error('Session-capable Agent runtimes must not register a competing execution-run lifecycle; the host derives finite Runs from sessions');
+    }
+    if (declaredPrimary === 'sessions' && !hasSessions) {
+        throw new Error('Agent declaration is Session-primary but the factory returned no session runtime');
+    }
+    if (declaredPrimary === 'executionRuns' && !hasExecutionRuns) {
+        throw new Error('Agent declaration is execution-run primary but the factory returned no execution-run runtime');
     }
     return value;
 }
@@ -1224,6 +1239,7 @@ function createLease(params: Readonly<{
     localAgentId: string;
     generation: string;
     immutableGenerationId: string | null;
+    declaredPrimary?: 'sessions' | 'executionRuns' | null;
     startupInstructionsVersions?: readonly [1];
     registration: AgentContributionRuntimeRegistration;
     runnerBinding?: AgentSessionRunnerBindingV1;
@@ -1280,7 +1296,10 @@ function createLease(params: Readonly<{
         });
         const contribution = Object.freeze({
             id: params.localAgentId,
-            qualifiedId: `${params.pluginId}/agents/${params.localAgentId}`,
+            qualifiedId: resolveAgentContributionQualifiedId({
+                pluginId: params.pluginId,
+                localId: params.localAgentId,
+            }),
         });
         const services = await createInvocationServices(input.signal, input.cwd);
         assertCurrent();
@@ -1334,7 +1353,10 @@ function createLease(params: Readonly<{
                     agentId: params.agentId,
                     generation: params.generation,
                     contributionQualifiedId:
-                        `${params.pluginId}/agents/${encodeURIComponent(params.localAgentId)}`,
+                        resolveAgentContributionQualifiedId({
+                            pluginId: params.pluginId,
+                            localId: params.localAgentId,
+                        }),
                     immutableGenerationId: params.immutableGenerationId,
                 },
                 isCurrent: params.isGenerationActive,
@@ -1377,7 +1399,10 @@ function createLease(params: Readonly<{
                     agentId: params.agentId,
                     generation: params.generation,
                     contributionQualifiedId:
-                        `${params.pluginId}/agents/${encodeURIComponent(params.localAgentId)}`,
+                        resolveAgentContributionQualifiedId({
+                            pluginId: params.pluginId,
+                            localId: params.localAgentId,
+                        }),
                     immutableGenerationId: params.immutableGenerationId,
                 },
                 assertCurrent,
@@ -1564,7 +1589,7 @@ function createLease(params: Readonly<{
                 });
                 const runtime = await factory(context);
                 assertCurrent();
-                return assertValidAgentRuntime(runtime);
+                return assertValidAgentRuntime(runtime, params.declaredPrimary ?? null);
             })();
             const runtime = await awaitRuntime(runtimePromise, signal);
             assertCurrent();
@@ -1639,6 +1664,11 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
         const startupInstructionsVersions = readStartupInstructionsVersions(
             selectedAgentById.get(agentId),
         );
+        const selectedDefinition = selectedAgentById.get(agentId)?.richDefinition?.definition ?? null;
+        const declaredPrimary = selectedDefinition !== null
+            && isPrimaryAgentContributionDefinition(selectedDefinition)
+            ? selectedDefinition.primary
+            : null;
         registry.set(agentId, createLease({
             pluginId: candidate.pluginId,
             pluginVersion: target.manifest.version,
@@ -1646,6 +1676,7 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
             localAgentId: candidate.registration.localId,
             generation: candidate.generation,
             immutableGenerationId: params.immutableGenerationIdsByPluginId?.get(candidate.pluginId) ?? null,
+            declaredPrimary,
             ...(startupInstructionsVersions
                 ? { startupInstructionsVersions }
                 : {}),
@@ -1808,8 +1839,10 @@ export function createDeclarativeAcpAgentRuntimeRegistry(params: Readonly<{
                 pluginId: declaration.pluginId,
                 pluginVersion,
                 agentId: declaration.agent.id,
-                qualifiedAgentId:
-                    `${declaration.pluginId}/agents/${localAgentId}`,
+                qualifiedAgentId: resolveAgentContributionQualifiedId({
+                    pluginId: declaration.pluginId,
+                    localId: localAgentId,
+                }),
                 localAgentId,
                 immutableGenerationId,
             })
@@ -1818,6 +1851,10 @@ export function createDeclarativeAcpAgentRuntimeRegistry(params: Readonly<{
             pluginId: declaration.pluginId,
             pluginVersion: pluginVersion ?? '0.0.0',
             agentId: declaration.agent.id,
+            declaredPrimary: declaration.agent.richDefinition?.definition !== undefined
+                && isPrimaryAgentContributionDefinition(declaration.agent.richDefinition.definition)
+                ? declaration.agent.richDefinition.definition.primary
+                : null,
             localAgentId,
             generation: existing?.generation ?? params.generation,
             immutableGenerationId,

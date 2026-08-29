@@ -147,17 +147,18 @@ describe('Composer media stage store', () => {
     const claimant = { composer, attachmentInstanceId: 'attachment-a' } as const;
     const otherClaimant = {
       composer: { kind: 'session', sessionId: 'session-b' } as ComposerRefV1,
-      attachmentInstanceId: 'attachment-a',
+      attachmentInstanceId: 'attachment-b',
     } as const;
     const restartedStore = createComposerMediaStageStore({ rootDirectory, executionTarget });
 
-    await expect(Promise.all([
+    const concurrentClaims = await Promise.all([
       store.claim({ handle: finalized.handle, executionTarget, owner, claimant }),
       restartedStore.claim({ handle: finalized.handle, executionTarget, owner, claimant }),
-    ])).resolves.toEqual([
-      { status: 'claimed' },
-      { status: 'claimed' },
     ]);
+    expect(concurrentClaims).toEqual(expect.arrayContaining([
+      { status: 'claimed', newlyAcquired: true },
+      { status: 'claimed', newlyAcquired: false },
+    ]));
     await expect(restartedStore.claim({
       handle: finalized.handle,
       executionTarget,
@@ -182,6 +183,323 @@ describe('Composer media stage store', () => {
       owner,
       claimant,
     })).resolves.toEqual({ status: 'released' });
+  });
+
+  it('refuses the same attachment identity when the exact Composer ref differs', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-transition-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'transition.png',
+    });
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) throw new Error(finalized.error);
+
+    const draftClaimant = {
+      composer: { kind: 'newSession', instanceId: 'composer-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    const sessionClaimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    const foreignIdentityClaimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-b',
+    } as const;
+
+    await expect(store.claim({ handle: finalized.handle, executionTarget, owner, claimant: draftClaimant }))
+      .resolves.toEqual({ status: 'claimed', newlyAcquired: true });
+    await expect(store.claim({ handle: finalized.handle, executionTarget, owner, claimant: sessionClaimant }))
+      .resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+    await expect(store.claim({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: foreignIdentityClaimant,
+    })).resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+
+    const restartedStore = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    await expect(restartedStore.claim({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: draftClaimant,
+    })).resolves.toEqual({ status: 'claimed', newlyAcquired: false });
+    await expect(restartedStore.release({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: draftClaimant,
+    })).resolves.toEqual({ status: 'released' });
+  });
+
+  it('forks an exact source claim into a deterministic Session submission claim', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-pending-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'pending.png',
+    });
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) throw new Error(finalized.error);
+
+    const sourceClaimant = {
+      composer: { kind: 'pendingMessage', sessionId: 'session-a', localId: 'pending-1' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    const destinationClaimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+
+    await expect(store.claim({ handle: finalized.handle, executionTarget, owner, claimant: sourceClaimant }))
+      .resolves.toEqual({ status: 'claimed', newlyAcquired: true });
+    const forked = await store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant,
+      destinationClaimant,
+      messageLocalId: 'message-1',
+    });
+    expect(forked).toMatchObject({ status: 'claimed', newlyAcquired: true });
+    expect(forked.handle?.id).not.toBe(finalized.handle.id);
+    const retry = await store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant,
+      destinationClaimant,
+      messageLocalId: 'message-1',
+    });
+    expect(retry).toMatchObject({ status: 'claimed', newlyAcquired: false, handle: forked.handle });
+    await expect(store.inspectForFinalization({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant: sourceClaimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+    await expect(store.inspectForFinalization({
+      handle: forked.handle!,
+      executionTarget,
+      owner,
+      claimant: destinationClaimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+    await expect(store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant: { ...sourceClaimant, attachmentInstanceId: 'attachment-b' },
+      destinationClaimant,
+      messageLocalId: 'message-1',
+    })).resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
+  });
+
+  it('forks a same-document submission capture into its own deterministic stage without consuming the draft original', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-same-ref-fork-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'same-ref.png',
+    });
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) throw new Error(finalized.error);
+
+    const claimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    await expect(store.claim({ handle: finalized.handle, executionTarget, owner, claimant }))
+      .resolves.toEqual({ status: 'claimed', newlyAcquired: true });
+
+    const forked = await store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant: claimant,
+      destinationClaimant: claimant,
+      messageLocalId: 'message-1',
+    });
+    expect(forked).toMatchObject({ status: 'claimed', newlyAcquired: true });
+    expect(forked.handle?.id).not.toBe(finalized.handle.id);
+
+    const retry = await store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant: claimant,
+      destinationClaimant: claimant,
+      messageLocalId: 'message-1',
+    });
+    expect(retry).toMatchObject({ status: 'claimed', newlyAcquired: false, handle: forked.handle });
+
+    await expect(store.inspectForFinalization({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+    await expect(store.inspectForFinalization({
+      handle: forked.handle!,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+
+    // A concurrent draft removal releases only the draft original; the captured
+    // submission fork keeps its own claim and stays persistable.
+    await expect(store.release({ handle: finalized.handle, executionTarget, owner, claimant }))
+      .resolves.toEqual({ status: 'released' });
+    await expect(store.inspectForFinalization({
+      handle: forked.handle!,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+  });
+
+  it('forks an unclaimed stage for a same-document submission capture and leaves it claimed for its owner', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-same-ref-unclaimed-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({ rootDirectory, executionTarget });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'same-ref-unclaimed.png',
+    });
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) throw new Error(finalized.error);
+
+    const claimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    const forked = await store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant: claimant,
+      destinationClaimant: claimant,
+      messageLocalId: 'message-1',
+    });
+    expect(forked).toMatchObject({ status: 'claimed', newlyAcquired: true });
+    expect(forked.handle?.id).not.toBe(finalized.handle.id);
+    await expect(store.inspectForFinalization({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+    await expect(store.inspectForFinalization({
+      handle: forked.handle!,
+      executionTarget,
+      owner,
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+  });
+
+  it('forks a source claim after its TTL and rejoins the fork after its TTL', async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-ttl-fork-'));
+    tempDirectories.push(tempDirectory);
+    const sourcePath = join(tempDirectory, 'incoming.png');
+    const bytes = createOneBitGrayscalePng(1, 1);
+    await writeFile(sourcePath, bytes);
+    let now = 1_000;
+    const rootDirectory = join(tempDirectory, 'stages');
+    const store = createComposerMediaStageStore({
+      rootDirectory,
+      executionTarget,
+      now: () => now,
+      orphanTtlMs: 100,
+    });
+    const finalized = await store.finalizeUpload({
+      tempPath: sourcePath,
+      sizeBytes: bytes.byteLength,
+      sha256: sha256(bytes),
+      executionTarget,
+      owner,
+      mediaKind: 'image',
+      mimeType: 'image/png',
+      name: 'ttl-fork.png',
+    });
+    expect(finalized.success).toBe(true);
+    if (!finalized.success) throw new Error(finalized.error);
+
+    const sourceClaimant = {
+      composer: { kind: 'pendingMessage', sessionId: 'session-a', localId: 'pending-1' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    const destinationClaimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    await expect(store.claim({ handle: finalized.handle, executionTarget, owner, claimant: sourceClaimant }))
+      .resolves.toMatchObject({ status: 'claimed' });
+
+    now += 100;
+    const forked = await store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant,
+      destinationClaimant,
+      messageLocalId: 'message-1',
+    });
+    expect(forked).toMatchObject({ status: 'claimed', newlyAcquired: true });
+    expect(forked.handle?.id).not.toBe(finalized.handle.id);
+
+    now += 100;
+    await expect(store.forkClaimForSubmission({
+      handle: finalized.handle,
+      executionTarget,
+      owner,
+      sourceClaimant,
+      destinationClaimant,
+      messageLocalId: 'message-1',
+    })).resolves.toMatchObject({ status: 'claimed', newlyAcquired: false, handle: forked.handle });
   });
 
   it('allows an unattached stage to be explicitly released but refuses an anonymous release after claim', async () => {
@@ -216,7 +534,7 @@ describe('Composer media stage store', () => {
       attachmentInstanceId: 'attachment-a',
     } as const;
     await expect(store.claim({ handle: attached.handle, executionTarget, owner, claimant }))
-      .resolves.toEqual({ status: 'claimed' });
+      .resolves.toEqual({ status: 'claimed', newlyAcquired: true });
     await expect(store.release({ handle: attached.handle, executionTarget, owner }))
       .resolves.toEqual({ status: 'unavailable', reason: 'claimedElsewhere' });
     await expect(store.inspectForFinalization({
@@ -279,7 +597,7 @@ describe('Composer media stage store', () => {
     await expect(pathExists(join(rootDirectory, 'completed'))).resolves.toBe(false);
   });
 
-  it('expires completed stages from a restarted store without retaining the stage bytes', async () => {
+  it('retains expired claimed stages for exact release while expiring unattached stages', async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), 'happier-composer-media-stage-expiry-'));
     tempDirectories.push(tempDirectory);
     const sourcePath = join(tempDirectory, 'incoming.png');
@@ -306,6 +624,13 @@ describe('Composer media stage store', () => {
     expect(finalized.success).toBe(true);
     if (!finalized.success) throw new Error(finalized.error);
 
+    const claimant = {
+      composer: { kind: 'session', sessionId: 'session-a' } as ComposerRefV1,
+      attachmentInstanceId: 'attachment-a',
+    } as const;
+    await expect(store.claim({ handle: finalized.handle, executionTarget, owner, claimant }))
+      .resolves.toMatchObject({ status: 'claimed' });
+
     now += 100;
     const restartedStore = createComposerMediaStageStore({
       rootDirectory,
@@ -317,12 +642,15 @@ describe('Composer media stage store', () => {
       handle: finalized.handle,
       executionTarget,
       owner,
-    })).resolves.toMatchObject({ status: 'unavailable' });
+      claimant,
+    })).resolves.toMatchObject({ status: 'ready' });
     await expect(restartedStore.release({
       handle: finalized.handle,
       executionTarget,
       owner,
-    })).resolves.toEqual({ status: 'unavailable', reason: 'notFound' });
+      claimant,
+    })).resolves.toEqual({ status: 'released' });
+    expect(await pathExists(join(rootDirectory, 'completed', finalized.handle.id))).toBe(false);
   });
 
   it('sweeps expired root-owned completed and pending stages on restart without a handle', async () => {
@@ -370,8 +698,12 @@ describe('Composer media stage store', () => {
     const stalePendingDirectory = join(pendingDirectory, randomUUID());
     await mkdir(stalePendingDirectory, { recursive: true });
     await writeFile(join(stalePendingDirectory, 'content'), 'partial');
+    const abandonedForkPendingDirectory = join(pendingDirectory, randomUUID());
+    await mkdir(abandonedForkPendingDirectory, { recursive: true });
+    await writeFile(join(abandonedForkPendingDirectory, 'manifest.json'), '{"fork":"abandoned-before-rename"}');
     const staleAt = new Date(now - orphanTtlMs);
     await utimes(stalePendingDirectory, staleAt, staleAt);
+    await utimes(abandonedForkPendingDirectory, staleAt, staleAt);
 
     const malformedDirectory = join(completedDirectory, randomUUID());
     await mkdir(malformedDirectory, { recursive: true });
@@ -415,6 +747,7 @@ describe('Composer media stage store', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(await pathExists(expiredDirectory)).toBe(true);
     expect(await pathExists(stalePendingDirectory)).toBe(true);
+    expect(await pathExists(abandonedForkPendingDirectory)).toBe(true);
 
     // The daemon-startup owner invokes maintenance once without needing an opaque claim.
     await runComposerMediaStageStartupMaintenance({
@@ -425,6 +758,7 @@ describe('Composer media stage store', () => {
 
     expect(await pathExists(expiredDirectory)).toBe(false);
     expect(await pathExists(stalePendingDirectory)).toBe(false);
+    expect(await pathExists(abandonedForkPendingDirectory)).toBe(false);
     expect(await pathExists(malformedDirectory)).toBe(false);
     expect(await pathExists(expiredForeignDirectory)).toBe(false);
     expect(await pathExists(currentDirectory)).toBe(true);

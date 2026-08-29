@@ -463,12 +463,22 @@ describe('runner daemon PluginServices v1 protocol', () => {
             actionId: 'voice_agent.start',
             input: { t: 'object', value: {} },
         }).success).toBe(true);
-        // D121 keeps the raw six-member subagent registry RPC-only. Plugins use
-        // the user-facing planning/delegation Actions instead of this transport.
+        // Safe bounded reads are public Plugin Actions. Lifecycle mutations
+        // remain host-internal and cannot cross this runner transport.
         for (const actionId of [
             'sessions.subagents.list',
             'sessions.subagents.get',
             'sessions.subagents.watch',
+        ]) {
+            expect(RunnerDaemonPluginServiceOperationV1Schema.safeParse({
+                kind: 'plugin_actions.execute_v1',
+                requestId: `request-action-${actionId}`,
+                invocationId: 'invocation-1',
+                actionId,
+                input: { t: 'object', value: {} },
+            }).success, actionId).toBe(true);
+        }
+        for (const actionId of [
             'sessions.subagents.upsert',
             'sessions.subagents.updateStatus',
             'sessions.subagents.complete',

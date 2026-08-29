@@ -22,12 +22,13 @@ import {
   type ComposerContentMimeTypeV1,
   ComposerInstanceIdSchema,
   ComposerRefV1Schema,
+  PendingLocalIdSchema,
   type ComposerRefV1,
   type PluginContributionIdentityV1,
   type SessionExecutionTargetV1,
 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
-
 import { configuration } from '@/configuration';
 import {
   isSessionMediaImageMimeType,
@@ -101,7 +102,7 @@ export type ComposerMediaStageReleaseResult =
     }>;
 
 export type ComposerMediaStageClaimResult =
-  | Readonly<{ status: 'claimed' }>
+  | Readonly<{ status: 'claimed'; newlyAcquired: boolean }>
   | Extract<ComposerMediaStageInspection, { status: 'unavailable' }>;
 
 export type ComposerMediaStageStore = Readonly<{
@@ -133,6 +134,14 @@ export type ComposerMediaStageStore = Readonly<{
     owner: PluginContributionIdentityV1;
     claimant?: ComposerMediaStageClaimant;
   }>) => Promise<ComposerMediaStageReleaseResult>;
+  forkClaimForSubmission: (input: Readonly<{
+    handle: ComposerContentHandleV1;
+    executionTarget: SessionExecutionTargetV1;
+    owner: PluginContributionIdentityV1;
+    sourceClaimant: ComposerMediaStageClaimant;
+    destinationClaimant: ComposerMediaStageClaimant;
+    messageLocalId: string;
+  }>) => Promise<ComposerMediaStageClaimResult & Readonly<{ handle?: ComposerContentHandleV1 }>>;
 }>;
 
 function unavailable(reason: Extract<ComposerMediaStageInspection, { status: 'unavailable' }>['reason']): Extract<ComposerMediaStageInspection, { status: 'unavailable' }> {
@@ -192,6 +201,14 @@ function readClaimant(value: unknown): ComposerMediaStageClaimant | null {
 function sameClaimant(left: ComposerMediaStageClaimant, right: ComposerMediaStageClaimant): boolean {
   return left.attachmentInstanceId === right.attachmentInstanceId
     && composerRefsV1Equal(left.composer, right.composer);
+}
+
+function deterministicStageId(input: string): string {
+  const bytes = Buffer.from(createHash('sha256').update(input).digest().subarray(0, 16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function readStageClaim(
@@ -370,6 +387,9 @@ async function sweepCompletedStages(input: Readonly<{
     if (!isExpired(createdAtMs, input.now, input.orphanTtlMs)) {
       continue;
     }
+    const claim = await readStageClaim(entryPath);
+    if (claim === 'corrupt') continue;
+    if (claim !== null && claim !== 'unattachedRelease') continue;
     await removeStageEntryFromNamespace(completedDirectory, entry.name);
   }
 }
@@ -489,6 +509,7 @@ export function createComposerMediaStageStore(input: Readonly<{
     handle: ComposerContentHandleV1;
     executionTarget: SessionExecutionTargetV1;
     owner: PluginContributionIdentityV1;
+    claimant?: ComposerMediaStageClaimant;
   }>): Promise<ComposerMediaStageInspection> => {
     const handle = ComposerContentHandleV1Schema.safeParse(request.handle);
     if (!handle.success) return unavailable('corrupt');
@@ -506,8 +527,20 @@ export function createComposerMediaStageStore(input: Readonly<{
       return unavailable(exists ? 'corrupt' : 'notFound');
     }
     if (isExpired(manifest.createdAtMs, now(), orphanTtlMs)) {
-      await removeStage(handle.data.id);
-      return unavailable('expired');
+      const claim = await readStageClaim(directory);
+      if (claim === 'corrupt') return unavailable('corrupt');
+      if (claim !== null && claim !== 'unattachedRelease') {
+        const claimant = request.claimant ? readClaimant(request.claimant) : null;
+        if (claimant && sameClaimant(claim, claimant)) {
+          // Valid claimed stages remain inspectable and exactly releasable; TTL
+          // cleanup only owns unattached or explicitly unattached-release stages.
+        } else {
+          return unavailable('expired');
+        }
+      } else {
+        await removeStage(handle.data.id);
+        return unavailable('expired');
+      }
     }
     if (!sameExecutionTarget(manifest.handle.executionTarget, input.executionTarget)) {
       await removeStage(handle.data.id);
@@ -547,7 +580,7 @@ export function createComposerMediaStageStore(input: Readonly<{
     if (existing === 'unattachedRelease') return unavailable('claimedElsewhere');
     if (existing) {
       return sameClaimant(existing, claimant)
-        ? { status: 'claimed' }
+        ? { status: 'claimed', newlyAcquired: false }
         : unavailable('claimedElsewhere');
     }
 
@@ -555,9 +588,11 @@ export function createComposerMediaStageStore(input: Readonly<{
     // one atomic first-claim decision; a loser reads the winner and succeeds
     // only when it names the exact same Composer attachment.
     const candidatePath = join(directory, `.claim-${randomUUID()}.json`);
+    let newlyAcquired = false;
     try {
       await writeFile(candidatePath, JSON.stringify(claimant), { encoding: 'utf8', flag: 'wx' });
       await link(candidatePath, join(directory, CLAIM_FILE_NAME));
+      newlyAcquired = true;
     } catch {
       // A concurrent first claimant is expected. All other failures are
       // adjudicated by reading the canonical claim below.
@@ -568,7 +603,7 @@ export function createComposerMediaStageStore(input: Readonly<{
     if (admitted === 'corrupt' || admitted === null) return unavailable('corrupt');
     if (admitted === 'unattachedRelease') return unavailable('claimedElsewhere');
     return sameClaimant(admitted, claimant)
-      ? { status: 'claimed' }
+      ? { status: 'claimed', newlyAcquired }
       : unavailable('claimedElsewhere');
   };
 
@@ -578,6 +613,114 @@ export function createComposerMediaStageStore(input: Readonly<{
       if (claimed.status !== 'claimed') return claimed;
     }
     return await inspectStage(request);
+  };
+
+  const forkClaimForSubmission: ComposerMediaStageStore['forkClaimForSubmission'] = async (request) => {
+    const sourceClaimant = readClaimant(request.sourceClaimant);
+    const destinationClaimant = readClaimant(request.destinationClaimant);
+    const messageLocalId = PendingLocalIdSchema.safeParse(request.messageLocalId);
+    if (!sourceClaimant || !destinationClaimant || !messageLocalId.success) return unavailable('corrupt');
+    if (sameClaimant(sourceClaimant, destinationClaimant)) {
+      // A same-document capture must still submit against its own fork. Keeping
+      // the original handle here would let a concurrent draft removal delete the
+      // exact bytes this submission captured between inspection and Session
+      // persistence. Rejoin (or acquire) the source claim idempotently, then
+      // fork below like every other submission snapshot.
+      const claimed = await claim({
+        handle: request.handle,
+        executionTarget: request.executionTarget,
+        owner: request.owner,
+        claimant: sourceClaimant,
+      });
+      if (claimed.status !== 'claimed') return claimed;
+    }
+
+    const sourceInspection = await inspectStage({ ...request, claimant: sourceClaimant });
+    if (sourceInspection.status !== 'ready') return sourceInspection;
+    const sourceClaim = await readStageClaim(stageDirectory(input.rootDirectory, sourceInspection.handle.id));
+    if (sourceClaim === 'corrupt') return unavailable('corrupt');
+    if (!sourceClaim || sourceClaim === 'unattachedRelease' || !sameClaimant(sourceClaim, sourceClaimant)) {
+      return unavailable('claimedElsewhere');
+    }
+
+    const forkId = deterministicStageId(createCanonicalJsonSigningInput({
+      domain: 'composer-media-stage-submission-fork-v1',
+      sourceHandle: sourceInspection.handle,
+      sourceClaimant,
+      destinationClaimant,
+      messageLocalId: messageLocalId.data,
+    }));
+    const forkHandle = createCanonicalHandle({
+      id: forkId,
+      executionTarget: sourceInspection.handle.executionTarget,
+      owner: sourceInspection.handle.owner,
+      mediaKind: sourceInspection.handle.mediaKind,
+      mimeType: sourceInspection.handle.mimeType,
+      name: sourceInspection.handle.name,
+      sizeBytes: sourceInspection.handle.sizeBytes,
+      sha256: sourceInspection.handle.sha256,
+    });
+    if (!forkHandle) return unavailable('corrupt');
+
+    const forkDirectory = stageDirectory(input.rootDirectory, forkId);
+    const existingFork = await inspectStage({
+      handle: forkHandle,
+      executionTarget: request.executionTarget,
+      owner: request.owner,
+      claimant: destinationClaimant,
+    });
+    if (existingFork.status === 'ready') {
+      const existingClaim = await readStageClaim(forkDirectory);
+      if (existingClaim === 'corrupt') return unavailable('corrupt');
+      if (!existingClaim || existingClaim === 'unattachedRelease' || !sameClaimant(existingClaim, destinationClaimant)) {
+        return unavailable('claimedElsewhere');
+      }
+      return { status: 'claimed', newlyAcquired: false, handle: existingFork.handle };
+    }
+    if (existingFork.reason !== 'notFound') return existingFork;
+
+    const pendingStageDirectory = join(pendingDirectory, randomUUID());
+    try {
+      await mkdir(pendingDirectory, { recursive: true });
+      await mkdir(completedDirectory, { recursive: true });
+      await mkdir(pendingStageDirectory);
+      const contentPath = join(pendingStageDirectory, CONTENT_FILE_NAME);
+      await copyFile(sourceInspection.filePath, contentPath);
+      if (!await verifyContentFile({ path: contentPath, handle: forkHandle })) {
+        await rm(pendingStageDirectory, { recursive: true, force: true });
+        return unavailable('corrupt');
+      }
+      const manifest: ComposerMediaStageManifest = {
+        v: MANIFEST_VERSION,
+        createdAtMs: now(),
+        handle: forkHandle,
+      };
+      await writeFile(join(pendingStageDirectory, MANIFEST_FILE_NAME), JSON.stringify(manifest), {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+      await writeFile(join(pendingStageDirectory, CLAIM_FILE_NAME), JSON.stringify(destinationClaimant), {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+      await rename(pendingStageDirectory, forkDirectory);
+    } catch {
+      await rm(pendingStageDirectory, { recursive: true, force: true }).catch(() => undefined);
+      const retry = await inspectStage({
+        handle: forkHandle,
+        executionTarget: request.executionTarget,
+        owner: request.owner,
+        claimant: destinationClaimant,
+      });
+      if (retry.status !== 'ready') return retry;
+      const retryClaim = await readStageClaim(forkDirectory);
+      if (retryClaim === 'corrupt') return unavailable('corrupt');
+      if (!retryClaim || retryClaim === 'unattachedRelease' || !sameClaimant(retryClaim, destinationClaimant)) {
+        return unavailable('claimedElsewhere');
+      }
+      return { status: 'claimed', newlyAcquired: false, handle: retry.handle };
+    }
+    return { status: 'claimed', newlyAcquired: true, handle: forkHandle };
   };
 
   return {
@@ -605,7 +748,7 @@ export function createComposerMediaStageStore(input: Readonly<{
         return failure('source_corrupt', 'Composer media bytes do not match declared metadata');
       }
 
-      const pendingStageDirectory = join(pendingDirectory, handle.id);
+      const pendingStageDirectory = join(pendingDirectory, randomUUID());
       const destinationDirectory = stageDirectory(input.rootDirectory, handle.id);
       try {
         await mkdir(pendingDirectory, { recursive: true });
@@ -636,6 +779,7 @@ export function createComposerMediaStageStore(input: Readonly<{
     },
     claim,
     inspectForFinalization,
+    forkClaimForSubmission,
     release: async (request) => {
       const inspected = await inspectStage(request);
       if (inspected.status !== 'ready') return inspected;
@@ -647,7 +791,12 @@ export function createComposerMediaStageStore(input: Readonly<{
         if (existingClaim === null) {
           const claimed = await claim({ ...request, claimant });
           if (claimed.status !== 'claimed') return claimed;
-        } else if (existingClaim === 'unattachedRelease' || !sameClaimant(existingClaim, claimant)) {
+        } else if (existingClaim === 'unattachedRelease') {
+          return unavailable('claimedElsewhere');
+        } else if (!sameClaimant(existingClaim, claimant)) {
+          // A different host-created attachment identity never deletes the
+          // stage. The same identity may legitimately carry a different
+          // Composer location after draft admission.
           return unavailable('claimedElsewhere');
         }
       } else {

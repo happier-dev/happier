@@ -85,7 +85,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
      * the operator which plugin lost its Connected Accounts. The registry itself
      * owns no logging channel.
      */
-    onDescriptorUnavailable?(ref: PluginContributionRef): void;
+    onDescriptorUnavailable?(ref: PluginContributionRef, error?: Error): void;
 }>): Readonly<{
     list(): readonly ConnectedAccountContributionRegistryEntry[];
     /**
@@ -119,6 +119,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         descriptor: ResolvedConnectedAccountDescriptorContribution['definition'];
         immutableGenerationId: string;
     }>>();
+    const duplicateKeys = new Set<string>();
     for (const contribution of params.descriptors) {
         const pluginId = contribution.pluginId?.trim();
         if (!pluginId) throw new TypeError('Connected-account descriptors require a plugin-qualified owner');
@@ -135,7 +136,20 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
             continue;
         }
         const key = qualifiedKey(ref);
-        if (descriptorsByKey.has(key)) throw new Error(`Duplicate connected-account descriptor '${key}'`);
+        if (duplicateKeys.has(key)) continue;
+        if (descriptorsByKey.has(key)) {
+            // Neither duplicate is authoritative. Keeping the first would still
+            // publish one arbitrarily selected descriptor for an ambiguous
+            // qualified service; isolate only that service and keep unrelated
+            // contributions available through the existing diagnostic owner.
+            descriptorsByKey.delete(key);
+            duplicateKeys.add(key);
+            params.onDescriptorUnavailable?.(
+                ref,
+                new Error(`Duplicate connected-account descriptor '${key}'`),
+            );
+            continue;
+        }
         descriptorsByKey.set(key, Object.freeze({ ref, descriptor, immutableGenerationId }));
     }
     let disposed = false;

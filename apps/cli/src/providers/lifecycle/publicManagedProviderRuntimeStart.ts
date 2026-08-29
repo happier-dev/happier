@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type {
   ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
@@ -420,11 +421,18 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       managedServices: input.custody.managedServices,
       signal: invocationAbort.signal,
     }));
-  } catch {
+  } catch (error) {
+    const runtimeInstallationUnavailable = isPluginError(error)
+      && (
+        error.code === 'plugin_packaged_runtime_binary_unavailable'
+        || error.code === 'plugin_managed_server_custody_failed'
+      );
     return await fail(
       invocationAbort.signal.aborted
         ? 'managed_provider_start_aborted'
-        : 'managed_provider_start_failed',
+        : runtimeInstallationUnavailable
+          ? 'managed_provider_runtime_unavailable'
+          : 'managed_provider_start_failed',
     );
   }
   let service: ManagedServiceHandle;

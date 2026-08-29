@@ -90,7 +90,6 @@ const TARGETED_CONTRIBUTION_ADMISSION_DIAGNOSTIC_CODES = [
     'target_semantics_unavailable',
     'descriptor_semantic_invalid',
     'surface_semantic_invalid',
-    'point_reference_invalid',
 ] as const satisfies readonly PluginCompatibilityDiagnostic['code'][];
 
 const TARGETED_CONTRIBUTION_ADMISSION_DIAGNOSTIC_CODE_SET = new Set<string>(
@@ -324,28 +323,17 @@ function oneDiagnostic(
 
 function oneSemanticDiagnostic(
     diagnostics: TargetedContributionAdmissionDiagnostic[],
-    targetDiagnosticsSeen: Set<string>,
     candidate: ResolvedTargetedPluginContributionDeclaration,
     code: Extract<TargetedContributionAdmissionDiagnosticCode,
         | 'target_semantics_unavailable'
         | 'descriptor_semantic_invalid'
         | 'surface_semantic_invalid'
-        | 'point_reference_invalid'
     >,
 ): void {
-    if (code !== 'target_semantics_unavailable') {
-        diagnostics.push(toDiagnostic(candidate, code));
-        return;
-    }
-    const targetDiagnosticKey = [
-        candidate.definition.target.pluginId,
-        candidate.definition.target.pointId,
-        candidate.definition.protocol.id,
-        candidate.definition.protocol.version,
-    ].join('\u0000');
-    if (targetDiagnosticsSeen.has(targetDiagnosticKey)) return;
-    targetDiagnosticsSeen.add(targetDiagnosticKey);
-    diagnostics.push(toDiagnostic(candidate, code, 'targetPoint'));
+    // Semantic validation is computed once per target protocol below, but
+    // ownership stays with each rejected contributor. A shared parser/cache
+    // must not collapse actionable diagnostics under the target plugin.
+    diagnostics.push(toDiagnostic(candidate, code));
 }
 
 function requiresTargetSemanticProjection(protocol: TargetPointProtocol): boolean {
@@ -499,7 +487,6 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
     // protocol in this cold resolution pass. A generation replacement creates
     // a fresh point object and therefore a fresh parser set.
     const semanticSchemasByPointProtocol = new Map<TargetPointProtocol, TargetSemanticSchemas | null>();
-    const targetSemanticDiagnosticsSeen = new Set<string>();
     for (const candidate of candidates) {
         const definition = candidate.declaration.definition;
         const targetKey = snapshotKey(definition.target.pluginId, definition.target.pointId);
@@ -537,7 +524,6 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             if (!semanticSchemas) {
                 oneSemanticDiagnostic(
                     diagnostics,
-                    targetSemanticDiagnosticsSeen,
                     candidate.declaration,
                     'target_semantics_unavailable',
                 );
@@ -670,7 +656,6 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
                 if (!parsed?.success) {
                     oneSemanticDiagnostic(
                         diagnostics,
-                        targetSemanticDiagnosticsSeen,
                         candidate.declaration,
                         'descriptor_semantic_invalid',
                     );
@@ -687,7 +672,6 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             ))) {
                 oneSemanticDiagnostic(
                     diagnostics,
-                    targetSemanticDiagnosticsSeen,
                     candidate.declaration,
                     'surface_semantic_invalid',
                 );
@@ -708,7 +692,6 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             if (!targetProtocol) {
                 oneSemanticDiagnostic(
                     diagnostics,
-                    targetSemanticDiagnosticsSeen,
                     candidate.declaration,
                     'target_semantics_unavailable',
                 );
@@ -727,7 +710,6 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             if (!targetProtocol) {
                 oneSemanticDiagnostic(
                     diagnostics,
-                    targetSemanticDiagnosticsSeen,
                     candidate.declaration,
                     'target_semantics_unavailable',
                 );

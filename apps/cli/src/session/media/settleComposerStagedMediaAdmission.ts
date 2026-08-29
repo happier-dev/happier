@@ -37,4 +37,7 @@ export async function settleComposerStagedMediaAdmissionV1(params: Readonly<{
     reason: 'failed_durable_write',
     ...(params.logger ? { logger: params.logger } : {}),
   });
+  await Promise.all(params.settlement.releaseIntents.map(
+    async (intent) => await params.stageStore.release(intent),
+  ));
 }

@@ -10,6 +10,7 @@ import {
     resolveAuthoritativePackagedRuntimeProjectRoot,
     resolvePackagedRuntimeEntrypoint,
 } from './resolvePackagedRuntimeEntrypoint';
+import { resolveRuntimeRootFromEntrypointPath } from './resolveRuntimeEntrypointArgv';
 
 const {
   readDefaultManagedReleaseChannelSyncMock,
@@ -116,6 +117,40 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
             root: '/runtime/node_modules/@happier-dev/cli',
             provenance: 'packaged-module',
         });
+    });
+
+    // The stack PM renames `dist` to `.dist.hstack-backup` while a rebuild is in
+    // flight and the bin importer boots that layout as a supported runtime tree.
+    // A toolchain module loaded from it must still classify its checkout — the
+    // plugin-authoring prepublication materialization fails closed otherwise.
+    it('classifies a .dist.hstack-backup module as its source checkout authority', () => {
+        vi.mocked(existsSync).mockImplementation((pathLike) => String(pathLike) === '/repo/apps/cli/src');
+
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///repo/apps/cli/.dist.hstack-backup/packagedRuntime/runtimeOwner.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/repo/apps/cli/bin/happier.mjs'],
+        })).toEqual({
+            root: '/repo/apps/cli',
+            provenance: 'source-module',
+        });
+    });
+
+    it('classifies a .dist.hstack-backup module without a source owner as packaged authority', () => {
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///runtime/current/.dist.hstack-backup/chunk.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/runtime/current/bin/happier.mjs'],
+        })).toEqual({
+            root: '/runtime/current',
+            provenance: 'packaged-module',
+        });
+    });
+
+    it('resolves a launched index.mjs entrypoint from .dist.hstack-backup to its runtime root', () => {
+        expect(resolveRuntimeRootFromEntrypointPath('/runtime/current/cli/.dist.hstack-backup/index.mjs')).toBe(
+            '/runtime/current/cli',
+        );
     });
 
     it.each([

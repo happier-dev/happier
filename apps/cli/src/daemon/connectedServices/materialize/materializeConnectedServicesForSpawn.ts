@@ -6,6 +6,7 @@ import {
   qualifiedPurposeKey,
   resolveConnectedServicesProviderStateSharingPolicyV1,
   type AccountSettings,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
   type QualifiedConnectedAccountPurposeBindingV1,
@@ -18,6 +19,7 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { AgentSpawnQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -303,8 +305,10 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               credentialFileScope: Object.freeze({
                 generation: currentGeneration.immutableGenerationId,
                 pluginId: identity.pluginId,
-                contributionQualifiedId:
-                  `${identity.pluginId}/agents/${identity.localId}`,
+                contributionQualifiedId: resolveAgentContributionQualifiedId({
+                  pluginId: identity.pluginId,
+                  localId: identity.localId,
+                }),
                 operationId: params.materializationKey,
               }),
               retainCredentialFileCleanup(cleanupLease: Readonly<{
@@ -464,7 +468,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   baseDir: string;
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-  selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
+  selectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection>;
   connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
   qualifiedPurposeBindingSnapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   exactPurposeBindingSubjectId?: string;
@@ -489,7 +493,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   baseDir: string;
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-  selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
+  selectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection>;
   connectedAccountMaterializationAuthority: ConnectedServicesMaterializationAuthority;
   qualifiedPurposeBindingSnapshot?: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   exactPurposeBindingSubjectId?: string;
@@ -502,6 +506,13 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   const attemptId = attemptRoot;
   activeMaterializationAttemptByRootDir.set(rootDir, attemptId);
   const cleanupAttemptRoot = createBestEffortCleanupDirectory(attemptRoot);
+  // Attempt roots are pre-promotion staging: removal here is observed
+  // best-effort and any residue is bounded by the attempt orphan sweep. The
+  // promoted-root cleanup below is the custody surface that publishes an
+  // awaited receipt.
+  const dropAttemptRoot = (): void => {
+    void cleanupAttemptRoot().catch(() => undefined);
+  };
 
   const qualifiedAuthority =
     params.connectedAccountMaterializationAuthority.kind === 'qualified'
@@ -520,7 +531,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     && !exactPurposeBindingSubjectId
     && !purposeBindingSessionId
   ) {
-    cleanupAttemptRoot();
+    dropAttemptRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     throw new Error('Connected Account exact launch authority is unavailable');
   }
@@ -562,12 +573,12 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     await ensurePrivateConnectedServiceMaterializedRoot(attemptRoot);
     materialized = await materializer();
   } catch (error) {
-    cleanupAttemptRoot();
+    dropAttemptRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     throw error;
   }
   if (!materialized) {
-    cleanupAttemptRoot();
+    dropAttemptRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     return null;
   }
@@ -578,7 +589,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     .filter((diagnostic) => diagnostic.severity === 'blocking');
   if (blockingDiagnostics.length > 0) {
     await cleanupMaterialized();
-    cleanupAttemptRoot();
+    dropAttemptRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     throw new ConnectedServiceMaterializationBlockedError(blockingDiagnostics);
   }
@@ -615,36 +626,63 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     }
   } catch (error) {
     await cleanupMaterialized();
-    cleanupAttemptRoot();
+    dropAttemptRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     throw error;
   }
 
   try {
     await runSerializedMaterializationPromotion(rootDir, async () => {
-      assertActiveAttempt({ rootDir, attemptId, cleanupRoot: cleanupAttemptRoot });
+      assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
       await replaceDirectoryAtomically({
         stagedDir: attemptRoot,
         targetDir: rootDir,
         afterPromote: () => {
-          assertActiveAttempt({ rootDir, attemptId, cleanupRoot: cleanupAttemptRoot });
+          assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
         },
       });
-      assertActiveAttempt({ rootDir, attemptId, cleanupRoot: cleanupAttemptRoot });
+      assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
     });
-    assertActiveAttempt({ rootDir, attemptId, cleanupRoot: cleanupAttemptRoot });
+    assertActiveAttempt({ rootDir, attemptId, cleanupRoot: dropAttemptRoot });
 
-    const cleanupFinalRoot = createBestEffortCleanupDirectory(rootDir);
+    const cleanupFinalRoot = createBestEffortCleanupDirectory(
+      rootDir, undefined, { failureMode: 'reject' },
+    );
+    // The promoted root is custody: its cleanup receipt awaits real root
+    // removal and surfaces a typed failure alongside the leaf credential
+    // cleanup instead of detaching the removal and suppressing its outcome.
+    const runPromotedRootCleanup = async (
+      cleanupCredentials: (() => void | Promise<void>) | null | undefined,
+    ): Promise<void> => {
+      let rootRemovalError: unknown;
+      const rootRemoval = cleanupFinalRoot().catch((error: unknown) => {
+        rootRemovalError = error;
+      });
+      let credentialCleanupError: unknown;
+      try {
+        await cleanupCredentials?.();
+      } catch (error) {
+        credentialCleanupError = error;
+      }
+      await rootRemoval;
+      const failures = [rootRemovalError, credentialCleanupError]
+        .filter((error) => error !== undefined);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(
+          failures,
+          'Connected-service materialized-root and credential cleanup failed',
+        );
+      }
+    };
     const cleanupOnFailure = materialized.cleanupOnFailure
       ? async () => {
-          cleanupFinalRoot();
-          await materialized.cleanupOnFailure?.();
+          await runPromotedRootCleanup(materialized.cleanupOnFailure);
         }
       : materialized.cleanupOnFailure;
     const cleanupOnExit = materialized.cleanupOnExit
       ? async () => {
-          cleanupFinalRoot();
-          await materialized.cleanupOnExit?.();
+          await runPromotedRootCleanup(materialized.cleanupOnExit);
         }
       : materialized.cleanupOnExit;
     if (
@@ -681,7 +719,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
     };
   } catch (error) {
     await cleanupMaterialized();
-    cleanupAttemptRoot();
+    dropAttemptRoot();
     throw error;
   } finally {
     forgetActiveAttemptIfCurrent(rootDir, attemptId);

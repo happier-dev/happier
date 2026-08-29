@@ -3,8 +3,6 @@ import {
 } from '@happier-dev/protocol/runtime';
 import {
     ProviderBoundModelRefSchema,
-    buildBackendTargetKeyV2,
-    readBackendTargetRefV2,
     type AcpConfigOptionOverridesV1,
     type BackendTargetRefV2Input,
     type ProviderBoundModelRef,
@@ -14,6 +12,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
+import { areExecutionRunBackendTargetsEqual } from '../backendTargets';
 
 export function buildExecutionRunConfiguration(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
@@ -29,10 +28,10 @@ export function buildExecutionRunConfiguration(input: Readonly<{
     const modelSelection = input.modelSelection
         ? ProviderBoundModelRefSchema.parse(input.modelSelection)
         : undefined;
-    const targetKey = buildBackendTargetKeyV2(
-        readBackendTargetRefV2(input.backendTarget),
-    );
-    if (modelSelection && modelSelection.agentTargetKey !== targetKey) {
+    if (
+        modelSelection
+        && !areExecutionRunBackendTargetsEqual(modelSelection.agentTargetKey, input.backendTarget)
+    ) {
         throw new Error('Execution-run model selection does not target its backend');
     }
     const legacyModelId = input.modelId?.trim() || undefined;

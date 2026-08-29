@@ -183,6 +183,7 @@ describe('managed Provider catalog runtime composition', () => {
     let switchRuntimeDuringStart = false;
     let returnSuccessorRuntime = false;
     let returnSuccessorRegistry = false;
+    let runtimeUnavailable = false;
     let releaseTransport!: () => void;
     const transportGate = new Promise<void>((resolve) => {
       releaseTransport = resolve;
@@ -253,6 +254,7 @@ describe('managed Provider catalog runtime composition', () => {
       isCurrent: () => true,
     }) satisfies ResolvedManagedProviderRuntime;
     const acquireManagedProviderRuntime = vi.fn(async () => {
+      if (runtimeUnavailable) return null;
       if (returnSuccessorRuntime) {
         returnSuccessorRuntime = false;
         return successorRuntime;
@@ -456,6 +458,17 @@ describe('managed Provider catalog runtime composition', () => {
     expect(invocationCleanup).toHaveBeenCalledTimes(3);
     expect(releaseRegistryLease).toHaveBeenCalledTimes(4);
     expect(disposeService).toHaveBeenCalledTimes(3);
+    runtimeUnavailable = true;
+    await expect(services.probe(identity)).resolves.toMatchObject({
+      status: 'error',
+      error: {
+        code: 'provider_contribution_unavailable',
+        action: 'restore_plugin',
+        retryable: false,
+      },
+    });
+    runtimeUnavailable = false;
+
     const state = await services.runtimeStore.read();
     expect(state.catalogs).toHaveLength(1);
     expect(state.endpointHealth).toEqual([]);

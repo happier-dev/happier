@@ -660,7 +660,12 @@ export function createCliActionDeps(params: Readonly<{
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
   const pluginPermissionGrantAction = params.credentials
-    ? createPluginPermissionGrantActionExecutor({ credentials: params.credentials })
+    ? createPluginPermissionGrantActionExecutor({
+      credentials: params.credentials,
+      ...(params.revalidatePluginActionCallerMaterialization
+        ? { revalidateCallerMaterialization: params.revalidatePluginActionCallerMaterialization }
+        : {}),
+    })
     : null;
   const pluginWebhookAction = params.credentials
     ? createPluginWebhookActionExecutor({
@@ -2255,6 +2260,7 @@ export function createCliActionDeps(params: Readonly<{
     sessionHandoffStart: async ({
       sessionId,
       targetMachineId,
+      targetPath,
       targetSessionStorageMode,
       workspaceTransfer,
       signal,
@@ -2285,6 +2291,7 @@ export function createCliActionDeps(params: Readonly<{
           sourceMachineId,
           targetMachineId,
           sessionStorageMode: source.sessionStorageMode,
+          ...(targetPath ? { targetPath } : {}),
           ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
           preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
           ...(workspaceTransfer ? { workspaceTransfer } : {}),
@@ -2342,7 +2349,6 @@ export function createCliActionDeps(params: Readonly<{
       agentTarget,
       modelSelection,
       profileId,
-      environmentVariables,
       permissionMode,
       agentModeId,
       configuration: configurationSnapshot,
@@ -2625,7 +2631,6 @@ export function createCliActionDeps(params: Readonly<{
           organizationPlacement: normalizedPlacement,
           ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
           ...(profileId ? { profileId } : {}),
-          ...(environmentVariables ? { environmentVariables } : {}),
           ...(resolvedPermissionMode ? { permissionMode: resolvedPermissionMode } : {}),
           ...(resolvedAgentModeId ? { agentModeId: resolvedAgentModeId } : {}),
           ...(normalizedConfigurationOverrides

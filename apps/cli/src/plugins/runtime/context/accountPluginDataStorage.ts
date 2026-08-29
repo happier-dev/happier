@@ -39,6 +39,9 @@ import {
     PluginCollectionCandidatePreparationStageResultV1Schema,
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
+    PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
+    PluginCollectionForgetRequestV1Schema,
+    PluginCollectionForgetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
     PluginCollectionMutationResultV1Schema,
     PluginCollectionQueryRequestV1Schema,
@@ -290,6 +293,7 @@ function createUnavailableAccountCollection<
         get: unavailableAsync,
         put: unavailableAsync,
         delete: unavailableAsync,
+        forget: unavailableAsync,
         query: unavailableAsync,
         batch: unavailableAsync,
         limits: unavailableAsync,
@@ -1597,6 +1601,33 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 }>> => {
                     const credentials = await currentCredentials(operationSignal);
                     const encryption = await currentEncryption(credentials, operationSignal);
+                    let absenceEpoch: number | undefined;
+                    for (const operation of operations) {
+                        if (operation.kind !== 'put' || operation.expectedRevision !== 'absent') continue;
+                        const snapshot = await request({
+                            path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+                            body: PluginCollectionGetRequestV1Schema.parse({
+                                pluginId: lifecycle.pluginId,
+                                collectionId: collection.contract.collectionId,
+                                rowId: splitLogicalPut({
+                                    collection,
+                                    value: operation.value,
+                                    encryptionMode: encryption.mode,
+                                    material: encryption.material,
+                                    randomBytes,
+                                }).rowId,
+                            }),
+                            kind: 'read',
+                            credentials,
+                            operationSignal,
+                        });
+                        const parsedSnapshot = PluginCollectionGetResultV1Schema.safeParse(snapshot);
+                        if (!parsedSnapshot.success) {
+                            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection currentness response is invalid');
+                        }
+                        absenceEpoch = parsedSnapshot.data.absenceEpoch;
+                        break;
+                    }
                     const prepared = preparePluginCollectionLogicalMutationRequestV1({
                         contract: collection.contract,
                         isValidLogicalValue: (value): value is PluginCollectionLogicalValueV1 => isValidPluginJsonSchemaValue(
@@ -1607,6 +1638,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         encryptionMode: encryption.mode,
                         material: encryption.material,
                         randomBytes,
+                        absenceEpoch,
                     });
                     if (prepared.status === 'failed') {
                         if (prepared.reason !== 'mutation-request-invalid') {
@@ -1674,6 +1706,52 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     return parsed.data;
                 };
 
+                const forgetTombstoneForRetention = async (
+                    rowId: string,
+                    expectedRevision: number,
+                    operationSignal?: AbortSignal,
+                ): Promise<boolean> => {
+                    const credentials = await currentCredentials(operationSignal);
+                    const snapshot = await request({
+                        path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+                        body: PluginCollectionGetRequestV1Schema.parse({
+                            pluginId: lifecycle.pluginId,
+                            collectionId: collection.contract.collectionId,
+                            rowId,
+                        }),
+                        kind: 'read',
+                        credentials,
+                        operationSignal,
+                    });
+                    const parsedSnapshot = PluginCollectionGetResultV1Schema.safeParse(snapshot);
+                    if (!parsedSnapshot.success) {
+                        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection currentness response is invalid');
+                    }
+                    const response = await request({
+                        path: PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
+                        body: PluginCollectionForgetRequestV1Schema.parse({
+                            pluginId: lifecycle.pluginId,
+                            collectionId: collection.contract.collectionId,
+                            writerContext: {
+                                schemaVersion: collection.contract.schemaVersion,
+                                contractDigest: collection.contract.contractDigest,
+                            },
+                            rowId,
+                            expectedRevision,
+                            expectedAbsenceEpoch: parsedSnapshot.data.absenceEpoch,
+                        }),
+                        kind: 'mutation',
+                        credentials,
+                        operationSignal,
+                    });
+                    const parsed = PluginCollectionForgetResultV1Schema.safeParse(response);
+                    if (!parsed.success) {
+                        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection forget response is invalid');
+                    }
+                    await assertCurrentAccount(credentials, operationSignal);
+                    return parsed.data.status === 'forgotten';
+                };
+
                 const materialize = (
                     row: PluginCollectionRowV1,
                     mode: 'plain' | 'e2ee',
@@ -1686,6 +1764,15 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 });
 
                 const bound: PluginAccountCollectionForDefinition<TDefinition> = Object.freeze({
+                    async forget(
+                        rowId: string,
+                        options: Readonly<{ expectedRevision: number; signal?: AbortSignal }>,
+                    ) {
+                        if (!await forgetTombstoneForRetention(rowId, options.expectedRevision, options.signal)) {
+                            throw dataError(COLLECTION_CONFLICT_CODE, 'Collection forget conflicted with a newer row revision or absence epoch');
+                        }
+                        return Object.freeze({ rowId, forgotten: true as const });
+                    },
                     async identityTag(
                         request: Readonly<{ field: string; components: readonly string[] }>,
                         options?: Readonly<{ signal?: AbortSignal }>,

@@ -28,6 +28,8 @@ function createRuntimeRegistry(
         currentGlobalExternalSessionsTarget?: ResolvedExecutablePluginRuntimeRegistry['currentGlobalExternalSessionsTarget'];
         additionalPluginDiagnostics?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
         durableRevision?: number;
+        settingsRollbackDeclarations?: ResolvedExecutablePluginRuntimeRegistry['settingsRollbackDeclarations'];
+        pruneRetiredPluginSettings?: ResolvedExecutablePluginRuntimeRegistry['pruneRetiredPluginSettings'];
     }>,
 ): ResolvedExecutablePluginRuntimeRegistry {
     return {
@@ -54,6 +56,12 @@ function createRuntimeRegistry(
         ...(params?.durableRevision === undefined
             ? {}
             : { durableRevision: params.durableRevision }),
+        ...(params?.settingsRollbackDeclarations
+            ? { settingsRollbackDeclarations: params.settingsRollbackDeclarations }
+            : {}),
+        ...(params?.pruneRetiredPluginSettings
+            ? { pruneRetiredPluginSettings: params.pruneRetiredPluginSettings }
+            : {}),
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         resolvePromptAssetBlocks: async () => [],
@@ -176,6 +184,44 @@ describe('createPluginReloadController', () => {
             'publish',
             'start:replacement',
         ]);
+    });
+
+    it('runs exact Settings artifact-retirement cleanup inside the publication fence', async () => {
+        const calls: string[] = [];
+        const previousRollback = new Map([
+            ['acme.indexer', new Map([
+                ['account', { generation: 'old-generation', supported: true, fieldIds: ['legacyMode'] }],
+            ] as const)],
+        ] as const);
+        const initialRegistry = createRuntimeRegistry('initial', {
+            settingsRollbackDeclarations: previousRollback,
+        });
+        const replacementRegistry = createRuntimeRegistry('replacement', {
+            pruneRetiredPluginSettings: async (previous) => {
+                expect(previous).toBe(previousRollback);
+                calls.push('settings-retirement');
+                return Object.freeze([]);
+            },
+        });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => initialRegistry,
+        });
+        const lease = await controller.acquireRuntimeRegistry();
+        await lease.release();
+
+        await controller.adoptPreparedRuntimeRegistry({
+            registry: replacementRegistry,
+            changedPluginIds: ['acme.indexer'],
+            durableRevision: 1,
+            runningSessionDisposition: 'retainRunningSessions',
+            beforePublish: async (_registry, publish) => {
+                calls.push('before-publish');
+                publish();
+            },
+        });
+
+        expect(calls).toEqual(['settings-retirement', 'before-publish']);
+        await controller.shutdown();
     });
 
     it('retargets a long-lived current-global External Sessions holder at registry publication', async () => {

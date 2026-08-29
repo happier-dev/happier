@@ -39,13 +39,26 @@ describe('server plugin permission grant requester', () => {
       subject,
       requester: { kind: 'plugin', pluginId: 'acme.voice' },
       reason: 'Voice provider raw credential access review',
+      caller: {
+        pluginId: 'acme.voice',
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+      },
+    } as const;
+    const pendingRequestInput = {
+      pluginId: request.pluginId,
+      capability: request.capability,
+      targetScope: request.targetScope,
+      subject: request.subject,
+      requester: request.requester,
+      reason: request.reason,
     } as const;
     const output = {
       pendingRequest: {
         v: 1,
         id: 'request-1',
         accountId: 'account-1',
-        ...request,
+        ...pendingRequestInput,
         authoritySource: {
           kind: 'machine_installation',
           machineId: 'machine-1',
@@ -80,5 +93,22 @@ describe('server plugin permission grant requester', () => {
         signal,
       }),
     );
+  });
+
+  it('refuses a plugin permission request without exact caller provenance', async () => {
+    const requester = createServerPluginPermissionGrantRequester({
+      credentials: { token: 'account-token' } as never,
+    });
+
+    await expect(requester.request({
+      pluginId: 'acme.voice',
+      capability: 'credentials.materialize.raw',
+      targetScope: { kind: 'account' },
+      subject: { kind: 'general' },
+      requester: { kind: 'plugin', pluginId: 'acme.voice' },
+      reason: 'Review access',
+    })).rejects.toThrow('plugin_permission_grant_publisher_proof_required');
+    expect(createDefaultPluginInstallationPublisherHeader).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });

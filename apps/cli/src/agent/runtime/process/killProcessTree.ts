@@ -151,7 +151,17 @@ export async function killProcessTree(
   opts?: {
     graceMs?: number;
     terminateWindowsTree?: typeof taskkillWindowsProcessTree;
-    /** The caller created and still owns a dedicated POSIX process group whose id is `pid`. */
+    /** The caller created and still owns a dedicated POSIX process group whose id is `pid`.
+     *
+     * That owned group is the containment contract for detached managed
+     * spawns (SVC09): success here proves the group is absent, and the
+     * descendants discoverable in the current ppid graph were signalled and
+     * observed gone. A descendant that moved itself into a new session (for
+     * example via `setsid`) left this containment; after the root exits no
+     * existing identity can observe it without adding a PID-enumeration
+     * discovery registry, so success is deliberately a containment fact and
+     * never a whole-tree-absence claim. Windows owns exact job containment;
+     * Darwin keeps the native subsecond generation witness. */
     ownedProcessGroup?: boolean;
   }
 ): Promise<void> {

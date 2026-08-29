@@ -18,10 +18,13 @@ import {
 } from './pluginWebhookInvocationReference';
 
 type DeliveryClaimV1 = Extract<PluginWebhookClaimResultV1, { kind: 'delivery' }>;
-type ClaimTargetV1 = Readonly<{
-  materialization: Readonly<{ machineId: string; materializationId: string; pluginId: string }>;
-  machineInstallationId: string;
-}>;
+/**
+ * The exact server-selected target is a claim fact, not a separate caller
+ * input: the protocol claim response carries it, and renew/complete/fail
+ * address work by that exact target. Deriving it here keeps the claim the
+ * single decision-maker — a caller can no longer pass a diverging target.
+ */
+type ClaimTargetV1 = DeliveryClaimV1['target'];
 
 /**
  * A handler is always cancelled before the active server lease can expire. The
@@ -129,7 +132,6 @@ function buildActionInputV1(claim: DeliveryClaimV1, credentials: StoredCredentia
  */
 export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
   claim: DeliveryClaimV1;
-  target: ClaimTargetV1;
   credentials: StoredCredentials;
   transport: PluginWebhookDeliveryWorkerTransportV1;
   execute(
@@ -143,13 +145,16 @@ export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<PluginWebhookSettleResultV1 | Readonly<{ kind: 'leaseLost' | 'unavailable'; code?: string }>> {
   const daemonStopped = () => ({ kind: 'unavailable' as const, code: 'daemon_stopped' });
+  // One exact-target authority: the claim response carries it, and every
+  // lease transition below addresses that same target.
+  const target = params.claim.target;
   if (params.signal?.aborted) return daemonStopped();
   const input = buildActionInputV1(params.claim, params.credentials);
   if (!input) {
     if (params.signal?.aborted) return daemonStopped();
     return await params.transport.fail({
       deliveryId: params.claim.deliveryId,
-      target: params.target,
+      target,
       lease: { leaseId: params.claim.lease.leaseId, revision: params.claim.lease.revision },
       result: { kind: 'deadLetter', code: 'content_unavailable' },
       ...(params.signal ? { signal: params.signal } : {}),
@@ -159,7 +164,7 @@ export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
   try {
     renewed = await params.transport.renew({
       deliveryId: params.claim.deliveryId,
-      target: params.target,
+      target,
       lease: { leaseId: params.claim.lease.leaseId, revision: params.claim.lease.revision },
       transition: 'executionStarted',
       ...(params.signal ? { signal: params.signal } : {}),
@@ -195,7 +200,7 @@ export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
       try {
         next = await params.transport.renew({
           deliveryId: params.claim.deliveryId,
-          target: params.target,
+          target,
           lease: { leaseId: lease.leaseId, revision: lease.revision },
           transition: 'renew',
           ...(params.signal ? { signal: params.signal } : {}),
@@ -251,7 +256,7 @@ export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
         v: 1,
         deliveryId: params.claim.deliveryId,
         endpoint: params.claim.endpoint,
-        target: params.target,
+        target,
       },
       readLease: () => custodyFailure ? null : { leaseId: lease.leaseId, revision: lease.revision },
       signal: handlerSignal,
@@ -286,7 +291,7 @@ export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
   if (result.kind === 'settled') {
     return await params.transport.complete({
       deliveryId: params.claim.deliveryId,
-      target: params.target,
+      target,
       lease: settlementLease,
       result,
       ...(params.signal ? { signal: params.signal } : {}),
@@ -294,7 +299,7 @@ export async function processClaimedPluginWebhookDeliveryV1(params: Readonly<{
   }
   return await params.transport.fail({
     deliveryId: params.claim.deliveryId,
-    target: params.target,
+    target,
     lease: settlementLease,
     result,
     ...(result.kind === 'retry' && automationAdmissionUnresolved

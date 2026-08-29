@@ -1743,6 +1743,7 @@ export async function startDaemon(
       beforeShutdown,
       apiMachine,
       closeDaemonMutationCustody: async () => {
+        connectedAccountDaemonRuntime.dispose();
         await daemonSessionMutationCustody.close();
       },
       machineConnectionStateCleanup,

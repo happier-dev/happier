@@ -27,6 +27,7 @@ import type {
 import type { StablePluginEventsBroker } from './events';
 import { clonePluginPlainData } from '../../plainData';
 import type { PluginInvocationServicesSeed } from './types';
+import type { PluginSettingsRollbackDeclarations } from '../../../settings/settingsRollbackDeclarations';
 import {
     PLUGIN_HOST_STORAGE_KEY_PREFIX,
     updatePluginStorageScopeValueAtomically,
@@ -76,11 +77,18 @@ export type StablePluginSettingsRecordStore = Readonly<{
     read(model: StablePluginSettingsModel, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown | null>;
     update<T>(
         model: StablePluginSettingsModel,
-        operation: (current: unknown | null) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>,
+        operation: (current: unknown | null) => Readonly<{
+            record: CanonicalPluginSettingsRecord;
+            result: T;
+            /** The computed record equals the stored one; the store must not persist or round-trip. */
+            skipWrite?: boolean;
+        }>,
         options?: Readonly<{
             signal?: AbortSignal;
             /** Pure postcondition projection after one ambiguous Account write readback. */
             settleOutcomeUnknown?(current: CanonicalPluginSettingsRecord): T | undefined;
+            /** Pure postcondition projection after one losing CAS readback; never retries the write. */
+            settleConflict?(current: CanonicalPluginSettingsRecord): T | undefined;
         }>,
     ): Promise<T>;
     watch?(
@@ -255,42 +263,11 @@ export function createStablePluginSettingsModels(params: Readonly<{
 }>): ReadonlyMap<StablePluginSettingsScope, StablePluginSettingsModel> {
     const pluginId = PluginIdSchema.parse(params.pluginId);
     const byScope = new Map<StablePluginSettingsScope, PluginSettingsContributionV2[]>();
-    const secretById = new Map<string, Readonly<{ scope: StablePluginSettingsScope; contributionId: string }>>();
-    const nonSecretById = new Map<string, Readonly<{ scope: StablePluginSettingsScope; contributionId: string }>>();
 
     for (const contribution of params.contributions) {
         const group = byScope.get(contribution.scope) ?? [];
         group.push(contribution);
         byScope.set(contribution.scope, group);
-        for (const field of contribution.fields) {
-            const existingSecret = secretById.get(field.id);
-            const existingNonSecret = nonSecretById.get(field.id);
-            if (isSecretSettingField(field)) {
-                if (existingSecret || existingNonSecret) {
-                    throw settingsError(
-                        'plugin_settings_field_id_conflict',
-                        `Plugin secret setting '${field.id}' is not plugin-global unique for '${pluginId}'`,
-                    );
-                }
-                secretById.set(field.id, Object.freeze({
-                    scope: contribution.scope,
-                    contributionId: contribution.id,
-                }));
-            } else {
-                if (existingSecret) {
-                    throw settingsError(
-                        'plugin_settings_field_id_conflict',
-                        `Plugin setting '${field.id}' conflicts with a declared plugin secret for '${pluginId}'`,
-                    );
-                }
-                if (!existingNonSecret) {
-                    nonSecretById.set(field.id, Object.freeze({
-                        scope: contribution.scope,
-                        contributionId: contribution.id,
-                    }));
-                }
-            }
-        }
     }
 
     return new Map(
@@ -299,6 +276,25 @@ export function createStablePluginSettingsModels(params: Readonly<{
             createStablePluginSettingsModel({ pluginId, contributions }),
         ]),
     );
+}
+
+/**
+ * The one supported rollback artifact declaration per `(pluginId, scope)`,
+ * derived by the caller from the existing plugin generation support state.
+ * Present means the support state was readable and is authoritative; absent
+ * means the state is unknown, so nothing is pruned and every removed value
+ * stays preserved. There is no second Settings registry behind this map.
+ */
+export type { PluginSettingsRollbackDeclarations } from '../../../settings/settingsRollbackDeclarations';
+
+function omitIds(
+    values: Readonly<Record<string, JsonValue>>,
+    ids: readonly string[],
+): Readonly<Record<string, JsonValue>> {
+    if (ids.length === 0) return values;
+    const next: Record<string, JsonValue> = { ...values };
+    for (const id of ids) delete next[id];
+    return Object.freeze(next);
 }
 
 export function validateStablePluginSettingValue(
@@ -342,14 +338,22 @@ export function createPluginStorageBackedSettingsRecordStore(params: Readonly<{
         },
         async update<T>(model: StablePluginSettingsModel, operation: (
             current: unknown | null,
-        ) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>): Promise<T> {
+        ) => Readonly<{
+            record: CanonicalPluginSettingsRecord;
+            result: T;
+            skipWrite?: boolean;
+        }>): Promise<T> {
             try {
                 return await updatePluginStorageScopeValueAtomically({
                     scope: params.storageForPlugin(model.identity.pluginId),
                     key: PLUGIN_SETTINGS_STORAGE_KEY,
                     operation: (current) => {
                         const next = operation(current);
-                        return Object.freeze({ value: next.record, result: next.result });
+                        return Object.freeze({
+                            value: next.record,
+                            result: next.result,
+                            ...(next.skipWrite === true ? { skipWrite: true } : {}),
+                        });
                     },
                 });
             } catch (error) {
@@ -505,15 +509,24 @@ export function createAccountSettingsBackedSettingsRecordStore(
             model: StablePluginSettingsModel,
             operation: (
                 current: unknown | null,
-            ) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>,
+            ) => Readonly<{
+                record: CanonicalPluginSettingsRecord;
+                result: T;
+                skipWrite?: boolean;
+            }>,
             options?: Readonly<{
                 signal?: AbortSignal;
                 settleOutcomeUnknown?(current: CanonicalPluginSettingsRecord): T | undefined;
+                settleConflict?(current: CanonicalPluginSettingsRecord): T | undefined;
             }>,
         ): Promise<T> {
             assertAccountSettingsModel(model);
             const current = await readAccountPluginSettingsRecord(model, adapter, options);
             const next = operation(current.record);
+            // A raced pruning writer found nothing left to remove: the stored
+            // bytes already satisfy the postcondition, so no CAS write, no
+            // revision bump, and no history entry may follow.
+            if (next.skipWrite === true) return next.result;
             const record = validateRecordForModel(
                 model,
                 parseCanonicalPluginSettingsRecord(next.record),
@@ -533,6 +546,13 @@ export function createAccountSettingsBackedSettingsRecordStore(
                 );
             }
             if (response.status === 'conflict') {
+                const readback = options?.settleConflict
+                    ? await readAccountPluginSettingsRecord(model, adapter).catch(() => null)
+                    : null;
+                const settled = readback
+                    ? options?.settleConflict?.(readback.record)
+                    : undefined;
+                if (settled !== undefined) return settled;
                 throw settingsError(
                     'plugin_settings_revision_conflict',
                     'Plugin settings revision does not match the current Account revision',
@@ -540,7 +560,7 @@ export function createAccountSettingsBackedSettingsRecordStore(
                 );
             }
             if (response.status === 'outcomeUnknown') {
-                const readback = await readAccountPluginSettingsRecord(model, adapter, options)
+                const readback = await readAccountPluginSettingsRecord(model, adapter)
                     .catch(() => null);
                 const settled = readback
                     ? options?.settleOutcomeUnknown?.(readback.record)
@@ -722,6 +742,25 @@ function visibleValues(
     return Object.freeze(values);
 }
 
+/**
+ * Returns the one scoped Settings snapshot an Agent may consume at launch.
+ * `snapshot()` intentionally contains only persisted values; launch behavior
+ * also needs the declaration defaults, so fill those from the same bound
+ * descriptor list and never include secret fields.
+ */
+export async function readPluginSettingsValuesWithDefaults(
+    service: ScopedSettingsService,
+    options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<Readonly<Record<string, JsonValue>>> {
+    const snapshot = await service.snapshot(options);
+    const values: Record<string, JsonValue> = { ...snapshot.values };
+    for (const descriptor of service.describe()) {
+        if (descriptor.secret === true || Object.hasOwn(values, descriptor.id)) continue;
+        if (descriptor.default !== undefined) values[descriptor.id] = clonePlainData(descriptor.default);
+    }
+    return Object.freeze(values);
+}
+
 function recordSatisfiesSettingsPostcondition(
     record: CanonicalPluginSettingsRecord,
     input: Readonly<{
@@ -741,9 +780,15 @@ function validateRecordForModel(
     model: StablePluginSettingsModel,
     record: CanonicalPluginSettingsRecord,
 ): CanonicalPluginSettingsRecord {
-    for (const [id, value] of Object.entries(record.values)) {
-        const field = model.fields.find((candidate) => candidate.id === id);
-        if (!field || field.descriptor.secret === true || !validateFieldValue(model, id, value)) {
+    // Validate the current descriptor projection, not every raw persisted key.
+    // A field removed from the current declaration remains opaque evidence in
+    // the raw record and is preserved by unrelated writes, while get/snapshot
+    // cannot expose it. If that id becomes current again, it is validated
+    // below against the new current schema before any read or write succeeds.
+    for (const field of model.fields) {
+        if (!Object.hasOwn(record.values, field.id)) continue;
+        const value = record.values[field.id]!;
+        if (field.descriptor.secret === true || !validateFieldValue(model, field.id, value)) {
             throw settingsError(
                 'plugin_settings_record_invalid',
                 `Plugin settings record '${model.identity.qualifiedId}' contains an invalid field value`,
@@ -771,6 +816,67 @@ export function createStablePluginSettingsOwner(params: Readonly<{
     broker: StablePluginEventsBroker;
 }>) {
     return Object.freeze({
+        /**
+         * Retirement is the only cleanup trigger. The caller supplies the
+         * exact non-secret ids owned by the artifact that just left the
+         * canonical rollback support state. Unknown raw ids are never inferred
+         * to be retired, so future and unrelated values remain opaque.
+         */
+        async pruneRetiredFields(input: Readonly<{
+            model: StablePluginSettingsModel;
+            retiredFieldIds: readonly string[];
+            retainedFieldIds?: readonly string[];
+            signal?: AbortSignal;
+        }>): Promise<Readonly<{ status: 'updated' | 'already-absent'; revision: string }>> {
+            assertSupportedScope(input.model, params.recordStore);
+            const currentIds = new Set(input.model.fields.map((field) => field.id));
+            const retainedIds = new Set(input.retainedFieldIds ?? []);
+            const candidates = [...new Set(input.retiredFieldIds)]
+                .filter((id) => !currentIds.has(id) && !retainedIds.has(id))
+                .sort();
+            const settleAbsent = (record: CanonicalPluginSettingsRecord) => (
+                candidates.every((id) => !Object.hasOwn(record.values, id))
+                    ? Object.freeze({ status: 'already-absent' as const, revision: String(record.revision) })
+                    : undefined
+            );
+            return await params.recordStore.update<Readonly<{
+                status: 'updated' | 'already-absent';
+                revision: string;
+            }>>(input.model, (raw) => {
+                const record = validateRecordForModel(
+                    input.model,
+                    parseCanonicalPluginSettingsRecord(raw),
+                );
+                const staleIds = candidates.filter((id) => Object.hasOwn(record.values, id));
+                if (staleIds.length === 0) {
+                    return Object.freeze({
+                        record,
+                        result: Object.freeze({
+                            status: 'already-absent' as const,
+                            revision: String(record.revision),
+                        }),
+                        skipWrite: true,
+                    });
+                }
+                const nextRevision = record.revision + 1;
+                if (!Number.isSafeInteger(nextRevision)) {
+                    throw settingsError('plugin_settings_revision_exhausted', 'Plugin settings revision is exhausted');
+                }
+                const next = Object.freeze({
+                    t: SETTINGS_RECORD_TYPE,
+                    revision: nextRevision,
+                    values: omitIds(record.values, staleIds),
+                });
+                return Object.freeze({
+                    record: next,
+                    result: Object.freeze({ status: 'updated' as const, revision: String(nextRevision) }),
+                });
+            }, {
+                signal: input.signal,
+                settleConflict: settleAbsent,
+                settleOutcomeUnknown: settleAbsent,
+            });
+        },
         async applyActionPatch(input: Readonly<{
             model: StablePluginSettingsModel;
             seed: PluginInvocationServicesSeed;
@@ -846,7 +952,7 @@ export function createStablePluginSettingsOwner(params: Readonly<{
                     ? { settleOutcomeUnknown: settlePatchReadback }
                     : {}),
             });
-            assertCurrent(seed, input.signal);
+            assertCurrent(seed);
             await params.broker.emit({
                 event: {
                     ref: SETTINGS_CHANGED_REF,
@@ -1090,6 +1196,14 @@ export function createStablePluginSettingsOwner(params: Readonly<{
 export type StablePluginSettingsHost = Readonly<{
     hasPlugin(pluginId: string): boolean;
     bind(seed: PluginInvocationServicesSeed): SettingsService | null;
+    /** Applies exact artifact-retirement cleanup; ordinary reads never mutate. */
+    pruneRetiredRollbackDeclarations?(
+        previous: PluginSettingsRollbackDeclarations | undefined,
+    ): Promise<readonly Readonly<{
+        pluginId: string;
+        scope: StablePluginSettingsScope;
+        status: 'updated' | 'already-absent' | 'unsettled';
+    }>[]>;
 }>;
 
 function unavailableScopedSettingsService(
@@ -1123,6 +1237,7 @@ export function createStablePluginSettingsHost(params: Readonly<{
     }>[];
     recordStore: StablePluginSettingsRecordStore;
     broker: StablePluginEventsBroker;
+    rollbackDeclarations?: PluginSettingsRollbackDeclarations;
     /**
      * Reports a plugin whose declared settings this host could not model, so the
      * caller can tell the operator which plugin lost its Settings service. The
@@ -1150,7 +1265,10 @@ export function createStablePluginSettingsHost(params: Readonly<{
             params.onPluginSettingsUnavailable?.({ pluginId, error });
         }
     }
-    const owner = createStablePluginSettingsOwner({ recordStore: params.recordStore, broker: params.broker });
+    const owner = createStablePluginSettingsOwner({
+        recordStore: params.recordStore,
+        broker: params.broker,
+    });
     return Object.freeze({
         hasPlugin(pluginId) {
             return modelsByPluginId.has(pluginId);
@@ -1168,6 +1286,47 @@ export function createStablePluginSettingsHost(params: Readonly<{
                         : unavailableScopedSettingsService(scope);
                 },
             });
+        },
+        async pruneRetiredRollbackDeclarations(previous) {
+            // Either side being unknown fails closed: absence may not be
+            // interpreted as a retirement transition.
+            if (!previous || !params.rollbackDeclarations) return Object.freeze([]);
+            const results: Array<Readonly<{
+                pluginId: string;
+                scope: StablePluginSettingsScope;
+                status: 'updated' | 'already-absent' | 'unsettled';
+            }>> = [];
+            for (const [pluginId, byScope] of previous) {
+                for (const [scope, retired] of byScope) {
+                    if (retired.supported !== true) continue;
+                    const retained = params.rollbackDeclarations.get(pluginId)?.get(scope);
+                    if (retained?.supported === true && retained.generation === retired.generation) continue;
+                    const model = modelsByPluginId.get(pluginId)?.get(scope);
+                    // Uninstall/no current declaration keeps the Account record
+                    // opaque. A future reinstall must make an explicit decision.
+                    if (!model) continue;
+                    try {
+                        const outcome = await owner.pruneRetiredFields({
+                            model,
+                            retiredFieldIds: retired.fieldIds,
+                            ...(retained?.supported === true
+                                ? { retainedFieldIds: retained.fieldIds }
+                                : {}),
+                        });
+                        results.push(Object.freeze({ pluginId, scope, status: outcome.status }));
+                    } catch (error) {
+                        const code = isPluginError(error) ? error.code : null;
+                        if (code !== 'plugin_settings_revision_conflict'
+                            && code !== 'plugin_settings_outcome_unknown'
+                            && code !== 'plugin_settings_persistence_unavailable') throw error;
+                        // The retirement owner performs no retry or sweep. The
+                        // ordinary CAS owner has truthfully reported that this
+                        // one settlement attempt could not be proven.
+                        results.push(Object.freeze({ pluginId, scope, status: 'unsettled' }));
+                    }
+                }
+            }
+            return Object.freeze(results);
         },
     });
 }

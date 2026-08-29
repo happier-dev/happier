@@ -85,15 +85,6 @@ export function resolveConnectedServiceMaterializedHomeRoot(
   }) ?? null;
 }
 
-export function listConnectedServiceNoRestartRequiredServiceIdsByAgentId(): ReadonlyMap<CatalogAgentId, ReadonlySet<ConnectedServiceId>> {
-  const out = new Map<CatalogAgentId, ReadonlySet<ConnectedServiceId>>();
-  for (const entry of Object.values(AGENTS)) {
-    if (!entry?.connectedServiceNoRestartRequiredServiceIds?.length) continue;
-    out.set(entry.id as CatalogAgentId, new Set(entry.connectedServiceNoRestartRequiredServiceIds));
-  }
-  return out;
-}
-
 export function shouldRestartConnectedServiceOnCredentialUpdate(
   agentId: CatalogAgentId,
   serviceId: ConnectedServiceId,

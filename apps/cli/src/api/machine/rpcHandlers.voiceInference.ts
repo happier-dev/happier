@@ -50,6 +50,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
   voiceInferenceWorker: VoiceInferenceWorkerHandle;
   voiceDiagnostics?: VoiceDiagnosticsController;
 }>): MachineVoiceInferenceRpcRegistration {
+  const worker = params.voiceInferenceWorker;
   const voiceDiagnostics = params.voiceDiagnostics
     ?? createVoiceDiagnosticsController({ happyHomeDir: configuration.happyHomeDir });
   const voiceDiagnosticsRegistration = registerMachineVoiceDiagnosticsRpcHandlers({
@@ -58,7 +59,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
   });
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, async () => {
     try {
-      const status = await params.voiceInferenceWorker.getStatus();
+      const status = await worker.getStatus();
       return DaemonVoiceInferenceStatusResponseSchema.parse({ ok: true, ...status });
     } catch (error) {
       return toVoiceInferenceError(error);
@@ -69,7 +70,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
     try {
       return DaemonVoiceInferenceModelsListResponseSchema.parse({
         ok: true,
-        models: await params.voiceInferenceWorker.listModels(),
+        models: await worker.listModels(),
       });
     } catch (error) {
       return toVoiceInferenceError(error);
@@ -84,14 +85,14 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
     try {
       return parseVoiceInferenceResponse(DaemonVoiceInferenceModelsStatusResponseSchema, {
         ok: true,
-        models: await params.voiceInferenceWorker.getModelsStatus(parsed.data.packIds ?? null),
+        models: await worker.getModelsStatus(parsed.data.packIds ?? null),
       });
     } catch (error) {
       return toVoiceInferenceError(error);
     }
   });
 
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM, async (raw: unknown) => {
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM, async (raw: unknown, context) => {
     const parsed = DaemonVoiceInferenceModelsWarmRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return toVoiceInferenceError(new Error('invalid_parameters'));
@@ -99,11 +100,11 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
     try {
       const packIds = [...new Set(parsed.data.packIds)];
       for (const packId of packIds) {
-        await params.voiceInferenceWorker.warmModelPack(packId);
+        await worker.warmModelPack(packId, context?.signal ?? null);
       }
       return parseVoiceInferenceResponse(DaemonVoiceInferenceModelsWarmResponseSchema, {
         ok: true,
-        models: await params.voiceInferenceWorker.getModelsStatus(packIds),
+        models: await worker.getModelsStatus(packIds),
       });
     } catch (error) {
       return toVoiceInferenceError(error);
@@ -120,7 +121,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
         ok: true,
         // The request's own lifetime bounds the install: a caller that timed out
         // or navigated away must not leave a download running to completion.
-        model: await params.voiceInferenceWorker.installModel({
+        model: await worker.installModel({
           ...parsed.data,
           signal: context?.signal ?? null,
         }),
@@ -136,7 +137,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
     try {
       return parseVoiceInferenceResponse(DaemonVoiceInferenceModelLicenseAcceptResponseSchema, {
         ok: true,
-        model: await params.voiceInferenceWorker.acceptModelPackLicense(parsed.data),
+        model: await worker.acceptModelPackLicense(parsed.data),
       });
     } catch (error) {
       return toVoiceInferenceError(error);
@@ -149,7 +150,7 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
       return toVoiceInferenceError(new Error('invalid_parameters'));
     }
     try {
-      await params.voiceInferenceWorker.removeModel(parsed.data.packId);
+      await worker.removeModel(parsed.data.packId);
       return parseVoiceInferenceResponse(DaemonVoiceInferenceModelsRemoveResponseSchema, { ok: true });
     } catch (error) {
       return toVoiceInferenceError(error);
@@ -158,17 +159,17 @@ export function registerMachineVoiceInferenceRpcHandlers(params: Readonly<{
 
   const voiceInferenceTransfers = registerMachineVoiceInferenceTransferRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
-    voiceInferenceWorker: params.voiceInferenceWorker,
+    voiceInferenceWorker: worker,
     voiceDiagnostics,
   });
   const voiceInferenceStreaming = registerMachineVoiceInferenceStreamingRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
-    voiceInferenceWorker: params.voiceInferenceWorker,
+    voiceInferenceWorker: worker,
     voiceDiagnostics,
   });
   const voiceInferenceTtsStreaming = registerMachineVoiceInferenceTtsStreamingRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
-    voiceInferenceWorker: params.voiceInferenceWorker,
+    voiceInferenceWorker: worker,
     voiceDiagnostics,
   });
 

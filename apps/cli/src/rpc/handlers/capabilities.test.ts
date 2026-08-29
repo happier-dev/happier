@@ -158,24 +158,59 @@ vi.mock('@/terminal/prompts/promptConfirmYesNo', () => ({
 describe('createCliCapabilitiesService installable dependencies', () => {
     afterEach(() => {
         vi.doUnmock('@/agent/catalog/registry');
+        vi.doUnmock('@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter');
+        vi.doUnmock('@/plugins/projection/registry/createResolvedContributionRegistry');
         vi.resetModules();
     });
 
-    it('describes Codex ACP from installable contributions when the backend has no local capability hook', async () => {
+    it('describes external Agent CLI capabilities from the resolved contribution registry without reading the global AGENTS facade', async () => {
         vi.resetModules();
         vi.doMock('@/agent/catalog/registry', async (importOriginal) => {
             const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
             return {
                 ...actual,
-                AGENTS: {
-                    ...actual.AGENTS,
-                    codex: {
-                        ...actual.AGENTS.codex,
-                        getCapabilities: undefined,
+                AGENTS: new Proxy({}, {
+                    ownKeys() {
+                        throw new Error('global AGENTS facade must not be enumerated');
                     },
-                },
+                    get() {
+                        throw new Error('global AGENTS facade must not be read');
+                    },
+                }),
             };
         });
+        vi.doMock('@/capabilities/probes/resolvePreflightSessionControlsProbeAdapter', () => ({
+            resolvePreflightSessionControlsProbeAdapter: async () => null,
+        }));
+        vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => {
+            const agent = Object.freeze({
+                id: 'acmeExternal',
+                provenance: 'external',
+                source: Object.freeze({ kind: 'path' }),
+                definition: Object.freeze({}),
+            });
+            const registry = Object.freeze({
+                agents: Object.freeze([agent]),
+                agentDefinitionsById: new Map([['acmeExternal', agent]]),
+                actions: Object.freeze([]),
+                resources: Object.freeze([]),
+            });
+            return {
+                getResolvedContributionRegistry: () => registry,
+                resolveMergedContributionRegistry: async () => registry,
+            };
+        });
+
+        const { createCliCapabilitiesService: createService } = await import('./capabilities');
+        const service = await createService({ readPluginCatalog: async () => [] });
+        const described = service.describe() as CapabilitiesDescribeResponse;
+
+        expect(described.capabilities.find((capability) => capability.id === 'cli.acmeExternal'))
+            .toMatchObject({ id: 'cli.acmeExternal', kind: 'cli' });
+    });
+
+    it('keeps the request-only Codex ACP vendorRecipe dependency out of executable installable capabilities', async () => {
+        vi.resetModules();
 
         const home = await createTempDir('happier-cli-capabilities-installables-');
         const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
@@ -187,15 +222,16 @@ describe('createCliCapabilitiesService installable dependencies', () => {
             const service = await createService();
             const described = service.describe() as CapabilitiesDescribeResponse;
 
-            expect(described.capabilities.find((capability) => capability.id === 'dep.codex-acp')).toMatchObject({
-                id: 'dep.codex-acp',
+            // dep.gh proves the described set includes executable installables,
+            // so the codex-acp absence below is discriminating rather than
+            // vacuous: its vendorRecipe contribution stays request-only at the
+            // canonical executable-managed-dependency owner and must never be
+            // coerced into an install/upgrade capability.
+            expect(described.capabilities.find((capability) => capability.id === 'dep.gh')).toMatchObject({
+                id: 'dep.gh',
                 kind: 'dep',
-                title: 'Codex ACP',
-                methods: expect.objectContaining({
-                    install: expect.any(Object),
-                    upgrade: expect.any(Object),
-                }),
             });
+            expect(described.capabilities.find((capability) => capability.id === 'dep.codex-acp')).toBeUndefined();
         } finally {
             await removeTempDir(home);
             envScope.restore();
@@ -323,6 +359,59 @@ describe('createCliCapabilitiesService tool.plugins', () => {
                 },
             },
         });
+    });
+
+    it('passes the current CLI invoker into capability-created scaffold scripts and generated skill guidance', async () => {
+        const home = await createTempDir('happier-cli-capabilities-plugin-create-');
+        const targetDir = join(home, 'generated-plugin');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_CLI_INVOKER_NAME']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_CLI_INVOKER_NAME: 'hdev' });
+        reloadConfiguration();
+
+        try {
+            const service = await createCliCapabilitiesService({
+                readPluginCatalog: async () => Object.freeze([]),
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'create',
+                params: {
+                    targetDir,
+                    pluginId: 'acme.capability-created',
+                    displayName: 'Capability Created',
+                },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'create',
+                    pluginId: 'acme.capability-created',
+                    sourceRootPath: targetDir,
+                },
+            });
+
+            const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as Readonly<{
+                scripts: Readonly<Record<string, string>>;
+            }>;
+            const skill = await readFile(join(
+                targetDir,
+                '.agents',
+                'skills',
+                'happier-plugin-authoring',
+                'SKILL.md',
+            ), 'utf8');
+
+            expect(packageJson.scripts.build).toBe('hdev plugins dev build .');
+            expect(packageJson.scripts.typecheck).toBe('hdev plugins dev typecheck .');
+            expect(packageJson.scripts.test).toBe('hdev plugins test .');
+            expect(packageJson.scripts['pack:plugin']).toBe('hdev plugins pack .');
+            expect(skill).toContain('hdev plugins dev');
+            expect(skill).toContain('hdev plugins doctor .');
+            expect(skill).not.toContain('happier plugins dev');
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+        }
     });
 
     it('projects the daemon\'s outstanding decisions and rejoins one by its issued id', async () => {

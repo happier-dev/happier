@@ -390,6 +390,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
                 machineId: params.machineId ?? null,
                 getSnapshot: readAccountSettingsSnapshot,
               }),
+              ...(connectedAccounts ? { connectedAccounts } : {}),
               isCurrent: () => speech.isCurrent() && lifecycle.isCurrent() && isCurrent(),
               isCredentialCurrent,
               signal,
@@ -397,8 +398,14 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
             });
           };
           if (dependencies) {
+            const caller = lease.registry.resolveCurrentPluginMaterializationRef?.(
+              target.pluginId,
+            ) ?? null;
             for (const phase of VOICE_SPEECH_CREDENTIAL_PHASES) {
               if (!hasDeclaredRawSpeechAccess(phase)) continue;
+              if (!caller || caller.pluginId !== target.pluginId) {
+                throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+              }
               rawCredentialMaterializers.set(phase, createDaemonPluginRawCredentialMaterializer({
                 binding: {
                   manifest,
@@ -406,6 +413,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
                   realm: 'daemon',
                   phase,
                   machineId: params.machineId ?? null,
+                  materialization: caller,
                   immutableGenerationId: lifecycle.generation,
                   isRuntimeAuthorityCurrent: () => speech.isCurrent() && lifecycle.isCurrent(),
                 },
@@ -750,7 +758,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         }
         const correspondence = resolveVoiceSpeechSettingsCorrespondence({
           contribution: lease!.contribution,
-          settings: parsed.data.settings,
+          settings: settingsLease.settings,
         });
         let isCredentialAuthorityCurrent = () => true;
         const credentials = settingsLease.resolveCredentials(
@@ -854,7 +862,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     let uploaded: FinalizedUpload | undefined;
     const parsed = DaemonVoiceSpeechTranscribeRequestSchema.safeParse(raw);
     if (!parsed.success) return invalid;
-    const { target, requestId, model, language, mimeType, uploadId } = parsed.data;
+    const { target, requestId, mimeType, uploadId } = parsed.data;
     try {
       lease = await resolveSpeechRuntime(target);
     } catch (error) {
@@ -887,12 +895,16 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         const bytes = new Uint8Array(await readFile(uploaded!.path));
         assertOperationMayPublish(lease!, signal);
         const operation = createSpeechOperationContext(lease!, signal);
-        if (!operation.correspondence.transcribe
-          || operation.correspondence.transcribe.model !== model) {
+        if (!operation.correspondence.transcribe) {
           throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
         }
         const providerResult = await lease!.runtime.transcribe!(
-          { requestId, model, language, mimeType, bytes },
+          {
+            requestId,
+            mimeType,
+            bytes,
+            ...operation.correspondence.transcribe,
+          },
           operation.context,
         );
         assertOperationMayPublish(lease!, signal, operation.isCurrent);
@@ -917,13 +929,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     const {
       target,
       requestId,
-      model,
       input,
-      voiceName,
-      languageCode,
-      format,
-      speakingRate,
-      pitch,
       recipientPublicKeyBase64,
     } = parsed.data;
     try {
@@ -940,13 +946,17 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       return await runBounded(async (signal) => {
         assertOperationMayPublish(lease!, signal);
         const operation = createSpeechOperationContext(lease!, signal);
-        if (!operation.correspondence.synthesize
-          || operation.correspondence.synthesize.model !== model
-          || operation.correspondence.synthesize.voiceName !== voiceName) {
+        const synthesisSettings = operation.correspondence.synthesize;
+        if (!synthesisSettings || synthesisSettings.format === null) {
           throw Object.assign(new Error('provider_settings_invalid'), { code: 'provider_settings_invalid' });
         }
         const providerResult = await lease!.runtime.synthesize!(
-          { requestId, input, model, voiceName, languageCode, format, speakingRate, pitch },
+          {
+            requestId,
+            input,
+            ...synthesisSettings,
+            format: synthesisSettings.format,
+          },
           operation.context,
         );
         assertOperationMayPublish(lease!, signal, operation.isCurrent);

@@ -99,7 +99,6 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'target_semantics_unavailable',
   'descriptor_semantic_invalid',
   'surface_semantic_invalid',
-  'point_reference_invalid',
 ]);
 export type PluginDiagnosticCode = z.infer<typeof PluginDiagnosticCodeSchema>;
 

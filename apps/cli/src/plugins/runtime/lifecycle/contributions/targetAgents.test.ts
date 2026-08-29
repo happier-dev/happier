@@ -1282,7 +1282,6 @@ describe('target Agent runtime registry', () => {
                         primary: 'sessions',
                         capabilities: {
                             sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
-                            executionRuns: { open: ['create'], checkpoint: false, stop: true },
                         },
                     },
                 },
@@ -3249,6 +3248,59 @@ describe('target Agent runtime registry', () => {
         await expect(lease.createRuntime({
             signal: new AbortController().signal,
         })).rejects.toThrow(/host derives finite Runs from sessions/i);
+    });
+
+    it('validates the lazy factory facet against the manifest primary without a second factory call', async () => {
+        const definition = PluginContributesV2Schema.parse({
+            agents: [{
+                id: 'assistant',
+                title: 'Assistant',
+                runtime: { kind: 'custom' },
+                primary: 'sessions',
+                capabilities: {
+                    sessions: {
+                        open: ['create'],
+                        delivery: ['newTurn'],
+                        cancel: true,
+                    },
+                },
+            }],
+        }).agents[0]!;
+        const factory = vi.fn(async () => ({
+            executionRuns: {
+                open: async () => ({
+                    send: async () => ({ status: 'admitted' as const }),
+                    stop: async () => ({ status: 'requested' as const }),
+                    watch: () => ({ dispose() {} }),
+                    dispose() {},
+                }),
+            },
+        })) as unknown as AgentRuntimeFactory;
+        const lease = createTargetAgentRuntimeRegistry({
+            agents: [{
+                id: 'assistant',
+                pluginId: 'happier.agent.fixture',
+                richDefinition: {
+                    provenance: 'external',
+                    definition,
+                },
+            }],
+            activationTargets: [target()],
+            targetRegistrations: [registration({ factory })],
+            isGenerationActive: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            onDuplicate: vi.fn(),
+        }).get('assistant');
+        if (!lease?.hasPrimaryRuntime) throw new Error('Expected a primary Agent runtime lease');
+
+        const signal = new AbortController().signal;
+        const first = lease.createRuntime({ signal });
+        const second = lease.createRuntime({ signal });
+        await Promise.all([
+            expect(first).rejects.toThrow(/Session-primary.*no session runtime/i),
+            expect(second).rejects.toThrow(/Session-primary.*no session runtime/i),
+        ]);
+        expect(factory).toHaveBeenCalledOnce();
     });
 
     it('publishes a manifest-local registration under its canonical Agent id', async () => {

@@ -7,7 +7,7 @@ export type SingleFlightIntervalLoopHandle = Readonly<{
 
 export function startSingleFlightIntervalLoop(args: Readonly<{
   intervalMs: number;
-  task: () => void | Promise<void>;
+  task: () => void | { nextAutomaticRunAfterMs: number } | Promise<void | { nextAutomaticRunAfterMs: number }>;
   onError?: (error: unknown) => void;
   unref?: boolean;
   failureBackoffMs?: number;
@@ -16,6 +16,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
   let stopped = false;
   let inFlight = false;
   let paused = false;
+  let pendingForcedRerun = false;
   let failureCount = 0;
   let nextAutomaticRunAtMs = 0;
   const intervalMs = Math.max(1, Math.floor(args.intervalMs));
@@ -28,15 +29,24 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
   const runOnce = (options: Readonly<{ force?: boolean }> = {}) => {
     if (stopped) return;
     if (paused) return;
-    if (inFlight) return;
-    if (!options.force && failureBackoffMs > 0 && Date.now() < nextAutomaticRunAtMs) return;
+    if (inFlight) {
+      // An explicit trigger while a run is in flight coalesces into exactly
+      // one forced rerun once that run settles; stop/pause prevents it.
+      if (options.force) pendingForcedRerun = true;
+      return;
+    }
+    if (!options.force && Date.now() < nextAutomaticRunAtMs) return;
 
     inFlight = true;
     Promise.resolve()
       .then(() => args.task())
-      .then(() => {
+      .then((result) => {
         failureCount = 0;
-        nextAutomaticRunAtMs = 0;
+        nextAutomaticRunAtMs = typeof result?.nextAutomaticRunAfterMs === 'number'
+          && Number.isFinite(result.nextAutomaticRunAfterMs)
+          && result.nextAutomaticRunAfterMs > 0
+          ? Date.now() + Math.floor(result.nextAutomaticRunAfterMs)
+          : 0;
       })
       .catch((error) => {
         if (failureBackoffMs > 0) {
@@ -49,6 +59,10 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
       })
       .finally(() => {
         inFlight = false;
+        if (pendingForcedRerun) {
+          pendingForcedRerun = false;
+          runOnce({ force: true });
+        }
       });
   };
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
@@ -482,20 +483,28 @@ describe('plugins command daemon mutations', () => {
 
   it('keeps a non-JSON headless review pending without prompting', async () => {
     daemon.requestChange.mockResolvedValue(reviewRequired);
+    // Pending-review guidance names the invoking invoker; pin the documented
+    // default lane instead of inheriting the test runner's argv-derived one.
+    const envScope = createEnvKeyScope(['HAPPIER_CLI_INVOKER_NAME']);
+    envScope.patch({ HAPPIER_CLI_INVOKER_NAME: 'happier' });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await handlePluginsCommand(['install', '/tmp/acme-sample'], {
-      isInteractiveTerminal: () => false,
-    });
+    try {
+      await handlePluginsCommand(['install', '/tmp/acme-sample'], {
+        isInteractiveTerminal: () => false,
+      });
 
-    expect(daemon.requestChange).toHaveBeenCalledWith({
-      kind: 'installPath', locator: '/tmp/acme-sample', development: false,
-    });
-    expect(daemon.confirm).not.toHaveBeenCalled();
-    expect(daemon.decideChange).not.toHaveBeenCalled();
-    expect(error.mock.calls.flat().join('\n')).toContain('happier plugins change status pending-1');
-    expect(error.mock.calls.flat().join('\n')).toContain('happier plugins change approve pending-1');
-    expect(error.mock.calls.flat().join('\n')).toContain('happier plugins change reject pending-1');
+      expect(daemon.requestChange).toHaveBeenCalledWith({
+        kind: 'installPath', locator: '/tmp/acme-sample', development: false,
+      });
+      expect(daemon.confirm).not.toHaveBeenCalled();
+      expect(daemon.decideChange).not.toHaveBeenCalled();
+      expect(error.mock.calls.flat().join('\n')).toContain('happier plugins change status pending-1');
+      expect(error.mock.calls.flat().join('\n')).toContain('happier plugins change approve pending-1');
+      expect(error.mock.calls.flat().join('\n')).toContain('happier plugins change reject pending-1');
+    } finally {
+      envScope.restore();
+    }
   });
 
   it('keeps a first dev install pending, then completes its two present-user decisions by the same id', async () => {

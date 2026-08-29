@@ -16,6 +16,10 @@ type ComposerMediaStageReleaseResponse =
   | Readonly<{ success: true }>
   | Readonly<{ success: false; error: string }>;
 
+type ComposerMediaStageClaimResponse =
+  | Readonly<{ success: true; newlyAcquired: boolean }>
+  | Readonly<{ success: false; error: string; claimedElsewhere?: boolean }>;
+
 type ComposerMediaStageCapabilityResponse = Readonly<{
   success: true;
   available: true;
@@ -33,6 +37,30 @@ function readReleaseRequest(value: unknown): Readonly<{
   const handle = ComposerContentHandleV1Schema.safeParse(record.handle);
   if (!handle.success) return null;
   if (record.claimant === undefined) return { handle: handle.data };
+  if (!record.claimant || typeof record.claimant !== 'object' || Array.isArray(record.claimant)) return null;
+  const claimantRecord = record.claimant as Readonly<Record<string, unknown>>;
+  if (Object.keys(claimantRecord).length !== 2) return null;
+  const composer = ComposerRefV1Schema.safeParse(claimantRecord.composer);
+  const attachmentInstanceId = ComposerInstanceIdSchema.safeParse(claimantRecord.attachmentInstanceId);
+  return composer.success && attachmentInstanceId.success
+    ? { handle: handle.data, claimant: { composer: composer.data, attachmentInstanceId: attachmentInstanceId.data } }
+    : null;
+}
+
+function readClaimRequest(value: unknown): Readonly<{
+  handle: ReturnType<typeof ComposerContentHandleV1Schema.parse>;
+  claimant: ComposerMediaStageClaimant;
+}> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(record);
+  if (!keys.every((key) => key === 'handle' || key === 'claimant') || !Object.hasOwn(record, 'handle')) return null;
+  const handle = ComposerContentHandleV1Schema.safeParse(record.handle);
+  if (!handle.success) return null;
+  // A publication claim always names the host-created attachment identity and
+  // its current Composer location. The store keys custody by the stable
+  // attachment identity; the location remains bounded evidence as the host
+  // carries that identity through New/Pending/Session ownership.
   if (!record.claimant || typeof record.claimant !== 'object' || Array.isArray(record.claimant)) return null;
   const claimantRecord = record.claimant as Readonly<Record<string, unknown>>;
   if (Object.keys(claimantRecord).length !== 2) return null;
@@ -64,6 +92,32 @@ export function registerComposerMediaStageLifecycleRpcHandlers(
         available: true,
         capability: COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
       };
+    },
+  );
+
+  rpcHandlerManager.registerHandler(
+    RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM,
+    async (raw: unknown): Promise<ComposerMediaStageClaimResponse> => {
+      const request = readClaimRequest(raw);
+      if (!request) return { success: false, error: 'Invalid Composer media claim request' };
+
+      try {
+        const claimed = await deps.store.claim({
+          handle: request.handle,
+          executionTarget: request.handle.executionTarget,
+          owner: request.handle.owner,
+          claimant: request.claimant,
+        });
+        if (claimed.status === 'claimed') {
+          return { success: true, newlyAcquired: claimed.newlyAcquired };
+        }
+        if (claimed.reason === 'claimedElsewhere') {
+          return { success: false, error: 'Composer media stage is claimed elsewhere', claimedElsewhere: true };
+        }
+        return { success: false, error: 'Composer media stage is unavailable' };
+      } catch {
+        return { success: false, error: 'Composer media stage is unavailable' };
+      }
     },
   );
 

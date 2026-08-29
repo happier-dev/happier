@@ -2875,17 +2875,14 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     await coordinator.tickOnce();
 
     expect(materializer).toHaveBeenCalledTimes(1);
-    const selection = materializer.mock.calls[0]?.[0].selectionsByServiceId?.get('openai-codex');
+    const selection = materializer.mock.calls[0]?.[0].selectionsByServiceId?.get('happier.agent.codex/openai-codex');
     expect(selection).toMatchObject({
       kind: 'group',
       groupId: 'team',
       activeProfileId: 'primary',
       generation: 2,
-      record: {
-        profileId: 'primary',
-        oauth: { accessToken: 'old-primary-access' },
-      },
     });
+    expect(selection).not.toHaveProperty('record');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -4529,7 +4526,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       const connectedServicesBindingsRaw = {
         v: 1 as const,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected' as const,
             selection: 'profile' as const,
             profileId: 'work',
@@ -4621,7 +4618,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       const connectedServicesBindingsRaw = {
         v: 1 as const,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected' as const,
             selection: 'profile' as const,
             profileId: 'work',

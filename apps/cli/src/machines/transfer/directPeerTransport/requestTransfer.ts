@@ -769,13 +769,17 @@ export async function requestDirectPeerTransferToFile(params: Readonly<{
   fetchFn?: typeof fetch;
   now?: () => number;
   timeoutMs?: number;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
 }>): Promise<TransferPayloadFileResult> {
+  let receivedBytes = 0;
   let sink = await createTransferPayloadFileSink({
     destinationPath: params.destinationPath,
   });
 
   const resetForRetry = async () => {
     await sink.abort().catch(() => undefined);
+    receivedBytes = 0;
+    await params.onProgress?.(0);
     sink = await createTransferPayloadFileSink({
       destinationPath: params.destinationPath,
     });
@@ -787,6 +791,8 @@ export async function requestDirectPeerTransferToFile(params: Readonly<{
       maxInMemoryPayloadBytes: readDirectPeerChunkBytes(),
       onChunk: async (chunk) => {
         await sink.appendChunk(chunk);
+        receivedBytes += chunk.length;
+        await params.onProgress?.(receivedBytes);
       },
       onFinish: async (manifestHash) => await sink.finalize(manifestHash),
       onAbort: async (terminal) => {

@@ -77,6 +77,13 @@ async function expectPackedCurrentUiToolContract(
   const driverRef: { current: VoiceSdkHandleConnectionDriver | null } = { current: null };
   const emittedControls: unknown[] = [];
   const signal = new AbortController().signal;
+  const fixtureEventsBeforeConnection = (
+    globalThis as typeof globalThis & { __HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__?: readonly unknown[] }
+  ).__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__?.length ?? 0;
+  // Provider-managed capture does not exist until createConnection. The public
+  // runtime must retain this exact desired mute and apply it before publishing
+  // the connection instead of rejecting or acknowledging an unapplied value.
+  await runtime.setInputMuted(true);
   const connection = await runtime.createConnection({
     session: {
       config: {
@@ -156,6 +163,10 @@ async function expectPackedCurrentUiToolContract(
   });
 
   expect(connection.kind).toBe('sdk_handle');
+  const startupEvents = (
+    globalThis as typeof globalThis & { __HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__?: readonly unknown[] }
+  ).__HAPPIER_PACKED_VOICE_FIXTURE_EVENTS__?.slice(fixtureEventsBeforeConnection) ?? [];
+  expect(startupEvents).toContainEqual({ kind: 'mediated_input_muted', muted: true });
   const activeDriver = driverRef.current;
   if (!activeDriver) throw new Error('packed_current_ui_driver_missing');
   await activeDriver.open({

@@ -53,7 +53,13 @@ import {
 } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
-import { COMMUNITY_NPM_MARKETPLACE_SOURCE } from '@/plugins/store/marketplace/service';
+import {
+  createMarketplaceIndexService,
+} from '@/plugins/store/marketplace/service';
+import {
+  marketplaceListingMatchesExpected,
+  resolveExactMarketplaceListingForInstall,
+} from '@/plugins/store/marketplace/exactInstall';
 import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
 
 import type {
@@ -174,30 +180,21 @@ async function assertCuratedUpdateSourceBindingCurrent(
   }
 }
 
-async function assertMarketplaceSourceBindingCurrent(
+async function assertMarketplaceListingCurrent(
   happyHomeDir: string,
   request: Extract<PluginChangeRequest, { kind: 'installNpm' }>,
+  service?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>,
 ): Promise<void> {
   const expected = request.expectedMarketplaceListing;
   if (!expected) return;
-  if (expected.source.kind === 'community-npm') {
-    if (
-      expected.source.id !== COMMUNITY_NPM_MARKETPLACE_SOURCE.id
-      || expected.source.sourceUrl !== COMMUNITY_NPM_MARKETPLACE_SOURCE.sourceUrl
-      || expected.registryProfileId !== undefined
-    ) {
-      throw new NpmRegistryProfileOperationError('source_changed');
-    }
-    return;
-  }
-  await assertCuratedUpdateSourceBindingCurrent(
+  const result = await resolveExactMarketplaceListingForInstall({
     happyHomeDir,
-    createPluginCuratedUpdateSourceBinding({
-      id: expected.source.id,
-      sourceUrl: expected.source.sourceUrl,
-      ...(expected.registryProfileId ? { registryProfileId: expected.registryProfileId } : {}),
-    }),
-  );
+    sourceId: expected.source.id,
+    pluginId: expected.pluginId,
+  }, service);
+  if (!result.ok || !marketplaceListingMatchesExpected(expected, result.resolution.listing)) {
+    throw new NpmRegistryProfileOperationError('source_changed');
+  }
 }
 
 function assertStagedCandidateMatchesMarketplaceListing(
@@ -321,6 +318,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
   npmRegistryProfiles?: NpmRegistryProfileArtifactService;
   createClient?: CreateNpmRegistryClient;
+  marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>;
   nowMs?: () => number;
 }>): (
   request: PluginChangeRequest,
@@ -336,7 +334,6 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
       throw new Error(`Plugin change '${request.kind}' is not implemented by the npm candidate adapter`);
     }
     assertMarketplaceRequestMatchesListing(request);
-    await assertMarketplaceSourceBindingCurrent(params.happyHomeDir, request);
     const installedUpdate = context?.installedUpdate;
     const automaticInstalledUpdate = installedUpdate?.updatePolicy === 'automatic';
     const requestedUpdatePolicy = installedUpdate?.updatePolicy
@@ -370,7 +367,9 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
         `Plugin '${installedUpdate.pluginId}' has no reviewed curated source binding for automatic updates`,
       );
     }
-    if (automaticUpdateAuthorized && persistedCuratedUpdateSource) {
+    if (marketplaceCuratedUpdateSource) {
+      await assertCuratedUpdateSourceBindingCurrent(params.happyHomeDir, marketplaceCuratedUpdateSource);
+    } else if (automaticUpdateAuthorized && persistedCuratedUpdateSource) {
       await assertCuratedUpdateSourceBindingCurrent(params.happyHomeDir, persistedCuratedUpdateSource);
     }
 
@@ -477,6 +476,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
           kind: 'npm',
           locator: `${staged.candidate.source.packageName}@${staged.candidate.source.version}`,
           integrity: staged.candidate.source.integrity,
+          integrityBasis: 'expected',
           packageName: staged.candidate.source.packageName,
           registryOrigin: staged.candidate.source.registryOrigin,
           ...(resolvedRegistryProfileId ? { registryProfileId: resolvedRegistryProfileId } : {}),
@@ -543,7 +543,7 @@ export function createDaemonNpmPluginChangePreparer(params: Readonly<{
             return { kind: 'failed' as const, code: 'plugin_install_trust_required' };
           }
           try {
-            await assertMarketplaceSourceBindingCurrent(params.happyHomeDir, request);
+            await assertMarketplaceListingCurrent(params.happyHomeDir, request, params.marketplaceIndexService);
             if (curatedUpdateSource) {
               await assertCuratedUpdateSourceBindingCurrent(
                 params.happyHomeDir,

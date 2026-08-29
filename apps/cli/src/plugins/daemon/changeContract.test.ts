@@ -24,11 +24,30 @@ describe('PluginInstallationReviewSchema', () => {
     expect(PluginInstallationReviewSchema.safeParse({
       ...pathReview,
       source: {
+        kind: 'archive',
+        locator: 'https://example.test/plugin.tgz',
+        integrity: 'sha512-observed-archive-integrity',
+        integrityBasis: 'observed',
+      },
+    }).success).toBe(true);
+    expect(PluginInstallationReviewSchema.safeParse({
+      ...pathReview,
+      source: {
         kind: 'npm',
         locator: '@acme/example@1.0.0',
         integrity: 'sha512-external-source-integrity',
+        integrityBasis: 'expected',
       },
     }).success).toBe(true);
+    expect(PluginInstallationReviewSchema.safeParse({
+      ...pathReview,
+      source: {
+        kind: 'npm',
+        locator: '@acme/example@1.0.0',
+        integrity: 'sha512-observed-npm-integrity',
+        integrityBasis: 'observed',
+      },
+    }).success).toBe(false);
   });
 
   it('admits a bounded newer-version compatibility report and rejects an unbounded one', () => {

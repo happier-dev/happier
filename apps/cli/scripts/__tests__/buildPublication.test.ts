@@ -11,9 +11,9 @@ const packageRoot = resolve(process.cwd());
 
 describe('CLI publication build', () => {
   it('compiles the shared closure in artifact mode before the dist build it fingerprints', () => {
-    // The shared build regenerates the bundled plugin inventory
-    // (generatedBundledPluginArtifacts.ts), which is an input to the dist runtime-input
-    // fingerprint that packTarball.mjs asserts. Building dist first records a fingerprint
+    // The shared build regenerates the runtime artifact records plus the build-owned
+    // generatedBundledPluginSourceIntegrities.json inventory. The runtime records are an
+    // input to the dist fingerprint that packTarball.mjs asserts. Building dist first records a fingerprint
     // the regeneration immediately invalidates; running the shared build in live mode
     // keeps a failing plugin's last-green package and packs bytes current source cannot
     // produce.

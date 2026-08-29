@@ -7,14 +7,26 @@ import {
   bundleInstalledPackageWithRuntimeDependencies as canonicalBundleInstalledPackageWithRuntimeDependencies,
 } from '../../../../packages/cli-common/src/workspaces/index';
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
-import { packTarball as packTarballImpl } from '../packTarball.mjs';
+import { packTarball as packTarballImpl, resolveCliPackManagedRuntimeStaging } from '../packTarball.mjs';
 
 const loadCliCommonWorkspacesModuleFromSource = async () => ({
   bundleInstalledPackageWithRuntimeDependencies:
     canonicalBundleInstalledPackageWithRuntimeDependencies,
 });
 
-const packTarball = (options: Parameters<typeof packTarballImpl>[0]) => packTarballImpl({
+const packTarball = (options: Parameters<typeof packTarballImpl>[0]) => {
+  // Artifact-mode metadata is carried by package.json. Most cases intentionally
+  // use an otherwise-empty synthetic package root because they exercise command
+  // and path behavior, so the shared fixture supplies the minimum real carrier.
+  const packageJsonPath = join(options.packageRoot, 'package.json');
+  if (!existsSync(packageJsonPath)) {
+    writeFileSync(packageJsonPath, `${JSON.stringify({
+      name: '@happier-dev/cli-pack-test',
+      version: '0.0.0',
+      files: ['package.json'],
+    })}\n`, 'utf8');
+  }
+  return packTarballImpl({
   ...options,
   // Synthetic package roots in this suite are not nested beneath a repository.
   // Keep the production lock owner active, but give it a fixture-owned path
@@ -28,7 +40,8 @@ const packTarball = (options: Parameters<typeof packTarballImpl>[0]) => packTarb
   assertPublicationClosureIdentityImpl: () => undefined,
   loadCliCommonWorkspacesModuleImpl:
     options.loadCliCommonWorkspacesModuleImpl ?? loadCliCommonWorkspacesModuleFromSource,
-});
+  });
+};
 
 const noopBundleWorkspaceDeps = async () => undefined;
 
@@ -125,6 +138,170 @@ function createArtifactWorkspaceManifestAdmissionAttempt({
 }
 
 describe('packTarball (npmExecpath)', () => {
+  it('classifies managed runtime staging from the one runtime-asset manifest owner', () => {
+    const archiveManifest = [
+      { archiveName: 'happier-cliproxyapi-managed-arm64-darwin.tar.gz' },
+      { archiveName: 'happier-cliproxyapi-managed-x64-linux.tar.gz' },
+    ];
+    const stagingFor = (stagedNames) => resolveCliPackManagedRuntimeStaging({
+      archivesDir: '/tools/archives',
+      archiveManifest,
+      exists: () => true,
+      readdir: () => stagedNames,
+    });
+
+    expect(stagingFor(['difftastic-arm64-darwin.tar.gz'])).toMatchObject({ mode: 'source-only' });
+    expect(stagingFor([])).toMatchObject({ mode: 'source-only' });
+    expect(stagingFor([
+      'happier-cliproxyapi-managed-riscv64-linux.tar.gz',
+    ])).toMatchObject({
+      mode: 'incomplete',
+      extraArchiveNames: ['happier-cliproxyapi-managed-riscv64-linux.tar.gz'],
+    });
+    expect(stagingFor([
+      'happier-cliproxyapi-managed-arm64-darwin.tar.gz',
+      'checksums.runtime-assets.sha256',
+    ])).toMatchObject({
+      mode: 'incomplete',
+      missingArchiveNames: ['happier-cliproxyapi-managed-x64-linux.tar.gz'],
+    });
+    expect(stagingFor([
+      'happier-cliproxyapi-managed-arm64-darwin.tar.gz',
+      'happier-cliproxyapi-managed-x64-linux.tar.gz',
+    ])).toMatchObject({ mode: 'incomplete', checksumManifestPresent: false });
+    expect(stagingFor([
+      'happier-cliproxyapi-managed-arm64-darwin.tar.gz',
+      'happier-cliproxyapi-managed-x64-linux.tar.gz',
+      'happier-cliproxyapi-managed-riscv64-linux.tar.gz',
+      'checksums.runtime-assets.sha256',
+    ])).toMatchObject({
+      mode: 'incomplete',
+      extraArchiveNames: ['happier-cliproxyapi-managed-riscv64-linux.tar.gz'],
+    });
+    expect(stagingFor([
+      'happier-cliproxyapi-managed-arm64-darwin.tar.gz',
+      'happier-cliproxyapi-managed-x64-linux.tar.gz',
+      'checksums.runtime-assets.sha256',
+      'difftastic-x64-linux.tar.gz',
+    ])).toMatchObject({ mode: 'complete' });
+  });
+
+  it('marks a source-only artifact with the unavailable CPX managed facet and performs no publication assertion', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      happier: { retainedFact: true },
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+    })}\n`, 'utf8');
+    const publicationAssertion = vi.fn();
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+      const packageJson = JSON.parse(readFileSync(join(options.cwd, 'package.json'), 'utf8'));
+      expect(packageJson.happier).toMatchObject({
+        retainedFact: true,
+        managedRuntimePublication: {
+          v: 1,
+          mode: 'source-only',
+          unavailableProviderRefs: [{
+            pluginId: 'happier.provider.cliproxyapi',
+            providerId: 'cliproxyapi',
+          }],
+        },
+      });
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    const result = await packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: async () => undefined,
+      spawnSync: spawn,
+      env: {},
+      assertCliManagedRuntimePublicationImpl: publicationAssertion,
+    });
+
+    expect(result.managedRuntimePublication).toBe('source-only');
+    expect(publicationAssertion).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when managed runtime staging is partial', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(join(packageRoot, 'tools', 'archives'), { recursive: true });
+    writeFileSync(join(packageRoot, 'tools', 'archives', 'happier-cliproxyapi-managed-arm64-darwin.tar.gz'), 'partial', 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'tools/archives', 'package.json'],
+    })}\n`, 'utf8');
+    const spawn = vi.fn();
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: async () => undefined,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/Incomplete managed CLI runtime staging[\s\S]*missing archives:/u);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('binds the managed-runtime publication claim from the packed bytes when staging is complete', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(join(packageRoot, 'tools', 'archives'), { recursive: true });
+    for (const archiveName of [
+      'happier-cliproxyapi-managed-arm64-darwin.tar.gz',
+      'happier-cliproxyapi-managed-x64-darwin.tar.gz',
+      'happier-cliproxyapi-managed-arm64-linux.tar.gz',
+      'happier-cliproxyapi-managed-x64-linux.tar.gz',
+      'happier-cliproxyapi-managed-x64-win32.tar.gz',
+      'checksums.runtime-assets.sha256',
+    ]) {
+      writeFileSync(join(packageRoot, 'tools', 'archives', archiveName), archiveName, 'utf8');
+    }
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'tools/archives', 'package.json'],
+    })}\n`, 'utf8');
+    const publicationChecks = [];
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+      expect(existsSync(join(options.cwd, 'tools', 'archives', 'checksums.runtime-assets.sha256'))).toBe(true);
+      expect(JSON.parse(readFileSync(join(options.cwd, 'package.json'), 'utf8')))
+        .toMatchObject({
+          happier: {
+            managedRuntimePublication: {
+              v: 1, mode: 'complete', unavailableProviderRefs: [],
+            },
+          },
+        });
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    const result = await packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: async () => undefined,
+      spawnSync: spawn,
+      env: {},
+      assertCliManagedRuntimePublicationImpl(tarballPath: string) {
+        publicationChecks.push(tarballPath);
+      },
+    });
+
+    expect(publicationChecks).toEqual([result.tarballPath]);
+    expect(result.managedRuntimePublication).toBe('complete');
+  });
+
   it('rejects a CLI dist whose recorded runtime inputs do not match the current source tree', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');

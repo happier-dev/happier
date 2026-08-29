@@ -611,4 +611,52 @@ describe('executeExternalAction', () => {
 
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it('validates the envelope before daemon Action-id admission for a syntactically valid unknown Action', async () => {
+    const execute = vi.fn();
+    const resolveTarget = vi.fn<ResolveExternalActionTarget>();
+
+    await expect(executeExternalAction({
+      actionId: 'unknown.public.action',
+      envelope: { v: 1, input: { nonFinite: Number.POSITIVE_INFINITY } },
+      principal,
+      currentMachineId: 'machine-1',
+      resolveTarget,
+      executor: { execute },
+    })).resolves.toEqual({
+      kind: 'invalid_request',
+      errorCode: 'invalid_envelope',
+    });
+
+    expect(resolveTarget).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('projects target-resolution faults as target_unavailable without leaking a route exception', async () => {
+    const execute = vi.fn();
+    const resolveTarget = vi.fn<ResolveExternalActionTarget>(async () => {
+      throw new Error('Session ownership lookup failed');
+    });
+
+    await expect(executeExternalAction({
+      actionId: 'session.spawn_new',
+      envelope: { v: 1, requestId: 'target-resolution-fault', input: {} },
+      principal,
+      currentMachineId: 'machine-1',
+      resolveTarget,
+      executor: { execute },
+    })).resolves.toMatchObject({
+      kind: 'response',
+      response: {
+        requestId: 'target-resolution-fault',
+        execution: {
+          ok: false,
+          errorCode: 'target_unavailable',
+          error: 'target_unavailable',
+        },
+      },
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

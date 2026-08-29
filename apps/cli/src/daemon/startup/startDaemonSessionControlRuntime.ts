@@ -26,6 +26,7 @@ import {
 } from '@/api/client/qualifiedConnectedAccountApi';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
+    ComposerRefV1Schema,
     ConnectedServiceBindingsV1Schema,
     ConnectedAccountServiceKeySchema,
     ConnectedServiceIdSchema,
@@ -43,6 +44,7 @@ import {
     writeConnectedServiceMaterializationIdentityV1ToMetadata,
     assessProviderEndpoint,
     type AccountSettings,
+    type ComposerRefV1,
     type ConnectedAccountServiceKey,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceCredentialRevisionV1,
@@ -68,12 +70,14 @@ import {
     PluginUiArtifactDigestV1Schema,
     verifyPluginUiArtifactFileSetIntegrityV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     resolveAgentIdFromSessionMetadata,
     resolveVendorResumeIdFromSessionMetadata,
     type TerminalHostAdapter,
 } from '@happier-dev/agents';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
     authorizeDaemonSessionModelTransitionProviderTarget,
@@ -186,7 +190,10 @@ import {
 import { isValidConnectedServiceRunMaterializeToken } from '../connectedServices/runs/capabilityToken';
 import { createExecutionRunConnectedServicesBridge } from '../connectedServices/runs/executionRunMaterialization';
 import { isExecutionRunConnectedServiceGenerationCurrent } from '../connectedServices/runs/executionRunGenerationAdmission';
-import { rehydrateLiveExecutionRunTargets } from '../connectedServices/runs/rehydrateExecutionRunTargets';
+import {
+    reattestRunningExecutionRunConnectedServices,
+    rehydrateLiveExecutionRunTargets,
+} from '../connectedServices/runs/rehydrateExecutionRunTargets';
 import { createAdoptedExecutionRunRootCleanup } from '../connectedServices/runs/createAdoptedExecutionRunRootCleanup';
 import { resolveConnectedServiceMaterializedRootDir } from '../connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import {
@@ -1286,6 +1293,36 @@ async function persistSessionConnectedServiceBindings(input: Readonly<{
                 : nextMetadata;
         },
     });
+}
+
+function stripComposerSourceRefPrivateMetaField(meta: Record<string, unknown>): Record<string, unknown> {
+    const {
+        [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: _discardedSourceComposerRef,
+        ...metaWithoutPrivateSourceRef
+    } = meta;
+    return metaWithoutPrivateSourceRef;
+}
+
+function readComposerSourceRefAndStripPrivateMetaField(meta: Record<string, unknown>): Readonly<{
+    meta: Record<string, unknown>;
+    sourceComposerRef?: ComposerRefV1;
+}> {
+    const rawSourceComposerRef = meta[COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1];
+    const metaWithoutPrivateSourceRef = stripComposerSourceRefPrivateMetaField(meta);
+    if (rawSourceComposerRef === undefined) {
+        return { meta: metaWithoutPrivateSourceRef };
+    }
+    const parsed = ComposerRefV1Schema.safeParse(rawSourceComposerRef);
+    if (!parsed.success) {
+        throw new PluginError({
+            code: 'composer_attachment_source_ref_invalid',
+            message: 'Composer attachment finalization received an invalid source Composer reference',
+        });
+    }
+    return {
+        meta: metaWithoutPrivateSourceRef,
+        sourceComposerRef: parsed.data,
+    };
 }
 
 async function publishProviderAccountUsageRecordIdToSessionMetadata(input: Readonly<{
@@ -2734,26 +2771,29 @@ export async function startDaemonSessionControlRuntime(
         projection: ConnectedServiceProjectionSnapshot | null,
     ): string | null => {
         if (!projection) return null;
-        const serviceId = resolveFirstPartyConnectedAccountServiceId(resolved.account.service);
-        if (!serviceId) return null;
+        const legacyServiceId = resolveFirstPartyConnectedAccountServiceId(resolved.account.service);
+        const serviceKey = legacyServiceId === null
+            ? null
+            : readBuiltInLegacyConnectedAccountServiceKeyIngress(legacyServiceId);
+        if (serviceKey === null) return null;
         if (!resolved.group) {
             const revision = projection.resolveCredentialRevision(
-                serviceId,
+                serviceKey,
                 resolved.account.accountId,
             );
             return revision
-                ? JSON.stringify([serviceId, resolved.account.accountId, revision])
+                ? JSON.stringify([serviceKey, resolved.account.accountId, revision])
                 : null;
         }
         const group = projection.groups.find((candidate) => (
-            candidate.serviceId === serviceId
+            candidate.serviceId === serviceKey
             && candidate.groupId === resolved.group?.groupId
         ));
         if (!group?.activeProfileId) return null;
-        const revision = projection.resolveCredentialRevision(serviceId, group.activeProfileId);
+        const revision = projection.resolveCredentialRevision(serviceKey, group.activeProfileId);
         return revision
             ? JSON.stringify([
-                serviceId,
+                serviceKey,
                 group.activeProfileId,
                 revision,
                 group.groupId,
@@ -3098,9 +3138,12 @@ export async function startDaemonSessionControlRuntime(
                     return true;
                 }
                 if (!snapshot) return false;
-                const serviceId = resolveFirstPartyConnectedAccountServiceId(account.service);
-                return serviceId !== null
-                    && snapshot.resolveCredentialRevision(serviceId, account.accountId)
+                const legacyServiceId = resolveFirstPartyConnectedAccountServiceId(account.service);
+                const serviceKey = legacyServiceId === null
+                    ? null
+                    : readBuiltInLegacyConnectedAccountServiceKeyIngress(legacyServiceId);
+                return serviceKey !== null
+                    && snapshot.resolveCredentialRevision(serviceKey, account.accountId)
                         === credentialRevision;
             },
         });
@@ -4554,7 +4597,7 @@ export async function startDaemonSessionControlRuntime(
     };
     const resolvePredictiveSoftSwitchModeForInput = async (input: Readonly<{
         sessionId: string;
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         groupId: string;
         activeProfileId: string;
         agentId?: string | null;
@@ -11744,13 +11787,29 @@ export async function startDaemonSessionControlRuntime(
                                 && !Array.isArray(transformedMeta)
                                 ? transformedMeta as Record<string, unknown>
                                 : null;
-                            const meta = preserveComposerAttachmentSelectionAcrossSessionInputTransformV1({
+                            const preservedMeta = preserveComposerAttachmentSelectionAcrossSessionInputTransformV1({
                                 sourceMeta: sourceMetaRecord,
                                 transformedMeta: transformedMetaRecord,
                             });
-                            if (!meta) {
-                                payload = transformed;
+                            const sourceRefRead = readComposerSourceRefAndStripPrivateMetaField(sourceMetaRecord);
+                            if (!preservedMeta) {
+                                if (
+                                    transformedMetaRecord
+                                    && Object.prototype.hasOwnProperty.call(
+                                        transformedMetaRecord,
+                                        COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1,
+                                    )
+                                ) {
+                                    payload = Object.freeze({
+                                        ...transformed,
+                                        meta: stripComposerSourceRefPrivateMetaField(transformedMetaRecord),
+                                    });
+                                } else {
+                                    payload = transformed;
+                                }
                             } else {
+                                const meta = stripComposerSourceRefPrivateMetaField(preservedMeta);
+                                const sourceComposerRef = sourceRefRead.sourceComposerRef;
                                 const selected =
                                     validateSessionStructuredInputIngressV1({
                                         meta,
@@ -11832,6 +11891,7 @@ export async function startDaemonSessionControlRuntime(
                                             meta,
                                             attachments:
                                                 preparedDraftAttachments,
+                                            ...(sourceComposerRef ? { sourceComposerRef } : {}),
                                             logger,
                                         });
                                     try {
@@ -12097,7 +12157,10 @@ export async function startDaemonSessionControlRuntime(
                         managedProviderAuthority?.bootstrap ?? null;
                     const isExactAgentContribution =
                         projection.contributionId
-                            === `${retainedAgent.pluginId}/agents/${retainedAgent.localAgentId}`;
+                            === resolveAgentContributionQualifiedId({
+                                pluginId: retainedAgent.pluginId,
+                                localId: retainedAgent.localAgentId,
+                            });
                     if (
                         (
                             !managedProviderBootstrap
@@ -13085,8 +13148,33 @@ export async function startDaemonSessionControlRuntime(
         // Execution-run bridge endpoints accept only the scoped run-materialize capability token.
         verifyRunMaterializeToken: (provided) => isValidConnectedServiceRunMaterializeToken(provided, controlToken),
         materializeConnectedServicesForExecutionRun: executionRunConnectedServicesBridge.materialize,
-        checkConnectedServicesGenerationForExecutionRun: async ({ runId, runnerPid }) => {
-            const target = connectedServiceRuntimeRegistry.getRunTargetByRunKey(runId);
+        checkConnectedServicesGenerationForExecutionRun: async ({
+            runId,
+            runnerPid,
+            registration,
+        }) => {
+            let target = connectedServiceRuntimeRegistry.getRunTargetByRunKey(runId);
+            if (!target && registration) {
+                await reattestRunningExecutionRunConnectedServices({
+                    markers: listExecutionRunMarkersForRehydration,
+                    runId,
+                    runnerPid,
+                    registration,
+                    adopt:
+                        executionRunConnectedServicesBridge
+                            .adoptLiveMaterialization,
+                    proveRunnerLive: async (marker) => {
+                        if (marker.happySessionId === null) return false;
+                        const tracked = params.pidToTrackedSession.get(marker.pid);
+                        if (!tracked || tracked.happySessionId !== marker.happySessionId) return false;
+                        return await isSessionRunnerActiveInDaemon({
+                            sessionId: marker.happySessionId,
+                            trackedSessions: [tracked],
+                        });
+                    },
+                }).catch(() => false);
+                target = connectedServiceRuntimeRegistry.getRunTargetByRunKey(runId);
+            }
             if (!target || target.pid !== runnerPid || target.materializationKey !== runId) {
                 return { ok: true as const, current: false };
             }

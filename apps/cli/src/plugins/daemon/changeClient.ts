@@ -533,9 +533,11 @@ export function formatPluginInstallationReviewForTerminal(
     `Source: ${review.source.locator}`,
     `Update channel: ${formatUpdateChannel(review.updateChannel)}`,
     'Verification signals:',
-    `- Source integrity: ${'integrity' in review.source && review.source.integrity
-      ? 'Provided and matched staged bytes'
-      : 'Not provided'}`,
+    `- Source integrity: ${review.source.kind === 'path'
+      ? 'None'
+      : review.source.integrityBasis === 'expected'
+        ? 'Matched expected integrity'
+        : 'Observed from staged bytes; not independently verified'}`,
     '- Manifest, contributions, and UI artifact declarations: validated in the staged candidate',
     `- Signature: ${formatSignature(review.signature)}`,
     `- Provenance: ${formatProvenance(review.provenance)}`,

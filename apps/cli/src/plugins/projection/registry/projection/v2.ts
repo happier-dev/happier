@@ -23,6 +23,7 @@ import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed'
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { PluginFinalPolicyCurrentGeneration } from '@/plugins/runtime/policy/facts';
 import { projectTargetActionPresentUserAuthorizationFacts } from '@/plugins/runtime/policy/evaluate';
+import type { PluginSettingsRollbackDeclarations } from '@/plugins/settings/settingsRollbackDeclarations';
 import type {
     ResolvedActionContribution,
     ResolvedContributionRegistry,
@@ -795,6 +796,7 @@ function buildResourcesById(
 
 function buildSettingsById(
     registry: ResolvedContributionRegistry,
+    settingsRollbackDeclarationsByPluginId?: PluginSettingsRollbackDeclarations,
 ): PluginProjectionV2['settingsById'] {
     const settingsById: PluginProjectionV2['settingsById'] = {};
     let declarations;
@@ -816,10 +818,14 @@ function buildSettingsById(
         );
     }
     for (const declaration of declarations) {
+        const rollback = settingsRollbackDeclarationsByPluginId
+            ?.get(declaration.pluginId)
+            ?.get(declaration.definition.scope);
         settingsById[qualifiedProjectionKey(declaration.pluginId, declaration.definition.id)] =
             projectPluginSettingsContributionV2({
                 pluginId: declaration.pluginId,
                 definition: declaration.definition,
+                ...(rollback ? { rollback } : {}),
             });
     }
     return settingsById;
@@ -835,6 +841,13 @@ export function buildPluginProjectionV2(params: Readonly<{
     pluginUiHostRuntime?: PluginUiProjectionHostRuntimeContext;
     /** Exact machine materialization facts for the same registry lease. */
     pluginExecutionOriginsByPluginId?: Readonly<Record<string, PluginMachineExecutionOriginV1>>;
+    /**
+     * The one supported rollback Settings declaration per (pluginId, scope)
+     * from the same registry lease; it projects onto each Settings entry so
+     * every consumer sees identical retention facts for bundled and external
+     * plugins alike.
+     */
+    settingsRollbackDeclarationsByPluginId?: PluginSettingsRollbackDeclarations;
     /** Read-only current manifest Action policy owner for the same runtime lease. */
     resolveActionPresentUserGatePolicy?: (
         pluginId: string,
@@ -913,7 +926,7 @@ export function buildPluginProjectionV2(params: Readonly<{
         toolsById: buildToolsById(params.registry),
         commandsById: buildCommandsById(params.registry),
         resourcesById: buildResourcesById(params.registry),
-        settingsById: buildSettingsById(params.registry),
+        settingsById: buildSettingsById(params.registry, params.settingsRollbackDeclarationsByPluginId),
         familiesById: buildPluginProjectionFamiliesByIdV2({
             registry: params.registry,
             generation: params.generation,

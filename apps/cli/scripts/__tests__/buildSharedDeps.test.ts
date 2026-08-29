@@ -39,6 +39,16 @@ const cliScriptsSourceDir = resolve(dirname(fileURLToPath(import.meta.url)), '..
 const workspaceScriptsSourceDir = resolve(cliScriptsSourceDir, '..', '..', '..', 'scripts', 'workspaces');
 const sourceRepoRoot = resolve(cliScriptsSourceDir, '..', '..', '..');
 
+function writeBundledPluginSourceIntegrityInventory(
+  inventoryPath: string,
+  integrities: readonly unknown[],
+): void {
+  mkdirSync(dirname(inventoryPath), { recursive: true });
+  writeFileSync(inventoryPath, `${JSON.stringify({
+    BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: integrities,
+  }, null, 2)}\n`, 'utf8');
+}
+
 function materializeWorkspaceRuntimeDependencyOwner(repoRoot: string): void {
   const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
   mkdirSync(cliCommonDir, { recursive: true });
@@ -395,7 +405,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 5,
+        version: 6,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -992,7 +1002,7 @@ describe('buildSharedDeps', () => {
 
       const inventoryPath = resolve(
         repoRoot,
-        'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+        'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
       );
       mkdirSync(dirname(inventoryPath), { recursive: true });
       const inventoryPayload = JSON.stringify([{
@@ -1003,10 +1013,7 @@ describe('buildSharedDeps', () => {
           digest: `sha256:${createHash('sha256').update(Buffer.from(publishedBundle, 'utf8')).digest('hex')}`,
         }],
       }]);
-      writeFileSync(inventoryPath, [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${inventoryPayload} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+      writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
 
       const builtWorkspaceNames: string[] = [];
       const publishBundledPluginArtifacts = vi.fn(async () => true);
@@ -1076,7 +1083,7 @@ describe('buildSharedDeps', () => {
 
       const inventoryPath = resolve(
         repoRoot,
-        'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+        'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
       );
       mkdirSync(dirname(inventoryPath), { recursive: true });
       const inventoryPayload = JSON.stringify([{
@@ -1087,10 +1094,7 @@ describe('buildSharedDeps', () => {
           digest: `sha256:${createHash('sha256').update(Buffer.from(publishedBundle, 'utf8')).digest('hex')}`,
         }],
       }]);
-      writeFileSync(inventoryPath, [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${inventoryPayload} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+      writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
 
       const builtWorkspaceNames: string[] = [];
       const publishBundledPluginArtifacts = vi.fn(async () => true);
@@ -1158,7 +1162,7 @@ describe('buildSharedDeps', () => {
 
       const inventoryPath = resolve(
         repoRoot,
-        'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+        'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
       );
       mkdirSync(dirname(inventoryPath), { recursive: true });
       // The compiler-owned `dist/index.js` matches its last publication exactly. Only the
@@ -1178,10 +1182,7 @@ describe('buildSharedDeps', () => {
           },
         ],
       }]);
-      writeFileSync(inventoryPath, [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${inventoryPayload} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+      writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
 
       const publishBundledPluginArtifacts = vi.fn(async () => true);
       await syncSharedDepsForSourceDev({
@@ -1229,7 +1230,7 @@ describe('buildSharedDeps', () => {
 
     const inventoryPath = resolve(
       repoRoot,
-      'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+      'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
     );
     mkdirSync(dirname(inventoryPath), { recursive: true });
     const inventoryPayload = JSON.stringify([{
@@ -1247,10 +1248,7 @@ describe('buildSharedDeps', () => {
         },
       ],
     }]);
-    writeFileSync(inventoryPath, [
-      `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${inventoryPayload} satisfies readonly unknown[]);`,
-      '',
-    ].join('\n'), 'utf8');
+    writeBundledPluginSourceIntegrityInventory(inventoryPath, JSON.parse(inventoryPayload));
   };
 
   const writeHoistedInventoryFixtureRepo = (repoRoot: string): void => {
@@ -1291,16 +1289,9 @@ describe('buildSharedDeps', () => {
 
     const inventoryPath = resolve(
       repoRoot,
-      'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+      'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
     );
-    mkdirSync(dirname(inventoryPath), { recursive: true });
-    writeFileSync(inventoryPath, [
-      `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${JSON.stringify([{
-        packageName,
-        files,
-      }])} satisfies readonly unknown[]);`,
-      '',
-    ].join('\n'), 'utf8');
+    writeBundledPluginSourceIntegrityInventory(inventoryPath, [{ packageName, files }]);
   };
 
   const runSourceDevRuntimeClosure = async (repoRoot: string, publishReadiness: () => unknown) => (
@@ -1339,7 +1330,7 @@ describe('buildSharedDeps', () => {
       const publishReadiness = vi.fn(() => ({ stamped: true }));
 
       await expect(runSourceDevRuntimeClosure(repoRoot, publishReadiness)).rejects.toThrow(
-        /Bundled plugin files disagree with generatedBundledPluginArtifacts\.ts/u,
+        /Bundled plugin files disagree with generatedBundledPluginSourceIntegrities\.json/u,
       );
 
       // The outcome that matters: no daemon-bootable readiness stamp was published.
@@ -1391,7 +1382,7 @@ describe('buildSharedDeps', () => {
     const repoRoot = createTempDirSync('happier-cli-plugin-last-green-');
     const inventoryPath = resolve(
       repoRoot,
-      'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+      'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
     );
     const installedRoot = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev');
     const preparedRoot = resolve(repoRoot, 'prepared');
@@ -1479,15 +1470,11 @@ describe('buildSharedDeps', () => {
         failedCurrentBytes,
       );
 
-      mkdirSync(dirname(inventoryPath), { recursive: true });
-      const inventory = JSON.stringify([
+      const inventory = [
         artifact('@happier-dev/plugins-healthy', healthyCurrentBytes),
         artifact('@happier-dev/plugins-failed', failedLastGreenBytes),
-      ]);
-      writeFileSync(inventoryPath, [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${inventory} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+      ];
+      writeBundledPluginSourceIntegrityInventory(inventoryPath, inventory);
 
       const syncedWorkspaceNames: string[] = [];
       const publishReadiness = vi.fn(() => ({ stamped: false, reason: 'stale-plugin-source' }));
@@ -1542,12 +1529,9 @@ describe('buildSharedDeps', () => {
       // A failed package without an inventory entry has no provable last-green.
       // The aggregate verifier enumerates inventory entries, so the per-package
       // admission owner must prevent readiness rather than silently omitting it.
-      writeFileSync(inventoryPath, [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${JSON.stringify([
-          artifact('@happier-dev/plugins-healthy', healthyCurrentBytes),
-        ])} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+      writeBundledPluginSourceIntegrityInventory(inventoryPath, [
+        artifact('@happier-dev/plugins-healthy', healthyCurrentBytes),
+      ]);
       publishReadiness.mockClear();
 
       await expect(main(runtimeOptions)).rejects.toThrow(
@@ -1568,7 +1552,7 @@ describe('buildSharedDeps', () => {
     const repoRoot = createTempDirSync('happier-cli-plugin-artifact-build-');
     const inventoryPath = resolve(
       repoRoot,
-      'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+      'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
     );
     const installedRoot = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev');
     const lastGreenBytes = 'export const broken = "last-green";\n';
@@ -1623,13 +1607,9 @@ describe('buildSharedDeps', () => {
         '@happier-dev/plugins-broken',
         lastGreenBytes,
       );
-      mkdirSync(dirname(inventoryPath), { recursive: true });
-      writeFileSync(inventoryPath, [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${JSON.stringify([
-          artifact('@happier-dev/plugins-broken', lastGreenBytes),
-        ])} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+      writeBundledPluginSourceIntegrityInventory(inventoryPath, [
+        artifact('@happier-dev/plugins-broken', lastGreenBytes),
+      ]);
 
       const forcedBuildSelections: Array<{ names: string[]; force: boolean }> = [];
       const publishReadiness = vi.fn(() => ({ stamped: true }));
@@ -2338,7 +2318,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 5,
+        version: 6,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -2422,16 +2402,10 @@ describe('buildSharedDeps', () => {
         byteLength: Buffer.byteLength(bytes, 'utf8'),
         digest: `sha256:${createHash('sha256').update(Buffer.from(bytes, 'utf8')).digest('hex')}`,
       }));
-      writeFileSync(resolve(
+      writeBundledPluginSourceIntegrityInventory(resolve(
         repoRoot,
-        'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
-      ), [
-        `export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(${JSON.stringify([{
-          packageName,
-          files,
-        }])} satisfies readonly unknown[]);`,
-        '',
-      ].join('\n'), 'utf8');
+        'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
+      ), [{ packageName, files }]);
 
       const signature = computeSourceDevSharedDepsSignature({
         repoRoot,
@@ -2440,7 +2414,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 5,
+        version: 6,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -2520,7 +2494,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 5,
+        version: 6,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -2980,7 +2954,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 5,
+        version: 6,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -3049,7 +3023,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 5,
+        version: 6,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -4070,6 +4044,98 @@ describe('buildSharedDeps', () => {
     }
   });
 
+  it('refreshes bundled runtime dependencies for the requested host in the same call that rebuilds its dependency', async () => {
+    const repoRoot = createTempDirSync('happy-cli-dev-sync-rebuilt-runtime-dependency-');
+    try {
+      const cliDir = resolve(repoRoot, 'apps', 'cli');
+      const protocolDir = resolve(repoRoot, 'packages', 'protocol');
+      const pluginSdkDir = resolve(repoRoot, 'packages', 'plugin-sdk');
+      const protocolSourcePath = resolve(protocolDir, 'src', 'index.ts');
+      const protocolDistPath = resolve(protocolDir, 'dist', 'index.js');
+      const pluginSdkSourcePath = resolve(pluginSdkDir, 'src', 'index.ts');
+      const pluginSdkDistPath = resolve(pluginSdkDir, 'dist', 'index.js');
+      mkdirSync(resolve(cliDir, 'node_modules', 'tweetnacl'), { recursive: true });
+      mkdirSync(resolve(protocolDir, 'src'), { recursive: true });
+      mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
+      mkdirSync(resolve(pluginSdkDir, 'src'), { recursive: true });
+      mkdirSync(resolve(pluginSdkDir, 'dist'), { recursive: true });
+
+      writeFileSync(resolve(repoRoot, 'package.json'), JSON.stringify({
+        private: true,
+        workspaces: ['apps/*', 'packages/*'],
+      }), 'utf8');
+      writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+      writeFileSync(resolve(cliDir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/cli',
+        bundledDependencies: ['@happier-dev/protocol', '@happier-dev/plugin-sdk'],
+      }), 'utf8');
+      writeFileSync(resolve(cliDir, 'node_modules', 'tweetnacl', 'package.json'), '{"name":"tweetnacl"}\n', 'utf8');
+      writeFileSync(resolve(protocolDir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/protocol',
+        type: 'module',
+        exports: { '.': { default: './dist/index.js' } },
+      }), 'utf8');
+      writeFileSync(resolve(protocolDir, 'tsconfig.json'), '{}\n', 'utf8');
+      writeFileSync(protocolSourcePath, 'export const protocol = 1;\n', 'utf8');
+      writeFileSync(protocolDistPath, 'export const protocol = 1;\n', 'utf8');
+      writeFileSync(resolve(pluginSdkDir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugin-sdk',
+        type: 'module',
+        dependencies: { '@happier-dev/protocol': '0.0.0' },
+        bundledDependencies: ['@happier-dev/protocol'],
+        exports: { '.': { default: './dist/index.js' } },
+      }), 'utf8');
+      writeFileSync(resolve(pluginSdkDir, 'tsconfig.json'), '{}\n', 'utf8');
+      writeFileSync(pluginSdkSourcePath, 'export const sdk = 1;\n', 'utf8');
+      writeFileSync(pluginSdkDistPath, 'export const sdk = 1;\n', 'utf8');
+
+      const currentTime = new Date('2030-01-01T00:00:00.000Z');
+      for (const path of [
+        resolve(protocolDir, 'package.json'),
+        resolve(protocolDir, 'tsconfig.json'),
+        protocolSourcePath,
+        protocolDistPath,
+        resolve(pluginSdkDir, 'package.json'),
+        resolve(pluginSdkDir, 'tsconfig.json'),
+        pluginSdkSourcePath,
+        pluginSdkDistPath,
+      ]) {
+        utimesSync(path, currentTime, currentTime);
+      }
+
+      const syncRuntimeDependencies = vi.fn(() => undefined);
+      const runSync = () => syncSharedDepsForSourceDev({
+        repoRoot,
+        workspaceNames: ['plugin-sdk'],
+        withBuildSharedDepsLockImpl: async (fn: () => Promise<unknown> | unknown) => await fn(),
+        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceBuildOwner(({ workspaceName }) => {
+          expect(workspaceName).toBe('protocol');
+          writeFileSync(protocolDistPath, 'export const protocol = 2;\n', 'utf8');
+          const rebuiltTime = new Date('2030-01-03T00:00:00.000Z');
+          utimesSync(protocolDistPath, rebuiltTime, rebuiltTime);
+        }),
+        syncBundledWorkspaceDistImpl: (options) => syncBundledWorkspaceDist(options),
+        syncBundledWorkspaceRuntimeDependenciesImpl: syncRuntimeDependencies,
+        syncCliRuntimeDependenciesImpl: () => undefined,
+      });
+
+      await expect(runSync()).resolves.toEqual({ synced: true, stamped: true });
+      syncRuntimeDependencies.mockClear();
+
+      writeFileSync(protocolSourcePath, 'export const protocol = 2;\n', 'utf8');
+      const changedSourceTime = new Date('2030-01-02T00:00:00.000Z');
+      utimesSync(protocolSourcePath, changedSourceTime, changedSourceTime);
+
+      await expect(runSync()).resolves.toEqual({ synced: true, stamped: true });
+      expect(syncRuntimeDependencies).toHaveBeenCalledOnce();
+      expect(syncRuntimeDependencies).toHaveBeenCalledWith(expect.objectContaining({
+        workspaceNames: ['protocol', 'plugin-sdk'],
+      }));
+    } finally {
+      removeTempDirSync(repoRoot);
+    }
+  });
+
   it('resyncs only changed or missing source-dev workspace outputs when a compatible stamp exists', async () => {
     const repoRoot = createTempDirSync('happy-cli-dev-sync-changed-subset-');
     try {
@@ -4134,7 +4200,7 @@ describe('buildSharedDeps', () => {
       expect(syncDist).toHaveBeenCalledOnce();
       expect(syncDist).toHaveBeenCalledWith(expect.objectContaining({ workspaceNames: ['plugins-opencode'] }));
       expect(syncRuntimeDependencies).toHaveBeenCalledWith(expect.objectContaining({
-        workspaceNames: ['plugins-opencode'],
+        workspaceNames: ['plugin-sdk', 'plugins-opencode'],
       }));
       expect(existsSync(resolve(cliDir, 'node_modules', '@happier-dev', 'plugins-opencode', 'dist', 'removed.js'))).toBe(false);
 

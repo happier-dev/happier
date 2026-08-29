@@ -4,6 +4,7 @@ import {
   parseBackendTargetKeyV2,
   type ProviderCatalogDeclarationV1,
   type ProviderBoundModelRef,
+  type ProviderConnectionId,
   type ProviderRuntimeStateFileV1,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
@@ -11,6 +12,7 @@ import type {
   DaemonProviderBindingStatusRequestV1,
   DaemonProviderBindingStatusResponseV1,
   DaemonProviderCurrentSelectionRecoveryV1,
+  DaemonProviderModelProjectionRefreshFailureV1,
   DaemonProviderModelProjectionRequestV1,
   DaemonProviderModelProjectionResponseV1,
   DaemonProviderModelSettingsMutationRequestV1,
@@ -339,6 +341,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           registry,
           ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
           admitResolution: sharedRuntime.probeInfrastructure.scheduler.runDns,
+          isCurrent: () => input.featureGate.isEnabled('providers'),
           lifetime: operationLifetime,
         });
       } catch (error) {
@@ -445,8 +448,14 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           preflightPolicy: 'advisory' | 'required' | null;
         }>>();
         const confirmedByRef = new Map<string, boolean>();
-        const pickerDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
-        const coldDemand: Array<Readonly<{ connectionId: string; machineId: string }>> = [];
+        const pickerDemand: Array<Readonly<{
+          connectionId: ProviderConnectionId;
+          machineId: string;
+        }>> = [];
+        const coldDemand: Array<Readonly<{
+          connectionId: ProviderConnectionId;
+          machineId: string;
+        }>> = [];
         for (const { connection, connectionRuntimeState, context } of resolvedContexts) {
           if (context.status === 'error') continue;
           const authorizedForDemand = context.connection.authorization.authorized;
@@ -533,17 +542,30 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       };
 
       let assembly = await assemble(await sharedRuntime.runtimeStore.read());
-      const awaitedColdDemand = assembly.coldDemand;
-      if (awaitedColdDemand.length > 0) {
-        // The canonical probe scheduler still owns admission, coalescing, concurrency
-        // and its typed capacity refusal; this read simply waits for the cold work it
-        // just demanded instead of answering with an empty catalog nobody follows up on.
-        await Promise.all(awaitedColdDemand.map((identity) =>
-          sharedRuntime.scheduleDemandRefresh(identity, 'picker_open', operationScope)));
+      // A cold automatic read must wait because it has no rows to show. An
+      // explicit user Retry waits for every eligible connection and enters the
+      // scheduler's existing forced branch; no consumer retry loop or cache is
+      // introduced here.
+      const awaitedDemand = request.forceRefresh ? assembly.pickerDemand : assembly.coldDemand;
+      const refreshFailures: DaemonProviderModelProjectionRefreshFailureV1[] = [];
+      if (awaitedDemand.length > 0) {
+        const outcomes = await Promise.all(awaitedDemand.map(async (identity) => ({
+          identity,
+          error: await sharedRuntime.scheduleDemandRefresh(
+            identity,
+            request.forceRefresh ? 'manual_refresh' : 'picker_open',
+            operationScope,
+          ),
+        })));
+        for (const outcome of outcomes) {
+          if (outcome.error !== null) {
+            refreshFailures.push({ connectionId: outcome.identity.connectionId, error: outcome.error });
+          }
+        }
         assembly = await assemble(await sharedRuntime.runtimeStore.read());
       }
       const { catalogs, modelLoadProjectionByConnectionId, confirmedByRef, pickerDemand } = assembly;
-      const awaitedConnectionIds = new Set(awaitedColdDemand.map((identity) => identity.connectionId));
+      const awaitedConnectionIds = new Set(awaitedDemand.map((identity) => identity.connectionId));
       const projection = projectProviderCatalogForPicker({
         catalogs,
         modelVisibilityByRef: settingsRead.settings.modelVisibilityByRef,
@@ -620,6 +642,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         agentTargetKey: request.agentTargetKey,
         groups,
         currentSelectionRecovery,
+        ...(refreshFailures.length > 0 ? { refreshFailures } : {}),
       });
     } finally {
       await lease.release();
@@ -771,6 +794,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           registry,
           ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
           admitResolution: sharedRuntime.probeInfrastructure.scheduler.runDns,
+          isCurrent: () => input.featureGate.isEnabled('providers'),
           lifetime: operationLifetime,
         });
       } catch (error) {

@@ -132,19 +132,198 @@ describe('finalizeComposerStagedMediaToSession', () => {
       sha256: sha256(pngBytes),
       origin: { source: 'user-upload' },
     });
-    expect(result.releaseIntents).toEqual([{
-      handle: staged.handle,
+    expect(result.releaseIntents).toHaveLength(1);
+    const releaseIntent = result.releaseIntents[0]!;
+    // The submission consumes its own fork copy, never the mutable draft original.
+    expect(releaseIntent.handle.id).not.toBe(staged.handle.id);
+    expect(releaseIntent.handle).toMatchObject({
       executionTarget,
       owner: attachmentOwner,
-      claimant: {
-        composer: { kind: 'session', sessionId: 'session-1' },
-        attachmentInstanceId: 'attachment-image-1',
-      },
-    }]);
+      mediaKind: staged.handle.mediaKind,
+      mimeType: staged.handle.mimeType,
+      name: staged.handle.name,
+      sizeBytes: staged.handle.sizeBytes,
+      sha256: staged.handle.sha256,
+    });
+    expect(releaseIntent.claimant).toEqual({
+      composer: { kind: 'session', sessionId: 'session-1' },
+      attachmentInstanceId: 'attachment-image-1',
+    });
     await expect(stageStore.inspectForFinalization({
       handle: staged.handle,
       executionTarget,
       owner: attachmentOwner,
+    })).resolves.toMatchObject({ status: 'ready' });
+  });
+
+  it.each([
+    ['Pending', { kind: 'pendingMessage' as const, sessionId: 'session-1', localId: 'pending-1' }],
+    ['NewSession', { kind: 'newSession' as const, instanceId: 'new-session-composer-1' }],
+  ] as const)('finalizes a %s cross-location submission through a claimed clone while retaining the original draft stage', async (
+    _kind,
+    sourceComposerRef,
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-composer-finalize-fork-'));
+    temporaryDirectories.push(root);
+    const { stageStore, staged, draftAttachment } = await createReadyStage(root);
+    const sourceClaimant = { composer: sourceComposerRef, attachmentInstanceId: draftAttachment.instanceId };
+    await expect(stageStore.claim({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: sourceClaimant,
+    })).resolves.toMatchObject({ status: 'claimed' });
+
+    const first = await finalizeComposerStagedMediaToSession({
+      ...finalizationParams({ root, stageStore, draftAttachment }),
+      sourceComposerRef,
+    });
+
+    expect(first.releaseIntents[0]?.handle.id).not.toBe(staged.handle.id);
+    await expect(stageStore.inspectForFinalization({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: sourceClaimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+    await expect(stageStore.release({
+      handle: first.releaseIntents[0]!.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: first.releaseIntents[0]!.claimant,
+    })).resolves.toEqual({ status: 'released' });
+    await expect(stageStore.inspectForFinalization({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: sourceClaimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+  });
+
+  it('persists through the submission fork when a concurrent draft removal releases the original stage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-composer-finalize-race-'));
+    temporaryDirectories.push(root);
+    const { stageStore, staged, draftAttachment } = await createReadyStage(root);
+    const draftClaimant = {
+      composer: { kind: 'session' as const, sessionId: 'session-1' },
+      attachmentInstanceId: draftAttachment.instanceId,
+    };
+    const actualPersist = sessionMediaBridgeSpies.persist.getMockImplementation();
+    if (!actualPersist) throw new Error('expected the real persistence implementation to be wired');
+    sessionMediaBridgeSpies.persist.mockImplementationOnce(async (input: unknown) => {
+      // The draft lifecycle removes the attachment after the finalizer captured
+      // its submission snapshot but before persistence opens the staged bytes.
+      await stageStore.release({
+        handle: staged.handle,
+        executionTarget,
+        owner: attachmentOwner,
+        claimant: draftClaimant,
+      });
+      return await actualPersist(input);
+    });
+
+    const result = await finalizeComposerStagedMediaToSession(finalizationParams({
+      root,
+      stageStore,
+      draftAttachment,
+    }));
+    expect(result.releaseIntents[0]?.handle.id).not.toBe(staged.handle.id);
+    // The concurrently removed draft stage is gone while the durable media exists.
+    await expect(stageStore.inspectForFinalization({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+    })).resolves.toMatchObject({ status: 'unavailable' });
+    const envelope = SessionMediaMessageMetaV1Schema.parse(result.meta.happier);
+    expect(envelope.payload.media).toHaveLength(1);
+
+    // Settlement releases only the submission fork, which is now consumed.
+    await expect(stageStore.release({
+      handle: result.releaseIntents[0]!.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: result.releaseIntents[0]!.claimant,
+    })).resolves.toEqual({ status: 'released' });
+  });
+
+  it('retains the draft original and rejoins the same submission fork when persistence fails then retries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-composer-finalize-retry-'));
+    temporaryDirectories.push(root);
+    const { stageStore, staged, draftAttachment } = await createReadyStage(root);
+    const draftClaimant = {
+      composer: { kind: 'session' as const, sessionId: 'session-1' },
+      attachmentInstanceId: draftAttachment.instanceId,
+    };
+    const params = finalizationParams({ root, stageStore, draftAttachment });
+
+    sessionMediaBridgeSpies.persist.mockResolvedValueOnce({
+      success: false,
+      items: [],
+      createdWorkspaceRelativePaths: [],
+      failures: [],
+      meta: {},
+    });
+    await expect(finalizeComposerStagedMediaToSession(params)).rejects.toMatchObject({
+      code: 'composer_staged_media_persist_failed',
+    });
+    // Failure cleanup garbage-collects only the failed durable write.
+    expect(sessionMediaBridgeSpies.cleanup).toHaveBeenCalledWith(expect.objectContaining({
+      workingDirectory: join(root, 'workspace'),
+    }));
+    // The mutable draft original survives for its own lifecycle.
+    await expect(stageStore.inspectForFinalization({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: draftClaimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+
+    const retry = await finalizeComposerStagedMediaToSession(params);
+    // The retry submits through a fork, never the draft original.
+    expect(retry.releaseIntents[0]?.handle.id).not.toBe(staged.handle.id);
+    await expect(stageStore.release({
+      handle: retry.releaseIntents[0]!.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: retry.releaseIntents[0]!.claimant,
+    })).resolves.toEqual({ status: 'released' });
+    await expect(stageStore.inspectForFinalization({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: draftClaimant,
+    })).resolves.toMatchObject({ status: 'ready' });
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['forged', { kind: 'newSession' as const, instanceId: 'composer-forged' }],
+  ] as const)('refuses a %s non-Session exact source without consuming the original stage', async (
+    _kind,
+    sourceComposerRef,
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-composer-finalize-source-'));
+    temporaryDirectories.push(root);
+    const { stageStore, staged, draftAttachment } = await createReadyStage(root);
+    const originalSource = { kind: 'pendingMessage' as const, sessionId: 'session-1', localId: 'pending-1' };
+    const originalClaimant = { composer: originalSource, attachmentInstanceId: draftAttachment.instanceId };
+    await expect(stageStore.claim({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: originalClaimant,
+    })).resolves.toMatchObject({ status: 'claimed' });
+
+    await expect(finalizeComposerStagedMediaToSession({
+      ...finalizationParams({ root, stageStore, draftAttachment }),
+      ...(sourceComposerRef ? { sourceComposerRef } : {}),
+    })).rejects.toMatchObject({ code: 'composer_staged_media_stage_unavailable' });
+    expect(sessionMediaBridgeSpies.persist).not.toHaveBeenCalled();
+    await expect(stageStore.inspectForFinalization({
+      handle: staged.handle,
+      executionTarget,
+      owner: attachmentOwner,
+      claimant: originalClaimant,
     })).resolves.toMatchObject({ status: 'ready' });
   });
 

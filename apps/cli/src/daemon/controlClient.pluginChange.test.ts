@@ -115,11 +115,13 @@ describe('daemon control client plugin changes', () => {
         actionId: 'acme.notes/store',
         input: { value: 'hello' },
         surface: 'cli',
+        authority: 'present_user',
       });
       await expect(client.requestDaemonPluginActionExecution({
         actionId: 'acme.older-daemon/run',
         input: {},
         surface: 'cli',
+        authority: 'present_user',
       })).resolves.toEqual({
         matched: true,
         result: {
@@ -160,6 +162,7 @@ describe('daemon control client plugin changes', () => {
             actionId: 'acme.notes/store',
             input: { value: 'hello' },
             surface: 'cli',
+            authority: 'present_user',
           },
         },
         {
@@ -169,6 +172,7 @@ describe('daemon control client plugin changes', () => {
             actionId: 'acme.older-daemon/run',
             input: {},
             surface: 'cli',
+            authority: 'present_user',
           },
         },
       ]);

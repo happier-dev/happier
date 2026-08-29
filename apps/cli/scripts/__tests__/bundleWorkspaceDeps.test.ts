@@ -39,55 +39,36 @@ function collectSandboxPackageTreeFiles(packageDir: string): readonly string[] {
 
 function writeBundledPluginArtifactInventory(options: {
   repoRoot: string;
-  packageName: string;
-  pluginId: string;
-  files: readonly { relativePath: string; bytes: Buffer }[];
+  packageName?: string;
+  pluginId?: string;
+  files?: readonly { relativePath: string; bytes: Buffer }[];
+  entries?: readonly {
+    packageName: string;
+    files: readonly { relativePath: string; bytes: Buffer }[];
+  }[];
 }): void {
   const inventoryPath = resolve(
     options.repoRoot,
-    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+    'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
   );
   mkdirSync(dirname(inventoryPath), { recursive: true });
-  const immutableArtifacts = [{
-    packageEntryRelativePath: 'dist/index.js',
+  const entryList = options.entries ?? [{
     packageName: options.packageName,
-    record: {
-      createdAtMs: 0,
-      files: options.files.map((file) => ({
-        byteLength: file.bytes.byteLength,
-        relativePath: file.relativePath,
-      })),
-      manifestRelativePath: '.happier-plugin/plugin.json',
-      pluginId: options.pluginId,
-      schemaVersion: 1,
-      t: 'happier_plugin_generation_v1',
-    },
+    files: options.files,
   }];
-  const sourceArtifactIntegrities = [{
-    packageName: options.packageName,
-    files: options.files.map((file) => ({
+  const sourceArtifactIntegrities = entryList.map((entry) => ({
+    packageName: entry.packageName,
+    files: entry.files.map((file) => ({
       byteLength: file.bytes.byteLength,
       digest: sha256Digest(file.bytes),
       relativePath: file.relativePath,
     })),
-  }];
+  }));
   writeFileSync(
     inventoryPath,
-    [
-      "import type { BundledImmutablePluginArtifact } from '../../../store/registry/generationStore';",
-      '',
-      'export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(',
-      `${JSON.stringify(immutableArtifacts, null, 2)} satisfies readonly BundledImmutablePluginArtifact[]);`,
-      '',
-      'export type BundledFirstPartySourceArtifactIntegrity = Readonly<{',
-      '  packageName: string;',
-      '  files: readonly Readonly<{ relativePath: string; byteLength: number; digest: string }>[];',
-      '}>;',
-      '',
-      'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(',
-      `${JSON.stringify(sourceArtifactIntegrities, null, 2)} satisfies readonly BundledFirstPartySourceArtifactIntegrity[]);`,
-      '',
-    ].join('\n'),
+    `${JSON.stringify({
+      BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: sourceArtifactIntegrities,
+    }, null, 2)}\n`,
     'utf8',
   );
 }
@@ -623,6 +604,30 @@ describe('bundleWorkspaceDeps', () => {
         },
       });
 
+      // Phase 1 (live): materialize the exact installed trees the canonical publisher
+      // would bind, then write the pack-time inventory entries from those bytes. The
+      // artifact pass below fails closed without an inventory when bundled plugins exist.
+      await bundleWorkspaceDeps({
+        repoRoot,
+        happyCliDir,
+        ensureWorkspacePackagesBuiltByName,
+      });
+      const bundledScopeDir = resolve(happyCliDir, 'node_modules', '@happier-dev');
+      const inventoryPackageDirs = new Map([
+        ['@happier-dev/plugins-grok', resolve(bundledScopeDir, 'plugins-grok')],
+        ['@happier-dev/plugins-inspector', resolve(bundledScopeDir, 'plugins-inspector')],
+      ]);
+      writeBundledPluginArtifactInventory({
+        repoRoot,
+        entries: [...inventoryPackageDirs].map(([name, packageDir]) => ({
+          packageName: name,
+          files: collectSandboxPackageTreeFiles(packageDir).map((relativePath) => ({
+            relativePath,
+            bytes: readFileSync(resolve(packageDir, ...relativePath.split('/'))),
+          })),
+        })),
+      });
+
       await bundleWorkspaceDeps({
         repoRoot,
         happyCliDir,
@@ -630,7 +635,6 @@ describe('bundleWorkspaceDeps', () => {
         ensureWorkspacePackagesBuiltByName,
       });
 
-      const bundledScopeDir = resolve(happyCliDir, 'node_modules', '@happier-dev');
       expect(existsSync(resolve(bundledScopeDir, 'plugin-sdk', 'dist', 'index.js'))).toBe(true);
       expect(existsSync(resolve(bundledScopeDir, 'plugin-ui', 'dist', 'index.js'))).toBe(true);
       expect(existsSync(resolve(bundledScopeDir, 'plugins-grok', 'dist', 'index.js'))).toBe(true);
@@ -720,7 +724,7 @@ describe('bundleWorkspaceDeps', () => {
             '.': { default: './dist/index.js', types: './dist/index.d.ts' },
             './composer': { default: './dist/composer.js', types: './dist/composer.d.ts' },
           },
-          happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+          happier: { publicSdkRelease: { posture: 'developer_preview' } },
         },
         files: {
           'dist/index.js': 'export const sdk = true;\n',
@@ -746,7 +750,7 @@ describe('bundleWorkspaceDeps', () => {
             'README.md',
             'api-declarations.md',
           ],
-          happier: { publicSdkRelease: { posture: 'prepublish_hold' } },
+          happier: { publicSdkRelease: { posture: 'developer_preview' } },
         },
         files: {
           'dist/index.js': "export { sdk } from '@happier-dev/plugin-sdk';\n",
@@ -781,7 +785,7 @@ describe('bundleWorkspaceDeps', () => {
 
       // The packed CLI retains the source-declared authoring contract, but remains
       // flat so it does not duplicate the SDK closure into its tarball.
-      expect(sdkPackageJson.happier?.publicSdkRelease?.posture).toBe('prepublish_hold');
+      expect(sdkPackageJson.happier?.publicSdkRelease?.posture).toBe('developer_preview');
       expect(sdkPackageJson.dependencies).toEqual({ '@happier-dev/protocol': '0.0.0' });
       expect(sdkPackageJson.optionalDependencies).toEqual({ '@happier-dev/protocol': '0.0.0' });
       expect(sdkPackageJson.bundledDependencies).toEqual(['@happier-dev/protocol']);
@@ -799,7 +803,7 @@ describe('bundleWorkspaceDeps', () => {
       expect(
         existsSync(resolve(bundledSdkDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'plugins', 'ui', 'client.js')),
       ).toBe(false);
-      expect(uiPackageJson.happier?.publicSdkRelease?.posture).toBe('prepublish_hold');
+      expect(uiPackageJson.happier?.publicSdkRelease?.posture).toBe('developer_preview');
       expect(uiPackageJson.dependencies).toEqual({ '@happier-dev/plugin-sdk': '0.0.0' });
       expect(uiPackageJson.bundledDependencies ?? []).toEqual([]);
       expect(uiPackageJson.files).toEqual([
@@ -897,23 +901,8 @@ describe('bundleWorkspaceDeps', () => {
       // reached released tarballs before this assertion existed.
       const inventoryPath = resolve(
         repoRoot,
-        'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+        'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
       );
-      const immutableArtifacts = [{
-        packageEntryRelativePath: 'dist/index.js',
-        packageName: '@happier-dev/plugins-grok',
-        record: {
-          createdAtMs: 0,
-          files: [
-            { byteLength: 44, relativePath: 'dist/.happier-chunks/chunk-GROK0001.js' },
-            { byteLength: 61, relativePath: 'dist/index.js' },
-          ],
-          manifestRelativePath: '.happier-plugin/plugin.json',
-          pluginId: 'grok',
-          schemaVersion: 1,
-          t: 'happier_plugin_generation_v1',
-        },
-      }];
       const sourceArtifactIntegrities = [{
         packageName: '@happier-dev/plugins-grok',
         files: [
@@ -932,21 +921,9 @@ describe('bundleWorkspaceDeps', () => {
       mkdirSync(dirname(inventoryPath), { recursive: true });
       writeFileSync(
         inventoryPath,
-        [
-          "import type { BundledImmutablePluginArtifact } from '../../../store/registry/generationStore';",
-          '',
-          'export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(',
-          `${JSON.stringify(immutableArtifacts, null, 2)} satisfies readonly BundledImmutablePluginArtifact[]);`,
-          '',
-          'export type BundledFirstPartySourceArtifactIntegrity = Readonly<{',
-          '  packageName: string;',
-          '  files: readonly Readonly<{ relativePath: string; byteLength: number; digest: string }>[];',
-          '}>;',
-          '',
-          'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(',
-          `${JSON.stringify(sourceArtifactIntegrities, null, 2)} satisfies readonly BundledFirstPartySourceArtifactIntegrity[]);`,
-          '',
-        ].join('\n'),
+        `${JSON.stringify({
+          BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: sourceArtifactIntegrities,
+        }, null, 2)}\n`,
         'utf8',
       );
 
@@ -956,7 +933,7 @@ describe('bundleWorkspaceDeps', () => {
         publicationMode: 'artifact',
         ensureWorkspacePackagesBuiltByName,
       })).rejects.toThrow(
-        /Bundled plugin files disagree with generatedBundledPluginArtifacts\.ts[\s\S]*missing: dist\/\.happier-chunks\/chunk-GROK0001\.js[\s\S]*mismatched: dist\/index\.js/,
+        /Bundled plugin files disagree with generatedBundledPluginSourceIntegrities\.json[\s\S]*missing: dist\/\.happier-chunks\/chunk-GROK0001\.js[\s\S]*mismatched: dist\/index\.js/,
       );
 
       // Live source-dev publication intentionally retains prior generation targets, so it
@@ -966,6 +943,54 @@ describe('bundleWorkspaceDeps', () => {
         happyCliDir,
         ensureWorkspacePackagesBuiltByName,
       })).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails closed in artifact mode when bundled plugins exist without a generated inventory', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-plugin-missing-inventory-');
+    const packageName = '@happier-dev/plugins-grok';
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: [packageName],
+        dependencies: { [packageName]: '0.0.0' },
+      });
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/grok',
+        packageName,
+        files: {
+          'dist/index.js': 'export const grokDaemon = true;\n',
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "grok", runtime: { apiVersion: 1 }, contributes: {} });\n',
+        },
+      });
+      const forcedBuilds: string[] = [];
+      const ensureWorkspacePackagesBuiltByName = async (
+        _targetRoot: string,
+        names: readonly string[],
+      ) => {
+        forcedBuilds.push(...names);
+        return { ok: true, built: [...names], skipped: [] };
+      };
+      const spawn = vi.fn();
+
+      // A missing inventory used to mean "nothing is generator-owned": every bundled
+      // plugin was re-admitted to the ordinary compiler and the exact-byte check
+      // verified an empty set. With canonical bundled membership present, the pack
+      // must refuse instead of shipping unverified plugin bytes.
+      await expect(bundleWorkspaceDeps({
+        repoRoot,
+        happyCliDir,
+        publicationMode: 'artifact',
+        ensureWorkspacePackagesBuiltByName,
+      })).rejects.toThrow(/Missing bundled plugin source-artifact integrity inventory/u);
+      expect(spawn).not.toHaveBeenCalled();
+      // CLI-common is the non-plugin prerequisite required to discover canonical
+      // bundled membership. The missing inventory still fails before any bundled
+      // plugin compiler can replace the staged immutable trees.
+      expect(forcedBuilds).toEqual(['@happier-dev/cli-common']);
     } finally {
       cleanup();
     }

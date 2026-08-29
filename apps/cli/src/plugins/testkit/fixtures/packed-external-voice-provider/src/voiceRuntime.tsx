@@ -305,6 +305,8 @@ export function activate(api: PluginClientApi): void {
   });
   let activeMediatedInputCapture: Readonly<{ setMuted(muted: boolean): void }> | null = null;
   let activeRawInputCapture: Readonly<{ setMuted(muted: boolean): void }> | null = null;
+  let mediatedDesiredMuted = false;
+  let rawDesiredMuted = false;
   const mediatedRuntime: PackedConversationRuntime = {
     kind: CONVERSATION_KIND,
     settingsOperations: {
@@ -429,6 +431,7 @@ export function activate(api: PluginClientApi): void {
         },
       });
       activeMediatedInputCapture = inputCapture;
+      inputCapture.setMuted(mediatedDesiredMuted);
       const emitCurrentUiRead = (): void => {
         if (!emitControl) return;
         const responseId = `${CURRENT_UI_READ_RESPONSE_PREFIX}${++nextCurrentUiResponse}`;
@@ -504,9 +507,9 @@ export function activate(api: PluginClientApi): void {
       });
     },
     setInputMuted(muted) {
+      mediatedDesiredMuted = muted;
       const inputCapture = activeMediatedInputCapture;
-      if (!inputCapture) throw new Error('fixture_provider_input_capture_unavailable');
-      inputCapture.setMuted(muted);
+      inputCapture?.setMuted(muted);
     },
     encodeToolResults(results) {
       return [{ kind: 'fixture_tool_results', results }];
@@ -555,6 +558,7 @@ export function activate(api: PluginClientApi): void {
         },
       });
       activeRawInputCapture = inputCapture;
+      inputCapture.setMuted(rawDesiredMuted);
       return input.media.createSdkHandleConnection({
         driver: {
           async open() {
@@ -585,9 +589,9 @@ export function activate(api: PluginClientApi): void {
     outputLevelMeter: 'unavailable',
     microphoneMode: 'provider_managed',
     setInputMuted(muted) {
+      rawDesiredMuted = muted;
       const inputCapture = activeRawInputCapture;
-      if (!inputCapture) throw new Error('fixture_provider_input_capture_unavailable');
-      inputCapture.setMuted(muted);
+      inputCapture?.setMuted(muted);
     },
   };
   api.voiceProviders.register('conversation-raw', rawRuntime);

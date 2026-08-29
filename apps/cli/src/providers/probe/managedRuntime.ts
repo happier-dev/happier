@@ -42,6 +42,7 @@ function managedCatalogLaunchError(input: Readonly<{
     case 'managed_provider_authorization_changed':
       return createProviderErrorV1('provider_authorization_changed', context);
     case 'managed_provider_runtime_unavailable':
+      return createProviderErrorV1('provider_contribution_unavailable', context);
     case 'managed_provider_start_aborted':
     case 'managed_provider_start_failed':
     case 'managed_provider_result_invalid':

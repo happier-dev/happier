@@ -201,10 +201,8 @@ const HTTP_METHODS = new Set<HttpMethod>(['GET', 'HEAD', 'POST', 'PUT', 'PATCH',
  * not infer semantic caller headers from keywords: every non-member is
  * intentionally visible and mutable to a matching trusted policy.
  */
-const STANDARD_SECURITY_SENSITIVE_INTERCEPTOR_HEADER_NAMES_V1 = new Set([
-    'authorization',
+const HTTP_INTERCEPTOR_PROTECTED_HEADER_ALIASES = new Set([
     'proxy-authorization',
-    'cookie',
     'set-cookie',
     'www-authenticate',
     'proxy-authenticate',
@@ -217,15 +215,14 @@ const STANDARD_SECURITY_SENSITIVE_INTERCEPTOR_HEADER_NAMES_V1 = new Set([
     'origin',
     'referer',
     'forwarded',
-    'x-api-key',
-    'api-key',
-    'x-auth-token',
     'x-client-ip',
     'x-real-ip',
     'x-signature',
     'x-hub-signature-256',
+    'x-user-id',
+    'chatgpt-account-id',
 ]);
-const STANDARD_SECURITY_SENSITIVE_INTERCEPTOR_HEADER_PREFIXES_V1 = [
+const HTTP_INTERCEPTOR_PROTECTED_HEADER_PREFIX_ALIASES = [
     'sec-',
     'x-forwarded-',
 ] as const;
@@ -373,9 +370,9 @@ function isHttpCredentialQueryDiagnosticKey(key: string): boolean {
 
 function isProtectedHeader(name: string): boolean {
     const normalized = normalizeHeaderName(name);
-    return STANDARD_SECURITY_SENSITIVE_INTERCEPTOR_HEADER_NAMES_V1
-        .has(normalized)
-        || STANDARD_SECURITY_SENSITIVE_INTERCEPTOR_HEADER_PREFIXES_V1
+    return isBaseCredentialDiagnosticKey(normalized)
+        || HTTP_INTERCEPTOR_PROTECTED_HEADER_ALIASES.has(normalized)
+        || HTTP_INTERCEPTOR_PROTECTED_HEADER_PREFIX_ALIASES
             .some((prefix) => normalized.startsWith(prefix));
 }
 

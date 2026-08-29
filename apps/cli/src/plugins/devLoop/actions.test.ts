@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import { executePluginDevLoopAction } from './actions';
 
@@ -257,6 +258,54 @@ describe('executePluginDevLoopAction', () => {
       expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
     } finally {
       await removeTempDir(pluginRoot);
+      await removeTempDir(workspaceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it('passes the current CLI invoker into pristine scaffold scripts and generated skill guidance', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const workspaceRoot = await createTempDir('happier-plugin-dev-loop-workspace-');
+    const targetDir = join(workspaceRoot, 'generated-plugin');
+    const envScope = createEnvKeyScope(['HAPPIER_CLI_INVOKER_NAME']);
+    envScope.patch({ HAPPIER_CLI_INVOKER_NAME: 'hdev' });
+
+    try {
+      const result = await executePluginDevLoopAction({
+        actionId: 'plugins.scaffold',
+        input: {
+          targetDir,
+          id: 'acme.generated',
+          name: 'Acme Generated',
+        },
+        happyHomeDir: home,
+        workspaceRoot,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        kind: 'plugins_scaffold',
+      });
+      const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as Readonly<{
+        scripts: Readonly<Record<string, string>>;
+      }>;
+      const skill = await readFile(join(
+        targetDir,
+        '.agents',
+        'skills',
+        'happier-plugin-authoring',
+        'SKILL.md',
+      ), 'utf8');
+
+      expect(packageJson.scripts.build).toBe('hdev plugins dev build .');
+      expect(packageJson.scripts.typecheck).toBe('hdev plugins dev typecheck .');
+      expect(packageJson.scripts.test).toBe('hdev plugins test .');
+      expect(packageJson.scripts['pack:plugin']).toBe('hdev plugins pack .');
+      expect(skill).toContain('hdev plugins dev');
+      expect(skill).toContain('hdev plugins doctor .');
+      expect(skill).not.toContain('happier plugins dev');
+    } finally {
+      envScope.restore();
       await removeTempDir(workspaceRoot);
       await removeTempDir(home);
     }

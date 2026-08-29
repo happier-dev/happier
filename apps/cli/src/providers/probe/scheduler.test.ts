@@ -80,6 +80,29 @@ describe('provider probe scheduler', () => {
     await expect(queued).resolves.toBe('ok');
   });
 
+  it('does not dispatch queued DNS work after its operation becomes non-current', async () => {
+    const scheduler = createProviderProbeScheduler({
+      maxConcurrentOperations: 1,
+      maxPendingOperations: 1,
+    });
+    const lifetime = { wallDeadlineAtMs: Date.now() + 60_000 };
+    let releaseActive!: () => void;
+    const active = scheduler.runDns(
+      () => new Promise<string>((resolve) => { releaseActive = () => resolve('active'); }),
+      lifetime,
+    );
+    let current = true;
+    const resolver = vi.fn(async () => 'obsolete');
+    const queued = scheduler.runDns(resolver, lifetime, () => current);
+    await vi.waitFor(() => expect(releaseActive).toBeTypeOf('function'));
+
+    current = false;
+    releaseActive();
+    await expect(active).resolves.toBe('active');
+    await expect(queued).rejects.toMatchObject({ reason: 'cancelled' });
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
   it('single-flights identical work and releases the successful payload once its callers settle', async () => {
     let resolve!: (value: { status: 'success' }) => void;
     const operation = vi.fn(() => new Promise<{ status: 'success' }>((done) => { resolve = done; }));

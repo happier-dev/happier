@@ -8,7 +8,7 @@ import {
   type ActionsSettingsV1,
 } from '@happier-dev/protocol';
 
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type {
   ResolvedActionContribution,
   ResolvedContributionProvenance,
@@ -84,7 +84,7 @@ function resolveActionToolRegistry(params?: Readonly<{
   registry?: ResolvedContributionRegistry;
 }>): ResolvedContributionRegistry {
   const activeRegistry = resolveCurrentRuntimeRegistry()?.contributes;
-  return params?.registry ?? activeRegistry ?? getResolvedContributionRegistry();
+  return params?.registry ?? activeRegistry ?? readCurrentContributionRegistry();
 }
 
 /**

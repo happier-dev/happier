@@ -916,14 +916,25 @@ function resolveScmBackendContributions(
     };
 }
 
-let cachedResolvedContributionRegistry: ResolvedContributionRegistry | null = null;
+/**
+ * The immutable built-in contribution snapshot.
+ *
+ * This is built exactly once from the generated bundled declarations and never
+ * mutated afterwards. It is the only registry that candidate preparation and
+ * cold built-in consumers may read: there is no module-global "primed" cache
+ * that a standalone CLI merge could silently overwrite for every other
+ * consumer. Callers that need installed-plugin contributions build an explicit
+ * ephemeral merged snapshot via `resolveMergedContributionRegistry` (standalone
+ * CLI) or read the reload controller's active registry via
+ * `readCurrentContributionRegistry` — no authority is cached across reloads.
+ */
+let builtInResolvedContributionRegistry: ResolvedContributionRegistry | null = null;
 
 export function getResolvedContributionRegistry(): ResolvedContributionRegistry {
-    if (cachedResolvedContributionRegistry) {
-        return cachedResolvedContributionRegistry;
-    }
-    cachedResolvedContributionRegistry = createResolvedContributionRegistry(resolveBuiltInContributions());
-    return cachedResolvedContributionRegistry;
+    builtInResolvedContributionRegistry ??= Object.freeze(
+        createResolvedContributionRegistry(resolveBuiltInContributions()),
+    );
+    return builtInResolvedContributionRegistry;
 }
 
 export async function resolveMergedContributionRegistry(
@@ -1036,14 +1047,6 @@ export function createMergedContributionRegistry(
             ...(plugin.pluginDiagnosticsByPluginId ?? {}),
         }),
     });
-}
-
-export async function primeResolvedContributionRegistry(
-    params?: Readonly<{ happyHomeDir?: string }>,
-): Promise<ResolvedContributionRegistry> {
-    const merged = await resolveMergedContributionRegistry(params);
-    cachedResolvedContributionRegistry = merged;
-    return merged;
 }
 
 function assertAgentContributionAligned(agent: ResolvedAgentContribution): void {

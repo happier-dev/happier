@@ -39,7 +39,7 @@ export const VOICE_INFERENCE_WORKER_IPC_DEFAULTS = {
     // Measured supported Kokoro cold starts can take several minutes under admitted host load.
     // Warm/prime remain bounded, but use their real operation budget instead of the ordinary
     // TTS/STT request deadline.
-    warmPrimeRequestTimeoutMs: 600_000,
+    warmPrimeRequestTimeoutMs: VOICE_RUNTIME_WARM_DEFAULTS.warmRequestTimeoutMs,
     maxFrameBytes: 8 * 1024 * 1024,
 } as const;
 

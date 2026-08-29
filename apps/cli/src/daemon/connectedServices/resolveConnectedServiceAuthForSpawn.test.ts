@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   ConnectedServiceAuthGroupV1Schema,
@@ -47,6 +47,15 @@ import {
   resolveQualifiedPurposeBindingsForAgentSpawn,
   type AgentSpawnPurposeContributions,
 } from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import {
+  createConnectedAccountPurposeBindingOwner,
+  type ConnectedAccountPurposeBindingOwner,
+  type ConnectedAccountPurposeBindingStore,
+} from './purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 async function readCodexConnectedAccountLaunchRegistration() {
   let captured: unknown;
@@ -119,7 +128,10 @@ type LegacyTestConnectedServiceApi = Readonly<{
   }>>;
 }>;
 
-function qualifiedAuthGroupApiFromLegacyTestApi(api: unknown): ConnectedServiceQualifiedAuthGroupApi {
+function qualifiedAuthGroupApiFromLegacyTestApi(
+  api: unknown,
+  fallbackProfileIdsByServiceId: ReadonlyMap<string, readonly string[]> = new Map(),
+): ConnectedServiceQualifiedAuthGroupApi {
   const legacy = api as LegacyTestConnectedServiceApi;
   let latestGroup: Awaited<ReturnType<NonNullable<LegacyTestConnectedServiceApi['getConnectedServiceAuthGroup']>>> = null;
   const resolveLegacyServiceId = (service: Readonly<{ pluginId: string; localId: string }>): string => {
@@ -166,7 +178,10 @@ function qualifiedAuthGroupApiFromLegacyTestApi(api: unknown): ConnectedServiceQ
       const profileRows = profiles?.profiles ?? latestGroup?.members?.map((member) => ({
         profileId: member.profileId,
         status: 'connected' as const,
-      })) ?? [];
+      })) ?? (fallbackProfileIdsByServiceId.get(serviceId) ?? []).map((profileId) => ({
+        profileId,
+        status: 'connected' as const,
+      }));
       return QualifiedConnectedAccountListResponseV4Schema.parse({
         service,
         accounts: profileRows.map((profile) => ({
@@ -184,12 +199,51 @@ function qualifiedAuthGroupApiFromLegacyTestApi(api: unknown): ConnectedServiceQ
   };
 }
 
+let resolverTestPurposeSubjectSequence = 0;
+
 function resolveConnectedServiceAuthForSpawn(input: Parameters<typeof resolveConnectedServiceAuthForSpawnImpl>[0]) {
+  const fallbackProfileIdsByServiceId = new Map<string, string[]>();
+  const rawBindings = input.connectedServicesBindingsRaw as Readonly<{
+    bindingsByServiceId?: Readonly<Record<string, Readonly<{
+      selection?: unknown;
+      profileId?: unknown;
+    }>>>;
+  }> | null;
+  for (const [serviceId, binding] of Object.entries(rawBindings?.bindingsByServiceId ?? {})) {
+    if (binding.selection !== 'profile' || typeof binding.profileId !== 'string') continue;
+    fallbackProfileIdsByServiceId.set(serviceId, [binding.profileId]);
+  }
   return resolveConnectedServiceAuthForSpawnImpl({
     ...input,
     ...(input.qualifiedConnectedAccountApi
       ? {}
-      : { qualifiedConnectedAccountApi: qualifiedAuthGroupApiFromLegacyTestApi(input.api) }),
+      : {
+          qualifiedConnectedAccountApi: qualifiedAuthGroupApiFromLegacyTestApi(
+            input.api,
+            fallbackProfileIdsByServiceId,
+          ),
+        }),
+    ...(input.resolveQualifiedPurposeBindingSnapshot
+      ? {}
+      : {
+          resolveQualifiedPurposeBindingSnapshot:
+            createAppliedQualifiedPurposeBindingSnapshotResolver(input.agentId),
+        }),
+    ...(input.activateQualifiedPurposeBindings
+      ? {}
+      : {
+          activateQualifiedPurposeBindings: (snapshot) => {
+            if (!externalPurposeOwner) {
+              throw new Error('test_connected_account_purpose_owner_unavailable');
+            }
+            resolverTestPurposeSubjectSequence += 1;
+            return externalPurposeOwner.activateSessionPurposeBindings({
+              sessionId: `resolver-test:${resolverTestPurposeSubjectSequence}:${input.materializationKey}`,
+              purposes: snapshot.purposes,
+              bindings: snapshot.bindings,
+            });
+          },
+        }),
   });
 }
 
@@ -299,6 +353,9 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
   activeRemainingPercent?: number;
   rereadGroup?: Readonly<Record<string, unknown>> | null;
   rereadError?: Error;
+  activateQualifiedPurposeBindings?: NonNullable<
+    Parameters<typeof resolveConnectedServiceAuthForSpawnImpl>[0]['activateQualifiedPurposeBindings']
+  >;
 }>) {
   const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-single-spawn-switch-test-'));
   const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-single-spawn-switch-server-test-'));
@@ -429,7 +486,7 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       groupGeneration?: number | null;
     }) => {
       if (
-        source.serviceId !== 'openai-codex'
+        source.serviceId !== 'happier.agent.codex/openai-codex'
         || source.groupId !== 'codex-main'
         || source.groupGeneration !== 5
       ) {
@@ -520,16 +577,346 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
         readGroup: readQualifiedConnectedAccountGroupV4,
         listAccounts: listQualifiedConnectedAccountsV4,
       },
+      ...(input.activateQualifiedPurposeBindings
+        ? { activateQualifiedPurposeBindings: input.activateQualifiedPurposeBindings }
+        : {}),
     } as Parameters<typeof resolveConnectedServiceAuthForSpawn>[0] & {
       accountUsageStore: typeof accountUsageStore;
     }),
   };
 }
 
+const EXTERNAL_CONNECTED_ACCOUNT_SERVICE = Object.freeze({
+  pluginId: 'acme.connected-account',
+  localId: 'credential',
+});
+const EXTERNAL_CONNECTED_ACCOUNT_SERVICE_KEY =
+  'acme.connected-account/credential';
+const EXTERNAL_CONNECTED_ACCOUNT_PURPOSE = Object.freeze({
+  consumer: Object.freeze({
+    pluginId: 'happier.agent.codex',
+    localId: 'codex',
+  }),
+  purpose: 'external-spawn-test',
+});
+
+let externalPurposeOwner: ConnectedAccountPurposeBindingOwner | null = null;
+let externalRuntimeLease: PluginRuntimeRegistryLease | null = null;
+
+function externalPurposeBindingStore(): ConnectedAccountPurposeBindingStore {
+  let current: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
+  const listeners = new Set<() => void>();
+  return {
+    read: async () => current,
+    update: async (mutate) => {
+      current = mutate(current);
+      for (const listener of listeners) listener();
+      return current;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    },
+  };
+}
+
+function externalSpawnPurposeSnapshot(
+  target:
+    | Readonly<{
+        kind: 'account';
+        account: Readonly<{
+          service: typeof EXTERNAL_CONNECTED_ACCOUNT_SERVICE;
+          accountId: string;
+        }>;
+      }>
+    | Readonly<{
+        kind: 'group';
+        service: typeof EXTERNAL_CONNECTED_ACCOUNT_SERVICE;
+        groupId: string;
+      }>,
+) {
+  return Object.freeze({
+    purposes: Object.freeze([EXTERNAL_CONNECTED_ACCOUNT_PURPOSE]),
+    bindings: Object.freeze([Object.freeze({
+      purpose: EXTERNAL_CONNECTED_ACCOUNT_PURPOSE,
+      target,
+    })]),
+    authorizedPurposes: Object.freeze([Object.freeze({
+      purpose: EXTERNAL_CONNECTED_ACCOUNT_PURPOSE,
+      serviceRefs: Object.freeze([EXTERNAL_CONNECTED_ACCOUNT_SERVICE]),
+    })]),
+    fileMaterializationPurposes: Object.freeze([]),
+    requestAuthUses: Object.freeze([]),
+    fileEnvironmentUses: Object.freeze([]),
+    environmentUses: Object.freeze([]),
+  });
+}
+
+beforeAll(async () => {
+    externalPurposeOwner = createConnectedAccountPurposeBindingOwner({
+      store: externalPurposeBindingStore(),
+      selectTarget: async () => ({
+        kind: 'account',
+        account: {
+          service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+          accountId: 'external-direct',
+        },
+      }),
+      resolveTarget: async (target) => ({
+        displayName: 'External account',
+        account: target.kind === 'account'
+          ? target.account
+          : {
+              service: target.service,
+              accountId: 'external-active',
+            },
+      }),
+      resolveCredentialRevision: async () => 'csr_0123456789ABCDEFGHJKMNPQRS',
+      materializeAccount: async ({ account, credentialRevisionBasis, request }) => {
+        credentialRevisionBasis?.captureCredentialRevision(
+          'csr_0123456789ABCDEFGHJKMNPQRS',
+        );
+        if (request.kind !== 'environment') {
+          throw new Error('external_spawn_test_environment_only');
+        }
+        return {
+          kind: 'environment',
+          env: Object.fromEntries(request.keys.map((key) => [
+            key,
+            `external:${account.accountId}`,
+          ])),
+        };
+      },
+      async projectTargetAccounts() {
+        throw new Error('external_spawn_test_listing_unexpected');
+      },
+      async assertTargetAccountMaterializable() {
+        throw new Error('external_spawn_test_listed_materialization_unexpected');
+      },
+    });
+    externalRuntimeLease = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
+        contributes: getResolvedContributionRegistry(),
+        pluginIds: [
+          'happier.agent.claude',
+          'happier.agent.codex',
+          'happier.agent.gemini',
+          'happier.agent.opencode',
+          'happier.agent.pi',
+        ],
+        connectedAccounts: externalPurposeOwner!,
+      }),
+    });
+});
+
+afterAll(async () => {
+  await externalRuntimeLease?.release();
+  externalRuntimeLease = null;
+  externalPurposeOwner = null;
+  await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+});
+
 describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
+  it('admits a novel qualified direct account through the real spawn materialization owner without legacy credential projection', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-external-direct-spawn-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-direct-spawn-server-'));
+    const getConnectedServiceCredentialPlain = vi.fn(async () => null);
+    const getConnectedServiceCredentialSealed = vi.fn(async () => null);
+    const listConnectedServiceProfiles = vi.fn(async () => ({ profiles: [] }));
+    const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const listAccounts = vi.fn(async () => QualifiedConnectedAccountListResponseV4Schema.parse({
+      service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+      accounts: [{
+        ref: {
+          service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+          accountId: 'external-direct',
+        },
+        status: 'connected',
+        authenticationModeId: 'manual',
+        revisionSemantics: 'revisioned',
+        credentialRevision,
+        configurationReady: true,
+        configurationRevision: null,
+        scopes: [],
+      }],
+    }));
+    const snapshot = externalSpawnPurposeSnapshot({
+      kind: 'account',
+      account: {
+        service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+        accountId: 'external-direct',
+      },
+    });
+
+    const result = await resolveConnectedServiceAuthForSpawnImpl({
+      agentId: 'codex',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          [EXTERNAL_CONNECTED_ACCOUNT_SERVICE_KEY]: {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'external-direct',
+          },
+        },
+      },
+      materializationKey: 'external-direct',
+      activeServerDir,
+      baseDir,
+      credentials: { token: 'happy-token', encryption: null },
+      api: {
+        getConnectedServiceCredentialPlain,
+        getConnectedServiceCredentialSealed,
+        listConnectedServiceProfiles,
+      } as unknown as ApiClient,
+      qualifiedConnectedAccountApi: {
+        readGroup: vi.fn(async () => null),
+        listAccounts,
+      },
+      resolveQualifiedPurposeBindingSnapshot: () => snapshot,
+      activateQualifiedPurposeBindings: (purposeSnapshot) =>
+        externalPurposeOwner!.activateSessionPurposeBindings({
+          sessionId: 'external-direct-subject',
+          purposes: purposeSnapshot.purposes,
+          bindings: purposeSnapshot.bindings,
+        }),
+      nowMs: () => 1_000,
+    });
+
+    expect(result).not.toBeNull();
+    expect(listAccounts).toHaveBeenCalledWith({
+      service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+    });
+    expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
+    expect(getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
+    expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
+    const childSelections = JSON.parse(
+      result?.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? '[]',
+    ) as Array<Record<string, unknown>>;
+    expect(childSelections).toEqual([expect.objectContaining({
+      kind: 'profile',
+      serviceId: EXTERNAL_CONNECTED_ACCOUNT_SERVICE_KEY,
+      profileId: 'external-direct',
+      credentialRevision,
+    })]);
+    await result?.cleanupOnExit?.();
+  });
+
+  it('admits a novel qualified group through the real spawn materialization owner without a scalar gate', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-external-group-spawn-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-group-spawn-server-'));
+    const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1,
+      ref: {
+        service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+        groupId: 'external-group',
+      },
+      incarnation: 'external-group-incarnation',
+      displayName: 'External group',
+      policy: { v: 1, strategy: 'priority', autoSwitch: false },
+      activeConnectedAccountId: 'external-active',
+      generation: 7,
+      runtimeStateRevision: 3,
+      state: {},
+      createdAt: 1,
+      updatedAt: 2,
+      members: [{
+        v: 1,
+        connectedAccountId: 'external-active',
+        priority: 1,
+        enabled: true,
+        state: {},
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+    });
+    const readGroup = vi.fn(async () => group);
+    const listAccounts = vi.fn(async () => QualifiedConnectedAccountListResponseV4Schema.parse({
+      service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+      accounts: [{
+        ref: {
+          service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+          accountId: 'external-active',
+        },
+        status: 'connected',
+        authenticationModeId: 'manual',
+        revisionSemantics: 'revisioned',
+        credentialRevision,
+        configurationReady: true,
+        configurationRevision: null,
+        scopes: [],
+      }],
+    }));
+    const getConnectedServiceCredentialPlain = vi.fn(async () => null);
+    const getConnectedServiceCredentialSealed = vi.fn(async () => null);
+    const snapshot = externalSpawnPurposeSnapshot({
+      kind: 'group',
+      service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+      groupId: 'external-group',
+    });
+
+    const result = await resolveConnectedServiceAuthForSpawnImpl({
+      agentId: 'codex',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          [EXTERNAL_CONNECTED_ACCOUNT_SERVICE_KEY]: {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'external-group',
+          },
+        },
+      },
+      materializationKey: 'external-group',
+      activeServerDir,
+      baseDir,
+      credentials: { token: 'happy-token', encryption: null },
+      api: {
+        getConnectedServiceCredentialPlain,
+        getConnectedServiceCredentialSealed,
+      } as unknown as ApiClient,
+      qualifiedConnectedAccountApi: { readGroup, listAccounts },
+      resolveQualifiedPurposeBindingSnapshot: () => snapshot,
+      activateQualifiedPurposeBindings: (purposeSnapshot) =>
+        externalPurposeOwner!.activateSessionPurposeBindings({
+          sessionId: 'external-group-subject',
+          purposes: purposeSnapshot.purposes,
+          bindings: purposeSnapshot.bindings,
+        }),
+      nowMs: () => 1_000,
+    });
+
+    expect(result).not.toBeNull();
+    expect(readGroup).toHaveBeenCalledWith({
+      service: EXTERNAL_CONNECTED_ACCOUNT_SERVICE,
+      groupId: 'external-group',
+    });
+    expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
+    expect(getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
+    const childSelections = JSON.parse(
+      result?.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? '[]',
+    ) as Array<Record<string, unknown>>;
+    expect(childSelections).toEqual([expect.objectContaining({
+      kind: 'group',
+      serviceId: EXTERNAL_CONNECTED_ACCOUNT_SERVICE_KEY,
+      groupId: 'external-group',
+      activeProfileId: 'external-active',
+      generation: 7,
+      credentialRevision,
+    })]);
+    await result?.cleanupOnExit?.();
+  });
+
   it('uses the qualified V4 group reader for scalar group bindings', async () => {
     const scenario = await createSpawnPreTurnSwitchScenario({
       switchResult: { status: 'auto_switch_disabled', generation: 5 },
+      activateQualifiedPurposeBindings: (purposeSnapshot) =>
+        externalPurposeOwner!.activateSessionPurposeBindings({
+          sessionId: 'qualified-v4-group-reader',
+          purposes: purposeSnapshot.purposes,
+          bindings: purposeSnapshot.bindings,
+        }),
     });
 
     await scenario.run();
@@ -898,7 +1285,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         reason: expect.objectContaining({
           name: 'ConnectedServiceQualifiedPurposeAuthorityError',
           code: 'connected_service_qualified_purpose_authority_unavailable',
-          missingServiceIds: ['gemini'],
+          missingServiceIds: ['happier.agent.gemini/gemini-account'],
         }),
       },
       {
@@ -906,7 +1293,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         reason: expect.objectContaining({
           name: 'ConnectedServiceQualifiedPurposeAuthorityError',
           code: 'connected_service_qualified_purpose_authority_unavailable',
-          missingServiceIds: ['gemini'],
+          missingServiceIds: ['happier.agent.gemini/gemini-account'],
         }),
       },
     ]);
@@ -1152,7 +1539,11 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       requestAuthPurposeBindings: [],
       connectedServicesBindings: {
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', profileId: 'work' },
+          'happier.agent.codex/openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
         },
       },
     });
@@ -1765,7 +2156,12 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       baseDir,
       credentials,
       api,
-    })).rejects.toThrow(/no active profile/);
+    })).rejects.toMatchObject({
+      name: 'ConnectedServiceSpawnAuthGroupAuthorityError',
+      kind: 'active_profile_missing',
+      serviceId: 'happier.agent.codex/openai-codex',
+      groupId: 'codex-main',
+    });
   });
 
   it('fails typed without performing raw CAS when an exhausted group needs the canonical switch owner', async () => {
@@ -1886,7 +2282,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     })).rejects.toMatchObject({
       name: 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError',
       kind: 'switch_coordinator_unavailable',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       activeProfileId: 'primary',
       selectedProfileId: 'backup',
@@ -2243,7 +2639,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     expect(accountUsageStore.resolveBySource).toHaveBeenCalled();
     expect(authGroupSwitchCoordinator.switchBeforeTurn).toHaveBeenCalledWith({
       sessionId: 'session-1',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       reason: 'soft_threshold',
       observedProfileId: 'primary',
@@ -2341,7 +2737,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     await expect(scenario.run()).resolves.not.toBeNull();
     expect(scenario.switchBeforeTurn).toHaveBeenCalledWith({
       sessionId: 'session-single-spawn-switch',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       reason: 'soft_threshold',
       observedProfileId: 'primary',
@@ -2591,7 +2987,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex',
       profileId: 'primary',
     });
-    expect(connectedServiceAuth?.connectedServicesBindings.bindingsByServiceId['openai-codex']).toEqual({
+    expect(connectedServiceAuth?.connectedServicesBindings.bindingsByServiceId[
+      'happier.agent.codex/openai-codex'
+    ]).toEqual({
       source: 'connected',
       selection: 'group',
       groupId: 'codex-main',
@@ -2795,14 +3193,14 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       name: 'ConnectedServiceSpawnProfileActionRequiredError',
       kind: 'profile_action_required',
       action: 'reconnect_connected_service_profile',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'primary',
       status: 'needs_reauth',
     });
     expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
-  it('does not let a revisioned Gemini credential reach private provider materialization diagnostics', async () => {
+  it('refuses a Gemini OAuth profile requiring reconnect before credential materialization', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-legacy-unsupported-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-legacy-unsupported-server-test-'));
     const record = buildConnectedServiceCredentialRecord({
@@ -2840,7 +3238,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
     } as unknown as ApiClient;
 
-    const connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+    await expect(resolveConnectedServiceAuthForSpawn({
       agentId: 'gemini',
       connectedServicesBindingsRaw: {
         v: 1,
@@ -2858,18 +3256,15 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(4) },
       },
       api,
-    });
-    expect(connectedServiceAuth?.diagnostics).toEqual([]);
-    const oauth = record.oauth;
-    if (!oauth) {
-      throw new Error('test fixture expected OAuth credentials');
-    }
-    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(oauth.accessToken);
-    expect(JSON.stringify(connectedServiceAuth?.env)).not.toContain(oauth.refreshToken);
-    expect(getConnectedServiceCredentialPlain).toHaveBeenCalledWith({
-      serviceId: 'gemini',
+    })).rejects.toMatchObject({
+      name: 'ConnectedServiceSpawnProfileActionRequiredError',
+      kind: 'profile_action_required',
+      action: 'reconnect_connected_service_profile',
+      serviceId: 'happier.agent.gemini/gemini-account',
       profileId: 'legacy-oauth',
+      status: 'needs_reauth',
     });
+    expect(getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
   });
 
   it('fails typed without raw CAS when profile health requires the canonical switch owner', async () => {
@@ -3006,7 +3401,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     })).rejects.toMatchObject({
       name: 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError',
       kind: 'switch_coordinator_unavailable',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       activeProfileId: 'primary',
       selectedProfileId: 'backup',
@@ -3395,7 +3790,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
     expect(authGroupSwitchCoordinator.switchAfterCalls).toEqual([{
       sessionId: 'session-1',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       reason: 'refresh_failed',
       observedProfileId: 'primary',

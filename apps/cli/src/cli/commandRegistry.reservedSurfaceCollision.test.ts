@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { codexHandlerSpy, primeResolvedContributionRegistryMock, providerHandlerSpy } = vi.hoisted(() => ({
+const { codexHandlerSpy, resolveMergedContributionRegistryMock, providerHandlerSpy } = vi.hoisted(() => ({
   providerHandlerSpy: vi.fn(async () => {}),
   codexHandlerSpy: vi.fn(async () => {}),
-  primeResolvedContributionRegistryMock: vi.fn(),
+  resolveMergedContributionRegistryMock: vi.fn(),
 }));
 
 vi.mock('@/configuration', () => ({
@@ -13,7 +13,7 @@ vi.mock('@/configuration', () => ({
 }));
 
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
-  primeResolvedContributionRegistry: primeResolvedContributionRegistryMock,
+  resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
 }));
 
 import {
@@ -27,8 +27,8 @@ describe('commandRegistry reserved command-surface collisions', () => {
   beforeEach(() => {
     codexHandlerSpy.mockClear();
     providerHandlerSpy.mockClear();
-    primeResolvedContributionRegistryMock.mockReset();
-    primeResolvedContributionRegistryMock.mockResolvedValue({
+    resolveMergedContributionRegistryMock.mockReset();
+    resolveMergedContributionRegistryMock.mockResolvedValue({
       commands: [],
       catalogEntriesById: {
         codex: {

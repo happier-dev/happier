@@ -69,7 +69,10 @@ function response(status: number, models: readonly string[] = []) {
   };
 }
 
-function harness(transport: ProviderProbeTransport) {
+function harness(
+  transport: ProviderProbeTransport,
+  scheduler = createProviderProbeScheduler(),
+) {
   let current = true;
   let selectedAccountId = 'selected-account';
   let revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -117,7 +120,7 @@ function harness(transport: ProviderProbeTransport) {
       resolveAddresses: async () => ['93.184.216.34'],
       transport,
     }),
-    scheduler: createProviderProbeScheduler(),
+    scheduler,
     now: (() => { let value = 10; return () => value += 1; })(),
   });
   return { observation, requestAuth, refreshAfterAuthFailure, redacted, setCurrent: (value: boolean) => { current = value; } };
@@ -177,6 +180,39 @@ describe('Agent Provider catalog observation', () => {
     await expect(h.observation.observe(input())).resolves.toMatchObject({
       source: 'dynamic', stale: true, models: [{ id: 'curated', name: 'Curated name', description: 'Curated presentation' }],
     });
+  });
+
+  it('keeps a retained native catalog current when only local scheduler capacity is unavailable', async () => {
+    const scheduler = createProviderProbeScheduler({ maxConcurrentOperations: 1, maxPendingOperations: 1 });
+    const h = harness(async () => response(200, ['api-only']), scheduler);
+    await expect(h.observation.observe(input())).resolves.toMatchObject({
+      source: 'dynamic', stale: false, models: [{ id: 'api-only' }],
+    });
+
+    let releaseActive!: () => void;
+    const active = scheduler.runCatalog(
+      'occupied',
+      'manual_refresh',
+      () => new Promise<Readonly<{ status: 'success' }>>((resolve) => {
+        releaseActive = () => resolve({ status: 'success' });
+      }),
+      { unavailable: () => ({ status: 'error' as const }) },
+    );
+    const queued = scheduler.runCatalog(
+      'queued',
+      'manual_refresh',
+      async () => ({ status: 'success' as const }),
+      { unavailable: () => ({ status: 'error' as const }) },
+    );
+    await vi.waitFor(() => expect(releaseActive).toBeTypeOf('function'));
+
+    await expect(h.observation.observe(input())).resolves.toMatchObject({
+      source: 'dynamic', stale: false, models: [{ id: 'api-only' }],
+    });
+
+    releaseActive();
+    await expect(active).resolves.toMatchObject({ status: 'success' });
+    await expect(queued).resolves.toMatchObject({ status: 'success' });
   });
 
   it('keeps the static catalog when the selected endpoint has no fixed URL', async () => {

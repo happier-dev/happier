@@ -20,6 +20,12 @@ import {
 
 import type { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceMaterializationBlockedError } from '../materialize/materializeConnectedServicesForSpawn';
+import {
+    boundConnectedServiceMaterializationDiagnosticValue,
+} from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import {
+    sanitizeConnectedServiceDiagnosticError,
+} from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import {
     scopeConnectedAccountPurposeBindingLease,
@@ -839,11 +845,11 @@ export function createExecutionRunConnectedServicesBridge(
                     contributionLease =
                         await deps.acquireAgentPurposeContributions({ agentId });
                 } catch (error) {
-                    return blocked(
+                    return blocked(sanitizeConnectedServiceDiagnosticError(
                         error instanceof Error
-                            ? error.message
+                            ? error
                             : 'Agent purpose contributions are unavailable',
-                    );
+                    ));
                 }
                 if (!runner.isCurrent()) {
                     await cleanupUnadmittedMaterialization({
@@ -893,25 +899,39 @@ export function createExecutionRunConnectedServicesBridge(
                         contributionLease,
                     });
                     if (error instanceof ConnectedServiceMaterializationBlockedError) {
+                        // Plugin-authored diagnostic prose reaches the retained
+                        // daemon log and the runner bridge, so every open scalar
+                        // is bounded and redacted by the one Connected Service
+                        // diagnostic privacy owner before it is serialized —
+                        // exactly like the canonical spawn producer.
                         logger.warn('[DAEMON RUN] Execution-run connected services materialization blocked; failing closed', {
                             runId: input.runId,
                             agentId,
                             diagnostics: error.diagnostics.map((diagnostic) => ({
-                                code: diagnostic.code,
+                                code: boundConnectedServiceMaterializationDiagnosticValue(diagnostic.code),
                                 serviceId: diagnostic.serviceId,
-                                reason: diagnostic.reason,
+                                reason: boundConnectedServiceMaterializationDiagnosticValue(diagnostic.reason),
                                 severity: diagnostic.severity,
                             })),
                         });
-                        const reason = error.diagnostics.map((diagnostic) => diagnostic.reason).filter(Boolean).join('; ');
+                        const reason = error.diagnostics
+                            .map((diagnostic) =>
+                                boundConnectedServiceMaterializationDiagnosticValue(diagnostic.reason))
+                            .filter(Boolean)
+                            .join('; ');
                         return blocked(reason || 'Connected service materialization blocked');
                     }
+                    // An unclassified resolution failure is still upstream/plugin
+                    // text: it can name a credential or a local path, so it passes
+                    // the same diagnostic privacy owner before it is retained or
+                    // bridged to the runner.
+                    const safeResolutionFailure = sanitizeConnectedServiceDiagnosticError(error);
                     logger.warn('[DAEMON RUN] Execution-run connected services resolution failed; failing closed', {
                         runId: input.runId,
                         agentId,
-                        error: error instanceof Error ? error.message : String(error),
+                        error: safeResolutionFailure,
                     });
-                    return blocked(error instanceof Error ? error.message : 'Connected services resolution failed');
+                    return blocked(safeResolutionFailure);
                 }
 
                 if (!resolved) {
@@ -1010,11 +1030,11 @@ export function createExecutionRunConnectedServicesBridge(
                             contributionLease,
                         });
                     }
-                    return blocked(
+                    return blocked(sanitizeConnectedServiceDiagnosticError(
                         error instanceof Error
-                            ? error.message
+                            ? error
                             : 'Execution-run connected services admission failed',
-                    );
+                    ));
                 }
             } finally {
                 if (

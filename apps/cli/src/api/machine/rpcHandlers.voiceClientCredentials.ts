@@ -117,6 +117,10 @@ export function registerMachineVoiceClientCredentialRpcHandlers(params: Readonly
           !lifecycle
           || !lifecycle.isCurrent()
         ) return failure(null);
+        const caller = lease.registry.resolveCurrentPluginMaterializationRef?.(
+          provider.pluginId,
+        ) ?? null;
+        if (!caller || caller.pluginId !== provider.pluginId) return failure(null);
         const targets = lease.registry.contributes.activationTargets.filter((candidate) => (
           candidate.pluginId === provider.pluginId
         ));
@@ -142,6 +146,7 @@ export function registerMachineVoiceClientCredentialRpcHandlers(params: Readonly
             realm,
             phase: request.data.phase,
             machineId: params.machineId,
+            materialization: caller,
             immutableGenerationId: lifecycle.generation,
             isRuntimeAuthorityCurrent: lifecycle.isCurrent,
           },

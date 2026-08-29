@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, link, lstat, open, mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { link, open, readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -33,6 +33,9 @@ import {
 import {
     MANAGED_SERVICE_NUMERIC_CONTRACT,
 } from './managedServiceSpecNormalization';
+import {
+    ensureProtectedLocalStateDirectory,
+} from '@/utils/fs/protectedLocalState';
 
 export type ManagedServiceDurableLogCapture = Readonly<{
     path: string;
@@ -280,12 +283,16 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
 
     async function ensureDirs(): Promise<void> {
         for (const directory of [endpointProjectionsDir, logsDir]) {
-            await mkdir(directory, { recursive: true, mode: 0o700 });
-            const facts = await lstat(directory);
-            if (!facts.isDirectory() || facts.isSymbolicLink()) {
-                return fail('plugin_managed_server_storage_unsafe', 'Managed server storage path is not a private directory');
+            try {
+                await ensureProtectedLocalStateDirectory(directory, {
+                    authority: 'owned',
+                });
+            } catch {
+                fail(
+                    'plugin_managed_server_storage_unsafe',
+                    'Managed server storage path is not a private directory',
+                );
             }
-            await chmod(directory, 0o700);
         }
     }
 
@@ -418,7 +425,11 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
             }
             // POSIX managed spawns are launched in a dedicated process
             // group whose id is the root pid. Root turnover is not stale while
-            // that owned containment still has descendants.
+            // that owned containment still has descendants. Group absence is
+            // the forgetting fact for this containment contract: it proves the
+            // owned group is gone, while a descendant that escaped into its own
+            // session is outside the group and outside what root/group evidence
+            // can observe, so this retirement never claims whole-tree absence.
             const observeGroup = params.observeProcessGroupPresence
                 ?? (async (processGroupId: number): Promise<ProcessLiveness> => (
                     probeProcessGroupLiveness(processGroupId)

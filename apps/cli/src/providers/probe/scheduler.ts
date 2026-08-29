@@ -564,6 +564,7 @@ export function createProviderProbeScheduler(input: Readonly<{
   const runDns = async <T>(
     operation: () => Promise<T>,
     lifetime: ProviderOperationLifetime,
+    isCurrent?: () => boolean,
   ): Promise<T> => {
     let started = false;
     let rejectPending: ((error: unknown) => void) | undefined;
@@ -575,6 +576,17 @@ export function createProviderProbeScheduler(input: Readonly<{
         queued: false,
         start: () => {
           started = true;
+          let current = true;
+          try {
+            current = isCurrent?.() ?? true;
+          } catch {
+            current = false;
+          }
+          if (!current) {
+            reject(new ProviderOperationAbandonedError('cancelled'));
+            admission.release();
+            return;
+          }
           void Promise.resolve().then(operation).then(resolve, reject)
             .finally(() => admission.release());
         },

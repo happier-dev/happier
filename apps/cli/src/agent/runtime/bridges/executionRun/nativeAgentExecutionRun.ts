@@ -25,6 +25,7 @@ import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registr
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/registry/engineRegistry/stateSharingPolicy';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import { createNativeAgentSessionInteractionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
@@ -191,7 +192,10 @@ function createNativeAgentInvocationContext(params: Readonly<{
         plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
         contribution: Object.freeze({
             id: params.lease.localAgentId,
-            qualifiedId: `${params.lease.pluginId}/agents/${params.lease.localAgentId}`,
+            qualifiedId: resolveAgentContributionQualifiedId({
+                pluginId: params.lease.pluginId,
+                localId: params.lease.localAgentId,
+            }),
         }),
         surface: 'agent' as const,
         invokedAtMs: params.invokedAtMs,
@@ -466,19 +470,33 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         async dispose() {
             if (disposed) return;
             disposed = true;
+            // The existing terminal fence settles completion waiters first, so
+            // waiter settlement and controller retirement are independent of
+            // any never-settling provider open or dispose below.
             if (nativeRuntimePromise && !terminal) {
                 terminal = true;
                 rejectTerminal(createDisposedError());
             }
             ownedAbortController.abort(new Error('Native Agent execution run disposed'));
-            const opened = nativeRuntime ?? (nativeRuntimePromise ? await nativeRuntimePromise.catch(() => null) : null);
             const watch = watchDisposable;
             watchDisposable = null;
             listeners.clear();
-            await Promise.all([
-                Promise.resolve(watch?.dispose()),
-                Promise.resolve(opened?.dispose()),
-            ]);
+            // Cleanup is attempted exactly once, best effort: it must not
+            // block this return on a provider open that never settles, and a
+            // provider cleanup failure is logged nowhere the caller depends
+            // on. A late-settling open is disposed when it settles.
+            const cleanupOpened = (opened: AgentExecutionRunRuntime | null): void => {
+                if (!opened) return;
+                void Promise.resolve().then(() => opened.dispose()).catch(() => undefined);
+            };
+            if (nativeRuntime) {
+                cleanupOpened(nativeRuntime);
+            } else if (nativeRuntimePromise) {
+                void nativeRuntimePromise.then(cleanupOpened, () => undefined);
+            }
+            if (watch) {
+                void Promise.resolve().then(() => watch.dispose()).catch(() => undefined);
+            }
         },
     });
 }
@@ -542,11 +560,13 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                     async dispose() {
                         if (disposed) return;
                         disposed = true;
-                        try {
-                            await execution.dispose();
-                        } finally {
-                            await sessionContext.dispose();
-                        }
+                        // The SDK lifecycle has already settled terminal truth.
+                        // Both native cleanup leaves are exactly-once, detached,
+                        // and best effort so neither can retain the controller.
+                        void Promise.resolve().then(() => execution.dispose())
+                            .catch(() => undefined);
+                        void Promise.resolve().then(() => sessionContext.dispose())
+                            .catch(() => undefined);
                     },
                 });
         },

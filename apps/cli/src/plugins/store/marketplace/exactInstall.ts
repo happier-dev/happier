@@ -1,6 +1,9 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import type { MarketplaceIndexItemV1, MarketplaceIndexQueryResultV1 } from '@happier-dev/protocol';
 
 import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
+import type { ExpectedMarketplaceListing } from '@/plugins/daemon/changeContract';
 
 import {
   COMMUNITY_NPM_MARKETPLACE_SOURCE,
@@ -9,7 +12,7 @@ import {
 } from './service';
 import { createMarketplaceSourceRegistryStore } from './sources/store';
 
-function readMarketplaceInstallAvailability(item: MarketplaceIndexItemV1):
+export function readMarketplaceInstallAvailability(item: MarketplaceIndexItemV1):
   | Readonly<{ ok: true; listing: MarketplaceIndexItemV1 }>
   | Readonly<{ ok: false; message: string }> {
   if (item.source.kind !== 'curated' && item.source.kind !== 'community-npm') {
@@ -57,30 +60,75 @@ export async function queryAllMarketplaceSourceItems(
   return { ...latest, items, nextCursor: null };
 }
 
-export type ExactMarketplaceInstallResult =
-  | Readonly<{
-      ok: true;
-      listing: MarketplaceIndexItemV1;
-      change: UserPluginChangeResult;
-    }>
-  | Readonly<{
-      ok: false;
-      code: 'install_unavailable';
-      message: string;
-    }>;
+export type ExactMarketplaceListingResolution = Readonly<{
+  source: MarketplaceIndexSourceConfig;
+  listing: MarketplaceIndexItemV1;
+  registryProfileId: string | null;
+}>;
 
-export async function requestExactMarketplaceInstall(
+export function projectExpectedMarketplaceListing(
+  listing: MarketplaceIndexItemV1,
+  registryProfileId: string | null,
+): ExpectedMarketplaceListing {
+  return listing.source.kind === 'community-npm' ? {
+    source: {
+      id: listing.source.id,
+      kind: 'community-npm',
+      sourceUrl: listing.source.sourceUrl,
+    },
+    pluginId: listing.pluginId,
+    publisher: listing.publisher,
+    packageName: listing.distribution.packageName,
+    registryOrigin: listing.distribution.registryOrigin,
+    version: listing.distribution.version,
+    integrity: listing.distribution.integrity,
+    manifestDigest: listing.manifestDigest,
+    review: { status: 'unreviewed', reviewedAt: null },
+    updatePolicy: listing.updatePolicy === 'pinned' ? 'pinned' : 'manual',
+  } : {
+    source: {
+      id: listing.source.id,
+      kind: 'curated',
+      sourceUrl: listing.source.sourceUrl,
+    },
+    pluginId: listing.pluginId,
+    publisher: listing.publisher,
+    packageName: listing.distribution.packageName,
+    registryOrigin: listing.distribution.registryOrigin,
+    ...(registryProfileId ? { registryProfileId } : {}),
+    version: listing.distribution.version,
+    integrity: listing.distribution.integrity,
+    manifestDigest: listing.manifestDigest,
+    review: {
+      status: 'approved',
+      reviewedAt: listing.review.reviewedAt!,
+      ...(listing.review.reason !== undefined ? { reason: listing.review.reason } : {}),
+    },
+    updatePolicy: listing.updatePolicy === 'curated-auto' ? 'automatic' : listing.updatePolicy,
+  };
+}
+
+export function marketplaceListingMatchesExpected(
+  expected: ExpectedMarketplaceListing,
+  listing: MarketplaceIndexItemV1,
+): boolean {
+  const registryProfileId = listing.artifactAccess.state === 'available'
+    ? listing.artifactAccess.registryProfileId
+    : null;
+  return isDeepStrictEqual(projectExpectedMarketplaceListing(listing, registryProfileId), expected);
+}
+
+export async function resolveExactMarketplaceListingForInstall(
   params: Readonly<{
     happyHomeDir: string;
     sourceId: string;
     pluginId: string;
-    approval?: 'prompt' | 'none';
   }>,
-  dependencies: Readonly<{
-    marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>;
-    requestChange?: typeof requestUserPluginChange;
-  }> = {},
-): Promise<ExactMarketplaceInstallResult> {
+  service?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>,
+): Promise<
+  | Readonly<{ ok: true; resolution: ExactMarketplaceListingResolution }>
+  | Readonly<{ ok: false; code: 'install_unavailable' | 'source_changed'; message: string }>
+> {
   const sourceId = params.sourceId.trim();
   const pluginId = params.pluginId.trim();
   if (!sourceId || !pluginId) {
@@ -100,7 +148,7 @@ export async function requestExactMarketplaceInstall(
   try {
     result = await queryAllMarketplaceSourceItems(
       source,
-      dependencies.marketplaceIndexService ?? createMarketplaceIndexService({ happyHomeDir: params.happyHomeDir }),
+      service ?? createMarketplaceIndexService({ happyHomeDir: params.happyHomeDir }),
     );
   } catch {
     return { ok: false, code: 'install_unavailable', message: 'The exact marketplace source facts are currently unavailable.' };
@@ -113,7 +161,7 @@ export async function requestExactMarketplaceInstall(
     || currentSource.origin !== source.origin
     || currentSource.sourceUrl !== source.sourceUrl
     || (currentSource.registryProfileId ?? null) !== (source.registryProfileId ?? null)) {
-    return { ok: false, code: 'install_unavailable', message: 'The persisted marketplace source binding changed while exact facts were loading.' };
+    return { ok: false, code: 'source_changed', message: 'The persisted marketplace source binding changed while exact facts were loading.' };
   }
 
   const listing = result.items.find((item) => (
@@ -133,8 +181,44 @@ export async function requestExactMarketplaceInstall(
     ? approvedListing.artifactAccess.registryProfileId
     : null;
   if ((source.registryProfileId ?? null) !== registryProfileId) {
-    return { ok: false, code: 'install_unavailable', message: 'The exact private registry profile binding changed before installation.' };
+    return { ok: false, code: 'source_changed', message: 'The exact private registry profile binding changed before installation.' };
   }
+  return { ok: true, resolution: { source, listing: approvedListing, registryProfileId } };
+}
+
+export type ExactMarketplaceInstallResult =
+  | Readonly<{
+      ok: true;
+      listing: MarketplaceIndexItemV1;
+      change: UserPluginChangeResult;
+    }>
+  | Readonly<{
+      ok: false;
+      code: 'install_unavailable' | 'source_changed';
+      message: string;
+    }>;
+
+export async function requestExactMarketplaceInstall(
+  params: Readonly<{
+    happyHomeDir: string;
+    sourceId: string;
+    pluginId: string;
+    approval?: 'prompt' | 'none';
+  }>,
+  dependencies: Readonly<{
+    marketplaceIndexService?: Pick<ReturnType<typeof createMarketplaceIndexService>, 'querySources'>;
+    requestChange?: typeof requestUserPluginChange;
+  }> = {},
+): Promise<ExactMarketplaceInstallResult> {
+  const resolution = await resolveExactMarketplaceListingForInstall({
+    happyHomeDir: params.happyHomeDir,
+    sourceId: params.sourceId,
+    pluginId: params.pluginId,
+  }, dependencies.marketplaceIndexService);
+  if (!resolution.ok) {
+    return { ok: false, code: resolution.code, message: resolution.message };
+  }
+  const { listing: approvedListing, registryProfileId } = resolution.resolution;
 
   const change = await (dependencies.requestChange ?? requestUserPluginChange)({
     request: {
@@ -143,42 +227,7 @@ export async function requestExactMarketplaceInstall(
       selector: approvedListing.distribution.version,
       registryOrigin: approvedListing.distribution.registryOrigin,
       ...(registryProfileId ? { registryProfileId } : {}),
-      expectedMarketplaceListing: approvedListing.source.kind === 'community-npm' ? {
-        source: {
-          id: approvedListing.source.id,
-          kind: 'community-npm',
-          sourceUrl: approvedListing.source.sourceUrl,
-        },
-        pluginId: approvedListing.pluginId,
-        publisher: approvedListing.publisher,
-        packageName: approvedListing.distribution.packageName,
-        registryOrigin: approvedListing.distribution.registryOrigin,
-        version: approvedListing.distribution.version,
-        integrity: approvedListing.distribution.integrity,
-        manifestDigest: approvedListing.manifestDigest,
-        review: { status: 'unreviewed', reviewedAt: null },
-        updatePolicy: approvedListing.updatePolicy === 'pinned' ? 'pinned' : 'manual',
-      } : {
-        source: {
-          id: approvedListing.source.id,
-          kind: 'curated',
-          sourceUrl: approvedListing.source.sourceUrl,
-        },
-        pluginId: approvedListing.pluginId,
-        publisher: approvedListing.publisher,
-        packageName: approvedListing.distribution.packageName,
-        registryOrigin: approvedListing.distribution.registryOrigin,
-        ...(registryProfileId ? { registryProfileId } : {}),
-        version: approvedListing.distribution.version,
-        integrity: approvedListing.distribution.integrity,
-        manifestDigest: approvedListing.manifestDigest,
-        review: {
-          status: 'approved' as const,
-          reviewedAt: approvedListing.review.reviewedAt!,
-          ...(approvedListing.review.reason !== undefined ? { reason: approvedListing.review.reason } : {}),
-        },
-        updatePolicy: approvedListing.updatePolicy === 'curated-auto' ? 'automatic' : approvedListing.updatePolicy,
-      },
+      expectedMarketplaceListing: projectExpectedMarketplaceListing(approvedListing, registryProfileId),
     },
     approval: params.approval ?? 'none',
   });

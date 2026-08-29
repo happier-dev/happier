@@ -12,6 +12,7 @@ import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/ty
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { projectManifestAgentContribution } from '../projection/registry/projectManifestAgentContribution';
+import { resolveAgentContributionQualifiedId } from '../projection/registry/agentRoutingIdentity';
 import {
     projectAgentCliAuthCatalogEntry,
     projectAgentCliSessionCommandCatalogEntry,
@@ -157,6 +158,7 @@ import {
     createProductionPluginInvocationServiceOwners,
     type ManagedProviderRuntimeInvocationServices,
 } from './invocation/services/production';
+import { readPluginSettingsValuesWithDefaults } from './invocation/services/settings';
 import type {
     PluginAccountSettingsRecordAdapter,
 } from './invocation/services/settings';
@@ -331,6 +333,10 @@ import { resolvePluginStorePaths } from '../store/paths';
 import {
     resolveNotificationChannelSettingsContributions,
 } from '../settings/notificationChannelSettings';
+import {
+    readPluginSettingsRollbackDeclarations,
+    type PluginSettingsRollbackDeclarations,
+} from '../settings/settingsRollbackDeclarations';
 import { collectDeclaredPluginSecrets } from './context/declaredPluginSecrets';
 import {
     type PluginAccessSelection,
@@ -711,6 +717,24 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /** Applied package admission facts. Real registries provide them; partial
      * consumer fixtures may omit them and consumers must then fail closed. */
     pluginFinalPolicyCurrentGenerationsById?: ReadonlyMap<string, PluginFinalPolicyCurrentGeneration>;
+    /**
+     * The one supported rollback Settings declaration per (pluginId, scope),
+     * derived from this registry generation's bounded rollback-retention
+     * state. Absent when the support state was unreadable (preserve-all).
+     */
+    settingsRollbackDeclarations?: PluginSettingsRollbackDeclarations;
+    /**
+     * One transition-scoped cleanup owned by registry publication. It compares
+     * the predecessor's exact support facts with this candidate and never
+     * infers retirement from raw Settings bytes.
+     */
+    pruneRetiredPluginSettings?(
+        previous: PluginSettingsRollbackDeclarations | undefined,
+    ): Promise<readonly Readonly<{
+        pluginId: string;
+        scope: 'account' | 'daemon';
+        status: 'updated' | 'already-absent' | 'unsettled';
+    }>[]>;
     /** Exact current-generation owner for one admitted Voice provider. */
     resolveVoiceProviderRuntimeLifecycle?(
         identity: PluginContributionIdentityV1,
@@ -1161,6 +1185,10 @@ function mergeActivatedContributes(
     immutableGenerationIdsByPluginId: ReadonlyMap<string, string>,
     isPluginRuntimeCurrent: (pluginId: string) => boolean,
     resolveManagedServiceSessionBaseUrl?: ManagedServiceSessionBaseUrlResolver,
+    resolveAgentPluginSettings?: (input: Readonly<{
+        pluginId: string;
+        localAgentId: string;
+    }>) => Promise<Readonly<Partial<Record<'account' | 'daemon', Readonly<Record<string, unknown>>>>> | null>,
 ): ResolvedContributionRegistry {
     const activationTargets = base.activationTargets ?? Object.freeze([]);
     const contributionKey = (contribution: Readonly<{ pluginId?: string; definition: Readonly<{ id: string }> }>): string => (
@@ -1322,6 +1350,14 @@ function mergeActivatedContributes(
                         agentId: agent.id,
                         cliSessionCommand: runtime.cliSessionCommand,
                         isCurrent: runtime.isCurrent,
+                        ...(resolveAgentPluginSettings
+                            ? {
+                                resolvePluginSettings: () => resolveAgentPluginSettings({
+                                    pluginId: runtime.pluginId,
+                                    localAgentId: runtime.localAgentId,
+                                }),
+                            }
+                            : {}),
                     })
                     : {}),
                 ...(runtime.cliAuth && agent.cliMetadata
@@ -2018,6 +2054,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // late-bound here because the canonical owner needs the completed
     // activation registry to construct its event/MCP/resource hosts.
     let invocationServiceOwners: ReturnType<typeof createProductionPluginInvocationServiceOwners>;
+    // Agent CLI declarations are projected before the generation-owned
+    // invocation/Settings owner is constructed. Keep this late-bound closure
+    // so launch callbacks read from that one owner when they execute.
+    let resolveAgentPluginSettings: (input: Readonly<{
+        pluginId: string;
+        localAgentId: string;
+    }>) => Promise<Readonly<Partial<Record<'account' | 'daemon', Readonly<Record<string, unknown>>>>> | null> = async () => null;
     let targetActionInvocations: ReturnType<typeof createTargetActionInvocationRegistry> | null = null;
     let disposeInvocationServiceOwners: () => Promise<void> = async () => {};
     let resolvedRuntimeRegistryOwner: ResolvedExecutablePluginRuntimeRegistry | null = null;
@@ -2193,7 +2236,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
             && !retiredRuntimeConsumerPluginIds.has(pluginId)
         ),
         params?.resolveManagedServiceSessionBaseUrl,
+        resolveAgentPluginSettings,
     );
+    // The one supported rollback Settings declaration per (pluginId, scope),
+    // derived from the install registry's own bounded rollback-retention
+    // state. A derivation failure leaves it undefined: unknown support state
+    // preserves every removed value instead of pruning evidence.
+    const settingsRollbackDeclarations = await readPluginSettingsRollbackDeclarations({
+        ...(params?.happyHomeDir !== undefined ? { happyHomeDir: params.happyHomeDir } : {}),
+        commit: committed?.commit ?? null,
+    }).catch(() => undefined);
     const resolveExactActivationTarget = (pluginId: string) => {
         const targets = authoritativeContributes.activationTargets.filter((target) => (
             target.pluginId === pluginId
@@ -3775,7 +3827,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 event.kind === 'event'
                 && event.automation?.eligible === true
                 && event.automation.source.supportedObservationTransports.some((transport) => (
-                    transport === 'checkpointedPull' || transport === 'durablePush'
+                    transport === 'checkpointedPull' || transport === 'durablePush' || transport === 'socket'
                 ))
             ))
         ));
@@ -3790,7 +3842,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             const immutableGenerationId = immutableGenerationIdsByPluginId.get(target.pluginId);
             if (!caller || !immutableGenerationId) continue;
             const lifecycle = resolveRuntimeConsumerLifecycle(target.pluginId);
-            const transportKinds = new Set<'checkpointedPull' | 'durablePush'>();
+            const transportKinds = new Set<'checkpointedPull' | 'durablePush' | 'socket'>();
             for (const event of target.manifest.contributes.events ?? []) {
                 if (event.kind !== 'event' || event.automation?.eligible !== true) continue;
                 for (const supportedTransport of event.automation.source.supportedObservationTransports) {
@@ -3800,7 +3852,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
             for (const transportKind of transportKinds) {
                 const transport: AutomationEventSourcesListTransportV1 = transportKind === 'checkpointedPull'
                     ? { kind: 'checkpointedPull' }
-                    : { kind: 'durablePush' };
+                    : transportKind === 'socket'
+                        ? { kind: 'socket' }
+                        : { kind: 'durablePush' };
                 const owner = createAutomationEventAdoptedDefinitionSetHostV1({
                     credentials: sessionCredentials,
                     caller,
@@ -4129,6 +4183,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         storagePaths: pluginStorePaths,
         daemonDatabase: daemonDatabaseHost,
         accountStorage: accountStorageHost,
+        ...(settingsRollbackDeclarations
+            ? { settingsRollbackDeclarations }
+            : {}),
         settingsDeclarations: [
             ...(authoritativeContributes.settings ?? []),
             ...resolveNotificationChannelSettingsContributions(
@@ -5268,6 +5325,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             immutableGenerationIdsByPluginId,
             (pluginId) => isPluginConsumerCurrent(pluginId),
             params?.resolveManagedServiceSessionBaseUrl,
+            resolveAgentPluginSettings,
         );
         return projected.agents.find((agent) => agent.id === agentId)?.catalogEntry ?? null;
     }
@@ -5453,14 +5511,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!inputCurrent) {
             return Object.freeze({ status: 'not_current' as const });
         }
-        const runtime = await acquireManagedProviderRuntime(identity);
-        if (!runtime) {
-            return Object.freeze({ status: 'unavailable' as const });
-        }
+        // Runtime acquisition has one owner: the public managed Provider lifecycle
+        // coordinator invoked by `input.establish`. Pre-acquiring it here made a
+        // permanently missing/integrity-rejected runtime collapse into the joiner's
+        // generic `unavailable` result before that coordinator could return its
+        // existing `managed_provider_runtime_unavailable` outcome. The registry
+        // generation itself is already the exact SVC09 operation generation; this
+        // closure only fences that admitted generation and the caller authority.
         const readsOperationCurrent = (): boolean => {
             try {
                 return input.isCurrent() === true
-                    && runtime.isCurrent() === true
                     && isPluginConsumerCurrent(identity.pluginId)
                     && activatedRegistry.activatedPluginIds.has(
                         identity.pluginId,
@@ -5477,7 +5537,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             pluginId: identity.pluginId,
             contributionQualifiedId:
                 `${identity.pluginId}/providers/${identity.localId}`,
-            generation: runtime.activationGeneration,
+            generation: String(activatedRegistry.generation),
             purposeBindingsEqualityKey,
             isCurrent: readsOperationCurrent,
             establish: input.establish,
@@ -6171,11 +6231,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         generation: String(activatedRegistry.generation),
         immutableGenerationIdsByPluginId,
         descriptors: authoritativeContributes.connectedAccountDescriptors ?? Object.freeze([]),
-        onDescriptorUnavailable(ref) {
-            logger.warn('[PLUGIN RUNTIME] Connected Account is unavailable: plugin generation was not admitted', {
+        onDescriptorUnavailable(ref, error) {
+            logger.warn('[PLUGIN RUNTIME] Connected Account descriptor is unavailable', {
                 pluginId: ref.pluginId,
                 localId: ref.localId,
-                reason: projectPluginFailureText(new Error(
+                reason: projectPluginFailureText(error ?? new Error(
                     committed?.rejectedGenerations.get(ref.pluginId)?.message
                     ?? 'The plugin has no admitted immutable generation in this runtime',
                 )),
@@ -6418,6 +6478,35 @@ export async function resolveExecutablePluginRuntimeRegistry(
         return invocationServiceOwners.createServices(seed, binding);
     };
 
+    resolveAgentPluginSettings = async ({ pluginId, localAgentId }) => {
+        // An Agent may consume only its own declarations. Account and daemon
+        // remain distinct records; no key merge or precedence rule exists.
+        const scopes = new Set<'account' | 'daemon'>();
+        for (const entry of authoritativeContributes.settings ?? []) {
+            if (entry.pluginId !== pluginId || entry.definition.target.kind !== 'agent') continue;
+            const target = entry.definition.target.agent;
+            const matches = typeof target === 'string'
+                ? target === localAgentId
+                : target.pluginId === pluginId && target.localId === localAgentId;
+            if (matches) scopes.add(entry.definition.scope);
+        }
+        if (scopes.size === 0) return null;
+        const services = createProjectionPluginServices({ pluginId });
+        if (!services || services.availability('settings').status !== 'available') return null;
+        const snapshot: Partial<Record<'account' | 'daemon', Readonly<Record<string, unknown>>>> = {};
+        for (const scope of scopes) {
+            try {
+                snapshot[scope] = await readPluginSettingsValuesWithDefaults(
+                    services.settings.forScope({ kind: scope }),
+                );
+            } catch {
+                // One unavailable scope cannot be substituted with or merged
+                // into the other. The exact available record remains useful.
+            }
+        }
+        return snapshot.account || snapshot.daemon ? Object.freeze(snapshot) : null;
+    };
+
     const resolvedRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
         contributes: authoritativeContributes,
         durableRevision: committed?.commit?.revision ?? -1,
@@ -6469,6 +6558,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
         eventDeclarationsByPluginId: activatedRegistry.eventDeclarationsByPluginId,
         pluginDiagnosticsByPluginId,
         pluginFinalPolicyCurrentGenerationsById,
+        ...(settingsRollbackDeclarations
+            ? { settingsRollbackDeclarations }
+            : {}),
+        pruneRetiredPluginSettings(previous) {
+            return invocationServiceOwners.pruneRetiredPluginSettings(previous);
+        },
         resolveVoiceProviderRuntimeLifecycle,
         resolveOptionalAccess(pluginId) {
             return committed?.generations.get(pluginId)?.installation?.optionalAccess
@@ -6915,7 +7010,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 contribution: Object.freeze({
                     id: verified.binding.localAgentId,
                     qualifiedId:
-                        `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
+                        resolveAgentContributionQualifiedId({
+                            pluginId: verified.binding.pluginId,
+                            localId: verified.binding.localAgentId,
+                        }),
                 }),
                 generation: String(activatedRegistry.generation),
                 correlationId: agentParams.correlationId,
@@ -6967,7 +7065,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 contribution: Object.freeze({
                     id: verified.binding.localAgentId,
                     qualifiedId:
-                        `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
+                        resolveAgentContributionQualifiedId({
+                            pluginId: verified.binding.pluginId,
+                            localId: verified.binding.localAgentId,
+                        }),
                 }),
                 generation: String(activatedRegistry.generation),
                 correlationId: agentParams.correlationId,
@@ -7020,7 +7121,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 contribution: Object.freeze({
                     id: verified.binding.localAgentId,
                     qualifiedId:
-                        `${verified.binding.pluginId}/agents/${verified.binding.localAgentId}`,
+                        resolveAgentContributionQualifiedId({
+                            pluginId: verified.binding.pluginId,
+                            localId: verified.binding.localAgentId,
+                        }),
                 }),
                 surface: 'agent',
                 sessionId: agentParams.sessionId,
@@ -7062,7 +7166,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 }),
                 contribution: Object.freeze({
                     id: binding.localAgentId,
-                    qualifiedId: `${binding.pluginId}/agents/${binding.localAgentId}`,
+                    qualifiedId: resolveAgentContributionQualifiedId({
+                        pluginId: binding.pluginId,
+                        localId: binding.localAgentId,
+                    }),
                 }),
                 generation: binding.immutableGenerationId,
                 correlationId: agentParams.correlationId,
@@ -7366,7 +7473,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 plugin: Object.freeze({ id: agentParams.pluginId, version: agentParams.pluginVersion }),
                 contribution: Object.freeze({
                     id: agentLocalId,
-                    qualifiedId: `${agentParams.pluginId}/agents/${agentLocalId}`,
+                    qualifiedId: resolveAgentContributionQualifiedId({
+                        pluginId: agentParams.pluginId,
+                        localId: agentLocalId,
+                    }),
                 }),
                 generation: agentParams.generation,
                 correlationId: agentParams.correlationId,

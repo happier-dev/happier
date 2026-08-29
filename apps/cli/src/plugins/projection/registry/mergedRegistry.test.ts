@@ -9,7 +9,6 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 
 import {
     getResolvedContributionRegistry,
-    primeResolvedContributionRegistry,
     resolveMergedContributionRegistry,
 } from './createResolvedContributionRegistry';
 
@@ -271,7 +270,7 @@ describe('resolveMergedContributionRegistry', () => {
         expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
     });
 
-    it('promotes a primed merged registry snapshot to the active contribution registry cache', async () => {
+    it('keeps repeated external generations ephemeral so a reload cannot collide with itself', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-prime-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-merged-prime-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -308,10 +307,25 @@ describe('resolveMergedContributionRegistry', () => {
 
         expect(getResolvedContributionRegistry().catalogEntriesById['acme.ohmypi']).toBeUndefined();
 
-        const mergedRegistry = await primeResolvedContributionRegistry({ happyHomeDir });
-        expect(mergedRegistry.catalogEntriesById['acme.ohmypi']).toBeUndefined();
+        // Explicit ephemeral merged snapshot; no prime global exists to leak
+        // installed contributions into the shared built-in authority.
+        const firstGeneration = await resolveMergedContributionRegistry({ happyHomeDir });
+        expect(firstGeneration.agentDefinitionsById.get('acme.ohmypi/acme-agent')?.pluginId)
+            .toBe('acme.ohmypi');
+
+        // Resolving the next generation starts from the immutable built-ins,
+        // not the previous merged result. Otherwise the same external Agent
+        // would self-collide on every reload.
+        const nextGeneration = await resolveMergedContributionRegistry({ happyHomeDir });
+        expect(nextGeneration).not.toBe(firstGeneration);
+        expect(nextGeneration.agentDefinitionsById.get('acme.ohmypi/acme-agent')?.pluginId)
+            .toBe('acme.ohmypi');
+        expect(nextGeneration.pluginDiagnosticsByPluginId['acme.ohmypi']
+            ?.filter((diagnostic) => diagnostic.message.includes('collides')))
+            .toEqual([]);
 
         const activeRegistry = getResolvedContributionRegistry();
+        expect(activeRegistry).toBe(getResolvedContributionRegistry());
         expect(activeRegistry.catalogEntriesById['acme.ohmypi']).toBeUndefined();
     });
 

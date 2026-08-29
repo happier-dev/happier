@@ -108,6 +108,7 @@ describe('daemon machine RPC route attachments', () => {
   it('attaches the Connected Account Action-form purpose producer before and after machine replacement', async () => {
     const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
     const runtime = {
+      activatePurposeBindings: vi.fn(),
       listActionFormConnectedAccountOptions: vi.fn(),
     };
     let apiMachineForSessions: null | {

@@ -3,6 +3,7 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AcpSessionModeOverrideV1Schema,
   AgentModelOptionOverrideRuleReadSchema,
+  BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
   ConnectedServiceBindingsV1Schema,
   SessionModelSelectionResolutionError,
   buildBackendTargetKeyV2,
@@ -368,6 +369,10 @@ function resolveInheritedConnectedServices(
 ): ConnectedServiceBindingsV1 | null {
   const explicit = ConnectedServiceBindingsV1Schema.safeParse(metadata?.connectedServices);
   if (explicit.success) return explicit.data;
+  const legacyExplicit = BuiltInLegacyConnectedServiceBindingsV1IngressSchema.safeParse(
+    metadata?.connectedServices,
+  );
+  if (legacyExplicit.success) return legacyExplicit.data;
 
   const legacyAgentId = agentTarget?.sourceKind === 'built_in'
     ? agentTarget.backendId
@@ -376,7 +381,7 @@ function resolveInheritedConnectedServices(
   const derivedBindings = readSessionMetadataConnectedServiceBindings(metadata, legacyAgentId);
   if (Object.keys(derivedBindings).length === 0) return null;
 
-  const derived = ConnectedServiceBindingsV1Schema.safeParse({
+  const derived = BuiltInLegacyConnectedServiceBindingsV1IngressSchema.safeParse({
     v: 1,
     bindingsByServiceId: derivedBindings,
   });

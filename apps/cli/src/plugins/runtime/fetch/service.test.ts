@@ -2456,7 +2456,8 @@ describe('createPluginHttpService', () => {
                 'authorization=authorization-secret&accessToken=access-token-secret',
                 'refresh_token=refresh-token-secret&api_key=api-key-secret',
                 'clientSecret=client-secret&password=password-secret&cookie=cookie-secret',
-                'jwt=jwt-secret&private_key=private-key-secret&passphrase=passphrase-secret',
+                'jwt=jwt-secret&private_key=private-key-secret&private.key=private-key-dot-secret',
+                'private:key=private-key-colon-secret&passphrase=passphrase-secret',
                 'sessionCount=7&tokenCount=8&secretary=meeting-notes',
             ].join('&'),
             headers: {
@@ -2469,6 +2470,8 @@ describe('createPluginHttpService', () => {
                 cookie: 'cookie-secret',
                 jwt: 'jwt-secret',
                 privateKey: 'private-key-secret',
+                'private.key': 'private-key-dot-secret',
+                'private:key': 'private-key-colon-secret',
                 passphrase: 'passphrase-secret',
                 sessionCount: 'seven-sessions',
                 tokenCount: 'eight-tokens',
@@ -2498,16 +2501,18 @@ describe('createPluginHttpService', () => {
                     'x-forwarded-for': '[redacted]',
                     'x-forwarded-email': '[redacted]',
                     'x-real-ip': '[redacted]',
-                    'chatgpt-account-id': 'account-1',
-                    'x-user-id': 'user-1',
-                    accessToken: 'access-token-secret',
-                    refresh_token: 'refresh-token-secret',
-                    apiKey: 'api-key-secret',
-                    client_secret: 'client-secret',
-                    password: 'password-secret',
-                    jwt: 'jwt-secret',
-                    privateKey: 'private-key-secret',
-                    passphrase: 'passphrase-secret',
+                    'chatgpt-account-id': '[redacted]',
+                    'x-user-id': '[redacted]',
+                    accessToken: '[redacted]',
+                    refresh_token: '[redacted]',
+                    apiKey: '[redacted]',
+                    client_secret: '[redacted]',
+                    password: '[redacted]',
+                    jwt: '[redacted]',
+                    privateKey: '[redacted]',
+                    'private.key': '[redacted]',
+                    'private:key': '[redacted]',
+                    passphrase: '[redacted]',
                     accept: 'application/json',
                 }),
             }),
@@ -2518,16 +2523,18 @@ describe('createPluginHttpService', () => {
                     'x-forwarded-for': '[redacted]',
                     'x-forwarded-email': '[redacted]',
                     'x-real-ip': '[redacted]',
-                    'chatgpt-account-id': 'account-1',
-                    'x-user-id': 'user-1',
-                    accessToken: 'access-token-secret',
-                    refresh_token: 'refresh-token-secret',
-                    apiKey: 'api-key-secret',
-                    client_secret: 'client-secret',
-                    password: 'password-secret',
-                    jwt: 'jwt-secret',
-                    privateKey: 'private-key-secret',
-                    passphrase: 'passphrase-secret',
+                    'chatgpt-account-id': '[redacted]',
+                    'x-user-id': '[redacted]',
+                    accessToken: '[redacted]',
+                    refresh_token: '[redacted]',
+                    apiKey: '[redacted]',
+                    client_secret: '[redacted]',
+                    password: '[redacted]',
+                    jwt: '[redacted]',
+                    privateKey: '[redacted]',
+                    'private.key': '[redacted]',
+                    'private:key': '[redacted]',
+                    passphrase: '[redacted]',
                     accept: 'application/json',
                 }),
             }),
@@ -2544,6 +2551,8 @@ describe('createPluginHttpService', () => {
             'cookie',
             'jwt',
             'private_key',
+            'private.key',
+            'private:key',
             'passphrase',
         ]) {
             expect(interceptorUrl.searchParams.get(key)).toBe('[redacted]');
@@ -2563,7 +2572,7 @@ describe('createPluginHttpService', () => {
 
     it('allows a matching trusted interceptor to inspect and rewrite caller headers outside the closed v1 set', async () => {
         const seen: TestFetchRequest[] = [];
-        const adapter = vi.fn(async (request) => createResponse(request.headers?.['x-tenant-token'] ?? 'missing'));
+        const adapter = vi.fn(async (request) => createResponse(request.headers?.['x-tenant-label'] ?? 'missing'));
         const service = createPluginHttpService({
             adapter,
             allowedUrlOrigins: ['https://api.example.test'],
@@ -2579,7 +2588,7 @@ describe('createPluginHttpService', () => {
                             request: {
                                 headers: {
                                     set: {
-                                        'x-tenant-token': 'tenant-rewritten-by-policy',
+                                        'x-tenant-label': 'tenant-rewritten-by-policy',
                                     },
                                 },
                             },
@@ -2594,7 +2603,7 @@ describe('createPluginHttpService', () => {
             headers: {
                 authorization: 'Bearer host-owned',
                 'x-forwarded-for': '203.0.113.10',
-                'x-tenant-token': 'tenant-caller-value',
+                'x-tenant-label': 'tenant-caller-value',
             },
         })).resolves.toMatchObject({
             body: new TextEncoder().encode('tenant-rewritten-by-policy'),
@@ -2604,14 +2613,14 @@ describe('createPluginHttpService', () => {
             headers: {
                 authorization: '[redacted]',
                 'x-forwarded-for': '[redacted]',
-                'x-tenant-token': 'tenant-caller-value',
+                'x-tenant-label': 'tenant-caller-value',
             },
         })]);
         expect(adapter).toHaveBeenCalledWith(expect.objectContaining({
             headers: {
                 authorization: 'Bearer host-owned',
                 'x-forwarded-for': '203.0.113.10',
-                'x-tenant-token': 'tenant-rewritten-by-policy',
+                'x-tenant-label': 'tenant-rewritten-by-policy',
             },
         }));
     });

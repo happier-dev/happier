@@ -24,6 +24,7 @@ import type {
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import {
@@ -464,7 +465,12 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     });
   }
 
-  const voiceInferenceRegistration = voiceInferenceWorker
+  const voiceInferenceEnabled = resolveCliFeatureDecision({
+    featureId: 'voice.daemonInference',
+    env: process.env,
+    serverSnapshot: params.deps?.getServerFeaturesSnapshot?.(),
+  }).state === 'enabled';
+  const voiceInferenceRegistration = voiceInferenceWorker && voiceInferenceEnabled
     ? registerMachineVoiceInferenceRpcHandlers({
       rpcHandlerManager,
       voiceInferenceWorker,

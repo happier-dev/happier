@@ -1,5 +1,6 @@
 import {
   prepareExternalActionResponseEnvelopeV1,
+  ExternalActionActionIdV1Schema,
   ExternalActionRequestEnvelopeV1Schema,
   PublicActionIdSchema,
   projectExternalActionExecutionResultV1,
@@ -73,14 +74,22 @@ export async function executeExternalAction(input: Readonly<{
   executor: ExternalActionExecutor;
   signal?: AbortSignal;
 }>): Promise<ExecuteExternalActionResult> {
-  const actionId = PublicActionIdSchema.safeParse(input.actionId);
-  if (!actionId.success) {
+  // Keep both public HTTP origins deterministic: first accept the bounded path
+  // scalar, then validate the transport envelope, and only then ask the
+  // daemon-owned registry whether that scalar names a public Action.
+  const externalActionId = ExternalActionActionIdV1Schema.safeParse(input.actionId);
+  if (!externalActionId.success) {
     return { kind: 'invalid_request', errorCode: 'invalid_action' };
   }
 
   const envelope = ExternalActionRequestEnvelopeV1Schema.safeParse(input.envelope);
   if (!envelope.success) {
     return { kind: 'invalid_request', errorCode: 'invalid_envelope' };
+  }
+
+  const actionId = PublicActionIdSchema.safeParse(externalActionId.data);
+  if (!actionId.success) {
+    return { kind: 'invalid_request', errorCode: 'invalid_action' };
   }
 
   const reconciliation = reconcileExternalActionTarget({
@@ -101,12 +110,22 @@ export async function executeExternalAction(input: Readonly<{
   // The final target resolver is deliberately after parsed-input reconciliation
   // so an explicit or input-derived Session is proved current immediately
   // before the canonical Action executor runs.
-  const target = await input.resolveTarget({
-    actionId: actionId.data,
-    target: reconciliation.target,
-    currentMachineId: input.currentMachineId,
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
+  let target: ExternalActionTargetV1 | null;
+  try {
+    target = await input.resolveTarget({
+      actionId: actionId.data,
+      target: reconciliation.target,
+      currentMachineId: input.currentMachineId,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  } catch {
+    return preparedResponse({
+      v: 1,
+      actionId: actionId.data,
+      ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
+      execution: targetUnavailable(),
+    });
+  }
   if (!target) {
     return preparedResponse({
       v: 1,
@@ -169,5 +188,13 @@ function targetNotLocal(): ActionExecuteResult {
     ok: false,
     errorCode: 'target_not_local',
     error: 'target_not_local',
+  };
+}
+
+function targetUnavailable(): ActionExecuteResult {
+  return {
+    ok: false,
+    errorCode: 'target_unavailable',
+    error: 'target_unavailable',
   };
 }

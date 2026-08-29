@@ -1,10 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol';
 
 export const CLI_API_TOKEN_ENV = 'HAPPIER_TOKEN';
 /** One-shot handoff for a selected --api-token across Happier's tmux re-exec. */
 export const CLI_API_TOKEN_HANDOFF_ENV = 'HAPPIER_CLI_API_TOKEN_HANDOFF_V1';
 
-const API_TOKEN_PREFIX = 'hap_v1_';
 const invocationApiTokenStore = new AsyncLocalStorage<Readonly<{ token: string }>>();
 const CLI_API_TOKEN_ENVIRONMENT_KEYS = new Set([
   CLI_API_TOKEN_ENV,
@@ -22,13 +22,9 @@ export class CliApiTokenInputError extends Error {
 
 function validateApiToken(raw: unknown, source: '--api-token' | typeof CLI_API_TOKEN_ENV): string {
   const value = typeof raw === 'string' ? raw : '';
-  if (
-    value.length <= API_TOKEN_PREFIX.length
-    || value.trim() !== value
-    || !value.startsWith(API_TOKEN_PREFIX)
-  ) {
+  if (parseAccountApiTokenBearerV1(value) === null) {
     throw new CliApiTokenInputError(
-      `Invalid ${source}. API Tokens created in Settings must start with ${API_TOKEN_PREFIX}.`,
+      `Invalid ${source}. Use an exact API Token created in Settings.`,
     );
   }
   return value;

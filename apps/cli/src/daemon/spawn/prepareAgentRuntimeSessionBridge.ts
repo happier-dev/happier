@@ -11,6 +11,7 @@ import type {
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import { configuration } from '@/configuration';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { resolveContributedAgentRoutingId } from '@/plugins/projection/registry/agentRoutingIdentity';
 
 import {
   createForegroundAgentRuntimeBootstrapAuthorization,
@@ -121,12 +122,15 @@ async function resolveRunnerAgentSessionDescriptorForLease(
     v: 1,
     pluginId: registration.pluginId,
     pluginVersion: registration.pluginVersion,
-    // The descriptor's `agentId` is the host routing id — the same id the
-    // runtime registry (`agentRuntimesByAgentId`) keys this Agent by — as its
-    // schema documents. Spelling installed Agents as the contribution-qualified
-    // `pluginId/agents/<localId>` reference here broke foreground admission and
-    // runner-authority reattachment, whose registry lookups key on routing ids.
-    agentId: registration.agentId,
+    // The registry remains keyed by the canonical host routing id, and the
+    // corridor's descriptor carries exactly that routing id. The manifest-local
+    // id is reserved for contributor factory construction; the always-qualified
+    // activation/service key travels only on the runner binding.
+    agentId: resolveContributedAgentRoutingId({
+      pluginId: registration.pluginId,
+      localId: registration.localAgentId,
+      provenance: agent.provenance,
+    }),
     backendId: backend.id,
     generation: registration.generation,
     ...(registration.immutableGenerationId

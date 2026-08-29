@@ -50,6 +50,7 @@ export type SessionHandoffDirectPeerTransferHandle = Readonly<{
     expectedManifestHash?: string;
     openBody?: unknown;
     timeoutMs?: number;
+    onProgress?: (receivedBytes: number) => Promise<void> | void;
   }>) => Promise<Readonly<{ destinationPath: string }>>;
   clearPublishedTransfer: (transferId: string) => void;
 }>;
@@ -81,6 +82,7 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
   expectedSizeBytes?: number;
   expectedManifestHash?: string;
   timeoutMs?: number;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle;
   invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
 }>): Promise<Readonly<{ destinationPath: string }>> {
@@ -100,6 +102,7 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
         ? { expectedManifestHash: params.expectedManifestHash }
         : {}),
       ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+      ...(params.onProgress ? { onProgress: params.onProgress } : {}),
     });
   }
 
@@ -121,6 +124,7 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
           ? { expectedManifestHash: params.expectedManifestHash }
           : {}),
         ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
         maxAttempts,
         retryDelayMs: 250,
         onRetry: async () => {
@@ -154,6 +158,7 @@ async function requestServerRoutedPrepareAgentBundle(params: Readonly<{
   destinationPath: string;
   machineTransferChannel: MachineTransferChannel;
   transferTimeoutMs?: number;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
 }>): Promise<SessionHandoffAgentBundle> {
   const timeoutMs = params.transferTimeoutMs;
   const openBody =
@@ -171,6 +176,7 @@ async function requestServerRoutedPrepareAgentBundle(params: Readonly<{
     destinationPath: params.destinationPath,
     ...(openBody ? { openBody } : {}),
     ...(timeoutMs ? { timeoutMs } : {}),
+    ...(params.onProgress ? { onProgress: params.onProgress } : {}),
   });
   return await readSessionHandoffAgentBundleFile(params.destinationPath);
 }
@@ -185,6 +191,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
   transferTimeoutMs?: number;
   invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
   receivedAgentBundlePath: string;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
 }>): Promise<SessionHandoffAgentBundle | undefined> {
   const transferPublication = params.handoffMetadataV2?.agentBundleTransferPublication;
   if (!transferPublication) {
@@ -195,6 +202,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
         destinationPath: params.receivedAgentBundlePath,
         machineTransferChannel: params.machineTransferChannel,
         transferTimeoutMs: params.transferTimeoutMs,
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       });
     }
     return undefined;
@@ -211,6 +219,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
         destinationPath: params.receivedAgentBundlePath,
         machineTransferChannel: params.machineTransferChannel,
         transferTimeoutMs: params.transferTimeoutMs,
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       })
       : params.actualTransportStrategy === 'direct_peer'
         && transferEndpointCandidates
@@ -225,6 +234,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                 destinationPath: params.receivedAgentBundlePath,
                 machineTransferChannel: params.machineTransferChannel,
                 transferTimeoutMs: params.transferTimeoutMs,
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
               });
             }
             throw new Error(directPeerTransferUnavailable().error);
@@ -247,6 +257,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                 destinationPath: params.receivedAgentBundlePath,
                 machineTransferChannel: params.machineTransferChannel,
                 transferTimeoutMs: params.transferTimeoutMs,
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
               });
             }
             throw new Error(directPeerTransferUnavailable().error);
@@ -262,6 +273,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                 expectedManifestHash: transferPublication.manifestHash,
                 ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
                 directPeerTransfer: params.directPeerTransfer!,
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
                 invalidateDirectPeerRouteCacheForHandoffMachines: params.invalidateDirectPeerRouteCacheForHandoffMachines,
               });
               params.transferRouteCache?.recordDirectPeerRouteViable({
@@ -287,6 +299,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                   destinationPath: params.receivedAgentBundlePath,
                   machineTransferChannel: params.machineTransferChannel,
                   transferTimeoutMs: params.transferTimeoutMs,
+                  ...(params.onProgress ? { onProgress: params.onProgress } : {}),
                 });
               }
               throw new Error(directPeerTransferUnavailable().error);

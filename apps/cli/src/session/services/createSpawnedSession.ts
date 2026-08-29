@@ -451,7 +451,7 @@ async function submitSpawnInitialInput(params: Readonly<{
   sessionId: string;
   initialInput?: CreateSpawnedSessionParams['initialInput'];
   localId: string;
-  buildInitialInputHandoff?: CreateSpawnedSessionParams['buildInitialInputHandoff'];
+  initialInputHandoff?: ReturnType<NonNullable<CreateSpawnedSessionParams['buildInitialInputHandoff']>>;
   machineAdmissionTransport?: CreateSpawnedSessionParams['machineAdmissionTransport'];
   signal?: AbortSignal;
 }>): Promise<SessionSpawnNewInitialInputDispositionV1> {
@@ -464,14 +464,14 @@ async function submitSpawnInitialInput(params: Readonly<{
   if (params.signal?.aborted) {
     return { status: 'rejected', code: 'session_input_cancelled' };
   }
-  if (!params.buildInitialInputHandoff) {
+  if (!params.initialInputHandoff) {
     throw createCodedError(
       'Initial input requires Message-owned admission identity',
       SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
       { sessionId: params.sessionId },
     );
   }
-  const initialInputHandoff = params.buildInitialInputHandoff(params.localId);
+  const initialInputHandoff = params.initialInputHandoff;
   try {
     const sent = await sendSessionMessage({
       credentials: params.credentials,
@@ -562,6 +562,8 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
   replaySeededCreation: ReplaySeededSessionCreationV1;
   spawnRequestInput: Readonly<Record<string, unknown>>;
   dispatchSpawnRequest: (request: SpawnDaemonSessionRequest) => Promise<unknown>;
+  initialInputLocalId: string;
+  initialInputHandoff?: ReturnType<NonNullable<CreateSpawnedSessionParams['buildInitialInputHandoff']>>;
 }>): Promise<Readonly<{
   disposition: 'created' | 'rejoined';
   sessionId: string;
@@ -749,12 +751,18 @@ async function createReplaySeededSpawnedSession(args: Readonly<{
     // The committed Session is already known; a mutable presentation read
     // cannot undo that fact.
   }
-  const pendingFirstInput = args.spawnRequestInput.pendingFirstInput as
-    | Readonly<{ localId: string }>
-    | undefined;
-  const initialInput: SessionSpawnNewInitialInputDispositionV1 = pendingFirstInput
-    ? { status: 'accepted', localId: pendingFirstInput.localId }
-    : { status: 'notRequested' };
+  // The committed Session is settled here; the initial input flows through
+  // the one Message-owned admission owner so the disposition is the exact
+  // admission outcome, never a fabricated acceptance.
+  const initialInput = await submitSpawnInitialInput({
+    credentials: params.credentials,
+    sessionId,
+    initialInput: params.initialInput,
+    localId: args.initialInputLocalId,
+    initialInputHandoff: args.initialInputHandoff,
+    machineAdmissionTransport: params.machineAdmissionTransport,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
   return {
     disposition: created.created ? 'created' : 'rejoined',
     sessionId,
@@ -880,16 +888,6 @@ export async function createSpawnedSession(
     ...(params.agentSessionStartupInstructionsV1
       ? { agentSessionStartupInstructionsV1: params.agentSessionStartupInstructionsV1 }
       : {}),
-    ...(initialInputRequested && initialInputHandoff
-      ? {
-        pendingFirstInput: {
-          text: initialInputText,
-          localId: initialInputLocalId,
-          ...(initialInputHandoff.meta ? { meta: initialInputHandoff.meta } : {}),
-          inputAdmission: initialInputHandoff.inputAdmission,
-        },
-      }
-      : {}),
   } satisfies Record<string, unknown>;
   const spawnRequest = SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
   const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
@@ -974,7 +972,7 @@ export async function createSpawnedSession(
         sessionId: existing.id,
         initialInput: params.initialInput,
         localId: initialInputLocalId,
-        buildInitialInputHandoff: params.buildInitialInputHandoff,
+        initialInputHandoff,
         machineAdmissionTransport: params.machineAdmissionTransport,
         ...(params.signal ? { signal: params.signal } : {}),
       });
@@ -1049,6 +1047,8 @@ export async function createSpawnedSession(
       replaySeededCreation: params.replaySeededCreation,
       spawnRequestInput,
       dispatchSpawnRequest,
+      initialInputLocalId,
+      ...(initialInputHandoff ? { initialInputHandoff } : {}),
     });
   }
 
@@ -1164,6 +1164,19 @@ export async function createSpawnedSession(
       { sessionId },
     );
   }
+  // The Session row is committed and settled here; initial input is submitted
+  // through the one Message-owned admission owner only after the settled
+  // candidate is authenticated, so the returned disposition is the exact
+  // admission outcome, never a fabricated acceptance.
+  const submitInitialInput = () => submitSpawnInitialInput({
+    credentials: params.credentials,
+    sessionId,
+    initialInput: params.initialInput,
+    localId: initialInputLocalId,
+    initialInputHandoff,
+    machineAdmissionTransport: params.machineAdmissionTransport,
+    ...(params.signal ? { signal: params.signal } : {}),
+  });
   const fetchTimeoutMs = resolvePositiveIntFromEnv('HAPPIER_SESSION_SPAWN_FETCH_TIMEOUT_MS', DEFAULT_SPAWNED_SESSION_FETCH_TIMEOUT_MS);
   const pollIntervalMs = resolvePositiveIntFromEnv('HAPPIER_SESSION_SPAWN_FETCH_POLL_INTERVAL_MS', DEFAULT_SPAWNED_SESSION_FETCH_POLL_INTERVAL_MS);
   const visibility = await waitForSpawnedSessionVisibility({
@@ -1191,9 +1204,7 @@ export async function createSpawnedSession(
         { sessionId },
       );
     }
-    const initialInput: SessionSpawnNewInitialInputDispositionV1 = initialInputRequested
-      ? { status: 'accepted', localId: initialInputLocalId }
-      : { status: 'notRequested' };
+    const initialInput = await submitInitialInput();
     return {
       disposition: sessionCreationOutcome.disposition,
       sessionId,
@@ -1256,9 +1267,7 @@ export async function createSpawnedSession(
       legacyMetadataLabel: params.legacyMetadataLabel,
     });
   }
-  const initialInput: SessionSpawnNewInitialInputDispositionV1 = initialInputRequested
-    ? { status: 'accepted', localId: initialInputLocalId }
-    : { status: 'notRequested' };
+  const initialInput = await submitInitialInput();
 
   return {
     disposition: sessionCreationOutcome.disposition,

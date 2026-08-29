@@ -18,6 +18,7 @@ import {
   readRepeatedFlagValues,
 } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { configuration } from '@/configuration';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry, type PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
@@ -169,51 +170,54 @@ const defaultPluginsCommandDeps: PluginsCommandDeps = {
 };
 
 function usage(): string {
+  const invoker = resolveInvokerName() ?? 'happier';
+  const pluginCommand = `${invoker} plugins`;
   return renderHelpPage({
-    title: 'happier plugins',
+    title: pluginCommand,
     subtitle: 'Plugin discovery, local authoring, and machine-local installs',
     usage: [
-      { label: 'happier plugins list [--json]', description: 'List installed plugins and their descriptors' },
-      { label: 'happier plugins show <pluginId> [--json]', description: 'Show one installed plugin in detail' },
-      { label: 'happier plugins actions <pluginId> [--json]', description: 'List invocable actions and tools declared by one installed plugin' },
-      { label: 'happier plugins install <path|archive|package> [--kind path|archive|npm] [--selector <version>] [--integrity <sha256-SRI>] [--dev --trust] [--dry-run] [--json]', description: 'Review, trust, and install through the active daemon' },
-      { label: 'happier plugins rollback <pluginId> [--json]', description: 'Restore the retained prior plugin version through the active daemon' },
-      { label: 'happier plugins enable|disable <pluginId> [--json]', description: 'Change plugin admission through the active daemon' },
-      { label: 'happier plugins uninstall <pluginId> [--delete-data --yes] [--json]', description: 'Remove a local installed plugin; preserve its data unless --delete-data --yes is supplied' },
-      { label: 'happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]', description: 'Create a minimal TypeScript plugin, optionally with a wired UI surface, ready for the normal development loop' },
-      { label: 'happier plugins dev [path] [--sdk-registry <origin>] [--json]', description: 'Watch a source plugin and submit captured edit batches to the daemon-owned development cycle' },
-      { label: 'happier plugins dev install <path> [--sdk-registry <origin>] [--json]', description: 'Repair or refresh a stale or wiped author root; the watch loop already materializes it' },
-      { label: 'happier plugins dev typecheck|build|test <path> [--json]', description: 'Run one managed focused development check' },
-      { label: 'happier plugins test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]', description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
-      { label: 'happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]', description: 'Validate and package a local plugin into an installable archive' },
-      { label: 'happier plugins doctor [path] [--json]', description: 'Evaluate and diagnose a code-defined plugin author module' },
-      { label: 'happier plugins doctor --installed [<pluginId>] [--json]', description: 'Inspect installed immutable plugin generations for missing, escaped, non-regular, drifted, or unloadable files' },
-      { label: 'happier plugins reload [developmentPluginId] [--json]', description: 'Reapply the development source registered for this directory, or one explicit plugin id' },
-      { label: 'happier plugins change status|approve|reject <pendingChangeId> [--json]', description: 'Rejoin or explicitly decide a daemon-lifetime pending plugin change by its issued id' },
-      { label: 'happier plugins logs <pluginId> [--machine <id>] [--generation <id>] [--correlation <id>] [--cursor <byteOffset>] [--limit <1-500>] [--follow] [--json]', description: 'Read canonical structured logs from one exact current daemon' },
-      { label: 'happier plugins settings list <pluginId> --scope <account|daemon> [--machine <id>] [--json]', description: 'List declared Plugin Settings from one exact Account or daemon scope' },
-      { label: 'happier plugins settings secret status|bind|unbind|delete <pluginId> <localId> [--scope <account|daemon>] [--machine <id>]', description: 'Read or mutate declared Plugin secret custody without accepting raw secret material; daemon custody requires one exact machine' },
-      { label: 'happier plugins registry add <origin> [--id <id>] [--name <name>] [--scope <@scope>] [--default] [--allow-private-network] [--json]', description: 'Add a private npm registry profile' },
-      { label: 'happier plugins registry login <profileId> [--json]', description: 'Store a registry token through a hidden prompt' },
-      { label: 'happier plugins registry test|logout|remove <profileId> [--json]', description: 'Test or change one private registry profile' },
-      { label: 'happier plugins registry list [--json]', description: 'List private registry profiles and paused sources' },
-      { label: 'happier plugins marketplace sources list [--json]', description: 'List shared marketplace sources' },
-      { label: 'happier plugins marketplace sources add <catalogUrl> [--title <title>] [--description <description>] [--registry-profile <profileId>|--no-registry-profile] [--disabled] [--json]', description: 'Persist a user marketplace source and optional private registry binding' },
-      { label: 'happier plugins marketplace sources enable <sourceRef> [--json]', description: 'Enable a persisted marketplace source' },
-      { label: 'happier plugins marketplace sources disable <sourceRef> [--json]', description: 'Disable a persisted marketplace source' },
-      { label: 'happier plugins marketplace sources remove <sourceRef> [--json]', description: 'Remove a persisted marketplace source' },
-      { label: 'happier plugins marketplace list [<sourceRef>] [--json]', description: 'List marketplace entries from the preferred persisted source' },
-      { label: 'happier plugins marketplace show [<sourceRef>] <pluginId> [--json]', description: 'Show one marketplace entry' },
-      { label: 'happier plugins marketplace install [<sourceRef>] <pluginId> [--json]', description: 'Install and trust one exact curated or community npm listing through the active daemon' },
+      { label: `${pluginCommand} list [--json]`, description: 'List installed plugins and their descriptors' },
+      { label: `${pluginCommand} show <pluginId> [--json]`, description: 'Show one installed plugin in detail' },
+      { label: `${pluginCommand} actions <pluginId> [--json]`, description: 'List invocable actions and tools declared by one installed plugin' },
+      { label: `${pluginCommand} install <path|archive|package> [--kind path|archive|npm] [--selector <version>] [--integrity <sha256-SRI>] [--dev --trust] [--dry-run] [--json]`, description: 'Review, trust, and install through the active daemon' },
+      { label: `${pluginCommand} update <pluginId> [--json]`, description: 'Apply a compatible newer release to one installed plugin through its daemon-owned update channel' },
+      { label: `${pluginCommand} rollback <pluginId> [--json]`, description: 'Restore the retained prior plugin version through the active daemon' },
+      { label: `${pluginCommand} enable|disable <pluginId> [--json]`, description: 'Change plugin admission through the active daemon' },
+      { label: `${pluginCommand} uninstall <pluginId> [--delete-data --yes] [--json]`, description: 'Remove a local installed plugin; preserve its data unless --delete-data --yes is supplied' },
+      { label: `${pluginCommand} create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]`, description: 'Create a minimal TypeScript plugin, optionally with a wired UI surface, ready for the normal development loop' },
+      { label: `${pluginCommand} dev [path] [--sdk-registry <origin>] [--json]`, description: 'Watch a source plugin and submit captured edit batches to the daemon-owned development cycle' },
+      { label: `${pluginCommand} dev install <path> [--sdk-registry <origin>] [--json]`, description: 'Repair or refresh a stale or wiped author root; the watch loop already materializes it' },
+      { label: `${pluginCommand} dev typecheck|build|test <path> [--json]`, description: 'Run one managed focused development check' },
+      { label: `${pluginCommand} test [path] [--packed] [--with-plugin <root-or-archive>]… [--sdk-registry <origin>] [--json]`, description: 'Run unit tests or pack, install, and exercise the plugin through a disposable daemon' },
+      { label: `${pluginCommand} pack <path> [--out <archive.tgz>] [--sdk-registry <origin>] [--json]`, description: 'Validate and package a local plugin into an installable archive' },
+      { label: `${pluginCommand} doctor [path] [--json]`, description: 'Evaluate and diagnose a code-defined plugin author module' },
+      { label: `${pluginCommand} doctor --installed [<pluginId>] [--json]`, description: 'Inspect installed immutable plugin generations for missing, escaped, non-regular, drifted, or unloadable files' },
+      { label: `${pluginCommand} reload [developmentPluginId] [--json]`, description: 'Reapply the development source registered for this directory, or one explicit plugin id' },
+      { label: `${pluginCommand} change status|approve|reject <pendingChangeId> [--json]`, description: 'Rejoin or explicitly decide a daemon-lifetime pending plugin change by its issued id' },
+      { label: `${pluginCommand} logs <pluginId> [--machine <id>] [--generation <id>] [--correlation <id>] [--cursor <byteOffset>] [--limit <1-500>] [--follow] [--json]`, description: 'Read canonical structured logs from one exact current daemon' },
+      { label: `${pluginCommand} settings list <pluginId> --scope <account|daemon> [--machine <id>] [--json]`, description: 'List declared Plugin Settings from one exact Account or daemon scope' },
+      { label: `${pluginCommand} settings secret status|bind|unbind|delete <pluginId> <localId> [--scope <account|daemon>] [--machine <id>]`, description: 'Read or mutate declared Plugin secret custody without accepting raw secret material; daemon custody requires one exact machine' },
+      { label: `${pluginCommand} registry add <origin> [--id <id>] [--name <name>] [--scope <@scope>] [--default] [--allow-private-network] [--json]`, description: 'Add a private npm registry profile' },
+      { label: `${pluginCommand} registry login <profileId> [--json]`, description: 'Store a registry token through a hidden prompt' },
+      { label: `${pluginCommand} registry test|logout|remove <profileId> [--json]`, description: 'Test or change one private registry profile' },
+      { label: `${pluginCommand} registry list [--json]`, description: 'List private registry profiles and paused sources' },
+      { label: `${pluginCommand} marketplace sources list [--json]`, description: 'List shared marketplace sources' },
+      { label: `${pluginCommand} marketplace sources add <catalogUrl> [--title <title>] [--description <description>] [--registry-profile <profileId>|--no-registry-profile] [--disabled] [--json]`, description: 'Persist a user marketplace source and optional private registry binding' },
+      { label: `${pluginCommand} marketplace sources enable <sourceRef> [--json]`, description: 'Enable a persisted marketplace source' },
+      { label: `${pluginCommand} marketplace sources disable <sourceRef> [--json]`, description: 'Disable a persisted marketplace source' },
+      { label: `${pluginCommand} marketplace sources remove <sourceRef> [--json]`, description: 'Remove a persisted marketplace source' },
+      { label: `${pluginCommand} marketplace list [<sourceRef>] [--json]`, description: 'List marketplace entries from the preferred persisted source' },
+      { label: `${pluginCommand} marketplace show [<sourceRef>] <pluginId> [--json]`, description: 'Show one marketplace entry' },
+      { label: `${pluginCommand} marketplace install [<sourceRef>] <pluginId> [--json]`, description: 'Install and trust one exact curated or community npm listing through the active daemon' }
     ],
     notes: [
       'Plugins are machine-local, descriptor-backed plugins.',
       'Current install support covers local directories, reviewed npm packages, local/remote archives, and exact curated or community npm marketplace listings.',
-      'Live authoring is local-path based: create a plugin, then run happier plugins dev from its directory.',
+      `Live authoring is local-path based: create a plugin, then run ${pluginCommand} dev from its directory.`,
       'Packed real-host testing uses a disposable authenticated daemon home and does not read or copy user credentials or installed-plugin state.',
       'Direct npm installation is staged behind the install-and-trust flow; private registry profiles are managed with the registry commands.',
       'Marketplace Install and trust rechecks exact version, integrity, manifest, source, and review facts; community code remains unreviewed until its staged Install & Trust decision.',
-      `Use ${cmd('happier agents list')} to see plugin-provided agent CLI surfaces after install.`,
+      `Use ${cmd(`${invoker} agents list`)} to see plugin-provided agent CLI surfaces after install.`,
     ],
   });
 }
@@ -742,10 +746,11 @@ function describePluginChangeFailure(result: Exclude<UserPluginChangeResult, { k
 }
 
 function pluginChangeReviewRejoinCommands(pendingChangeId: string): readonly string[] {
+  const pluginCommand = `${resolveInvokerName() ?? 'happier'} plugins`;
   return [
-    `Review status: happier plugins change status ${pendingChangeId}`,
-    `Approve after review: happier plugins change approve ${pendingChangeId}`,
-    `Reject: happier plugins change reject ${pendingChangeId}`,
+    `Review status: ${pluginCommand} change status ${pendingChangeId}`,
+    `Approve after review: ${pluginCommand} change approve ${pendingChangeId}`,
+    `Reject: ${pluginCommand} change reject ${pendingChangeId}`,
   ];
 }
 
@@ -906,7 +911,7 @@ async function printPluginChangeDecisionResult(
       }, { exitCode: 1 });
       return;
     }
-    console.error(errorFrame('Pending:', [message, `Review status: happier plugins change status ${pendingChangeId}`]));
+    console.error(errorFrame('Pending:', [message, `Review status: ${resolveInvokerName() ?? 'happier'} plugins change status ${pendingChangeId}`]));
     process.exitCode = 1;
     return;
   }
@@ -1269,6 +1274,54 @@ function summarizePluginForCommand(entry: PluginCatalogEntry) {
   return projectPluginCatalogEntrySnapshot(entry);
 }
 
+/**
+ * The one CLI surface for the daemon's explicit `{ kind: 'update' }` request.
+ * The daemon owns channel reconstruction and update-policy enforcement; this
+ * command carries the caller's approval mode and reports its typed outcome.
+ */
+async function runPluginsUpdateCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
+  const pluginId = String(args[1] ?? '').trim();
+  if (!pluginId || pluginId === 'help' || pluginId === '--help' || pluginId === '-h') {
+    console.log(usage());
+    return;
+  }
+
+  const previousEntry = await readInstalledPluginCatalogEntry({ pluginId });
+  const result = await requestUserPluginChange({
+    request: { kind: 'update', pluginId },
+    approval: resolveUserPluginChangeApproval({
+      interactive: (deps.isInteractiveTerminal ?? isInteractiveTerminal)(),
+      json: wantsJson(args),
+    }),
+  });
+  if (result.kind !== 'committed') {
+    await reportPluginChangeFailure(args, 'plugins_update', result);
+    return;
+  }
+
+  const postEntry = await readInstalledPluginCatalogEntry({ pluginId: result.pluginId });
+
+  if (wantsJson(args)) {
+    await printJsonEnvelope({
+      ok: true,
+      kind: 'plugins_update',
+      data: {
+        pluginId: result.pluginId,
+        ...(postEntry ? { plugin: summarizePluginForCommand(postEntry) } : {}),
+        desiredGeneration: result.desiredGeneration,
+        appliedGeneration: result.appliedGeneration,
+        pendingSurfaces: result.pendingSurfaces,
+      },
+    });
+    return;
+  }
+
+  const out = createOutputBuilder();
+  out.line(ok(`Updated ${postEntry?.title ?? previousEntry?.title ?? result.pluginId}.`));
+  if (result.pendingSurfaces.length > 0) out.line(neutral(`  Pending reconciliation: ${result.pendingSurfaces.join(', ')}`));
+  console.log(out.render());
+}
+
 async function runPluginsDestructiveUninstallCommand(
   args: readonly string[],
   rawPluginId: string,
@@ -1496,15 +1549,17 @@ function normalizePluginCreateName(rawName: string): Readonly<{
 export function formatPluginCreateNextCommands(
   targetDir: string,
   platform: NodeJS.Platform = process.platform,
+  invokerName: string = resolveInvokerName() ?? 'happier',
 ): readonly string[] {
+  const invoker = invokerName.trim() || 'happier';
   if (platform === 'win32') {
-    const args = ['happier', 'plugins', 'dev', targetDir];
+    const args = [invoker, 'plugins', 'dev', targetDir];
     return [
       `PowerShell: ${buildPowerShellCommand(args)}`,
       `cmd.exe: ${buildWindowsCmdCommand(args)}`,
     ];
   }
-  return [`cd ${buildPosixShellCommand([targetDir])} && happier plugins dev`];
+  return [`cd ${buildPosixShellCommand([targetDir])} && ${invoker} plugins dev`];
 }
 
 async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
@@ -1555,6 +1610,7 @@ async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
     targetDir,
     pluginId: readFlagValue(args, '--id') ?? `local.${slug}`,
     displayName: readFlagValue(args, '--name') ?? displayName,
+    invokerName: resolveInvokerName() ?? 'happier',
     ...(ui ? { ui: ui as PluginScaffoldUiMode } : {}),
   });
 
@@ -2246,7 +2302,8 @@ function renderInstalledGenerationReport(report: InstalledPluginGenerationReport
     lines.push(`  ${diagnostic.relativePath ? `${diagnostic.relativePath}: ` : ''}${diagnostic.message}`);
   }
   if (report.repair === 'reinstall') {
-    lines.push(`  ${dim('Repair:')} reinstall this plugin with ${cmd(`happier plugins install <source>`)}, or restore the retained prior version with ${cmd(`happier plugins rollback ${report.pluginId}`)}.`);
+    const pluginCommand = `${resolveInvokerName() ?? 'happier'} plugins`;
+    lines.push(`  ${dim('Repair:')} reinstall this plugin with ${cmd(`${pluginCommand} install <source>`)}, or restore the retained prior version with ${cmd(`${pluginCommand} rollback ${report.pluginId}`)}.`);
   }
   return lines;
 }
@@ -2407,13 +2464,13 @@ async function resolveDevelopmentPluginReloadTarget(
     return {
       ok: false,
       code: 'development_plugin_not_found_in_current_directory',
-      message: `No registered development plugin contains ${currentDirectory}. Run happier plugins install . --dev, or reload an explicit development plugin id.`,
+      message: `No registered development plugin contains ${currentDirectory}. Run ${resolveInvokerName() ?? 'happier'} plugins install . --dev, or reload an explicit development plugin id.`,
     };
   }
   return {
     ok: false,
     code: 'development_plugin_ambiguous_in_current_directory',
-    message: `Multiple registered development plugins contain ${currentDirectory}: ${matches.map((entry) => entry.pluginId).sort().join(', ')}. Run happier plugins reload <developmentPluginId>.`,
+    message: `Multiple registered development plugins contain ${currentDirectory}: ${matches.map((entry) => entry.pluginId).sort().join(', ')}. Run ${resolveInvokerName() ?? 'happier'} plugins reload <developmentPluginId>.`,
   };
 }
 
@@ -2995,6 +3052,11 @@ export async function handlePluginsCommand(
 
   if (subcommand === 'install') {
     await runPluginsInstallCommand(args, deps);
+    return;
+  }
+
+  if (subcommand === 'update') {
+    await runPluginsUpdateCommand(args, deps);
     return;
   }
 

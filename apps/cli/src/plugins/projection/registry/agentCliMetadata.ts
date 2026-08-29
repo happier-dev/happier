@@ -14,7 +14,7 @@ import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
 import { readJsonFileSafe } from '@/capabilities/cliAuth/shared';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
-import { readAgentSessionCapabilities } from './agentContributionDefinition';
+import { readAgentExecutionRunCapabilities, readAgentSessionCapabilities } from './agentContributionDefinition';
 import { resolveFirstPartyLegacyAgentConnectedAccountServiceId } from './connectedAccountPurposeCompatibility';
 import type { ResolvedCatalogEntry, ResolvedContributionProvenance } from './types';
 
@@ -214,9 +214,8 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
     provenance: ResolvedContributionProvenance;
 }>): ResolvedCatalogEntry | null {
     const sessionCapabilities = readAgentSessionCapabilities(params.definition);
-    const executionRunCapabilities = 'executionRuns' in params.definition.capabilities
-        ? params.definition.capabilities.executionRuns
-        : undefined;
+    const executionRunCapabilities = readAgentExecutionRunCapabilities(params.definition)
+        ?? undefined;
     if (!sessionCapabilities && !executionRunCapabilities) return null;
     const cli = params.cli;
     const connectedServiceIds = resolveManifestAgentConnectedServiceIds(params);

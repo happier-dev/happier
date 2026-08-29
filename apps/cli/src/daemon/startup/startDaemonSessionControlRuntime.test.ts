@@ -78,6 +78,7 @@ import {
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     createResolvedContributionRegistry,
     getResolvedContributionRegistry,
@@ -623,6 +624,17 @@ const refreshAccountSettingsForMinimumVersionMock = vi.hoisted(() => vi.fn(async
     loadedAtMs: 1_000,
     settingsSecretsReadKeys: [],
 })));
+const finalizeComposerStagedMediaToSessionActual = vi.hoisted(() => ({
+    current: null as null | ((input: unknown) => Promise<unknown>),
+}));
+const finalizeComposerStagedMediaToSessionMock = vi.hoisted(() => vi.fn(
+    async (input: unknown) => {
+        if (!finalizeComposerStagedMediaToSessionActual.current) {
+            throw new Error('finalizeComposerStagedMediaToSession actual implementation was not captured');
+        }
+        return await finalizeComposerStagedMediaToSessionActual.current(input);
+    },
+));
 const acquireAuthoritativePluginRuntimeRegistryLeaseMock = vi.hoisted(() => vi.fn());
 const authorizeSessionModelTransitionProviderTargetWithLeaseMock =
     vi.hoisted(() => vi.fn());
@@ -829,6 +841,7 @@ vi.mock('@/configuration', () => ({
         daemonStopSessionWaitForExitMs: 0,
         daemonStopSessionWaitForExitPollIntervalMs: 50,
         apiServerUrl: 'http://127.0.0.1:41001',
+        activeServerId: 'server-test',
         happyHomeDir: '/tmp/happier-test-home',
         activeServerDir: '/tmp/happier-test-home/servers/default',
         daemonStateFile: '/tmp/happier-test-home/servers/default/daemon.state.json',
@@ -856,6 +869,19 @@ vi.mock('@/api/session/pendingQueueV2Transport', () => ({
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({
     callSessionRpc: vi.fn(async () => ({ type: 'no_pending' })),
 }));
+
+vi.mock('@/session/media/finalizeComposerStagedMediaToSession', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/session/media/finalizeComposerStagedMediaToSession')
+    >();
+    finalizeComposerStagedMediaToSessionActual.current = actual.finalizeComposerStagedMediaToSession as (
+        input: unknown,
+    ) => Promise<unknown>;
+    return {
+        ...actual,
+        finalizeComposerStagedMediaToSession: finalizeComposerStagedMediaToSessionMock,
+    };
+});
 
 vi.mock('../controlServer', () => ({
     startDaemonControlServer: vi.fn(async () => ({
@@ -1454,7 +1480,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     tokens: [{
                         tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'Daemon external Action',
-                        displayPrefix: 'hap_1234abcd',
+                        displayPrefix: 'hap_v1_1234abcd',
                         createdAt: '2026-08-23T10:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,
@@ -1476,7 +1502,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     tokens: [{
                         tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'Daemon external Action',
-                        displayPrefix: 'hap_1234abcd',
+                        displayPrefix: 'hap_v1_1234abcd',
                         createdAt: '2026-08-23T10:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,
@@ -4497,6 +4523,37 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('forwards the exact failed request-auth revision to the canonical refresh coordinator once', async () => {
+        const service = {
+            pluginId: 'happier.agent.codex',
+            localId: 'openai-codex',
+        } as const;
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        const binding = {
+            purpose: {
+                consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                purpose: 'primary',
+            },
+            target: {
+                kind: 'account' as const,
+                account: { service, accountId: 'primary' },
+            },
+        };
+        const fetchAccountProfile = vi.spyOn(axios, 'get').mockResolvedValue({
+            status: 200,
+            data: {
+                id: 'account-request-auth-currentness',
+                connectedServicesV2: [{
+                    serviceId: 'openai-codex',
+                    profiles: [{ profileId: 'primary', status: 'connected', kind: 'oauth' }],
+                    groups: [],
+                }],
+                connectedServiceCredentialRevisionsV1: [{
+                    serviceId: 'openai-codex',
+                    profileId: 'primary',
+                    credentialRevision,
+                }],
+            },
+        });
         const refreshConnectedServiceCredentialForQuota = vi.fn(async () => ({
             kind: 'oauth',
         }));
@@ -4528,42 +4585,52 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         try {
-            await connectedAccountRequestAuthServiceDependenciesCapture.current
-                ?.refreshAfterAuthFailure({
-                    resolved: {
-                        account: {
-                            service: {
-                                pluginId: 'happier.agent.codex',
-                                localId: 'openai-codex',
-                            },
-                            accountId: 'primary',
-                        },
-                        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-                        legacyServiceKeyedCompatibility: true,
+            const dependencies = connectedAccountRequestAuthServiceDependenciesCapture.current;
+            if (!dependencies) throw new Error('Expected request-auth broker dependencies');
+            const subject = {
+                subjectId: 'agent-session:legacy-request-auth-currentness',
+                legacyServiceKeyedCompatibility: true as const,
+                isCurrent: () => true,
+                registerRedaction: () => undefined,
+                resolvePurposeUse: () => null,
+                listPurposeUses: () => [],
+            } satisfies ConnectedAccountRequestAuthSubject;
+            const resolved = await dependencies.resolveCurrentBinding({
+                subject,
+                binding,
+                signal: new AbortController().signal,
+            });
+            expect(resolved).toEqual({
+                account: binding.target.account,
+                credentialRevision,
+                legacyServiceKeyedCompatibility: true,
+            });
+            await expect(dependencies.refreshAfterAuthFailure({
+                resolved: resolved!,
+                failure: {
+                    class: 'authentication',
+                    evidence: {
+                        httpStatus: 401,
+                        limitCategory: 'auth_invalid',
+                        quotaScope: 'unknown',
+                        evidenceSource: { kind: 'structured' },
                     },
-                    failure: {
-                        class: 'authentication',
-                        evidence: {
-                            httpStatus: 401,
-                            limitCategory: 'auth_invalid',
-                            quotaScope: 'unknown',
-                            evidenceSource: { kind: 'structured' },
-                        },
-                    },
-                    signal: new AbortController().signal,
-                });
+                },
+                signal: new AbortController().signal,
+            })).resolves.toEqual({ status: 'current_unchanged' });
 
             expect(refreshConnectedServiceCredentialForQuota).toHaveBeenCalledOnce();
             expect(refreshConnectedServiceCredentialForQuota).toHaveBeenCalledWith({
                 serviceId: 'openai-codex',
                 profileId: 'primary',
                 force: true,
-                expectedCredentialRevision:
-                    'csr_0123456789ABCDEFGHJKMNPQRS',
+                expectedCredentialRevision: credentialRevision,
             });
+            expect(fetchAccountProfile).toHaveBeenCalledTimes(2);
             expect(handleConnectedServiceRuntimeAuthFailureForSessionMock).not.toHaveBeenCalled();
             expect(sendSessionMessageMock).not.toHaveBeenCalled();
         } finally {
+            fetchAccountProfile.mockRestore();
             await runtime.stopControlServer();
         }
     });
@@ -5896,6 +5963,13 @@ describe('startDaemonSessionControlRuntime', () => {
             version: 2,
             metadata: updater({}),
         }));
+        finalizeComposerStagedMediaToSessionMock.mockReset();
+        finalizeComposerStagedMediaToSessionMock.mockImplementation(async (input: unknown) => {
+            if (!finalizeComposerStagedMediaToSessionActual.current) {
+                throw new Error('finalizeComposerStagedMediaToSession actual implementation was not captured');
+            }
+            return await finalizeComposerStagedMediaToSessionActual.current(input);
+        });
         acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockReset();
         acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockImplementation(async () => ({
             registry: {
@@ -6842,6 +6916,270 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             });
             expect(release).toHaveBeenCalledTimes(7);
+        } finally {
+            await runtime.stopControlServer();
+        }
+    });
+
+    it('passes detached Composer source refs to staged-media finalization and strips the private meta carrier', async () => {
+        const sessionId = 'session-composer-source-ref';
+        const binding = createAgentSessionRunnerFactoryBinding({
+            v: 1,
+            pluginId: 'plugin.runner',
+            pluginVersion: '1.0.0',
+            agentId: 'claude',
+            localAgentId: 'claude',
+            immutableGenerationId: 'generation-composer-source-ref',
+            locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
+            normalizedModulePath: '/immutable/runtime.mjs',
+            loadMode: 'immutable-js',
+        });
+        const attachmentOwner = { pluginId: 'acme.media', localId: 'image' };
+        const stagedHandle = {
+            v: 1 as const,
+            id: 'stage-image-1',
+            executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-composer-source-ref' },
+            owner: attachmentOwner,
+            mediaKind: 'image' as const,
+            mimeType: 'image/png',
+            name: 'review.png',
+            sizeBytes: 68,
+            sha256: 'a'.repeat(64),
+        };
+        const draftAttachment = {
+            v: 1 as const,
+            instanceId: 'image-1',
+            attachment: attachmentOwner,
+            key: 'image-1',
+            value: { id: '42' },
+            presentation: { label: 'Image', typeLabel: 'Image' },
+            content: { kind: 'stagedMedia' as const, handle: stagedHandle },
+        };
+        const mediaAttachment = {
+            provenance: 'external',
+            source: { kind: 'path' },
+            pluginId: attachmentOwner.pluginId,
+            pluginVersion: '1.0.0',
+            identity: attachmentOwner,
+            manifestPath: '/fixtures/acme.media/plugin.json',
+            definition: {
+                id: attachmentOwner.localId,
+                title: { key: 'composer.attachment.image', fallback: 'Image' },
+                icon: 'image',
+                cardinality: 'many',
+                valueSchema: {
+                    type: 'object',
+                    properties: { id: { type: 'string' } },
+                    required: ['id'],
+                    additionalProperties: false,
+                },
+            },
+        } satisfies ResolvedComposerAttachmentContribution;
+        const injectedSourceRef = { kind: 'bogus-transform-injected-source-ref' };
+        const transformSessionInput = vi.fn(async (rawEvent: unknown) => {
+            const event = rawEvent as HookEventEnvelopeV1;
+            const payload = event.payload as Record<string, unknown>;
+            const sourceMeta = payload.meta as Record<string, unknown>;
+            return {
+                ...payload,
+                meta: {
+                    ...sourceMeta,
+                    [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: injectedSourceRef,
+                },
+            };
+        });
+        acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
+            registry: {
+                contributes: createResolvedContributionRegistry({ agents: [], composerAttachments: [mediaAttachment] }),
+                hookHandlersByHookId: new Map<string, readonly ResolvedPluginHookHandler[]>([
+                    ['session.input.transform', Object.freeze([{
+                        pluginId: 'fixture.transform',
+                        hookId: 'session.input.transform',
+                        priority: 0,
+                        registrationIndex: 0,
+                        manifestPath: '/fixtures/fixture.transform/plugin.json',
+                        daemonEntryPath: '/fixtures/fixture.transform/daemon.mjs',
+                        exportName: 'transform',
+                        registration: {
+                            provenance: 'external',
+                            source: { kind: 'path' },
+                            pluginId: 'fixture.transform',
+                            manifestPath: '/fixtures/fixture.transform/plugin.json',
+                            daemonEntryPath: '/fixtures/fixture.transform/daemon.mjs',
+                            sourceSpec: {
+                                kind: 'path',
+                                locator: '/fixtures/fixture.transform',
+                                trustPolicy: 'local_trusted',
+                                installPolicy: 'link',
+                            },
+                            definition: {
+                                hookApiVersion: 1,
+                                id: 'session.input.transform',
+                                category: 'augmentation',
+                                scope: 'session',
+                                executionKind: 'augment',
+                            },
+                        },
+                        handler: transformSessionInput,
+                    }])],
+                ]),
+                composerAttachments: {
+                    admit: vi.fn((input: { attachments: readonly unknown[] }) => input.attachments),
+                    isDeclared: vi.fn(() => true),
+                    requires: vi.fn(() => false),
+                    supports: vi.fn(() => true),
+                },
+            },
+            source: 'active',
+            release: vi.fn(async () => {}),
+        });
+        finalizeComposerStagedMediaToSessionMock.mockImplementation(async (input: unknown) => {
+            const params = input as {
+                meta: Record<string, unknown>;
+                attachments: readonly unknown[];
+            };
+            return {
+                meta: params.meta,
+                attachments: params.attachments,
+                releaseIntents: [],
+                createdWorkspaceRelativePaths: [],
+            };
+        });
+        const tracked: TrackedSession = {
+            pid: 441,
+            startedBy: 'daemon',
+            happySessionId: sessionId,
+            spawnOptions: { directory: '/workspace' } as SpawnSessionOptions,
+        };
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-composer-source-ref',
+            credentials: { token: 'token-daemon', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        try {
+            const dispatch = vi.mocked(startDaemonControlServer)
+                .mock.calls.at(-1)?.[0].agentRuntimeDaemonServices?.dispatch;
+            const submit = async (
+                localId: string,
+                sourceRef: unknown,
+                composerAttachments: readonly unknown[] = [draftAttachment],
+            ) => await dispatch?.(
+                AgentRuntimeDaemonServiceRequestV1Schema.parse({
+                    v: 1,
+                    context: { token: 'a'.repeat(43), sessionId },
+                    operation: {
+                        kind: 'turn_contributions.resolve',
+                        requestId: `composer-source-${localId}`,
+                        request: {
+                            kind: 'transformSessionInput',
+                            payload: {
+                                sessionId,
+                                localId,
+                                text: 'Review this image.',
+                                meta: {
+                                    ...(sourceRef === undefined
+                                        ? {}
+                                        : { [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: sourceRef }),
+                                    happierStructuredInputV1: { v: 1, composerAttachments },
+                                },
+                                timestampMs: 1,
+                            },
+                        },
+                    },
+                }),
+                {
+                    sessionId,
+                    runner: {
+                        pid: 23124,
+                        processStartTimeMs: 1,
+                        processCommandHash: 'b'.repeat(64),
+                        snapshotIdentity: 'snapshot:composer-source-ref',
+                    },
+                    retainedAgent: binding,
+                    invocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: false },
+                    signal: new AbortController().signal,
+                },
+            );
+
+            const pendingSource = { kind: 'pendingMessage' as const, sessionId, localId: 'pending-1' };
+            const noAttachmentResponse = await submit('local-no-attachment', pendingSource, []);
+            expect(noAttachmentResponse).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'transformSessionInput',
+                        payload: {
+                            meta: expect.not.objectContaining({ [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: expect.anything() }),
+                        },
+                    },
+                },
+            });
+            expect(finalizeComposerStagedMediaToSessionMock).not.toHaveBeenCalled();
+
+            const pendingResponse = await submit('local-pending', pendingSource);
+            expect(finalizeComposerStagedMediaToSessionMock).toHaveBeenLastCalledWith(expect.objectContaining({
+                sourceComposerRef: pendingSource,
+                meta: expect.not.objectContaining({ [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: expect.anything() }),
+            }));
+            expect(pendingResponse).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'transformSessionInput',
+                        payload: {
+                            meta: expect.not.objectContaining({ [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: expect.anything() }),
+                        },
+                    },
+                },
+            });
+
+            const newSessionSource = { kind: 'newSession' as const, instanceId: 'new-composer-1' };
+            await expect(submit('local-new-session', newSessionSource)).resolves.toMatchObject({ ok: true });
+            expect(finalizeComposerStagedMediaToSessionMock).toHaveBeenLastCalledWith(expect.objectContaining({
+                sourceComposerRef: newSessionSource,
+            }));
+
+            const injectedOnlyResponse = await submit('local-transform-injected', undefined);
+            expect(finalizeComposerStagedMediaToSessionMock).toHaveBeenLastCalledWith(expect.not.objectContaining({
+                sourceComposerRef: expect.anything(),
+            }));
+            expect(injectedOnlyResponse).toMatchObject({
+                ok: true,
+                result: {
+                    kind: 'turn_contributions',
+                    status: 'resolved',
+                    contributions: {
+                        kind: 'transformSessionInput',
+                        payload: {
+                            meta: expect.not.objectContaining({ [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: expect.anything() }),
+                        },
+                    },
+                },
+            });
+
+            await expect(submit('local-forged', { kind: 'bogus' })).rejects.toMatchObject({
+                code: 'composer_attachment_source_ref_invalid',
+            });
         } finally {
             await runtime.stopControlServer();
         }

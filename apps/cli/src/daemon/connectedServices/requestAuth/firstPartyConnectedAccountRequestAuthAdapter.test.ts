@@ -7,7 +7,7 @@ import {
 
 import {
     materializeFirstPartyConnectedAccountBearer,
-    projectLegacyConnectedServiceBindingsToQualifiedPurposeBindings,
+    projectConnectedServiceBindingsToQualifiedPurposeBindings,
     resolveFirstPartyConnectedAccountBinding,
     resolveFirstPartyConnectedAccountServiceId,
 } from './firstPartyConnectedAccountRequestAuthAdapter';
@@ -63,7 +63,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
     });
 
     it('projects released service-keyed Agent bindings one way into exact qualified purposes', () => {
-        expect(projectLegacyConnectedServiceBindingsToQualifiedPurposeBindings({
+        expect(projectConnectedServiceBindingsToQualifiedPurposeBindings({
             consumer: purpose.consumer,
             declarations: [{
                 purpose: purpose.purpose,
@@ -118,8 +118,77 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
         }]);
     });
 
+    it('projects canonical qualified external direct and group bindings without a first-party scalar mapping', () => {
+        const externalService = {
+            pluginId: 'acme.connected-account',
+            localId: 'credential',
+        } as const;
+        const externalConsumer = {
+            pluginId: 'acme.agent',
+            localId: 'runtime',
+        } as const;
+        expect(projectConnectedServiceBindingsToQualifiedPurposeBindings({
+            consumer: externalConsumer,
+            declarations: [{
+                purpose: 'direct',
+                service: externalService,
+            }, {
+                purpose: 'group',
+                service: externalService,
+            }],
+            bindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    'acme.connected-account/credential': {
+                        source: 'connected',
+                        selection: 'group',
+                        groupId: 'external-group',
+                    },
+                },
+            },
+        })).toEqual([{
+            purpose: { consumer: externalConsumer, purpose: 'direct' },
+            target: {
+                kind: 'group',
+                service: externalService,
+                groupId: 'external-group',
+            },
+        }, {
+            purpose: { consumer: externalConsumer, purpose: 'group' },
+            target: {
+                kind: 'group',
+                service: externalService,
+                groupId: 'external-group',
+            },
+        }]);
+
+        expect(projectConnectedServiceBindingsToQualifiedPurposeBindings({
+            consumer: externalConsumer,
+            declarations: [{ purpose: 'direct', service: externalService }],
+            bindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    'acme.connected-account/credential': {
+                        source: 'connected',
+                        selection: 'profile',
+                        profileId: 'external-account',
+                    },
+                },
+            },
+        })).toEqual([{
+            purpose: { consumer: externalConsumer, purpose: 'direct' },
+            target: {
+                kind: 'account',
+                account: {
+                    service: externalService,
+                    accountId: 'external-account',
+                },
+            },
+        }]);
+    });
+
     it('normalizes a manifest-local service id against its declaring Agent plugin', () => {
-        expect(projectLegacyConnectedServiceBindingsToQualifiedPurposeBindings({
+        expect(projectConnectedServiceBindingsToQualifiedPurposeBindings({
             consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
             declarations: [{
                 purpose: 'primary',
@@ -151,7 +220,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
     });
 
     it('does not synthesize qualified authority for native, missing, or unqualified legacy bindings', () => {
-        expect(projectLegacyConnectedServiceBindingsToQualifiedPurposeBindings({
+        expect(projectConnectedServiceBindingsToQualifiedPurposeBindings({
             consumer: purpose.consumer,
             declarations: [{
                 purpose: purpose.purpose,
@@ -169,7 +238,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
     it('resolves fixed accounts and the current group member from the observed projection', () => {
         const projection = {
             groups: [{
-                serviceId: 'openai-codex' as const,
+                serviceId: 'happier.agent.codex/openai-codex' as const,
                 groupId: 'team',
                 activeProfileId: 'member-b',
                 generation: 7,

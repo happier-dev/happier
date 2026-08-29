@@ -284,7 +284,7 @@ describe('Voice client mediated Connected Account credential RPC', () => {
       },
     });
     expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
-      purpose: operationPurpose,
+      purpose: bindingPurpose,
       serviceRefs: [service],
       request: materializationRequest,
       expectedAccount: { service, accountId: 'account-a' },
@@ -328,7 +328,7 @@ describe('Voice client mediated Connected Account credential RPC', () => {
       headers: { authorization: 'Bearer account-a' },
     });
     expect(owner.materialize).toHaveBeenCalledWith(expect.objectContaining({
-      purpose: operationPurpose,
+      purpose: bindingPurpose,
     }));
   });
 

@@ -432,14 +432,10 @@ describe('stable declarative plugin model', () => {
     });
   });
 
-    it('fails closed for ambiguous settings, invalid select values, and missing actions', () => {
+    it('fails closed for invalid select values and missing actions', () => {
         const settings = createStablePluginSettingsModel({
             pluginId: 'com.acme.forms',
             contribution: settingsContribution,
-        });
-        const duplicateFieldSettings = createStablePluginSettingsModel({
-            pluginId: 'com.acme.forms',
-            contribution: { ...settingsContribution, id: 'other' },
         });
         const base = {
             pluginId: 'com.acme.forms',
@@ -447,16 +443,6 @@ describe('stable declarative plugin model', () => {
             actions: [{ pluginId: 'com.acme.forms', localId: 'save' }],
             availability: { visible: true, enabledActions: {} },
         } as const;
-
-        expectPluginError(() => createStablePluginDeclarativeModel({
-            ...base,
-            settings: [settings, duplicateFieldSettings],
-            renderer: {
-                id: 'ambiguous',
-                kind: 'declarative',
-                root: { kind: 'field', label: 'Enabled', control: { kind: 'toggle', settingId: 'enabled' } },
-            },
-        }), 'plugin_declarative_setting_ambiguous');
 
         expectPluginError(() => createStablePluginDeclarativeModel({
             ...base,

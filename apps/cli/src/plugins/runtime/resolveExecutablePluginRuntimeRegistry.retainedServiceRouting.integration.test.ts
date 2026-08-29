@@ -623,7 +623,7 @@ async function writePluginSource(input: Readonly<{
                         }
                         if (
                             request.headers.authorization !== '[redacted]'
-                            || request.headers['x-tenant-token'] !== 'caller-visible'
+                            || request.headers['x-tenant-label'] !== 'caller-visible'
                         ) {
                             return { decision: 'deny' };
                         }
@@ -633,7 +633,7 @@ async function writePluginSource(input: Readonly<{
                                 ...request,
                                 headers: {
                                     ...request.headers,
-                                    'x-tenant-token': 'rewritten-by-current-policy',
+                                    'x-tenant-label': 'rewritten-by-current-policy',
                                 },
                             },
                         };
@@ -1780,7 +1780,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                     method: 'GET',
                     headers: {
                         authorization: 'Bearer runner-caller-value',
-                        'x-tenant-token': 'caller-visible',
+                        'x-tenant-label': 'caller-visible',
                     },
                     redirect: 'error',
                 })).resolves.toMatchObject({
@@ -1807,7 +1807,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 expect.objectContaining({
                     headers: {
                         authorization: 'Bearer runner-caller-value',
-                        'x-tenant-token': 'rewritten-by-current-policy',
+                        'x-tenant-label': 'rewritten-by-current-policy',
                     },
                 }),
             );

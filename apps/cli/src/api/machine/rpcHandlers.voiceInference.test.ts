@@ -696,6 +696,7 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     ];
 
     const warmCalls: string[] = [];
+    const warmSignals: Array<AbortSignal | null | undefined> = [];
     const getModelsStatus = vi.fn(async (packIds?: readonly string[] | null) => {
       if (!packIds || packIds.length === 0) return models;
       return models.filter((model) => packIds.includes(model.packId));
@@ -731,8 +732,9 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
         modelPackId: 'sherpa-stt-en-v1',
       }),
       cancelStt: async () => {},
-      warmModelPack: async (packId: string) => {
+      warmModelPack: async (packId: string, signal?: AbortSignal | null) => {
         warmCalls.push(packId);
+        warmSignals.push(signal);
       },
     };
 
@@ -745,13 +747,15 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     const warm = mgr.handlers.get(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM);
     expect(warm).toBeDefined();
 
+    const requestLifetime = new AbortController();
     await expect(warm?.({
       packIds: ['kokoro-82m-v1.0-onnx-q8-wasm', 'sherpa-stt-en-v1', 'kokoro-82m-v1.0-onnx-q8-wasm'],
-    })).resolves.toEqual({
+    }, { signal: requestLifetime.signal })).resolves.toEqual({
       ok: true,
       models,
     });
     expect(warmCalls).toEqual(['kokoro-82m-v1.0-onnx-q8-wasm', 'sherpa-stt-en-v1']);
+    expect(warmSignals).toEqual([requestLifetime.signal, requestLifetime.signal]);
     expect(getModelsStatus).toHaveBeenCalledWith(['kokoro-82m-v1.0-onnx-q8-wasm', 'sherpa-stt-en-v1']);
   });
 

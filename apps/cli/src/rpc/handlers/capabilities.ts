@@ -1,5 +1,4 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { AGENTS } from '@/agent/catalog/registry';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { createCapabilityChecklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
@@ -39,6 +38,7 @@ import {
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { ProviderProbeCancelledError } from '@/providers/probe/client';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -53,8 +53,9 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connected
 import { invokeAgentCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeAgentCliInstall';
 import {
     getResolvedContributionRegistry,
-    primeResolvedContributionRegistry,
+    resolveMergedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { requestExactMarketplaceInstall } from '@/plugins/store/marketplace/exactInstall';
 import {
     readInstalledPluginCatalogEntry,
@@ -71,8 +72,18 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { runPluginAuthorToolchain } from '@/plugins/authoring/toolchain';
 import { packLocalPlugin } from '@/plugins/packaging/pack';
 import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
+
+/** Plugin reload generation of this process; fences registry snapshots against in-process reloads. */
+function readPluginReloadGeneration(): number {
+    try {
+        return pluginReloadController.getState().generation;
+    } catch {
+        return 0;
+    }
+}
 
 type ConnectedServiceProbeCredentials = NonNullable<
     Awaited<ReturnType<typeof resolveProbeBackendContext>>['credentials']
@@ -86,6 +97,7 @@ type CliProbeDependencies = Readonly<{
         service: AgentProviderCatalogObservationService;
     }> | null;
     agentRegistrySnapshot?: ReturnType<typeof getResolvedContributionRegistry>;
+    activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     isAgentRegistryCurrent?: () => boolean;
 }>;
 
@@ -125,7 +137,8 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         'connected-services',
         'materialized',
     );
-    const registry = params.dependencies.agentRegistrySnapshot ?? getResolvedContributionRegistry();
+    const registry = params.dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
+    const consumer = registry.agentDefinitionsById.get(params.agentId)?.identity ?? null;
     const resolved = await resolveConnectedServiceAuthForSpawn({
         agentId: params.agentId,
         sessionDirectory: params.cwd,
@@ -143,6 +156,21 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
                 bindings,
                 contributions: registry,
             }),
+        ...(params.dependencies.activatePurposeBindings && consumer
+            ? {
+                activateQualifiedPurposeBindings: (snapshot) =>
+                    params.dependencies.activatePurposeBindings!({
+                        subject: {
+                            kind: 'operation',
+                            operationId: materializationIdentity.id,
+                            consumer,
+                            isCurrent: () => params.dependencies.isAgentRegistryCurrent?.() === true,
+                        },
+                        purposes: snapshot.purposes,
+                        bindings: snapshot.bindings,
+                    }),
+            }
+            : {}),
         // Capability probes observe the current selection. Spawn/runtime owners alone may refresh
         // credentials or advance an auth group.
         authGroupSwitchCoordinator: null,
@@ -162,8 +190,14 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         connectedServiceSelectionCacheKey:
             resolved.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] ?? null,
         cleanup: async () => {
-            resolved.cleanupOnExit?.();
-            resolved.cleanupOnFailure?.();
+            // The materialization cleanups publish awaited removal receipts;
+            // this probe's own receipt is the bounded rm of the ephemeral
+            // root below, so cleanup failures here are observed, not decisive.
+            await Promise.allSettled([
+                Promise.resolve(resolved.cleanupOnExit?.()),
+                Promise.resolve(resolved.cleanupOnFailure?.()),
+                Promise.resolve(resolved.materializationPurposeLease?.dispose()),
+            ]);
             await rm(ephemeralRoot, { recursive: true, force: true });
         },
     };
@@ -320,10 +354,9 @@ async function invokeCliProbeOrInstallMethod(
         const bindings = ConnectedServiceBindingsV1Schema.safeParse(params?.connectedServices);
         const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
         if (observation && observationRuntime && bindings.success) {
-            const registry = dependencies.agentRegistrySnapshot ?? getResolvedContributionRegistry();
+            const registry = dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
             const isCurrent = (): boolean => requestContext.signal?.aborted !== true
-                && (dependencies.isAgentRegistryCurrent?.()
-                    ?? getResolvedContributionRegistry() === registry);
+                && (dependencies.isAgentRegistryCurrent?.() ?? true);
             const agent = registry.agentDefinitionsById.get(agentId);
             const consumer = agent?.identity;
             const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
@@ -605,6 +638,7 @@ async function invokePluginDevelopmentAction(
             targetDir,
             pluginId,
             displayName,
+            invokerName: resolveInvokerName() ?? 'happier',
             ...(ui ? { ui: ui.data } : {}),
         });
         if (!result.ok) {
@@ -811,7 +845,7 @@ async function invokePluginMarketplaceAction(
             ok: false,
             // A refusal the change owner explained — a pinned installation, an
             // unavailable trusted channel — reaches the caller with that owner's
-            // own code and words, the same ones `happier install plugin update`
+            // own code and words, the same ones `happier plugins update`
             // prints.
             error: change.kind === 'failed'
                 ? {
@@ -929,20 +963,26 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
         machineId: string;
         service: AgentProviderCatalogObservationService;
     }> | null;
+    activatePurposeBindings?: CliProbeDependencies['activatePurposeBindings'];
     isAgentRegistryCurrent?: () => boolean;
 }> = {}): Promise<ReturnType<typeof createCapabilitiesService>> {
+    // Explicit ephemeral merged snapshot for this service's probes only. It is
+    // never written back into a shared registry authority; currentness is
+    // generation-fenced against in-process plugin reloads (the daemon path
+    // injects its own currentness check).
     const resolvedContributionRegistry = (
-        await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined)
+        await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined)
     ) ?? getResolvedContributionRegistry();
+    const snapshotReloadGeneration = readPluginReloadGeneration();
     const cliProbeDependencies: CliProbeDependencies = {
         ...dependencies,
         agentRegistrySnapshot: resolvedContributionRegistry,
         isAgentRegistryCurrent: dependencies.isAgentRegistryCurrent
-            ?? (() => getResolvedContributionRegistry() === resolvedContributionRegistry),
+            ?? (() => readPluginReloadGeneration() === snapshotReloadGeneration),
     };
 
     const cliCapabilities = await Promise.all(
-        (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) =>
+        resolvedContributionRegistry.agents.map(async (entry) =>
             await createGenericCliCapability(entry.id, cliProbeDependencies)),
     );
 
@@ -978,7 +1018,10 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
             ...installableCapabilities,
             ...explicitCapabilities,
         ],
-        checklists: createCapabilityChecklists(installablesRegistry),
+        checklists: createCapabilityChecklists(
+            installablesRegistry,
+            resolvedContributionRegistry,
+        ),
         buildContext: buildDetectContext,
     });
 }
@@ -989,14 +1032,6 @@ export function registerCapabilitiesHandlers(
 ): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
     let servicePluginReloadGeneration: number | null = null;
-
-    const readPluginReloadGeneration = (): number => {
-        try {
-            return pluginReloadController.getState().generation;
-        } catch {
-            return 0;
-        }
-    };
 
     const getService = (): Promise<ReturnType<typeof createCapabilitiesService>> => {
         const currentGeneration = readPluginReloadGeneration();

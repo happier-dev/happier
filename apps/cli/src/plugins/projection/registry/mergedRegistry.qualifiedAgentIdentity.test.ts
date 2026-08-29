@@ -16,7 +16,11 @@ import {
 } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import type { ActivationTarget } from '@/plugins/runtime/lifecycle/activation/targets';
 
-import { readAgentRoutingIdForContributionIdentity, indexAgentRoutingIdsByContributionIdentity } from './agentRoutingIdentity';
+import {
+    indexAgentRoutingIdsByContributionIdentity,
+    readAgentRoutingIdForContributionIdentity,
+    resolveAgentContributionQualifiedId,
+} from './agentRoutingIdentity';
 import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
 
 const LOCAL_AGENT_ID = 'assistant';
@@ -81,10 +85,10 @@ function agentRuntimeRegistration(pluginId: string) {
             localId: LOCAL_AGENT_ID,
             value: {
                 factory: async () => ({
-                    executionRuns: {
+                    sessions: {
                         open: async () => ({
                             send: async () => ({ status: 'admitted' as const, owner: pluginId }),
-                            stop: async () => ({ status: 'requested' as const }),
+                            cancel: async () => ({ status: 'requested' as const }),
                             watch: () => ({ dispose: () => undefined }),
                             dispose: async () => undefined,
                         }),
@@ -125,6 +129,13 @@ async function resolveTwoAssistantPluginRegistry() {
 }
 
 describe('two plugins declaring the same local Agent id', () => {
+    it('keeps routing and contribution-qualified activation identity distinct', () => {
+        expect(resolveAgentContributionQualifiedId({
+            pluginId: 'acme.alpha',
+            localId: LOCAL_AGENT_ID,
+        })).toBe('acme.alpha/agents/assistant');
+    });
+
     it('projects, selects and routes each Agent through its own qualified identity', async () => {
         const registry = await resolveTwoAssistantPluginRegistry();
 
@@ -196,11 +207,11 @@ describe('two plugins declaring the same local Agent id', () => {
         expect(runtimes.get(LOCAL_AGENT_ID)).toBeUndefined();
 
         // Each lease builds its own plugin's runtime, not the other plugin's.
-        const alphaRun = await (await alphaLease!.createRuntime!({ signal: new AbortController().signal }))
-            .executionRuns!.open({} as never, {} as never);
-        const betaRun = await (await betaLease!.createRuntime!({ signal: new AbortController().signal }))
-            .executionRuns!.open({} as never, {} as never);
-        expect(await alphaRun.send({} as never)).toMatchObject({ owner: 'acme.alpha' });
-        expect(await betaRun.send({} as never)).toMatchObject({ owner: 'acme.beta' });
+        const alphaSession = await (await alphaLease!.createRuntime!({ signal: new AbortController().signal }))
+            .sessions!.open({} as never, {} as never);
+        const betaSession = await (await betaLease!.createRuntime!({ signal: new AbortController().signal }))
+            .sessions!.open({} as never, {} as never);
+        expect(await alphaSession.send({} as never)).toMatchObject({ owner: 'acme.alpha' });
+        expect(await betaSession.send({} as never)).toMatchObject({ owner: 'acme.beta' });
     });
 });

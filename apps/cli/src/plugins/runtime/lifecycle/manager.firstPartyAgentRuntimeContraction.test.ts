@@ -69,9 +69,9 @@ describe('first-party AgentRuntime contraction', () => {
                     agentId,
                 ).not.toContain(V1_COMPATIBILITY_FACTORY_SYMBOL);
                 expect(runtime.sessions !== undefined, `${agentId}: sessions capability`)
-                    .toBe(definition.capabilities.sessions !== undefined);
+                    .toBe(definition.primary === 'sessions');
                 expect(runtime.executionRuns !== undefined, `${agentId}: execution-runs capability`)
-                    .toBe(definition.capabilities.executionRuns !== undefined);
+                    .toBe(definition.primary === 'executionRuns');
                 expect(runtime.surfaces?.terminal !== undefined, `${agentId}: terminal capability`)
                     .toBe(definition.capabilities.surfaces?.includes('terminal') === true);
             }
@@ -118,9 +118,9 @@ describe('first-party AgentRuntime contraction', () => {
             expect(
                 Object.getOwnPropertySymbols(runtime).map((symbol) => Symbol.keyFor(symbol)),
             ).not.toContain(V1_COMPATIBILITY_FACTORY_SYMBOL);
-            expect(runtime.sessions !== undefined).toBe(definition.capabilities.sessions !== undefined);
+            expect(runtime.sessions !== undefined).toBe(definition.primary === 'sessions');
             expect(runtime.executionRuns !== undefined)
-                .toBe(definition.capabilities.executionRuns !== undefined);
+                .toBe(definition.primary === 'executionRuns');
             expect(runtime.surfaces?.terminal !== undefined)
                 .toBe(definition.capabilities.surfaces?.includes('terminal') === true);
         } finally {

@@ -250,7 +250,7 @@ describe('Discord Channels as a first-class Automation Event source', () => {
           automation: expect.objectContaining({
             eligible: true,
             source: expect.objectContaining({
-              supportedObservationTransports: ['checkpointedPull'],
+              supportedObservationTransports: ['socket'],
               setupActionRef: { pluginId: PLUGIN_ID, localId: SETUP_ACTION_ID },
             }),
           }),

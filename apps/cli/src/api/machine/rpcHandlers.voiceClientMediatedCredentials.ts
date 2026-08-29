@@ -188,12 +188,10 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
         // resolution against that authority before and after materialization.
         const expectedSelection = request.data.expectedSelection;
         const materialization = await connectedAccounts.materialize({
-          // The slot purpose above owns source selection. Recipient
-          // materialization is authorized for this exact operation purpose.
-          purpose: {
-            consumer: identity.contribution,
-            purpose: operation.purpose,
-          },
+          // The slot purpose owns both source selection and binding lookup.
+          // The distinct operation purpose was consumed above when resolving
+          // the exact operation projection and must not redirect the binding.
+          purpose: identity.purpose,
           serviceRefs: Object.freeze([selectedService]),
           ...(expectedSelection.kind === 'account'
             ? { expectedAccount: expectedSelection.account }

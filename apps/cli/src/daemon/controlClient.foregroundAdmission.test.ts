@@ -7,6 +7,8 @@ import {
   admitDaemonForegroundAgentRuntime,
 } from '@/daemon/controlClient';
 import {
+  AgentCliSessionCommandBuildInputV1Schema,
+  AgentCliSessionCommandOptionsV1Schema,
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
 } from '@/daemon/agentRuntime/foregroundAdmissionContract';
 import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
@@ -42,7 +44,7 @@ describe('daemon control client: foreground Agent runtime admission', () => {
     }
   });
 
-  it('accepts only legacy service-keyed Connected Services intent and rejects client-qualified purpose authority', () => {
+  it('accepts only qualified service-keyed Connected Services intent and rejects client-qualified purpose authority', () => {
     const request = {
       v: 1 as const,
       attemptId: 'attempt-1',
@@ -58,7 +60,7 @@ describe('daemon control client: foreground Agent runtime admission', () => {
       connectedServices: {
         v: 1 as const,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected' as const,
             selection: 'profile' as const,
             profileId: 'work',
@@ -75,6 +77,45 @@ describe('daemon control client: foreground Agent runtime admission', () => {
         purposes: [],
         bindings: [],
       },
+    }).success).toBe(false);
+  });
+
+  it('rejects non-string foreground session-option environment values at the wire boundary', () => {
+    const input = {
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
+      settings: {},
+      pluginSettings: {
+        account: { ownedMode: 'safe' },
+        daemon: { daemonOnly: true },
+      },
+      environment: { KEEP: 'value' },
+      startOrigin: 'terminal',
+    } as const;
+
+    expect(AgentCliSessionCommandBuildInputV1Schema.parse(input)).toEqual(input);
+    expect(AgentCliSessionCommandBuildInputV1Schema.safeParse({
+      ...input,
+      environment: { KEEP: 'value', DROP: 1 },
+    }).success).toBe(false);
+    expect(AgentCliSessionCommandBuildInputV1Schema.safeParse({
+      ...input,
+      pluginSettings: { ownedMode: 'legacy-flat-value' },
+    }).success).toBe(false);
+    const { pluginSettings: _pluginSettings, ...missingPluginSettings } = input;
+    expect(AgentCliSessionCommandBuildInputV1Schema.safeParse(missingPluginSettings).success).toBe(false);
+  });
+
+  it('accepts nested strict JSON foreground session options and rejects undefined values', () => {
+    expect(AgentCliSessionCommandOptionsV1Schema.parse({
+      mode: 'safe',
+      nested: { list: [true, null, { depth: 2 }] },
+    })).toEqual({
+      mode: 'safe',
+      nested: { list: [true, null, { depth: 2 }] },
+    });
+    expect(AgentCliSessionCommandOptionsV1Schema.safeParse({
+      omitted: undefined,
     }).success).toBe(false);
   });
 

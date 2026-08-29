@@ -65,6 +65,7 @@ describe('settleComposerStagedMediaAdmissionV1', () => {
 
     await expect(readdir(join(workingDirectory, '.happier/uploads/messages/msg-1')))
       .resolves.toEqual([]);
+    expect(stageStore.release).toHaveBeenCalledWith(releaseIntent);
   });
 
   it('releases the exact stages it consumed when acceptance lands after Session teardown', async () => {

@@ -4,7 +4,7 @@ import {
     type SensitiveDiagnosticValuesLease,
 } from '@happier-dev/protocol';
 
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 
 const INACTIVE_LEASE: SensitiveDiagnosticValuesLease = Object.freeze({ close: () => undefined });
 
@@ -21,7 +21,7 @@ export function beginProviderBindingRuntimeDiagnosticRedaction(params: Readonly<
         'providerRequirements',
     )
         ? params.providerRequirements
-        : getResolvedContributionRegistry()
+        : readCurrentContributionRegistry()
             .agentDefinitionsById
             .get(params.agentId)
             ?.definition.providerRequirements;

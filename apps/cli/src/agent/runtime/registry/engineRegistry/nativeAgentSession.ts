@@ -94,6 +94,7 @@ import {
     readAgentSessionCapabilities,
     type AgentSessionCapabilities,
 } from '@/plugins/projection/registry/agentContributionDefinition';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
 import { resolveBackendExecutionSurfacesFromNativeAgentRuntime } from '@/agent/runtime/registry/backendEngineSurfaceBindings';
 import {
@@ -1968,7 +1969,10 @@ export function composeNativeAgentSessionRuntimeContext(params: Readonly<{
         }),
         contribution: Object.freeze({
             id: params.contributionId,
-            qualifiedId: `${params.identity.pluginId}/agents/${params.contributionId}`,
+            qualifiedId: resolveAgentContributionQualifiedId({
+                pluginId: params.identity.pluginId,
+                localId: params.contributionId,
+            }),
         }),
         surface: 'agent' as const,
         invokedAtMs: params.invokedAtMs,

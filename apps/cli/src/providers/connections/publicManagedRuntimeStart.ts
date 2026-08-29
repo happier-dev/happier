@@ -31,6 +31,9 @@ function failForCoordinatorCode(
   if (code === 'managed_provider_authorization_changed') {
     throw createProviderErrorV1('provider_authorization_changed', { machineId });
   }
+  if (code === 'managed_provider_runtime_unavailable') {
+    throw createProviderErrorV1('provider_contribution_unavailable', { machineId });
+  }
   throw createProviderErrorV1('provider_endpoint_unavailable', { machineId });
 }
 

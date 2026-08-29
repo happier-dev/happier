@@ -165,7 +165,7 @@
     "vitest": "../stack/bin/hstack-exec --script=vitest:local",
     "vitest:local": "vitest",
     "test:unit": "../stack/bin/hstack-exec --script=test:unit:local",
-    "test:unit:local": "node scripts/withNodeHeapLimit.mjs vitest run --config vitest.config.ts && node --test scripts/prepack-script.test.mjs && yarn -s test:import-cycles",
+    "test:unit:local": "node scripts/withNodeHeapLimit.mjs vitest run --config vitest.config.ts && node --test scripts/prepack-script.test.mjs scripts/stageManagedRuntimeArchives.test.mjs && yarn -s test:import-cycles",
     "test:import-cycles": "node scripts/importCycleGuard.mjs",
     "test:integration": "../stack/bin/hstack-exec --script=test:integration:local",
     "test:integration:local": "node scripts/runVitestShards.mjs --config vitest.integration.config.ts",

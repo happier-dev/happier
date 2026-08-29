@@ -174,6 +174,40 @@ describe('tracked session handoff coordinator', () => {
     });
   });
 
+  it('projects authoritative session bundle byte transfer into the parent action operation', async () => {
+    const transferStatus = {
+      ...status('staging_target'),
+      progress: {
+        updatedAtMs: 123,
+        checkpoint: 'import_session',
+        planned: { totalBytes: 4096 },
+        transferred: { bytes: 1024 },
+        current: { phaseDetail: 'transferring_session' },
+        resumable: false,
+      },
+    };
+    const { deps } = createDeps({
+      prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: transferStatus })),
+      getPreparedTargetResult: vi.fn(async () => prepared),
+      getTargetStatus: vi.fn(async () => ({ handoffId: 'handoff-1', transitionRevision: 1, status: transferStatus })),
+    });
+
+    await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId: 'target-machine' },
+      signal: new AbortController().signal,
+      ...deps,
+    });
+
+    expect(deps.publishOwnerUpdate).toHaveBeenCalledWith({
+      progress: {
+        phase: 'session_transfer',
+        current: 1024,
+        total: 4096,
+        label: 'Transferring session data',
+      },
+    });
+  });
+
   it('waits for explicit user Resume and continues the parent sequence exactly once after recovery', async () => {
     let releaseWait: (() => void) | undefined;
     const waitForResume = new Promise<void>((resolve) => {

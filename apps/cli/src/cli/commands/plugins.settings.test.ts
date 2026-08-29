@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 import { handlePluginsCommand } from './plugins';
 
 describe('plugin Settings administration CLI', () => {
   it('advertises scope-selected Settings administration', async () => {
+    // Help labels name the invoking invoker; pin the documented default lane
+    // instead of inheriting the test runner's argv-derived invoker.
+    const envScope = createEnvKeyScope(['HAPPIER_CLI_INVOKER_NAME']);
+    envScope.patch({ HAPPIER_CLI_INVOKER_NAME: 'happier' });
     const output = captureConsoleText();
     try {
       await handlePluginsCommand(['help']);
@@ -18,6 +23,7 @@ describe('plugin Settings administration CLI', () => {
       );
     } finally {
       output.restore();
+      envScope.restore();
     }
   });
 

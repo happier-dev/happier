@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { access, mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
 import * as tar from 'tar';
@@ -529,7 +529,14 @@ async function installPluginThroughPresentUserTerminal(
 }
 
 describe('handlePluginsCommand', () => {
+  // Help text, recovery guidance, and scaffold scripts name the invoker the
+  // author actually invoked (`resolveInvokerName()`), so pin the documented
+  // default lane for this file instead of inheriting the test runner's argv.
+  let invokerNameScope: ReturnType<typeof createEnvKeyScope> | null = null;
+
   beforeEach(() => {
+    invokerNameScope = createEnvKeyScope(['HAPPIER_CLI_INVOKER_NAME']);
+    invokerNameScope.patch({ HAPPIER_CLI_INVOKER_NAME: 'happier' });
     activePluginChangeService = null;
     activePluginReloadController = null;
     daemonBoundary.ensureRunning.mockClear();
@@ -553,6 +560,8 @@ describe('handlePluginsCommand', () => {
   });
 
   afterEach(async () => {
+    invokerNameScope?.restore();
+    invokerNameScope = null;
     await activePluginChangeService?.shutdown();
     await activePluginReloadController?.shutdown();
     activePluginChangeService = null;
@@ -567,6 +576,7 @@ describe('handlePluginsCommand', () => {
       expect(output.text()).toContain('happier plugins');
       expect(output.text()).toContain('happier plugins list [--json]');
       expect(output.text()).toContain('happier plugins install <path|archive|package> [--kind path|archive|npm]');
+      expect(output.text()).toContain('happier plugins update <pluginId> [--json]');
       expect(output.text()).toContain('happier plugins rollback <pluginId> [--json]');
       expect(output.text()).toContain('happier plugins uninstall <pluginId> [--delete-data --yes] [--json]');
       expect(output.text()).toContain('happier plugins create <name> [--id <plugin.id>] [--name <display name>] [--ui hostedWeb|reactNative] [--json]');
@@ -3661,6 +3671,57 @@ describe('handlePluginsCommand', () => {
       expect(daemonBoundary.requestChange).toHaveBeenLastCalledWith({ kind: 'rollback', pluginId: SAMPLE_PLUGIN_ID });
       const state = await createPluginStateStore({ happyHomeDir: home }).read();
       expect(state.plugins[SAMPLE_PLUGIN_ID]?.install.manifestVersion).toBe('1.0.0');
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
+      await removeTempDir(home);
+      await rm(sourceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('updates an installed plugin through the daemon update owner without reconstructing its channel client-side', async () => {
+    const home = await createTempDir('happier-plugin-update-cli-');
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+    envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+    reloadConfiguration();
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-update-source-'));
+    await materializeSamplePluginFixture(sourceRoot);
+    const manifestPath = join(sourceRoot, '.happier-plugin', 'plugin.json');
+    try {
+      await installPluginThroughPresentUserTerminal(sourceRoot);
+
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+      await writeFile(manifestPath, JSON.stringify({ ...manifest, version: '2.0.0' }, null, 2), 'utf8');
+
+      const output = captureConsoleJsonOutput();
+      try {
+        await handlePluginsCommand(['update', SAMPLE_PLUGIN_ID, '--json']);
+        expect(output.json<{
+          ok: boolean;
+          kind: string;
+          data?: {
+            pluginId?: string;
+            plugin?: { version?: string };
+            desiredGeneration?: string | null;
+            appliedGeneration?: string | null;
+          };
+        }>).toMatchObject({
+          ok: true,
+          kind: 'plugins_update',
+          data: {
+            pluginId: SAMPLE_PLUGIN_ID,
+            plugin: { version: '2.0.0' },
+            desiredGeneration: expect.any(String),
+            appliedGeneration: expect.any(String),
+          },
+        });
+      } finally {
+        output.restore();
+      }
+
+      expect(daemonBoundary.requestChange).toHaveBeenLastCalledWith({ kind: 'update', pluginId: SAMPLE_PLUGIN_ID });
+      const state = await createPluginStateStore({ happyHomeDir: home }).read();
+      expect(state.plugins[SAMPLE_PLUGIN_ID]?.install.manifestVersion).toBe('2.0.0');
     } finally {
       envScope.restore();
       reloadConfiguration();

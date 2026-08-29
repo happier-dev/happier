@@ -149,7 +149,7 @@ describe('Composer media stage download handler', () => {
       executionTarget,
       owner,
       claimant,
-    })).resolves.toEqual({ status: 'claimed' });
+    })).resolves.toEqual({ status: 'claimed', newlyAcquired: true });
     await expect(release({
       handle: finalized.handle,
       claimant: {

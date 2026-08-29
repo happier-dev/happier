@@ -40,21 +40,33 @@ export type DaemonVoiceRuntimePackAdapter =
       }>;
     }>;
 
-const SUPPORTED_RUNTIME_FAMILIES: ReadonlySet<ModelPackRuntimeFamily> = new Set([
-  'sherpa_zipformer_streaming',
-  'sherpa_kokoro_offline',
-]);
+export type DaemonVoiceRuntimeFamilyCapabilities = Readonly<Partial<
+  Record<ModelPackRuntimeFamily, Readonly<{ abiVersion: number }>>
+>>;
+
+const SUPPORTED_RUNTIME_FAMILY_CAPABILITIES: DaemonVoiceRuntimeFamilyCapabilities = Object.freeze({
+  sherpa_zipformer_streaming: Object.freeze({ abiVersion: 1 }),
+  sherpa_kokoro_offline: Object.freeze({ abiVersion: 1 }),
+});
 
 // An adapter can be implemented and exercised before it is safe to advertise
 // as installable. Parakeet remains staged until its published manifest,
 // cancellation semantics, and measured memory policy pass the W4.3 gates.
 const IMPLEMENTED_RUNTIME_FAMILIES: ReadonlySet<ModelPackRuntimeFamily> = new Set([
-  ...SUPPORTED_RUNTIME_FAMILIES,
+  ...(Object.keys(SUPPORTED_RUNTIME_FAMILY_CAPABILITIES) as ModelPackRuntimeFamily[]),
   'sherpa_parakeet_offline',
 ]);
 
 export function isDaemonVoiceRuntimeFamilySupported(runtimeFamily: ModelPackRuntimeFamily): boolean {
-  return SUPPORTED_RUNTIME_FAMILIES.has(runtimeFamily);
+  return Object.hasOwn(SUPPORTED_RUNTIME_FAMILY_CAPABILITIES, runtimeFamily);
+}
+
+/**
+ * The daemon runtime registry is the single owner of the runtime families and
+ * ABI versions it can truthfully advertise to public model-pack projection.
+ */
+export function resolveDaemonVoiceRuntimeFamilyCapabilities(): DaemonVoiceRuntimeFamilyCapabilities {
+  return SUPPORTED_RUNTIME_FAMILY_CAPABILITIES;
 }
 
 /**

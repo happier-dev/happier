@@ -58,6 +58,7 @@ describe('filesystem path mutations', () => {
       expect(result).toMatchObject({ success: true, exists: true, kind: 'file' });
       expect(typeof result.sizeBytes).toBe('number');
       expect(typeof result.modifiedMs).toBe('number');
+      expect(result.contentHash).toBeUndefined();
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -66,6 +67,7 @@ describe('filesystem path mutations', () => {
   it('statFile preserves high-precision mtime for snapshot revision consumers', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-stat-'));
     try {
+      writeFileSync(join(workspace, 'file.txt'), 'hello\n', 'utf8');
       const statMock = vi.fn(async () => ({
         isDirectory: () => false,
         isFile: () => true,
@@ -85,23 +87,23 @@ describe('filesystem path mutations', () => {
       const statFile = mgr.handlers.get(RPC_METHODS.STAT_FILE);
       if (!statFile) throw new Error('expected statFile handler');
 
-      await expect(statFile({ path: 'file.txt' })).resolves.toEqual({
+      await expect(statFile({ path: 'file.txt', includeContentHash: true })).resolves.toEqual({
         success: true,
         exists: true,
         kind: 'file',
-        sizeBytes: 5,
+        sizeBytes: 6,
         modifiedMs: 100.125,
+        contentHash: expect.any(String),
       });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
 
-  it('statFile reports a status-change time an equal-size edit cannot hide', async () => {
+  it('statFile reports an exact content hash for an equal-size edit', async () => {
     // The exact failure a size+mtime revision cannot see: a rewrite that keeps
-    // the length and puts the modification time back. Only the status-change
-    // time separates those bytes, and no `utimes` call can restore it, so this
-    // is the fact a byte-sensitive revision is built from.
+    // the length and puts the modification time back. The opt-in content hash
+    // names those bytes; changedMs remains metadata for older consumers.
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-stat-'));
     try {
       const filePath = join(workspace, 'file.txt');
@@ -116,16 +118,80 @@ describe('filesystem path mutations', () => {
       const statFile = mgr.handlers.get(RPC_METHODS.STAT_FILE);
       if (!statFile) throw new Error('expected statFile handler');
 
-      const before = await statFile({ path: 'file.txt' });
+      const before = await statFile({ path: 'file.txt', includeContentHash: true });
 
       writeFileSync(filePath, 'world', 'utf8');
       utimesSync(filePath, pinnedModified, pinnedModified);
-      const after = await statFile({ path: 'file.txt' });
+      const after = await statFile({ path: 'file.txt', includeContentHash: true });
 
       expect(after.sizeBytes).toBe(before.sizeBytes);
       expect(after.modifiedMs).toBe(before.modifiedMs);
       expect(typeof before.changedMs).toBe('number');
       expect(after.changedMs).toBeGreaterThan(before.changedMs);
+      expect(typeof before.contentHash).toBe('string');
+      expect(typeof after.contentHash).toBe('string');
+      expect(after.contentHash).not.toBe(before.contentHash);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('statFile hashes bytes when every timestamp collides', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-stat-'));
+    try {
+      const filePath = join(workspace, 'file.txt');
+      const pinnedModified = new Date(1_700_000_000_000);
+      writeFileSync(filePath, 'hello', 'utf8');
+      utimesSync(filePath, pinnedModified, pinnedModified);
+
+      const mgr = createRpcHandlerManager();
+      registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+      const statFile = mgr.handlers.get(RPC_METHODS.STAT_FILE);
+      if (!statFile) throw new Error('expected statFile handler');
+      const before = await statFile({ path: 'file.txt', includeContentHash: true });
+
+      writeFileSync(filePath, 'world', 'utf8');
+      utimesSync(filePath, pinnedModified, pinnedModified);
+      const after = await statFile({ path: 'file.txt', includeContentHash: true });
+
+      expect(after.sizeBytes).toBe(before.sizeBytes);
+      expect(after.modifiedMs).toBe(before.modifiedMs);
+      expect(after.contentHash).not.toBe(before.contentHash);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('does not hash a file that grows beyond the inline ceiling during the read', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-files-stat-'));
+    try {
+      writeFileSync(join(workspace, 'file.txt'), 'hello', 'utf8');
+      const boundedRead = vi.fn(async (buffer: Buffer, offset: number, length: number) => {
+        buffer.fill(0x61, offset, offset + length);
+        return { bytesRead: length };
+      });
+      const openMock = vi.fn(async () => ({
+        read: boundedRead,
+        close: vi.fn(async () => undefined),
+      }));
+      vi.resetModules();
+      vi.doMock('fs/promises', async (importOriginal) => {
+        const original = await importOriginal<typeof import('fs/promises')>();
+        return { ...original, open: openMock };
+      });
+      const { registerFileSystemHandlers: registerHandlersWithBoundedRead } = await import('./fileSystem');
+      const mgr = createRpcHandlerManager();
+      registerHandlersWithBoundedRead(mgr as unknown as RpcHandlerManager, workspace);
+
+      const statFile = mgr.handlers.get(RPC_METHODS.STAT_FILE);
+      if (!statFile) throw new Error('expected statFile handler');
+      const result = await statFile({ path: 'file.txt', includeContentHash: true });
+
+      // The mocked read fills the existing cap plus one byte, representing a
+      // growth race. The response must omit a digest for that oversized buffer.
+      expect(boundedRead).toHaveBeenCalledWith(expect.any(Buffer), 0, expect.any(Number), 0);
+      expect(result).toMatchObject({ success: true, exists: true, kind: 'file', sizeBytes: 5 });
+      expect(result.contentHash).toBeUndefined();
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

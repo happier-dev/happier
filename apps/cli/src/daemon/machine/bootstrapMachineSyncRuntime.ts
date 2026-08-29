@@ -644,6 +644,7 @@ export async function bootstrapMachineSyncRuntime(
           expectedManifestHash,
           openBody,
           timeoutMs,
+          onProgress,
         }) =>
           await directPeerServerLifecycle.requestPayloadFile({
             transferId,
@@ -653,6 +654,7 @@ export async function bootstrapMachineSyncRuntime(
             ...(typeof expectedManifestHash === 'string' ? { expectedManifestHash } : {}),
             ...(openBody !== undefined ? { openBody } : {}),
             ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+            ...(onProgress ? { onProgress } : {}),
           }),
         clearPublishedTransfer: (transferId: string) => directPeerServerLifecycle.clearPublishedTransfer(transferId),
       }

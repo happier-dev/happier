@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     authorizeModelTransition: vi.fn(),
     createOperationServices: vi.fn(),
     createRunnerManagedServiceInvocationOwner: vi.fn(),
+    verifiedAgentProvenance: 'first_party' as 'first_party' | 'external',
     bindManagedServicesCustodyRequestPort: vi.fn(),
     bindManagedServices: vi.fn(),
     resolveAuthorizedManagedProviderServices: vi.fn(),
@@ -280,6 +281,7 @@ function cleanupDeferred(): Readonly<{
 
 describe('runner Agent session runtime source', () => {
     beforeEach(() => {
+        mocks.verifiedAgentProvenance = 'first_party';
         vi.clearAllMocks();
         mocks.externalSessionsCompanion = null;
         mocks.readAuthority.mockResolvedValue(authority());
@@ -321,7 +323,7 @@ describe('runner Agent session runtime source', () => {
                 definition: exactAgentDeclaration((input as Readonly<{
                     retainedAgent: Readonly<{ localAgentId: string }>;
                 }>).retainedAgent.localAgentId),
-                provenance: 'first_party',
+                provenance: mocks.verifiedAgentProvenance,
             },
             hostAccessRequests: [],
             clearEndpointAuth: vi.fn(),
@@ -518,6 +520,7 @@ describe('runner Agent session runtime source', () => {
     });
 
     it('keeps installed Agents with one local id distinct through runner construction', async () => {
+        mocks.verifiedAgentProvenance = 'external';
         const localAgentId = 'assistant';
         const entries = [
             {
@@ -581,9 +584,11 @@ describe('runner Agent session runtime source', () => {
             }),
         ));
         expect(sources.every((source) => source !== null)).toBe(true);
+        // `identity.agentId` is the canonical host routing id; the qualified
+        // `/agents/` caller grammar stays confined to invocation seeds.
         expect(sources.map((source) => source?.identity.agentId)).toEqual([
-            entries[0].qualifiedAgentId,
-            entries[1].qualifiedAgentId,
+            entries[0].routingId,
+            entries[1].routingId,
         ]);
         expect(new Set(sources.map((source) => source?.identity.agentId)).size)
             .toBe(2);

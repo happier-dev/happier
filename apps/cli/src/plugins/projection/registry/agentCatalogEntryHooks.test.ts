@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AgentCliSessionCommandDeclarationV1,
+  AgentCliSessionCommandBuildInputV1,
   AgentConnectedAccountRuntimeAuthAdapterV1,
   AgentPreflightSessionControlsContributionV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -360,7 +361,7 @@ describe('Agent registration catalog projections', () => {
       environment: {},
       startOrigin: 'terminal' as const,
     };
-    expect(projected.resolveSessionRuntimePreferences?.(preferencesInput)).toEqual({
+    await expect(projected.resolveSessionRuntimePreferences?.(preferencesInput)).resolves.toEqual({
       externalAgentArgs: ['--fast'],
     });
 
@@ -371,8 +372,43 @@ describe('Agent registration catalog projections', () => {
       terminalRuntime: null,
     });
     expect(runBackendSessionCliCommandMock).toHaveBeenCalledTimes(1);
-    expect(projected.resolveSessionRuntimePreferences?.(preferencesInput)).toEqual({});
+    await expect(projected.resolveSessionRuntimePreferences?.(preferencesInput)).resolves.toEqual({});
     expect(buildSessionOptions).toHaveBeenCalledTimes(1);
+  });
+
+  it('injects only the owner-provided non-secret Settings projection for an Agent launch', async () => {
+    const buildSessionOptions = vi.fn((input: AgentCliSessionCommandBuildInputV1) => ({
+      ok: true as const,
+      options: {
+        accountSelected: input.pluginSettings.account?.ownedMode ?? null,
+        daemonSelected: input.pluginSettings.daemon?.ownedMode ?? null,
+      },
+    }));
+    const projected = projectAgentCliSessionCommandCatalogEntry({
+      agentId: 'acme.external' as never,
+      cliSessionCommand: {
+        sessionRuntimeId: 'acme.external.backend',
+        accountSettingsAgentId: 'acme.external',
+        buildSessionOptions,
+      },
+      resolvePluginSettings: async () => ({
+        account: { ownedMode: 'safe', secret: undefined },
+        daemon: { ownedMode: 'daemon-safe' },
+      }),
+    });
+    await expect(projected.resolveSessionRuntimePreferences?.({
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
+      settings: { ownedMode: 'wrong-host-value' },
+      environment: {},
+      startOrigin: 'terminal',
+    })).resolves.toEqual({ accountSelected: 'safe', daemonSelected: 'daemon-safe' });
+    expect(buildSessionOptions).toHaveBeenCalledWith(expect.objectContaining({
+      pluginSettings: {
+        account: { ownedMode: 'safe', secret: undefined },
+        daemon: { ownedMode: 'daemon-safe' },
+      },
+    }));
   });
 
   it('refuses a retained CLI handler when its generation retires during async delegation', async () => {

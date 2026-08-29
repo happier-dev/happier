@@ -5,11 +5,15 @@ import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/c
 import { cmdSessionHistory } from './history';
 import { handleSessionCommand } from './handleSessionCommand';
 
-const { execute, createCliActionExecutorFromCredentials } = vi.hoisted(() => {
+const { execute, boundExecute, bindInvocation, createCliActionExecutorFromCredentials } = vi.hoisted(() => {
   const execute = vi.fn();
+  const boundExecute = vi.fn();
+  const bindInvocation = vi.fn(() => ({ execute: boundExecute }));
   return {
     execute,
-    createCliActionExecutorFromCredentials: vi.fn(() => ({ execute })),
+    boundExecute,
+    bindInvocation,
+    createCliActionExecutorFromCredentials: vi.fn(() => ({ execute, bindInvocation })),
   };
 });
 
@@ -20,6 +24,8 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 describe('happier session history (action executor)', () => {
   afterEach(() => {
     execute.mockReset();
+    boundExecute.mockReset();
+    bindInvocation.mockClear();
     createCliActionExecutorFromCredentials.mockClear();
   });
 
@@ -62,6 +68,52 @@ describe('happier session history (action executor)', () => {
 
     expect(readCredentialsFn).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('releases a follow lease through the unbound executor and reports cancellation as a terminal JSONL failure', async () => {
+    const controller = new AbortController();
+    const output = captureConsoleJsonOutput();
+    const previousExitCode = process.exitCode;
+    boundExecute.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        ok: true,
+        result: { ok: true, leaseId: 'lease-1', items: [], nextCursor: '0', truncated: false },
+      };
+    });
+    execute.mockResolvedValueOnce({ ok: true, result: { ok: true, released: true } });
+
+    try {
+      await cmdSessionHistory(['history', 'sess-1', '--follow', '--jsonl'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+        signal: controller.signal,
+      });
+
+      expect(bindInvocation).toHaveBeenCalledWith(controller.signal);
+      expect(boundExecute).toHaveBeenCalledWith(
+        'transcript.follow',
+        expect.objectContaining({ sessionId: 'sess-1' }),
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(execute).toHaveBeenCalledWith(
+        'transcript.unfollow',
+        { sessionId: 'sess-1', leaseId: expect.any(String) },
+        { surface: 'cli', defaultSessionId: null },
+      );
+      expect(output.logs.map((line) => JSON.parse(line))).toEqual([{
+        v: 1,
+        ok: false,
+        kind: 'session_history',
+        error: { code: 'cancelled' },
+      }]);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+      output.restore();
+    }
   });
 
   it('follows through finite transcript actions and emits normalized JSONL rows', async () => {

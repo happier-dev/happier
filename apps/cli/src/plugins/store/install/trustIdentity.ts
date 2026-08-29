@@ -145,7 +145,7 @@ export const PluginTrustRecordSchema: z.ZodType<PluginTrustRecord> = z.object({
  * Happier has no update scheduler. Nothing here runs on a timer, at startup or
  * in the background: every policy below is read only while
  * `resolveInstalledPluginUpdate` answers an explicit `{ kind: 'update' }`
- * request from `happier install plugin update` or the Plugins settings screen.
+ * request from `happier plugins update` or the Plugins settings screen.
  *
  * - `pinned` — the request is refused (`plugin_update_pinned`). The installation
  *   stays where the user put it until they change this policy.

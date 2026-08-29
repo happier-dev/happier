@@ -14,6 +14,7 @@ import {
 import {
   deriveVoiceModelPackLicenseTextDigestV1,
   deriveVoiceModelPackManifestDigestV1,
+  verifyInstalledModelPackWithHost,
 } from '@happier-dev/voice-modelpacks';
 
 import { createInferenceConcurrencyCoordinator } from '@/daemon/inference/inferenceConcurrencyCoordinator';
@@ -22,7 +23,10 @@ import {
   createUnavailableInferenceDiagnostics,
   type InferenceDiagnostics,
 } from '@/daemon/inference/inferenceDiagnostics';
-import { createInferenceInstallBookkeeping } from '@/daemon/inference/inferenceInstallBookkeeping';
+import {
+  createInferenceInstallBookkeeping,
+  INFERENCE_INSTALL_PROGRESS_PERSISTENCE_INTERVAL_MS,
+} from '@/daemon/inference/inferenceInstallBookkeeping';
 import { createInferenceWarmupCoordinator } from '@/daemon/inference/inferenceWarmupCoordinator';
 
 import {
@@ -40,6 +44,7 @@ import {
 } from './runtime/runtimeFamilyRegistry';
 import type { VoiceInferenceRuntime } from './voiceInferenceRuntimeTypes';
 import type { DaemonPublicVoiceModelPackRuntime } from './publicModelPacks/runtime';
+import { createNodeInstalledModelPackIntegrityHost } from './nodeModelPackIntegrityHost';
 import {
   resolveVoiceInferenceIdleResidencyMs,
   resolveVoiceInferenceMaxLoadedArtifactBytes,
@@ -81,7 +86,7 @@ export type VoiceInferenceWorkerLifecycleHandle = Readonly<{
   }>) => Promise<DaemonVoiceInferenceModelStatus>;
   acceptModelPackLicense: (input: Parameters<DaemonPublicVoiceModelPackRuntime['acceptLicense']>[0]) => Promise<DaemonVoiceInferenceModelStatus>;
   removeModel: (packId: string) => Promise<void>;
-  warmModelPack: (packId: string) => Promise<void>;
+  warmModelPack: (packId: string, signal?: AbortSignal | null) => Promise<void>;
 }>;
 
 export type VoiceInferenceWorkerLifecycleContext = Readonly<{
@@ -92,6 +97,9 @@ export type VoiceInferenceWorkerLifecycleContext = Readonly<{
   runLifecycleExclusive: <T>(packId: string, work: () => Promise<T>, options?: Readonly<{ signal?: AbortSignal | null }>) => Promise<T>;
   warmRuntimeForPack: (packId: string, signal?: AbortSignal | null) => Promise<WarmRuntimeHandle>;
 }>;
+
+type PublicModelPackEntry = Awaited<ReturnType<DaemonPublicVoiceModelPackRuntime['list']>>[number];
+type PublicModelPackSnapshot = ReadonlyMap<string, PublicModelPackEntry>;
 
 type VoiceInferenceWorkerLifecycleParams = Readonly<{
   runtimeLoader?: RuntimeLoader;
@@ -122,9 +130,44 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   const paths = resolveVoiceInferencePaths();
   const now = params?.now ?? (() => Date.now());
   const residencyMs = params?.residencyMs ?? resolveVoiceInferenceIdleResidencyMs();
+  const publicModelPacks = params?.publicModelPacks;
+  const installedIntegrityHost = createNodeInstalledModelPackIntegrityHost(paths.packsRootDir);
   const installBookkeeping = createInferenceInstallBookkeeping({
     stateFilePath: paths.installsStateFilePath,
     now,
+    progressPersistenceIntervalMs: INFERENCE_INSTALL_PROGRESS_PERSISTENCE_INTERVAL_MS,
+    verifyInterruptedInstall: async (installed) => {
+      if (!installed.version || !installed.manifestHash) return 'interrupted';
+      const publicEntry = await publicModelPacks?.resolve(installed.modelId);
+      if (publicEntry) {
+        const manifest = publicEntry.descriptor?.loadable === true
+          ? publicEntry.installedManifest
+          : null;
+        return manifest
+          && publicEntry.installedMetadata?.manifestDigest === installed.manifestHash
+          && manifest.version === installed.version
+          ? 'installed'
+          : 'interrupted';
+      }
+      const manifest = await readInstalledVoiceModelPackManifest({
+        packsRootDir: paths.packsRootDir,
+        packId: installed.modelId,
+      });
+      if (
+        !manifest
+        || manifest.version !== installed.version
+        || hashVoiceModelPackManifest(manifest) !== installed.manifestHash
+      ) {
+        return 'interrupted';
+      }
+      await verifyInstalledModelPackWithHost({
+        host: installedIntegrityHost,
+        packId: installed.modelId,
+        expectedManifest: manifest,
+        actualManifest: manifest,
+      });
+      return 'installed';
+    },
   });
   const concurrencyCoordinator = createInferenceConcurrencyCoordinator({
     perModelConcurrency: params?.perModelConcurrency ?? resolveVoiceInferencePerModelConcurrency(),
@@ -160,7 +203,6 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   const enforceCatalogRuntimeManifest = params?.enforceCatalogRuntimeManifest !== false;
   const fetchManifest = params?.installerOps?.fetchManifest ?? fetchVoiceModelPackManifest;
   const installModelPack = params?.installerOps?.installModelPack ?? installVoiceModelPack;
-  const publicModelPacks = params?.publicModelPacks;
 
   function isCatalogRuntimeAdmitted(
     entry: ReturnType<typeof getModelPackCatalogEntry>,
@@ -175,8 +217,15 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   let diagnostics: InferenceDiagnostics = createUnavailableInferenceDiagnostics();
   let stopped = false;
   const warmRuntimeByPackId = new Map<string, WarmRuntimeHandle>();
+  // Attempt-local currentness latch for public runtimes. The plugin reload
+  // controller remains the event owner; this map only identifies which exact
+  // warm resources that event must retire.
+  const warmPublicPluginIdByPackId = new Map<string, string>();
   const stopScopedController = new AbortController();
   const stopScopedPackIds = new Set<string>();
+  let publicInvalidationTail = Promise.resolve();
+  let unsubscribePublicInvalidations: (() => void) | null = null;
+  let publicInvalidationEpoch = 0;
 
   function throwIfWarmAborted(signal: AbortSignal | null | undefined): void {
     if (signal?.aborted) {
@@ -226,6 +275,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   async function clearWarmRuntimeForPack(packId: string): Promise<void> {
     await warmupCoordinator.release(packId, { skipOnRelease: true });
     runtimeStateByPackId.delete(packId);
+    warmPublicPluginIdByPackId.delete(packId);
     await releaseRuntimeForPack(packId);
   }
 
@@ -233,8 +283,16 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     return runtimeStateByPackId.get(packId) ?? 'cold';
   }
 
-  async function resolveManifestForStatus(packId: string): Promise<ModelPackManifest | null> {
-    const publicEntry = await publicModelPacks?.resolve(packId);
+  async function readPublicModelPackSnapshot(): Promise<PublicModelPackSnapshot> {
+    const entries = await publicModelPacks?.list() ?? [];
+    return new Map(entries.map((entry) => [entry.key, entry]));
+  }
+
+  async function resolveManifestForStatus(
+    packId: string,
+    publicSnapshot: PublicModelPackSnapshot,
+  ): Promise<ModelPackManifest | null> {
+    const publicEntry = publicSnapshot.get(packId);
     if (publicEntry) return publicEntry.installedManifest;
     return await readInstalledVoiceModelPackManifest({ packsRootDir: paths.packsRootDir, packId });
   }
@@ -242,6 +300,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
   async function resolveModelIdentity(
     packId: string,
     manifest: Readonly<{ kind: DaemonVoiceInferenceModelStatus['kind']; model: string }> | null,
+    publicSnapshot: PublicModelPackSnapshot,
   ): Promise<VoiceInferenceModelIdentity> {
     if (manifest) {
       return {
@@ -250,7 +309,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       };
     }
 
-    const publicEntry = await publicModelPacks?.resolve(packId);
+    const publicEntry = publicSnapshot.get(packId);
     if (publicEntry?.descriptor?.contribution) {
       return {
         kind: publicEntry.descriptor.contribution.manifest.kind,
@@ -277,10 +336,13 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     throw createVoiceInferenceError('internal_error', 'voice_inference_model_identity_missing');
   }
 
-  async function buildModelStatus(packId: string): Promise<DaemonVoiceInferenceModelStatus> {
-    const publicEntry = await publicModelPacks?.resolve(packId) ?? null;
-    const manifest = await resolveManifestForStatus(packId);
-    const identity = await resolveModelIdentity(packId, manifest);
+  async function buildModelStatus(
+    packId: string,
+    publicSnapshot: PublicModelPackSnapshot,
+  ): Promise<DaemonVoiceInferenceModelStatus> {
+    const publicEntry = publicSnapshot.get(packId) ?? null;
+    const manifest = await resolveManifestForStatus(packId, publicSnapshot);
+    const identity = await resolveModelIdentity(packId, manifest, publicSnapshot);
     const installed = await installBookkeeping.status(packId);
     const statResult = publicEntry
       ? {
@@ -288,14 +350,29 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
           updatedAtMs: publicEntry.installedMetadata?.verifiedAtMs ?? now(),
         }
       : await statInstalledVoiceModelPack({ packsRootDir: paths.packsRootDir, packId });
+    // Interrupted-install reconciliation is the canonical integrity decision.
+    // A retained pack.json is only a shallow recovery/discard locator and must
+    // not overrule the verifier's durable error result after restart.
+    const reconciledArtifactRejected = installed.state === 'error'
+      && installed.lastError === 'inference_install_interrupted';
+    const installedArtifactExists = statResult.exists && !reconciledArtifactRejected;
     const catalogEntry = getModelPackCatalogEntry(packId);
+    const declaredVoices = publicEntry?.descriptor?.contribution?.manifest.voices
+      ?? manifest?.voices
+      ?? [];
+    const declaredDefaultVoiceId = publicEntry?.descriptor?.contribution?.manifest.defaultVoiceId
+      ?? manifest?.defaultVoiceId
+      ?? declaredVoices[0]?.id
+      ?? null;
     let runtimeSupported = publicEntry?.descriptor?.contribution
       ? isDaemonVoiceRuntimeFamilySupported(publicEntry.descriptor.contribution.manifest.runtime.family)
         && publicEntry.descriptor.status === 'available'
       : catalogEntry
         ? isCatalogRuntimeAdmitted(catalogEntry)
         : false;
-    if (!publicEntry && runtimeSupported && enforceCatalogRuntimeManifest && statResult.exists) {
+    if (reconciledArtifactRejected) {
+      runtimeSupported = false;
+    } else if (!publicEntry && runtimeSupported && enforceCatalogRuntimeManifest && installedArtifactExists) {
       if (!manifest) {
         runtimeSupported = false;
       } else {
@@ -315,7 +392,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       executionSupport: ['daemon'],
       runtimeFamily: publicEntry?.runtimeDescriptor?.family ?? catalogEntry?.runtimeFamily ?? null,
       runtimeSupported,
-      installState: statResult.exists
+      installState: installedArtifactExists
         ? installed.state === 'installing'
           ? 'installing'
           : 'installed'
@@ -334,7 +411,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
           }
         : null,
       lastError: installed.lastError,
-      updatedAtMs: Math.trunc(statResult.updatedAtMs),
+      updatedAtMs: Math.trunc(reconciledArtifactRejected ? installed.updatedAtMs : statResult.updatedAtMs),
       // Additive readiness snapshot fields (T6). The declared artifact byte count is only
       // meaningful while that pack's runtime is loaded; it is not process-memory telemetry.
       runtimeState: resolveRuntimeStateForPack(packId),
@@ -363,12 +440,17 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
             },
           }
         : { licenseReview: null }),
+      ...(identity.kind === 'tts_sherpa'
+        ? {
+            voices: declaredVoices,
+            defaultVoiceId: declaredDefaultVoiceId,
+          }
+        : {}),
     };
   }
 
-  async function listKnownPackIds(): Promise<string[]> {
+  async function listKnownPackIds(publicSnapshot: PublicModelPackSnapshot): Promise<string[]> {
     const installEntries = (await installBookkeeping.list()).map((entry) => entry.modelId);
-    const publicEntries = await publicModelPacks?.list() ?? [];
     const physicallyInstalledCatalogEntries = (
       await Promise.all(listModelPackCatalogEntries().map(async (entry) => (
         (await statInstalledVoiceModelPack({
@@ -381,7 +463,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     ).filter((packId): packId is string => packId !== null);
     return [...new Set([
       ...installEntries,
-      ...publicEntries.map((entry) => entry.key),
+      ...publicSnapshot.keys(),
       ...physicallyInstalledCatalogEntries,
     ])];
   }
@@ -429,8 +511,23 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       ? AbortSignal.any([stopScopedController.signal, signal])
       : stopScopedController.signal;
     throwIfWarmAborted(warmSignal);
+    const resolveInvalidationEpoch = publicInvalidationEpoch;
     const publicEntry = await publicModelPacks?.resolve(packId);
     throwIfWarmAborted(warmSignal);
+    if (publicEntry && resolveInvalidationEpoch !== publicInvalidationEpoch) {
+      // Resolution may have retained an old registry lease. Any reload while
+      // it was pending makes that descriptor generation unprovable; retry must
+      // re-resolve through the current public catalog before native admission.
+      throw createVoiceInferenceError('runtime_unavailable', 'voice_inference_public_pack_generation_stale');
+    }
+    if (publicEntry) {
+      // Publish the currentness latch before native warm can yield so a plugin
+      // reload during warm queues retirement behind the existing lifecycle
+      // lock rather than missing this soon-to-be-live runtime.
+      warmPublicPluginIdByPackId.set(packId, publicEntry.identity.pluginId);
+    } else {
+      warmPublicPluginIdByPackId.delete(packId);
+    }
     const catalogEntry = getModelPackCatalogEntry(packId);
     if (!publicEntry && !isCatalogRuntimeAdmitted(catalogEntry)) {
       throw createVoiceInferenceError('unsupported_runtime_family');
@@ -487,6 +584,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     } catch (error) {
       loadedArtifactBytesByPackId.delete(packId);
       runtimeStateByPackId.delete(packId);
+      warmPublicPluginIdByPackId.delete(packId);
       if (readVoiceInferenceErrorCode(error) === 'runtime_unavailable') {
         diagnostics = createUnavailableInferenceDiagnostics();
       } else {
@@ -503,6 +601,31 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       throw error;
     }
   }
+
+  unsubscribePublicInvalidations = publicModelPacks?.subscribeInvalidations?.((changedPluginIds) => {
+    if (changedPluginIds.length === 0) return;
+    publicInvalidationEpoch += 1;
+    const changed = new Set(changedPluginIds);
+    const retiredPackIds = [...warmPublicPluginIdByPackId.entries()]
+      .filter(([, pluginId]) => changed.has(pluginId))
+      .map(([packId]) => packId);
+    if (retiredPackIds.length === 0) return;
+    publicInvalidationTail = publicInvalidationTail.then(async () => {
+      for (const packId of retiredPackIds) {
+        await concurrencyCoordinator.runLifecycleExclusive(packId, async () => {
+          // A reload/update/disable event ends the admitted runtime epoch. A
+          // later inference re-resolves and re-verifies the current plugin
+          // generation before warming again.
+          await clearWarmRuntimeForPack(packId);
+        });
+      }
+    }).catch((error) => {
+      diagnostics = createInferenceDiagnostics({
+        runtimeState: 'degraded',
+        lastError: error instanceof Error ? error.message : 'voice_inference_public_runtime_release_failed',
+      });
+    });
+  }) ?? null;
 
   return {
     isStopped: () => stopped,
@@ -532,30 +655,42 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
       }
       stopped = true;
       stopScopedController.abort();
+      unsubscribePublicInvalidations?.();
+      unsubscribePublicInvalidations = null;
+      await publicInvalidationTail;
       await params?.onStop?.();
-      const packIds = new Set([...await listKnownPackIds(), ...warmRuntimeByPackId.keys(), ...stopScopedPackIds]);
+      const publicSnapshot = await readPublicModelPackSnapshot();
+      const packIds = new Set([...await listKnownPackIds(publicSnapshot), ...warmRuntimeByPackId.keys(), ...stopScopedPackIds]);
       for (const packId of packIds) {
         await concurrencyCoordinator.runLifecycleExclusive(packId, async () => {
           await clearWarmRuntimeForPack(packId);
         });
       }
     },
-    getStatus: async () => ({
-      serviceState:
-        diagnostics.runtimeState === 'ready' && (await listKnownPackIds()).length === 0
-          ? 'idle'
-          : diagnostics.runtimeState === 'downloading'
-            ? 'warming'
-          : diagnostics.runtimeState === 'error'
-            ? 'degraded'
-            : diagnostics.runtimeState,
-      normalization,
-      models: await Promise.all((await listKnownPackIds()).map(async (packId) => await buildModelStatus(packId))),
-    }),
-    listModels: async () => await Promise.all((await listKnownPackIds()).map(async (packId) => await buildModelStatus(packId))),
+    getStatus: async () => {
+      const publicSnapshot = await readPublicModelPackSnapshot();
+      const packIds = await listKnownPackIds(publicSnapshot);
+      return {
+        serviceState:
+          diagnostics.runtimeState === 'ready' && packIds.length === 0
+            ? 'idle'
+            : diagnostics.runtimeState === 'downloading'
+              ? 'warming'
+              : diagnostics.runtimeState === 'error'
+                ? 'degraded'
+                : diagnostics.runtimeState,
+        normalization,
+        models: await Promise.all(packIds.map(async (packId) => await buildModelStatus(packId, publicSnapshot))),
+      };
+    },
+    listModels: async () => {
+      const publicSnapshot = await readPublicModelPackSnapshot();
+      return await Promise.all((await listKnownPackIds(publicSnapshot)).map(async (packId) => await buildModelStatus(packId, publicSnapshot)));
+    },
     getModelsStatus: async (packIds) => {
-      const targetPackIds = packIds && packIds.length > 0 ? [...new Set(packIds)] : await listKnownPackIds();
-      return await Promise.all(targetPackIds.map(async (packId) => await buildModelStatus(packId)));
+      const publicSnapshot = await readPublicModelPackSnapshot();
+      const targetPackIds = packIds && packIds.length > 0 ? [...new Set(packIds)] : await listKnownPackIds(publicSnapshot);
+      return await Promise.all(targetPackIds.map(async (packId) => await buildModelStatus(packId, publicSnapshot)));
     },
     installModel: async ({ packId, signal: callerSignal }) => {
       // Daemon shutdown and caller abandonment both cancel this install.
@@ -591,7 +726,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
               },
             });
             await clearWarmRuntimeForPack(normalizedPackId);
-            return await buildModelStatus(normalizedPackId);
+            return await buildModelStatus(normalizedPackId, await readPublicModelPackSnapshot());
           }, { signal: installSignal });
         } finally {
           stopScopedPackIds.delete(normalizedPackId);
@@ -629,7 +764,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
             },
           });
           await clearWarmRuntimeForPack(safePackId);
-          return await buildModelStatus(safePackId);
+          return await buildModelStatus(safePackId, await readPublicModelPackSnapshot());
         }, { signal: installSignal });
       } finally {
         stopScopedPackIds.delete(safePackId);
@@ -638,7 +773,7 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
     acceptModelPackLicense: async (input) => {
       if (!publicModelPacks) throw createVoiceInferenceError('unsupported_runtime_family');
       const accepted = await publicModelPacks.acceptLicense(input);
-      return await buildModelStatus(accepted.key);
+      return await buildModelStatus(accepted.key, await readPublicModelPackSnapshot());
     },
     removeModel: async (packId) => {
       const normalizedPackId = normalizePackId(packId);
@@ -661,18 +796,24 @@ export function createVoiceInferenceWorkerLifecycle(params?: VoiceInferenceWorke
         await installBookkeeping.remove(safePackId);
       });
     },
-    warmModelPack: async (packId) => {
+    warmModelPack: async (packId, callerSignal) => {
+      const warmSignal = callerSignal
+        ? AbortSignal.any([stopScopedController.signal, callerSignal])
+        : stopScopedController.signal;
       const normalizedPackId = normalizePackId(packId);
       if (!normalizedPackId) {
         throw createVoiceInferenceError('internal_error', 'voice_inference_pack_missing');
       }
-      const publicEntry = await publicModelPacks?.resolve(normalizedPackId);
-      const runtimePackId = publicEntry
-        ? normalizedPackId
-        : assertVoiceInferencePackIdFilesystemSafe(normalizedPackId);
+      // Public resolution belongs exclusively inside warmRuntimeForPack where
+      // the reload epoch fences its retained registry lease. Built-in catalog
+      // ids are the only ids that need filesystem validation before admission;
+      // an unknown external id is rejected before it can reach a disk owner.
+      const runtimePackId = getModelPackCatalogEntry(normalizedPackId)
+        ? assertVoiceInferencePackIdFilesystemSafe(normalizedPackId)
+        : normalizedPackId;
       await concurrencyCoordinator.runLifecycleExclusive(runtimePackId, async () => {
-        await warmRuntimeForPack(runtimePackId, stopScopedController.signal);
-      }, { signal: stopScopedController.signal });
+        await warmRuntimeForPack(runtimePackId, warmSignal);
+      }, { signal: warmSignal });
     },
   };
 }

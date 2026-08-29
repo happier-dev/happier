@@ -1,7 +1,6 @@
-import { basename } from 'node:path';
-
 import type { CommandContext } from '@/cli/commandRegistry';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import {
     applyCliUninstallPlan,
     buildCliUninstallPlan,
@@ -39,23 +38,6 @@ function parseFlags(args: readonly string[]): UninstallFlags {
         keepService: flags.has('--keep-service'),
         help: flags.has('--help') || flags.has('-h'),
     };
-}
-
-function resolveInvokerName(): string | null {
-    const envInvokerName = basename(String(process.env.HAPPIER_CLI_INVOKER_NAME ?? '').trim())
-        .replace(/\.exe$/iu, '')
-        .replace(/\.m?js$/iu, '')
-        .trim();
-    if (envInvokerName) return envInvokerName;
-    const candidates = [process.argv[1] ?? '', process.argv[0] ?? ''];
-    for (const candidate of candidates) {
-        const normalized = basename(String(candidate ?? '').trim())
-            .replace(/\.exe$/iu, '')
-            .replace(/\.m?js$/iu, '')
-            .trim();
-        if (normalized) return normalized;
-    }
-    return null;
 }
 
 async function printJson(data: unknown): Promise<void> {

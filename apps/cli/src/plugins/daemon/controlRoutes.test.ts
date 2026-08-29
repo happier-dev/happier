@@ -793,6 +793,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
         actionId: 'acme.example/echo',
         input: { value: 'hello' },
         surface: 'cli',
+        authority: 'present_user',
       },
     });
 
@@ -805,6 +806,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
       actionId: 'acme.example/echo',
       input: { value: 'hello' },
       surface: 'cli',
+      authority: 'present_user',
     });
     expect(requireAuth).toHaveBeenCalledOnce();
   });
@@ -840,6 +842,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
         actionId: 'acme.example/echo',
         input: { value: 'hello' },
         surface: 'cli',
+        authority: 'account_automation',
         expectedContributorImmutableGenerationId: 'generation-g',
       },
     });

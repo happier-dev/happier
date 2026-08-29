@@ -23,7 +23,7 @@ import type {
     ConnectedAccountRequestAuthSubjectRegistry,
 } from './ConnectedAccountRequestAuthSubjectRegistry';
 import {
-    projectLegacyConnectedServiceBindingsToQualifiedPurposeBindingSnapshot,
+    projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot,
 } from './firstPartyConnectedAccountRequestAuthAdapter';
 import type {
     ConnectedAccountPurposeAuthorizationScope,
@@ -367,7 +367,7 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
 }>): AgentSpawnQualifiedPurposeBindingSnapshot | null {
     const declarations = resolveAgentSpawnPurposeDeclarations(input);
     if (!declarations) return null;
-    const snapshot = projectLegacyConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({
+    const snapshot = projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({
         consumer: declarations.consumer,
         declarations: declarations.declarations,
         bindings: input.bindings,

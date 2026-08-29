@@ -299,6 +299,7 @@ type ResolvedAccountSettingsV2UpdateDeps = Readonly<{
     content: AccountSettingsStoredContentEnvelope | null;
   }>): Promise<AccountSettingsV2UpdateResponse>;
   resolveAccountEncryptionMode(): Promise<'plain' | 'e2ee'>;
+  resolveAccountEncryptionModeForReadback(): Promise<'plain' | 'e2ee'>;
   randomBytes(n: number): Uint8Array;
   writeCacheSnapshot(
     settingsContent: AccountSettingsStoredContentEnvelope | null,
@@ -400,7 +401,7 @@ function resolveAccountSettingsV2UpdateDeps(params: Readonly<{
     return parsed.data;
   });
 
-  const resolveAccountEncryptionMode = params.deps?.resolveAccountEncryptionMode ?? (async () => {
+  const resolveAccountEncryptionModeFromServer = async (signal?: AbortSignal) => {
     const accountSettingsBaseUrl = resolveAccountSettingsHttpBaseUrl();
     const response = await axios.get(`${accountSettingsBaseUrl}/v1/account/encryption`, {
       headers: {
@@ -410,7 +411,7 @@ function resolveAccountSettingsV2UpdateDeps(params: Readonly<{
       },
       timeout: 15_000,
       validateStatus: () => true,
-      ...(params.signal ? { signal: params.signal } : {}),
+      ...(signal ? { signal } : {}),
     });
     if (response.status < 200 || response.status >= 300) {
       throw Object.assign(
@@ -423,13 +424,19 @@ function resolveAccountSettingsV2UpdateDeps(params: Readonly<{
       throw new Error('Failed to parse account encryption mode response');
     }
     return parsed.data.mode;
-  });
+  };
+
+  const resolveAccountEncryptionMode = params.deps?.resolveAccountEncryptionMode
+    ?? (async () => await resolveAccountEncryptionModeFromServer(params.signal));
+  const resolveAccountEncryptionModeForReadback = params.deps?.resolveAccountEncryptionMode
+    ?? (async () => await resolveAccountEncryptionModeFromServer());
 
   return Object.freeze({
     fetchSettings,
     rereadSettings,
     updateSettings,
     resolveAccountEncryptionMode,
+    resolveAccountEncryptionModeForReadback,
     randomBytes,
     writeCacheSnapshot,
   });
@@ -607,7 +614,7 @@ async function settleSubmittedImmutableWrite(params: Readonly<{
 }>): Promise<AccountSettingsMutationResult> {
   try {
     const reread = await params.deps.rereadSettings();
-    const accountMode = await params.deps.resolveAccountEncryptionMode();
+    const accountMode = await params.deps.resolveAccountEncryptionModeForReadback();
     const expectedEnvelopeKind = accountMode === 'plain' ? 'plain' : 'encrypted';
     if (reread.content && reread.content.t !== expectedEnvelopeKind) {
       return Object.freeze({ status: 'outcomeUnknown', lastKnownVersion: reread.version });

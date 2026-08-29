@@ -1,7 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -30,12 +29,13 @@ const daemonHost = {
 };
 
 async function readPublicAuthoringManifest(): Promise<ParsedPluginManifestV2> {
-  const examplePath = fileURLToPath(new URL(
-    '../../../../../packages/plugin-sdk/examples/public-authoring/.happier-plugin/plugin.json',
-    import.meta.url,
-  ));
-  const manifest = JSON.parse(await readFile(examplePath, 'utf8')) as unknown;
-  const ingested = ingestPluginManifestV2(manifest);
+  // This example is code-defined. Consume its canonical evaluated entrypoint;
+  // a handwritten source manifest would create a second authority beside
+  // `definePlugin(publicAuthoringDefinition)`.
+  const publicAuthoringModule = await import(
+    new URL('../../../../../packages/plugin-sdk/examples/public-authoring/index.ts', import.meta.url).href
+  ) as Readonly<{ manifest: unknown }>;
+  const ingested = ingestPluginManifestV2(publicAuthoringModule.manifest);
   expect(ingested.ok, ingested.ok ? undefined : JSON.stringify(ingested.diagnostics)).toBe(true);
   if (!ingested.ok) throw new Error('public_authoring_manifest_ingestion_failed');
   return ingested.manifest;
@@ -81,7 +81,11 @@ async function installPublicAuthoringFixture(manifest: ParsedPluginManifestV2): 
   const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
   await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
   await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
-  await writeFile(join(pluginRoot, 'daemon.js'), 'export function activate() {}\n', 'utf8');
+  const daemonEntrypoint = manifest.entrypoints?.daemon;
+  if (!daemonEntrypoint) throw new Error('public_authoring_daemon_entrypoint_missing');
+  const daemonEntrypointPath = join(pluginRoot, daemonEntrypoint);
+  await mkdir(dirname(daemonEntrypointPath), { recursive: true });
+  await writeFile(daemonEntrypointPath, 'export function activate() {}\n', 'utf8');
   const store = createPluginStateStore({ happyHomeDir });
 
   async function setEnabled(enabled: boolean): Promise<void> {
@@ -126,6 +130,18 @@ describe('public declarative voice model-pack authoring integration fixture', ()
       const qualifiedSettingsId = `${pluginId}/preferences`;
       const qualifiedVoiceProviderId = `${pluginId}/credentialed-browser`;
 
+      expect(manifest.contributes.settings).toEqual([
+        expect.objectContaining({ id: 'preferences', scope: 'account' }),
+      ]);
+      expect(enabledLoad.loadedPlugins).toEqual([
+        expect.objectContaining({
+          manifest: expect.objectContaining({
+            contributes: expect.objectContaining({
+              settings: [expect.objectContaining({ id: 'preferences', scope: 'account' })],
+            }),
+          }),
+        }),
+      ]);
       expect(enabled.registry.settings).toEqual([
         expect.objectContaining({ pluginId, definition: expect.objectContaining({ id: 'preferences' }) }),
       ]);

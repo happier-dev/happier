@@ -38,15 +38,10 @@ const EMPTY_RUNTIME_PROJECTION = Object.freeze({
 function projectManagedConnectedAccountPurpose(
   declaration: ResolvedProviderManagedConnectedAccountPurposeDeclarationV1,
 ) {
-  const title = declaration.title === undefined
-    ? undefined
-    : typeof declaration.title === 'string'
-      ? declaration.title
-      : declaration.title.fallback;
   return {
     purpose: declaration.purpose,
     service: declaration.service,
-    ...(title === undefined ? {} : { title }),
+    ...(declaration.title === undefined ? {} : { title: declaration.title }),
     required: declaration.required === true,
     ...(declaration.materializationKinds !== undefined
       ? { materializationKinds: [...declaration.materializationKinds] }
@@ -141,6 +136,12 @@ export async function describeProviderConnections(
                 managedRuntimeDeclaration.connectedAccounts.map(
                   projectManagedConnectedAccountPurpose,
                 ),
+              ...(managedRuntimeDeclaration.connectedAccountPurposeBindingPolicy === undefined
+                ? {}
+                : {
+                    connectedAccountPurposeBindingPolicy:
+                      managedRuntimeDeclaration.connectedAccountPurposeBindingPolicy,
+                  }),
             }
           : null;
       const probeCapability: ProviderConnectionView['probeCapability'] = catalogDefinition
@@ -295,6 +296,12 @@ export async function describeProviderConnections(
                           }]
                         : [];
                     }),
+                  ...(resolvedManagedDeployment.managedRuntime.connectedAccountPurposeBindingPolicy === undefined
+                    ? {}
+                    : {
+                        connectedAccountPurposeBindingPolicy:
+                          resolvedManagedDeployment.managedRuntime.connectedAccountPurposeBindingPolicy,
+                      }),
                 }
               : null,
           }

@@ -8,10 +8,10 @@ import {
   type ComposerAttachmentDraftV1,
   type ComposerAttachmentInputV1,
   type ComposerContentHandleV1,
+  type ComposerRefV1,
   type PluginContributionIdentityV1,
   type SessionExecutionTargetV1,
 } from '@happier-dev/protocol';
-
 import {
   garbageCollectFailedSessionMediaCommit,
   persistSessionMediaForTranscript,
@@ -151,7 +151,9 @@ function assertSupportedHandle(
 }
 
 async function inspectReadyStagedMedia(params: Readonly<{
-  sessionId: string;
+  sourceComposerRef: ComposerRefV1;
+  destinationComposerRef: ComposerRefV1;
+  messageLocalId: string;
   attachments: readonly ComposerAttachmentDraftV1[];
   executionTarget: SessionExecutionTargetV1;
   stageStore: ComposerMediaStageStore;
@@ -170,19 +172,36 @@ async function inspectReadyStagedMedia(params: Readonly<{
     );
     if (stageIds.has(handle.id)) fail('composer_staged_media_attachment_invalid');
     stageIds.add(handle.id);
-    const claimant: ComposerMediaStageClaimant = {
-      composer: { kind: 'session', sessionId: params.sessionId },
+    const sourceClaimant: ComposerMediaStageClaimant = {
+      composer: params.sourceComposerRef,
       attachmentInstanceId: attachment.data.instanceId,
     };
-    const inspection = await params.stageStore.inspectForFinalization({
+    const claimant: ComposerMediaStageClaimant = {
+      composer: params.destinationComposerRef,
+      attachmentInstanceId: attachment.data.instanceId,
+    };
+    // Every captured submission snapshot submits against its own fork copy, even
+    // when the source and destination Composer refs are equal. Persisting the
+    // mutable draft original would let a concurrent draft removal delete the
+    // exact bytes between this inspection and Session persistence.
+    const submissionHandle = (await params.stageStore.forkClaimForSubmission({
       handle,
+      executionTarget: params.executionTarget,
+      owner: attachment.data.attachment,
+      sourceClaimant,
+      destinationClaimant: claimant,
+      messageLocalId: params.messageLocalId,
+    })).handle;
+    if (!submissionHandle) fail('composer_staged_media_stage_unavailable');
+    const inspection = await params.stageStore.inspectForFinalization({
+      handle: submissionHandle,
       executionTarget: params.executionTarget,
       owner: attachment.data.attachment,
       claimant,
     });
     if (inspection.status !== 'ready') fail('composer_staged_media_stage_unavailable');
     if (
-      !sameHandle(inspection.handle, handle)
+      !sameHandle(inspection.handle, submissionHandle)
       || inspection.mediaKind !== handle.mediaKind
       || inspection.mimeType !== handle.mimeType
       || inspection.name !== handle.name
@@ -191,7 +210,7 @@ async function inspectReadyStagedMedia(params: Readonly<{
     ) {
       fail('composer_staged_media_stage_unavailable');
     }
-    staged.push({ attachment: attachment.data, handle, inspection, claimant });
+    staged.push({ attachment: attachment.data, handle: submissionHandle, inspection, claimant });
   }
   return Object.freeze(staged);
 }
@@ -247,6 +266,7 @@ async function cleanupNewUncommittedMedia(params: Readonly<{
  */
 export async function finalizeComposerStagedMediaToSession(params: Readonly<{
   sessionId: string;
+  sourceComposerRef?: ComposerRefV1;
   messageLocalId: string;
   workingDirectory: string;
   executionTarget: SessionExecutionTargetV1;
@@ -255,8 +275,11 @@ export async function finalizeComposerStagedMediaToSession(params: Readonly<{
   attachments: readonly ComposerAttachmentDraftV1[];
   logger?: LoggerLike;
 }>): Promise<ComposerStagedMediaFinalizationResult> {
+  const destinationComposerRef: ComposerRefV1 = { kind: 'session', sessionId: params.sessionId };
   const staged = await inspectReadyStagedMedia({
-    sessionId: params.sessionId,
+    sourceComposerRef: params.sourceComposerRef ?? destinationComposerRef,
+    destinationComposerRef,
+    messageLocalId: params.messageLocalId,
     attachments: params.attachments,
     executionTarget: params.executionTarget,
     stageStore: params.stageStore,

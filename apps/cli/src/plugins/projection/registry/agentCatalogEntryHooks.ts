@@ -7,6 +7,8 @@ import type {
     AgentCliAuthContributionV1,
     AgentCliSessionCommandBuildOptionsResultV1,
     AgentCliSessionCommandDeclarationV1,
+    AgentCliSessionCommandOptionsV1,
+    AgentCliSessionCommandPluginSettingsV1,
     AgentConnectedAccountLaunchContributionV1,
     AgentExperimentalVendorResumeSupportContributionV1,
     AgentPreflightSessionControlsCommandResultV1,
@@ -47,6 +49,7 @@ import type {
     ConnectedServiceRuntimeAuthAdapterResult,
 } from '@/daemon/connectedServices/runtimeAuth/types';
 import { createNativeAgentCliAuthStaticProbe } from './agentCliMetadata';
+import { resolveAgentContributionQualifiedId } from './agentRoutingIdentity';
 
 import type {
     ResolvedCatalogEntry,
@@ -408,7 +411,11 @@ export function projectAgentProviderCliAttachCatalogEntry(params: Readonly<{
                                 await resolveManagedServiceSessionBaseUrl({
                                     pluginId: params.pluginId,
                                     sessionId: input.sessionId,
-                                    contributionId: `${params.pluginId}/agents/${params.localAgentId}`,
+                                    contributionId:
+                                        resolveAgentContributionQualifiedId({
+                                            pluginId: params.pluginId,
+                                            localId: params.localAgentId,
+                                        }),
                                 })
                             ),
                         }
@@ -909,9 +916,9 @@ function resolveAgentCliSessionCommandDeclaration(
     });
 }
 
-function normalizeAgentCliSessionCommandOptions(
+export function normalizeAgentCliSessionCommandOptions(
     value: AgentCliSessionCommandBuildOptionsResultV1,
-): Record<string, unknown> {
+): AgentCliSessionCommandOptionsV1 {
     if (!isRecord(value)) {
         throw new Error('Agent CLI session command returned an invalid result.');
     }
@@ -922,9 +929,10 @@ function normalizeAgentCliSessionCommandOptions(
     if (value.ok !== true || !isRecord(value.options)) {
         throw new Error('Agent CLI session command returned an invalid result.');
     }
-    const options: Record<string, unknown> = {};
+    const options: Record<string, JsonValue> = {};
     for (const [key, option] of Object.entries(value.options)) {
-        if (option !== undefined && !StrictJsonValueSchema.safeParse(option).success) {
+        if (option === undefined) continue;
+        if (!StrictJsonValueSchema.safeParse(option).success) {
             throw new Error(`Agent CLI session command returned a non-JSON Session option '${key}'.`);
         }
         options[key] = option;
@@ -941,6 +949,8 @@ export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
     agentId: CatalogAgentId;
     cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
     isCurrent?: () => boolean;
+    /** Exact Agent Settings projection supplied by the runtime owner. */
+    resolvePluginSettings?: () => Promise<AgentCliSessionCommandPluginSettingsV1 | null>;
 }>): Pick<ResolvedCatalogEntry, 'getCliCommandHandler' | 'resolveSessionRuntimePreferences'> {
     const cliSessionCommand = resolveAgentCliSessionCommandDeclaration(
         params.cliSessionCommand,
@@ -959,10 +969,22 @@ export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
         ),
         ...(cliSessionCommand.buildSessionOptions
             ? {
-                resolveSessionRuntimePreferences: (input: SessionRuntimePreferencesInput) => {
+                resolveSessionRuntimePreferences: async (input: SessionRuntimePreferencesInput) => {
                     if (!isCurrent()) return {};
+                    if (!params.resolvePluginSettings) {
+                        const result = normalizeAgentCliSessionCommandOptions(
+                            await cliSessionCommand.buildSessionOptions!({
+                                ...input,
+                                pluginSettings: Object.freeze({}),
+                            }),
+                        );
+                        return isCurrent() ? result : {};
+                    }
                     const result = normalizeAgentCliSessionCommandOptions(
-                        cliSessionCommand.buildSessionOptions!(input),
+                        await cliSessionCommand.buildSessionOptions!({
+                            ...input,
+                            pluginSettings: await params.resolvePluginSettings() ?? Object.freeze({}),
+                        }),
                     );
                     return isCurrent() ? result : {};
                 },

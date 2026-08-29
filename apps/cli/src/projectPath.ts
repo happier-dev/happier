@@ -21,7 +21,10 @@ export function projectPathFromModuleUrl(moduleUrl: string): string {
     }
 
     let nearestTreeMarkerIndex = -1;
-    for (const marker of ['/src/', '/dist/', '/package-dist/']) {
+    // `/.dist.hstack-backup/` is the stack PM's supported rename-aside layout
+    // for `dist` during a rebuild; modules booting from it still resolve to
+    // the owning package root.
+    for (const marker of ['/src/', '/dist/', '/package-dist/', '/.dist.hstack-backup/']) {
         nearestTreeMarkerIndex = Math.max(nearestTreeMarkerIndex, normalized.lastIndexOf(marker));
     }
     if (nearestTreeMarkerIndex >= 0) {

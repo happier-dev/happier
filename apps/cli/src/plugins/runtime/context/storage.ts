@@ -42,7 +42,11 @@ export interface PluginStorageOwner {
 
 type AtomicStorageUpdate = <T>(
     key: string,
-    operation: (current: unknown | null) => Readonly<{ value: unknown; result: T }>,
+    operation: (current: unknown | null) => Readonly<{
+        value: unknown;
+        result: T;
+        skipWrite?: boolean;
+    }>,
 ) => Promise<T>;
 
 const atomicStorageUpdates = new WeakMap<object, AtomicStorageUpdate>();
@@ -272,7 +276,10 @@ function createFileScope(filePath: string): PluginStorageOwnerScope {
         await writeJsonAtomic(filePath, createStorageFile(values));
     }
 
-    async function mutateValues<T>(operation: (values: JsonObject) => Promise<T> | T): Promise<T> {
+    async function mutateValues<T>(
+        operation: (values: JsonObject) => Promise<T> | T,
+        shouldWrite: (result: T) => boolean = () => true,
+    ): Promise<T> {
         return await withJsonOwnerFileLock({
             lockPath: `${filePath}.lock`,
             timeoutMs: 5_000,
@@ -281,7 +288,7 @@ function createFileScope(filePath: string): PluginStorageOwnerScope {
         }, async () => {
             const values = await readValues();
             const result = await operation(values);
-            await writeValues(values);
+            if (shouldWrite(result)) await writeValues(values);
             return result;
         });
     }
@@ -309,14 +316,21 @@ function createFileScope(filePath: string): PluginStorageOwnerScope {
     });
     atomicStorageUpdates.set(scope, async <T>(key: string, operation: (
         current: unknown | null,
-    ) => Readonly<{ value: unknown; result: T }>): Promise<T> => await mutateValues((values) => {
-        const current = Object.prototype.hasOwnProperty.call(values, key)
-            ? cloneJsonValue(values[key])
-            : null;
-        const next = operation(current);
-        setOwnRecordValue(values, key, cloneJsonValue(next.value));
+    ) => Readonly<{
+        value: unknown;
+        result: T;
+        skipWrite?: boolean;
+    }>): Promise<T> => {
+        const next = await mutateValues((values) => {
+            const current = Object.prototype.hasOwnProperty.call(values, key)
+                ? cloneJsonValue(values[key])
+                : null;
+            const next = operation(current);
+            if (next.skipWrite !== true) setOwnRecordValue(values, key, cloneJsonValue(next.value));
+            return next;
+        }, (result) => result.skipWrite !== true);
         return next.result;
-    }));
+    });
     atomicStorageTransactions.set(scope, async <T>(operation: (transaction: StorageTransaction) => Promise<T>, signal?: AbortSignal) => (
         await mutateValues(async (values) => await runTransaction({
             values,
@@ -330,7 +344,11 @@ function createFileScope(filePath: string): PluginStorageOwnerScope {
 export async function updatePluginStorageScopeValueAtomically<T>(params: Readonly<{
     scope: PluginStorageOwnerScope;
     key: string;
-    operation: (current: unknown | null) => Readonly<{ value: unknown; result: T }>;
+    operation: (current: unknown | null) => Readonly<{
+        value: unknown;
+        result: T;
+        skipWrite?: boolean;
+    }>;
 }>): Promise<T> {
     const update = atomicStorageUpdates.get(params.scope);
     if (!update) {

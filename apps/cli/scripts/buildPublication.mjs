@@ -9,10 +9,10 @@
  *    current source and refuses the publication when one fails. A live/development shared
  *    build isolates that failure instead and keeps the plugin's last-green package
  *    installed, so a pack that follows it ships bytes current source cannot produce.
- *    That step also regenerates the bundled plugin inventory
- *    (`src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts`).
+ *    That step also regenerates the runtime artifact records and the build-only source
+ *    integrity inventory (`scripts/build-owned/generatedBundledPluginSourceIntegrities.json`).
  * 2. The CLI dist build runs AFTER that regeneration, so the dist runtime-input
- *    fingerprint covers the inventory this publication produced. Running it first is what
+ *    fingerprint covers the runtime records this publication produced. Running it first is what
  *    makes `assertCliPackInputCurrentness` in `packTarball.mjs` trip on its own inputs.
  *
  * Every producer of a CLI tarball runs these steps, in this order, through this module:

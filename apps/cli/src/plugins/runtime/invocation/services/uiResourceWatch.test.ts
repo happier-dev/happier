@@ -658,6 +658,68 @@ describe('daemon plugin UI resource invalidation transport (EU-4b)', () => {
         watches.retire();
     });
 
+    it('releases the exact subscription when its transport aborts mid-poll', async () => {
+        const live = await createLiveResource();
+        const watches = createWatchOwner(live.owner);
+        await watches.open({ subscriptionId: 'sub-abort', callerPluginId: CALLER, resourceId: 'live' });
+
+        const transport = new AbortController();
+        const parked = watches.next({
+            callerPluginId: CALLER,
+            subscriptionId: 'sub-abort',
+            waitMs: 30_000,
+            signal: transport.signal,
+        });
+        transport.abort();
+        await expect(parked).resolves.toEqual({ status: 'idle' });
+
+        // The transport that owned this watch is gone and no other call will
+        // necessarily arrive, so the exact watch is released now: the producer
+        // stops observing and the subscription leaves the map instead of
+        // waiting for a later open/next to reclaim it.
+        expect(watches.close({ callerPluginId: CALLER, subscriptionId: 'sub-abort' })).toBe(false);
+        await expect(watches.next({ callerPluginId: CALLER, subscriptionId: 'sub-abort' }))
+            .rejects.toMatchObject({ code: 'plugin_resource_subscription_unknown' });
+        watches.retire();
+    });
+
+    it('retains the subscription after an ordinary long-poll timeout', async () => {
+        const live = await createLiveResource();
+        const watches = createWatchOwner(live.owner);
+        await watches.open({ subscriptionId: 'sub-timeout', callerPluginId: CALLER, resourceId: 'live' });
+
+        await expect(watches.next({
+            callerPluginId: CALLER,
+            subscriptionId: 'sub-timeout',
+            waitMs: 1,
+        })).resolves.toEqual({ status: 'idle' });
+
+        // An idle response is ordinary long-poll rotation, not transport
+        // retirement. The next request continues to own the same watch.
+        expect(watches.close({ callerPluginId: CALLER, subscriptionId: 'sub-timeout' })).toBe(true);
+        watches.retire();
+    });
+
+    it('releases the exact subscription when the poll starts with an already-aborted transport', async () => {
+        const live = await createLiveResource();
+        const watches = createWatchOwner(live.owner);
+        await watches.open({ subscriptionId: 'sub-pre-abort', callerPluginId: CALLER, resourceId: 'live' });
+
+        const transport = new AbortController();
+        transport.abort();
+        await expect(watches.next({
+            callerPluginId: CALLER,
+            subscriptionId: 'sub-pre-abort',
+            waitMs: 30_000,
+            signal: transport.signal,
+        })).resolves.toEqual({ status: 'idle' });
+
+        expect(watches.close({ callerPluginId: CALLER, subscriptionId: 'sub-pre-abort' })).toBe(false);
+        await expect(watches.next({ callerPluginId: CALLER, subscriptionId: 'sub-pre-abort' }))
+            .rejects.toMatchObject({ code: 'plugin_resource_subscription_unknown' });
+        watches.retire();
+    });
+
     it('replaces the predecessor when the same subscription id re-opens after a reconnect', async () => {
         const live = await createLiveResource();
         const watches = createWatchOwner(live.owner);

@@ -1,5 +1,6 @@
 import {
-  ActionsSettingsV1Schema,
+  normalizeActionsSettingsV1,
+  tryNormalizeActionsSettingsV1,
   isActionEnabledByActionsSettings,
   isApprovalRequiredByActionsSettings,
   listActionSpecs,
@@ -27,8 +28,7 @@ export function readActionsSettingsOverrideFromEnv(): ActionsSettingsV1 | null {
     return null;
   }
 
-  const parsed = ActionsSettingsV1Schema.safeParse(parsedJson);
-  return parsed.success ? parsed.data : null;
+  return tryNormalizeActionsSettingsV1(parsedJson);
 }
 
 export function readActionsSettingsFromEnv(): ActionsSettingsV1 {
@@ -40,8 +40,7 @@ export function resolveActionsSettingsWithEnvironmentOverride(
 ): ActionsSettingsV1 {
   const environmentOverride = readActionsSettingsOverrideFromEnv();
   if (environmentOverride) return environmentOverride;
-  const parsed = ActionsSettingsV1Schema.safeParse(accountSettings.actionsSettingsV1);
-  return parsed.success ? parsed.data : EMPTY_ACTIONS_SETTINGS;
+  return normalizeActionsSettingsV1(accountSettings.actionsSettingsV1);
 }
 
 export function isActionEnabledByEnv(

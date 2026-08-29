@@ -48,7 +48,6 @@ import {
   resolveProviderSpawnAuthorization,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
-import { resolveProviderAuthorizationApplyPolicy } from '../sessions/providerAuthorizationApplyPolicy';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 const contributionKey = 'acme.gateway/gateway';
@@ -1215,25 +1214,6 @@ describe('provider spawn authorization resolver', () => {
     const next = authorize('model-b');
     if (!current.ok || !next.ok) throw new Error('Expected exact Provider authorizations');
 
-    expect(resolveProviderAuthorizationApplyPolicy({
-      current: current.authorization,
-      next: next.authorization,
-    })).toBe('live');
-
-    const changedEndpoint = {
-      ...next.authorization,
-      binding: {
-        ...next.authorization.binding,
-        endpoint: {
-          ...next.authorization.binding.endpoint,
-          normalizedUrl: 'https://other.example/v1',
-        },
-      },
-    } as typeof next.authorization;
-    expect(resolveProviderAuthorizationApplyPolicy({
-      current: current.authorization,
-      next: changedEndpoint,
-    })).toBe('restart_session');
   });
 
   it('authorizes a managed deployment logically without realizing or persisting a loopback endpoint', () => {

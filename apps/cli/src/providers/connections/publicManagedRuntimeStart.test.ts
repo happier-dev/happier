@@ -644,6 +644,59 @@ describe('public managed Provider explicit-start production operation', () => {
     await controller.shutdown({ timeoutMs: 0 });
   });
 
+  it('maps a permanently unavailable managed runtime to the existing restore-plugin Provider outcome', async () => {
+    const pluginId = 'acme.provider.missing-runtime';
+    const localId = 'managed';
+    const registry = runtimeRegistry({
+      pluginId,
+      localId,
+      runtime: Object.freeze({ start: vi.fn() }),
+      invocationCleanup: vi.fn(),
+      projectEndpointAccess: vi.fn(),
+      acquireRuntime: vi.fn(async () => null),
+      createInvocationServices: vi.fn(async () => Object.freeze({
+        connectedAccounts: connectedAccounts(),
+        managedServices: managedServices(),
+        projectEndpointAccess: vi.fn(),
+        cleanup: vi.fn(),
+      })),
+      runManagedProviderExplicitStart: establishManagedProviderExplicitStart,
+      addRuntimeDisposable: vi.fn(),
+      settleRetiredBackgroundServices: vi.fn(async () => undefined),
+      disposeRegistry: vi.fn(async () => undefined),
+    });
+    const controller: PluginReloadController = Object.freeze({
+      ...createPluginReloadController(),
+      tryAcquireRuntimeRegistry: () => Object.freeze({
+        registry,
+        source: 'active' as const,
+        durableRevision: -1,
+        release: async () => undefined,
+      }),
+    });
+    const startExplicit = createPublicManagedProviderRuntimeStartOperation({
+      machineId: 'machine-a',
+      happyHomeDir: '/tmp/happier-managed-provider-test',
+      controller,
+    });
+
+    await expect(startExplicit({
+      contributionKey: `${pluginId}/${localId}`,
+      identity: Object.freeze({ pluginId, localId }),
+      request: Object.freeze({
+        reason: 'explicitStartLocal',
+        endpointTemplateIds: Object.freeze(['chat']),
+      }),
+      purposeBindings: { v: 1, bindings: [] },
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization: async () => true,
+    })).rejects.toMatchObject({
+      code: 'provider_contribution_unavailable',
+      action: 'restore_plugin',
+      retryable: false,
+    });
+  });
+
   it('never orphans a transferred live effect when authority changes at the transfer boundary', async () => {
     const pluginId = 'acme.provider.transfer-race';
     const localId = 'managed';

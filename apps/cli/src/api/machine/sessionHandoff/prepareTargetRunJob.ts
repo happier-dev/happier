@@ -335,6 +335,35 @@ export async function runSessionHandoffPrepareTargetJob(
         }
       }
 
+      const agentBundlePublicationForProgress = requestResolvedHandoffMetadataV2?.agentBundleTransferPublication;
+      let lastAgentBundleProgressPersistedAtMs = 0;
+      const reportAgentBundleTransferProgress = agentBundlePublicationForProgress
+        ? async (receivedBytes: number): Promise<void> => {
+          const totalBytes = agentBundlePublicationForProgress.sizeBytes;
+          const nowMs = Date.now();
+          if (receivedBytes < totalBytes && nowMs - lastAgentBundleProgressPersistedAtMs < 250) {
+            return;
+          }
+          lastAgentBundleProgressPersistedAtMs = nowMs;
+          await persistJobRecord(buildPrepareJobRecord({
+            jobId,
+            handoffId,
+            createdAtMs,
+            updatedAtMs: nowMs,
+            status: buildPreparePendingStatus({
+              handoffId,
+              jobId,
+              transportStrategy: actualTransportStrategy,
+              recoveryActions: pendingStatus.recoveryActions,
+              phaseDetail: receivedBytes < totalBytes ? 'transferring_session' : 'importing_session',
+              sessionTransfer: {
+                currentBytes: Math.min(receivedBytes, totalBytes),
+                totalBytes,
+              },
+            }),
+          }));
+        }
+        : undefined;
       const resolvedAgentBundle =
         localAgentBundle
         ?? await resolvePrepareAgentBundle({
@@ -347,6 +376,7 @@ export async function runSessionHandoffPrepareTargetJob(
           transferTimeoutMs,
           invalidateDirectPeerRouteCacheForHandoffMachines,
           receivedAgentBundlePath: await sourceExportStore.prepareReceivedAgentBundleFilePath(handoffId),
+          ...(reportAgentBundleTransferProgress ? { onProgress: reportAgentBundleTransferProgress } : {}),
         });
       if (!resolvedAgentBundle) {
         throw new Error('Invalid session handoff provider bundle');

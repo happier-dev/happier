@@ -85,7 +85,9 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
   admitResolution?: <T>(
     operation: () => Promise<T>,
     lifetime: ProviderOperationLifetime,
+    isCurrent?: () => boolean,
   ) => Promise<T>;
+  isCurrent?: () => boolean;
   lifetime: ProviderOperationLifetime;
 }>): Promise<ReadonlyMap<string, ProviderEndpointDnsEvidence>> {
   const urlsByConnectionId = new Map<string, readonly ProviderConnectionEndpointUrl[]>();
@@ -124,7 +126,7 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
           input.lifetime,
         );
         const addresses = input.admitResolution
-          ? await input.admitResolution(resolveOne, input.lifetime)
+          ? await input.admitResolution(resolveOne, input.lifetime, input.isCurrent)
           : await resolveOne();
         addressesByHostname.set(hostname, Object.freeze([...addresses]));
       } catch (error) {
@@ -168,7 +170,9 @@ export async function collectProviderConnectionDnsEvidence(input: Readonly<{
   admitResolution?: <T>(
     operation: () => Promise<T>,
     lifetime: ProviderOperationLifetime,
+    isCurrent?: () => boolean,
   ) => Promise<T>;
+  isCurrent?: () => boolean;
   /**
    * The already-started Provider operation budget. A public owner starts this
    * before registry/DNS work; this resolver only spends that same budget.
@@ -182,6 +186,7 @@ export async function collectProviderConnectionDnsEvidence(input: Readonly<{
     registry: input.registry,
     ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
     ...(input.admitResolution ? { admitResolution: input.admitResolution } : {}),
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     lifetime: input.lifetime,
   });
   return evidenceByConnectionId.get(input.connectionId) ?? new Map();

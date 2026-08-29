@@ -59,15 +59,36 @@ describe('registerSessionHandlers session controls', () => {
     };
     const preparePendingMessageComposerAdmission = vi.fn(async () => ({
       text: 'prepared text',
-      meta: { happierStructuredInputV1: { v: 1, composerAttachments: [admittedAttachment] } },
+      meta: {
+        happierStructuredInputV1: { v: 1, composerAttachments: [admittedAttachment] },
+        happier: {
+          kind: 'session_media.v1',
+          payload: {
+            media: [{
+              id: 'media-42',
+              role: 'input',
+              category: 'attachment',
+              mediaKind: 'image',
+              mimeType: 'image/png',
+              name: 'issue.png',
+              path: '.happier/uploads/issue.png',
+              sizeBytes: 42,
+              sha256: 'a'.repeat(64),
+              origin: { source: 'user-upload' },
+            }],
+          },
+        },
+      },
       stagedMediaHandles: [],
     }));
     const acceptPendingMessageComposerAdmission = vi.fn(async () => undefined);
+    const abandonPendingMessageComposerAdmission = vi.fn(async () => undefined);
 
     registerSessionHandlers(registrar, process.cwd(), {
       sessionRuntimeControls: {
         preparePendingMessageComposerAdmission,
         acceptPendingMessageComposerAdmission,
+        abandonPendingMessageComposerAdmission,
       },
     });
 
@@ -85,6 +106,26 @@ describe('registerSessionHandlers session controls', () => {
       text: 'prepared text',
       structuredInput: { v: 1, composerAttachments: [admittedAttachment] },
       stagedMediaHandles: [],
+      sessionMediaMetadata: {
+        key: 'happier',
+        envelope: {
+          kind: 'session_media.v1',
+          payload: {
+            media: [{
+              id: 'media-42',
+              role: 'input',
+              category: 'attachment',
+              mediaKind: 'image',
+              mimeType: 'image/png',
+              name: 'issue.png',
+              path: '.happier/uploads/issue.png',
+              sizeBytes: 42,
+              sha256: 'a'.repeat(64),
+              origin: { source: 'user-upload' },
+            }],
+          },
+        },
+      },
     });
     expect(preparePendingMessageComposerAdmission).toHaveBeenCalledWith({
       localId: 'pending-successor-1',
@@ -103,6 +144,18 @@ describe('registerSessionHandlers session controls', () => {
       SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1,
     )?.(acceptedRequest)).resolves.toEqual({ ok: true });
     expect(acceptPendingMessageComposerAdmission).toHaveBeenCalledWith(acceptedRequest);
+
+    const abandonedRequest = {
+      ...acceptedRequest,
+      sessionMediaCleanup: {
+        workingDirectory: '/workspace/session',
+        createdWorkspaceRelativePaths: ['.happier/uploads/messages/media-42.png'],
+      },
+    };
+    await expect(handlers.get(
+      SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1,
+    )?.(abandonedRequest)).resolves.toEqual({ ok: true });
+    expect(abandonPendingMessageComposerAdmission).toHaveBeenCalledWith(abandonedRequest);
   });
 
   it('routes goal RPCs to runtime goal controls and returns current work state', async () => {

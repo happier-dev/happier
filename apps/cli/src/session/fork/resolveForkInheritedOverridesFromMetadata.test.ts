@@ -462,7 +462,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected',
             selection: 'group',
             groupId: 'happier',
@@ -475,7 +475,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected',
             selection: 'group',
             groupId: 'happier',
@@ -616,7 +616,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
       connectedServicesUpdatedAt: 459,

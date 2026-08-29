@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs, VoiceAgentTurnStreamEvent } from './voiceAgentTypes';
@@ -559,13 +559,17 @@ describe('VoiceAgentManager', () => {
       return options.modelId === 'commit-model' ? commitBackend : chatBackend;
     };
     const manager = new VoiceAgentManager({ createBackend });
+    const canonicalOpenCodeTargetKey = buildBackendTargetKeyV2({
+      kind: 'agent',
+      identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+    });
     const chatModelSelection = ProviderBoundModelRefSchema.parse({
-      agentTargetKey: 'backend:opencode',
+      agentTargetKey: canonicalOpenCodeTargetKey,
       providerConnectionId: 'pc_chat',
       modelId: 'chat-model',
     });
     const commitModelSelection = ProviderBoundModelRefSchema.parse({
-      agentTargetKey: 'backend:opencode',
+      agentTargetKey: canonicalOpenCodeTargetKey,
       providerConnectionId: 'pc_commit',
       modelId: 'commit-model',
     });
@@ -610,12 +614,12 @@ describe('VoiceAgentManager', () => {
       chatModelId: 'shared-model',
       commitModelId: 'shared-model',
       chatModelSelection: ProviderBoundModelRefSchema.parse({
-        agentTargetKey: 'backend:opencode',
+        agentTargetKey: 'agent:happier.agent.opencode/opencode',
         providerConnectionId: 'pc_chat',
         modelId: 'shared-model',
       }),
       commitModelSelection: ProviderBoundModelRefSchema.parse({
-        agentTargetKey: 'backend:opencode',
+        agentTargetKey: 'agent:happier.agent.opencode/opencode',
         providerConnectionId: 'pc_commit',
         modelId: 'shared-model',
       }),

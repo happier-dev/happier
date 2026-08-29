@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { rehydrateLiveExecutionRunTargets } from './rehydrateExecutionRunTargets';
+import {
+  reattestRunningExecutionRunConnectedServices,
+  rehydrateLiveExecutionRunTargets,
+} from './rehydrateExecutionRunTargets';
 
 const launch = {
   v: 1 as const,
@@ -23,6 +26,84 @@ const launch = {
   sessionDirectory: '/workspace',
   materializedRoot: '/managed/materialized/run-1/codex',
 };
+
+describe('reattestRunningExecutionRunConnectedServices', () => {
+  it('reconstructs only the exact still-running receipt/registration pair', async () => {
+    const registration = {
+      ...launch,
+      activationId: '11111111-1111-4111-8111-111111111111',
+      connectedServicesBindings: {
+        v: 1 as const,
+        bindingsByServiceId: {
+          'happier.agent.codex/connected-accounts/openai-codex': {
+            source: 'connected' as const,
+            selection: 'profile' as const,
+            profileId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'profile',
+          serviceId:
+            'happier.agent.codex/connected-accounts/openai-codex',
+          profileId: 'team',
+        }]),
+      },
+    };
+    const runningMarker = {
+      runId: registration.runKey,
+      happySessionId: 'session-1',
+      pid: 4321,
+      status: 'running',
+      executionRunConnectedServicesCleanupReceiptV1: {
+        v: 1 as const,
+        activationId: registration.activationId,
+        runKey: registration.runKey,
+        agentId: registration.agentId,
+      },
+    };
+    const adopt = vi.fn(async () => true);
+    const proveRunnerLive = vi.fn(async () => true);
+
+    await expect(reattestRunningExecutionRunConnectedServices({
+      markers: [runningMarker],
+      runId: registration.runKey,
+      runnerPid: runningMarker.pid,
+      registration,
+      proveRunnerLive,
+      adopt,
+    })).resolves.toBe(true);
+    expect(adopt).toHaveBeenCalledWith({
+      runId: registration.runKey,
+      runnerPid: runningMarker.pid,
+      sessionId: runningMarker.happySessionId,
+      persistedLaunch: registration,
+    });
+
+    adopt.mockClear();
+    await expect(reattestRunningExecutionRunConnectedServices({
+      markers: [{ ...runningMarker, status: 'succeeded', finishedAtMs: 10 }],
+      runId: registration.runKey,
+      runnerPid: runningMarker.pid,
+      registration,
+      proveRunnerLive,
+      adopt,
+    })).resolves.toBe(false);
+    await expect(reattestRunningExecutionRunConnectedServices({
+      markers: [runningMarker],
+      runId: registration.runKey,
+      runnerPid: runningMarker.pid,
+      registration: {
+        ...registration,
+        activationId: '22222222-2222-4222-8222-222222222222',
+      },
+      proveRunnerLive,
+      adopt,
+    })).resolves.toBe(false);
+    expect(adopt).not.toHaveBeenCalled();
+  });
+});
 
 describe('rehydrateLiveExecutionRunTargets', () => {
   it('retries terminal cleanup from the bounded receipt without reconstructing run authority', async () => {
@@ -52,6 +133,47 @@ describe('rehydrateLiveExecutionRunTargets', () => {
       clearTerminalCleanupReceipt,
     });
 
+    expect(result).toEqual({ registeredRunIds: [], inactiveRunIds: [receipt.runKey] });
+    expect(cleanupTerminal).toHaveBeenCalledWith({
+      runId: receipt.runKey,
+      runnerPid: 4321,
+      sessionId: 'session-1',
+      receipt,
+    });
+    expect(clearTerminalCleanupReceipt).toHaveBeenCalledWith(receipt.runKey);
+    expect(proveRunnerLive).not.toHaveBeenCalled();
+    expect(adopt).not.toHaveBeenCalled();
+  });
+
+  it('routes a cancelled terminal marker to cleanup-only adoption without reconstructing run authority', async () => {
+    const cleanupTerminal = vi.fn(async () => true);
+    const clearTerminalCleanupReceipt = vi.fn(async () => undefined);
+    const proveRunnerLive = vi.fn(async () => true);
+    const adopt = vi.fn(async () => true);
+    const receipt = {
+      v: 1 as const,
+      activationId: '55555555-5555-4555-8555-555555555555',
+      runKey: 'run-cancelled-cleanup',
+      agentId: 'codex',
+    };
+
+    const result = await rehydrateLiveExecutionRunTargets({
+      markers: [{
+        runId: receipt.runKey,
+        happySessionId: 'session-1',
+        pid: 4321,
+        status: 'cancelled',
+        finishedAtMs: 30,
+        executionRunConnectedServicesCleanupReceiptV1: receipt,
+      }],
+      proveRunnerLive,
+      adopt,
+      cleanupTerminal,
+      clearTerminalCleanupReceipt,
+    });
+
+    // A run cancelled while daemon A was down stays terminal on daemon B:
+    // cleanup-only custody, never a resurrected run target.
     expect(result).toEqual({ registeredRunIds: [], inactiveRunIds: [receipt.runKey] });
     expect(cleanupTerminal).toHaveBeenCalledWith({
       runId: receipt.runKey,

@@ -91,6 +91,10 @@ type AgentCatalogScheduledResult =
       status: 'error';
       completedKey: string;
       error?: Readonly<{ retryAfterMs?: number }>;
+    }>
+  | Readonly<{
+      status: 'local_unavailable';
+      completedKey: string;
     }>;
 
 function requireSingleStaticProbeCatalog(provider: ProviderContributionV1): StaticProbeCatalog {
@@ -253,6 +257,10 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
             status: 'error',
             completedKey: scheduledIdentity,
           }),
+          localCapacityUnavailable: (): AgentCatalogScheduledResult => ({
+            status: 'local_unavailable',
+            completedKey: scheduledIdentity,
+          }),
           ...(input.signal ? { signal: input.signal } : {}),
           isCurrent: input.isCurrent,
         };
@@ -383,14 +391,19 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         const effectiveIdentity = scheduled.completedKey;
         const previous = transitionByIdentity.get(effectiveIdentity)
           ?? { snapshot: null, staleProbeModels: [] };
-        const transition = applyProviderCatalogRefreshV1(
-          previous,
-          scheduled.status === 'success'
-            ? { status: 'success', observedAt: now(), models: scheduled.result.catalog.models }
-            : { status: 'failed', failedAt: now() },
-        );
+        // Local admission refusal means no Provider request occurred. Keep
+        // the canonical observation unchanged instead of fabricating a failed
+        // refresh and marking a valid retained catalog stale.
+        const transition = scheduled.status === 'local_unavailable'
+          ? previous
+          : applyProviderCatalogRefreshV1(
+              previous,
+              scheduled.status === 'success'
+                ? { status: 'success', observedAt: now(), models: scheduled.result.catalog.models }
+                : { status: 'failed', failedAt: now() },
+            );
         assertCurrent();
-        remember(effectiveIdentity, transition);
+        if (scheduled.status !== 'local_unavailable') remember(effectiveIdentity, transition);
         const merged = mergeProviderCatalogV1({
           staticModels: catalog.staticModels,
           manualModels: [],

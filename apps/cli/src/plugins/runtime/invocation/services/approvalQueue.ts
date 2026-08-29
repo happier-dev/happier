@@ -15,6 +15,7 @@ import type {
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionPluginCaller } from '@happier-dev/protocol/actions';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol';
 
 import {
     getSharedBlockingApprovalCoordinator,
@@ -107,12 +108,29 @@ function readActionResult(result: unknown): Readonly<Record<string, unknown>> | 
     return readRecord(readRecord(result)?.result);
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
-    if (typeof value === 'number') return Number.isFinite(value);
-    if (Array.isArray(value)) return value.every(isJsonValue);
-    const record = readRecord(value);
-    return record !== null && Object.values(record).every(isJsonValue);
+/**
+ * Admits one canonical strict JSON projection or reports the queue response as
+ * invalid. The Protocol owner enforces dense arrays, plain objects, finite
+ * numbers, and immutable snapshots — the local recursive predicate this
+ * replaced accepted sparse arrays (holes are skipped by `every`) and
+ * nonordinary objects (any prototype carrying finite own values).
+ */
+function strictJsonOrInvalidQueueResponse(value: unknown): JsonValue {
+    try {
+        return normalizeStrictJsonValue(value);
+    } catch {
+        return invalidQueueResponse();
+    }
+}
+
+/** Omits the execution projection when the stored result is not strict JSON. */
+function strictJsonExecutionResultOrOmit(value: unknown): JsonValue | undefined {
+    if (value === undefined) return undefined;
+    try {
+        return normalizeStrictJsonValue(value);
+    } catch {
+        return undefined;
+    }
 }
 
 function isApprovalStatus(value: unknown): value is ApprovalRequestStatus {
@@ -143,15 +161,18 @@ function projectApprovalRequest(
         || typeof request.summary !== 'string'
         || typeof request.createdAtMs !== 'number'
         || typeof request.updatedAtMs !== 'number'
-        || !isJsonValue(request.actionArgs)
     ) return invalidQueueResponse();
+    const actionArgs = strictJsonOrInvalidQueueResponse(request.actionArgs);
     const decision = readRecord(request.decision);
     const execution = readRecord(request.execution);
+    const executionResult = execution
+        ? strictJsonExecutionResultOrOmit(execution.result)
+        : null;
     return Object.freeze({
         approvalRequestId,
         status: request.status,
         actionId: request.actionId,
-        input: request.actionArgs,
+        input: actionArgs,
         summary: request.summary,
         createdAtMs: request.createdAtMs,
         updatedAtMs: request.updatedAtMs,
@@ -166,7 +187,7 @@ function projectApprovalRequest(
                     execution: Object.freeze({
                         executedAtMs: execution.executedAtMs,
                         ok: execution.ok,
-                        ...(isJsonValue(execution.result) ? { result: execution.result } : {}),
+                        ...(executionResult !== undefined ? { result: executionResult } : {}),
                         ...(typeof execution.errorCode === 'string' ? { errorCode: execution.errorCode } : {}),
                         ...(typeof execution.error === 'string' ? { error: execution.error } : {}),
                     }),

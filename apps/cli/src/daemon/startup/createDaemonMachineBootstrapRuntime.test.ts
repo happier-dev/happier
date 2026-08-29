@@ -18,9 +18,15 @@ import { createDaemonMachineBootstrapRuntime } from './createDaemonMachineBootst
 const automationWorkerMocks = vi.hoisted(() => ({
   startAutomationWorker: vi.fn(),
 }));
+const voiceInferenceWorkerMocks = vi.hoisted(() => ({
+  startVoiceInferenceWorker: vi.fn(async () => ({ stop: vi.fn(async () => {}) })),
+}));
 
 vi.mock('../automation/automationWorker', () => ({
   startAutomationWorker: automationWorkerMocks.startAutomationWorker,
+}));
+vi.mock('../voiceInference/voiceInferenceWorker', () => ({
+  startVoiceInferenceWorker: voiceInferenceWorkerMocks.startVoiceInferenceWorker,
 }));
 
 const deviceLocalSecretStorage = {
@@ -71,6 +77,20 @@ function createBaseRuntimeParams(overrides: Partial<Parameters<typeof createDaem
 }
 
 describe('createDaemonMachineBootstrapRuntime', () => {
+  it('does not start the daemon inference worker while its canonical feature decision is disabled', async () => {
+    const previous = process.env.HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED;
+    delete process.env.HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED;
+    try {
+      const runtime = createDaemonMachineBootstrapRuntime(createBaseRuntimeParams());
+      await expect(runtime.startVoiceInferenceWorkerForMachine('machine_1', 'account_1'))
+        .resolves.toBeNull();
+      expect(voiceInferenceWorkerMocks.startVoiceInferenceWorker).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED;
+      else process.env.HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED = previous;
+    }
+  });
+
   it('keeps daemon quiescence out of ownership metadata and forwards it as a lifecycle dependency', () => {
     const machineSyncClient = vi.fn(() => ({}));
     const isShuttingDown = vi.fn(() => false);

@@ -10,7 +10,11 @@ import { createDaemonControlApp } from './controlServer';
 const RUN_BINDINGS = {
     v: 1,
     bindingsByServiceId: {
-        'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
+        'happier.agent.codex/openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'profile_1',
+        },
     },
 } as const;
 

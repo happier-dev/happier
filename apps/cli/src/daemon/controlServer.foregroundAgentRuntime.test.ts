@@ -4,6 +4,7 @@ import {
   FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
   FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
   FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
+  FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH,
 } from './agentRuntime/foregroundAdmissionContract';
 import { createDaemonControlApp } from './controlServer';
 
@@ -37,6 +38,10 @@ describe('daemon control server: foreground Agent runtime admission', () => {
       sensitiveEnvironmentVariableNames: ['PROVIDER_TOKEN'],
     }));
     const release = vi.fn(async () => undefined);
+    const resolveSessionRuntimePreferences = vi.fn(async () => ({
+      ok: true as const,
+      options: { model: 'codex-latest' },
+    }));
     const app = createDaemonControlApp({
       getChildren: () => [],
       machineId: 'machine-1',
@@ -49,6 +54,7 @@ describe('daemon control server: foreground Agent runtime admission', () => {
         admit,
         claimEnvironment,
         release,
+        resolveSessionRuntimePreferences,
       } as never,
     });
     const admissionPayload = {
@@ -121,6 +127,42 @@ describe('daemon control server: foreground Agent runtime admission', () => {
     });
     expect(released.statusCode).toBe(200);
     expect(release).toHaveBeenCalledWith('attempt-1', 'session-1');
+
+    const sessionOptionsPayload = {
+      v: 1,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: 1234,
+      input: {
+        isExplicitCliSubcommand: false,
+        parsed: { agentArgs: [] },
+        settings: {},
+        pluginSettings: {},
+        environment: {},
+        startOrigin: 'daemon',
+      },
+    } as const;
+    const sessionOptions = await app.inject({
+      method: 'POST',
+      url: FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH,
+      headers: { 'x-happier-daemon-token': 'control-token' },
+      payload: sessionOptionsPayload,
+    });
+    expect(sessionOptions.statusCode).toBe(200);
+    expect(sessionOptions.json()).toEqual({ ok: true, options: { model: 'codex-latest' } });
+    expect(resolveSessionRuntimePreferences).toHaveBeenCalledWith(sessionOptionsPayload);
+
+    const malformedSessionOptions = await app.inject({
+      method: 'POST',
+      url: FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH,
+      headers: { 'x-happier-daemon-token': 'control-token' },
+      payload: {
+        ...sessionOptionsPayload,
+        input: { ...sessionOptionsPayload.input, environment: { BAD: 1 } },
+      },
+    });
+    expect(malformedSessionOptions.statusCode).toBe(400);
+    expect(resolveSessionRuntimePreferences).toHaveBeenCalledTimes(1);
 
     await app.close();
   });

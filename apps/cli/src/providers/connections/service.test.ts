@@ -147,6 +147,7 @@ function managedContribution(): ResolvedProviderContribution {
       ],
       managedRuntime: {
         kind: 'managed',
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
         connectedAccounts: [{
           purpose: 'upstream',
           service: {
@@ -435,13 +436,17 @@ describe('provider connection service', () => {
             localId: 'gateway',
           },
           protocols: ['openai-responses', 'openai-chat'],
+          connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
           connectedAccountPurposes: [{
             purpose: 'upstream',
             service: {
               pluginId: 'happier.connected-account.openai',
               localId: 'openai',
             },
-            title: 'Use upstream OpenAI account',
+            title: {
+              key: 'plugins.acme.gateway.connectedAccounts.upstream',
+              fallback: 'Use upstream OpenAI account',
+            },
             required: true,
             materializationKinds: ['httpHeaders'],
             target: {
@@ -459,13 +464,17 @@ describe('provider connection service', () => {
       });
       expect(describedConnection?.managedLocalOption).toEqual({
         targetMachineId: 'machine-a',
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
         connectedAccountPurposes: [{
           purpose: 'upstream',
           service: {
             pluginId: 'happier.connected-account.openai',
             localId: 'openai',
           },
-          title: 'Use upstream OpenAI account',
+          title: {
+              key: 'plugins.acme.gateway.connectedAccounts.upstream',
+              fallback: 'Use upstream OpenAI account',
+            },
           required: true,
           materializationKinds: ['httpHeaders'],
         }],

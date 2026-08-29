@@ -154,7 +154,15 @@ export async function resolvePrepareTargetBootstrap(
     jobId,
     transportStrategy: input.request.negotiatedTransportStrategy,
     recoveryActions: [],
-    phaseDetail: isRestartingPersistedJob ? 'resuming_after_restart' : 'importing_workspace',
+    phaseDetail: isRestartingPersistedJob ? 'resuming_after_restart' : 'transferring_session',
+    ...(input.request.handoffMetadataV2?.agentBundleTransferPublication
+      ? {
+        sessionTransfer: {
+          currentBytes: 0,
+          totalBytes: input.request.handoffMetadataV2.agentBundleTransferPublication.sizeBytes,
+        },
+      }
+      : {}),
   });
 
   await input.prepareJobStore.write(buildPrepareJobRecord({

@@ -129,6 +129,9 @@ export function registerSessionHandlers(
         createCapabilitiesApiClient?: NonNullable<
             Parameters<typeof registerCapabilitiesHandlers>[1]
         >['createApiClient'];
+        activateCapabilitiesPurposeBindings?: NonNullable<
+            Parameters<typeof registerCapabilitiesHandlers>[1]
+        >['activatePurposeBindings'];
     }>,
 ) {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
@@ -141,6 +144,9 @@ export function registerSessionHandlers(
             : {}),
         ...(opts?.createCapabilitiesApiClient
             ? { createApiClient: opts.createCapabilitiesApiClient }
+            : {}),
+        ...(opts?.activateCapabilitiesPurposeBindings
+            ? { activatePurposeBindings: opts.activateCapabilitiesPurposeBindings }
             : {}),
     });
     registerDaemonContributionRegistryProjectionHandler(

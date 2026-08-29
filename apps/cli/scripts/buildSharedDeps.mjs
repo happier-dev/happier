@@ -49,7 +49,10 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_BUNDLED_HOST_APPS = ['cli'];
 const PLUGINS_WORKSPACE_PREFIX = 'plugins-';
-const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 5;
+// v6 records closures published with host-wide bundled runtime dependency
+// refresh. Earlier stamps may describe current root dists while a host's nested
+// bundled workspace copy still contains the predecessor bytes.
+const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 6;
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_PROGRESS';
 const SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_MS';
 const SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_MS';
@@ -2252,6 +2255,20 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
         && !unpreparedStaleWorkspaceNames.has(workspaceName)
       ),
     );
+    // Dist publication and bundled-runtime closure refresh own different facts.
+    // A dependency rebuilt in this invocation (for example Protocol) can leave a
+    // still-current host package's nested bundled copy stale (for example Plugin
+    // SDK's private Protocol copy). Refresh every requested host's runtime
+    // dependency closure in the same pass; the runtime-dependency owner filters
+    // this list to actual bundled hosts. Do not narrow this to the workspaces whose
+    // own dist changed or the generator can immediately load a stale nested copy.
+    const runtimeDependencyWorkspaceNamesToSync = (
+      workspaceNamesToSyncBeforeIncrementalPublication.length > 0
+        ? workspaceNames.filter(
+            (workspaceName) => !failedPluginWorkspaceNames.has(workspaceName),
+          )
+        : []
+    );
 
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'bundled-dist-sync',
@@ -2276,8 +2293,11 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       stage: 'bundled-runtime-deps-sync',
       event: 'start',
     });
-    if (includeRuntimeDependencies && workspaceNamesToSync.length > 0) {
-      syncBundledRuntimeDependencies({ repoRoot, workspaceNames: workspaceNamesToSync });
+    if (includeRuntimeDependencies && runtimeDependencyWorkspaceNamesToSync.length > 0) {
+      syncBundledRuntimeDependencies({
+        repoRoot,
+        workspaceNames: runtimeDependencyWorkspaceNamesToSync,
+      });
     }
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'bundled-runtime-deps-sync',

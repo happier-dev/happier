@@ -38,6 +38,13 @@ const ARCHIVE_CHECKSUM_MANIFEST_NAMES = Object.freeze([
     RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME,
 ]);
 
+const CLI_RUNTIME_ASSET_MANAGED_PROVIDER_REFS = Object.freeze({
+    'cliproxyapi-managed': Object.freeze({
+        pluginId: 'happier.provider.cliproxyapi',
+        providerId: 'cliproxyapi',
+    }),
+});
+
 /**
  * Platform leaves of the CLIProxyAPI managed wrapper. The wrapper is a runtime
  * asset of the CLI distribution, not a third-party developer tool: the plugin
@@ -59,6 +66,7 @@ const CLI_RUNTIME_ASSET_ARCHIVE_MANIFEST = [
     { asset: 'cliproxyapi-managed', platformDir: 'x64-win32', archiveName: 'happier-cliproxyapi-managed-x64-win32.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed.exe', extraBinaries: ['happier-process-custody.exe'], version: '1' },
 ].map((entry) => Object.freeze({
     ...entry,
+    managedProviderRef: CLI_RUNTIME_ASSET_MANAGED_PROVIDER_REFS[entry.asset],
     licenseNames: Object.freeze(['CLIProxyAPI-LICENSE', 'CLIProxyAPI-THIRD-PARTY-NOTICES']),
     runtimeAssetRelativePath: `tools/unpacked/${entry.binaryName}`,
 }));

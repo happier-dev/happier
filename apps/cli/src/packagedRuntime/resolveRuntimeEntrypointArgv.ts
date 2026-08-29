@@ -24,6 +24,7 @@ export function resolveRuntimeRootFromEntrypointPath(pathLike: string | null | u
 
   const packageDistMarker = `${String.raw`/`}package-dist${String.raw`/`}`;
   const distMarker = `${String.raw`/`}dist${String.raw`/`}`;
+  const distBackupMarker = `${String.raw`/`}.dist.hstack-backup${String.raw`/`}`;
   const packageDistIndex = normalized.indexOf(packageDistMarker);
   if (packageDistIndex >= 0) {
     return normalized.slice(0, packageDistIndex);
@@ -31,6 +32,12 @@ export function resolveRuntimeRootFromEntrypointPath(pathLike: string | null | u
   const distIndex = normalized.indexOf(distMarker);
   if (distIndex >= 0) {
     return normalized.slice(0, distIndex);
+  }
+  // The stack PM's rename-aside rebuild layout boots as a supported runtime
+  // tree, so a launched `index.mjs` inside it still names its runtime root.
+  const distBackupIndex = normalized.indexOf(distBackupMarker);
+  if (distBackupIndex >= 0) {
+    return normalized.slice(0, distBackupIndex);
   }
   return null;
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { PluginError } from '@happier-dev/plugin-sdk';
+
 import type {
   ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ManagedProviderRuntime } from '@happier-dev/plugin-sdk/providers';
@@ -207,6 +209,40 @@ describe('public managed Provider runtime start coordinator', () => {
 
     expect(result).toEqual({ ok: false, code: 'managed_provider_start_aborted' });
     expect(acquireRuntime).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    'plugin_packaged_runtime_binary_unavailable',
+    'plugin_managed_server_custody_failed',
+  ])('preserves permanent runtime installation failure %s as runtime unavailable', async (code) => {
+    const runtime = resolvedRuntime(Object.freeze({
+      start: async () => {
+        throw new PluginError({ code, message: 'runtime installation is unavailable' });
+      },
+    }));
+
+    const result = await startPublicManagedProviderRuntime({
+      identity: Object.freeze({ pluginId: 'cliproxyapi', localId: 'cliproxyapi' }),
+      request: Object.freeze({
+        reason: 'explicitStartLocal' as const,
+        endpointTemplateIds: Object.freeze(['responses']),
+      }),
+      acquireRuntime: async () => runtime,
+      connectedAccounts: connectedAccounts(),
+      custody: Object.freeze({
+        managedServices: managedServices(),
+        projectEndpointAccess: vi.fn(),
+      }),
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization: async () => true,
+      signal: new AbortController().signal,
+      launchResourceScope: createProviderLaunchResourceScope(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: 'managed_provider_runtime_unavailable',
+    });
   });
 
   it('reports cancellation after Provider admission without misclassifying it as authorization drift', async () => {

@@ -17,6 +17,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';
 import { prepareDirectProviderLaunch } from '@/providers/lifecycle/prepareDirectLaunch';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -145,6 +146,16 @@ export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
   connectedServicesMaterializationBaseDir?: string;
 }>;
 
+function copyStringEnvironmentValues(
+  source: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, string>> {
+  return Object.freeze(Object.fromEntries(
+    Object.entries(source).filter((entry): entry is [string, string] => (
+      typeof entry[1] === 'string'
+    )),
+  ));
+}
+
 function mergeForegroundAdmissionEnvironment(input: Readonly<{
   profile: Readonly<Record<string, string>>;
   connectedService: Readonly<Record<string, string>>;
@@ -157,8 +168,8 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
 }> {
   const environment: Record<string, string> = Object.assign(
     Object.create(null),
-    input.profile,
-    input.connectedService,
+    copyStringEnvironmentValues(input.profile),
+    copyStringEnvironmentValues(input.connectedService),
   );
   const unsetByIdentity = new Map<string, string>();
   const applyUnset = (name: string) => {
@@ -177,7 +188,7 @@ function mergeForegroundAdmissionEnvironment(input: Readonly<{
     environment[name] = value;
   };
   for (const name of input.connectedServiceUnset) applyUnset(name);
-  for (const [name, value] of Object.entries(input.provider)) {
+  for (const [name, value] of Object.entries(copyStringEnvironmentValues(input.provider))) {
     applyValue(name, value);
   }
   for (const name of input.providerUnset) applyUnset(name);
@@ -510,9 +521,16 @@ export async function prepareForegroundAgentRuntimeAdmission(
       target: request.backendTarget,
       lease,
     });
+    const registration = lease.registry.agentRuntimesByAgentId.get(
+      request.agentId,
+    );
+    // The registry is keyed by the canonical host routing id, and the
+    // descriptor must carry exactly that id — no corridor-local respelling.
+    const expectedDescriptorAgentId = registration?.agentId ?? null;
     if (
       !bridge
-      || bridge.authorization.descriptor.agentId !== request.agentId
+      || bridge.authorization.descriptor.agentId
+        !== expectedDescriptorAgentId
       || bridge.authorization.descriptor.backendId
         !== request.backendTarget.backendId
     ) {
@@ -528,9 +546,6 @@ export async function prepareForegroundAgentRuntimeAdmission(
       ));
     }
     tokenCleanup = bridge.cleanupBootstrapFiles;
-    const registration = lease.registry.agentRuntimesByAgentId.get(
-      request.agentId,
-    );
     if (
       !registration?.hasPrimaryRuntime
       || registration.pluginId !== bridge.authorization.descriptor.pluginId
@@ -882,6 +897,23 @@ export async function prepareForegroundAgentRuntimeAdmission(
         isCurrent: () => (
           registration.isCurrent() && connectedAccountLaunchCurrent
         ),
+        ...(stateSharingCatalogEntry?.resolveSessionRuntimePreferences
+          ? {
+              resolveSessionRuntimePreferences: async (input) => {
+                if (
+                  registration.retirementSignal.aborted
+                  || !registration.isCurrent()
+                  || !connectedAccountLaunchCurrent
+                ) {
+                  return {};
+                }
+                const result = await stateSharingCatalogEntry.resolveSessionRuntimePreferences!(input);
+                return registration.isCurrent() && connectedAccountLaunchCurrent
+                  ? result
+                  : {};
+              },
+            }
+          : {}),
         claim: async ({
           canonicalSessionId,
           httpPort,
@@ -1106,8 +1138,10 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   credentialFileScope: Object.freeze({
                     generation: registration.generation,
                     pluginId: registration.pluginId,
-                    contributionQualifiedId:
-                      `${registration.pluginId}/agents/${registration.localAgentId}`,
+                    contributionQualifiedId: resolveAgentContributionQualifiedId({
+                      pluginId: registration.pluginId,
+                      localId: registration.localAgentId,
+                    }),
                     sessionId: canonicalSessionId,
                   }),
                   retainCredentialFileCleanup(cleanup) {

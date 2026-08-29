@@ -22,7 +22,6 @@ export class PluginLocalSettingsDeclarationError extends Error {
         | 'PLUGIN_SETTINGS_PLUGIN_ID_REQUIRED'
         | 'PLUGIN_SETTINGS_SCHEMA_INVALID'
         | 'PLUGIN_SETTINGS_DEFAULT_INVALID'
-        | 'PLUGIN_SETTINGS_FIELD_ID_CONFLICT'
         | 'PLUGIN_SETTINGS_SCOPE_UNAVAILABLE'
         | 'PLUGIN_SETTINGS_AVAILABILITY_UNAVAILABLE';
     readonly pluginId: string;
@@ -60,7 +59,6 @@ export function resolveLocalSettingsDeclarations(params: Readonly<{
     pluginId?: string;
 }>): readonly ResolvedLocalSettingsDeclaration[] {
     const declarations: ResolvedLocalSettingsDeclaration[] = [];
-    const fieldOwnersByPluginId = new Map<string, Map<string, string>>();
 
     for (const contribution of params.settings) {
         if (!contribution.pluginId) {
@@ -86,7 +84,6 @@ export function resolveLocalSettingsDeclarations(params: Readonly<{
             });
         }
         const definition = parsed.data;
-        const fieldOwners = fieldOwnersByPluginId.get(contribution.pluginId) ?? new Map<string, string>();
         for (const field of definition.fields) {
             let validate: ReturnType<typeof compilePluginSettingFieldSchema>;
             try {
@@ -101,7 +98,7 @@ export function resolveLocalSettingsDeclarations(params: Readonly<{
                     reason: `Plugin setting '${field.id}' has an invalid schema`,
                 });
             }
-            if (field.secret !== true && field.default !== undefined && !isValidPluginJsonSchemaValue(validate, field.default)) {
+            if (field.secret === undefined && field.default !== undefined && !isValidPluginJsonSchemaValue(validate, field.default)) {
                 throw new PluginLocalSettingsDeclarationError({
                     code: 'PLUGIN_SETTINGS_DEFAULT_INVALID',
                     pluginId: contribution.pluginId,
@@ -110,19 +107,7 @@ export function resolveLocalSettingsDeclarations(params: Readonly<{
                     reason: `Plugin setting '${field.id}' has an invalid default`,
                 });
             }
-            const existingContributionId = fieldOwners.get(field.id);
-            if (existingContributionId) {
-                throw new PluginLocalSettingsDeclarationError({
-                    code: 'PLUGIN_SETTINGS_FIELD_ID_CONFLICT',
-                    pluginId: contribution.pluginId,
-                    contributionId: definition.id,
-                    fieldId: field.id,
-                    reason: `Duplicate settings field '${field.id}' for plugin '${contribution.pluginId}'`,
-                });
-            }
-            fieldOwners.set(field.id, definition.id);
         }
-        fieldOwnersByPluginId.set(contribution.pluginId, fieldOwners);
         declarations.push(Object.freeze({ pluginId: contribution.pluginId, definition }));
     }
 

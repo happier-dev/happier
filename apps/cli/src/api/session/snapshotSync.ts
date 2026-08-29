@@ -106,6 +106,9 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
 
     const nextMetadataLayoutVersion = readSessionMetadataLayoutVersion(raw.metadataLayoutVersion);
     const currentMetadataLayoutVersion = readSessionMetadataLayoutVersion(opts.currentMetadataLayoutVersion);
+    if (currentMetadataLayoutVersion < 0) {
+        return out;
+    }
     if (
         nextMetadataLayoutVersion !== 0
         && nextMetadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1

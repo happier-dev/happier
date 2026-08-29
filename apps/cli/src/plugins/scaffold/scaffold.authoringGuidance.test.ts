@@ -69,6 +69,11 @@ describe('scaffoldLocalPlugin authoring guidance', () => {
       expect(skill).toContain('--sdk-registry <origin>');
       expect(skill).toContain('prepares declared dependencies automatically');
       expect(skill).toContain('do not run `happier plugins dev install .` first');
+      // The dependency-refresh exception: cold-start preparation materializes
+      // an author root once; refreshing a stale tree is `plugins dev install`.
+      expect(skill).toContain('Exception — dependency refresh');
+      expect(skill).toContain('change declared dependencies in `package.json`');
+      expect(skill).toContain('run `happier plugins dev install .` once to refresh the tree');
       expect(skill).toContain('running Happier CLI');
       expect(skill).toContain('prepublication SDK version resolves automatically');
       expect(skill).toContain('managed author commands');
@@ -78,6 +83,42 @@ describe('scaffoldLocalPlugin authoring guidance', () => {
       expect(skill).toContain('happier plugins dev typecheck .');
       expect(skill).toContain('happier plugins dev build .');
       expect(skill).toContain('happier plugins pack .');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('threads the selected CLI invoker through scripts and generated guidance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-hdev-guidance-'));
+    try {
+      const scaffold = await scaffoldLocalPlugin({
+        targetDir: join(root, 'plugin'),
+        pluginId: 'acme.authoring-hdev',
+        displayName: 'Authoring hdev',
+        invokerName: 'hdev',
+      });
+      expect(scaffold.ok).toBe(true);
+      if (!scaffold.ok) return;
+
+      const packageJson = JSON.parse(await readFile(join(root, 'plugin', 'package.json'), 'utf8')) as Readonly<{
+        scripts: Readonly<Record<string, string>>;
+      }>;
+      const skill = await readFile(join(
+        root,
+        'plugin',
+        '.agents',
+        'skills',
+        'happier-plugin-authoring',
+        'SKILL.md',
+      ), 'utf8');
+
+      expect(packageJson.scripts.build).toBe('hdev plugins dev build .');
+      expect(packageJson.scripts.typecheck).toBe('hdev plugins dev typecheck .');
+      expect(packageJson.scripts.test).toBe('hdev plugins test .');
+      expect(packageJson.scripts['pack:plugin']).toBe('hdev plugins pack .');
+      expect(skill).toContain('hdev plugins dev');
+      expect(skill).toContain('hdev plugins doctor .');
+      expect(skill).not.toContain('happier plugins dev');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

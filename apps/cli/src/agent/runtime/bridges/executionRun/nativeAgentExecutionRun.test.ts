@@ -658,9 +658,11 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         await activeHost.dispose();
     });
 
-    it('isolates a throwing host listener so terminal settlement and later listeners still complete', async () => {
+    it('isolates a throwing host listener and detaches never-settling finite cleanup after terminal truth', async () => {
         const watchState: { publish?: (event: AgentExecutionRunEvent) => void } = {};
-        const disposeRuntime = vi.fn(async () => undefined);
+        const disposeRuntime = vi.fn(async () => {
+            await new Promise<never>(() => undefined);
+        });
         const opened: AgentExecutionRunRuntime = Object.freeze({
             async send() { return { status: 'admitted' as const }; },
             async stop() { return { status: 'requested' as const }; },
@@ -715,7 +717,8 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         await host.waitForTurnCompletion?.();
 
         expect(messages).toContainEqual({ type: 'status', status: 'stopped' });
-        await host.dispose();
+        await expect(host.dispose()).resolves.toBeUndefined();
+        await expect(host.dispose()).resolves.toBeUndefined();
         expect(disposeRuntime).toHaveBeenCalledOnce();
     });
 

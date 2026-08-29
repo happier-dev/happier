@@ -696,9 +696,13 @@ export function createStablePluginExecService(params: Readonly<{
                 ...(managedCustody ? { processCustody: managedCustody } : {}),
                 spawnOptions: {
                     // A dedicated POSIX process group lets the canonical supervisor
-                    // terminate the complete plugin tree immediately without first
+                    // terminate the owned process group immediately without first
                     // enumerating every process on the host. Windows remains attached
-                    // and terminates through the named job containment.
+                    // and terminates through the named job containment. The group is
+                    // also the managed-executable containment contract: an owned
+                    // child that moves a descendant into a new session (`setsid`)
+                    // leaves SVC09's enforceable containment, and cleanup proves
+                    // group absence — never unbounded-tree absence.
                     detached: process.platform !== 'win32',
                     // Under custody the helper's own argv is built here and must
                     // use the standard quoting contract so the helper can decode

@@ -57,7 +57,7 @@ describe('isAcpForkEligibleForAgent', () => {
         agentId: 'pi',
         metadata: {},
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('keeps the provider-owned current runtime descriptor opaque', () => {
@@ -211,7 +211,7 @@ describe('isAcpForkEligibleForAgent', () => {
     ).toBe(true);
   });
 
-  it('treats agent-keyed linked external-session metadata as ACP eligibility for the matching agent', () => {
+  it('treats the top-level agent-keyed backend mode as eligibility alongside a matching canonical link', () => {
     expect(
       isAcpForkEligibleForAgent({
         agentId: 'opencode',
@@ -222,8 +222,8 @@ describe('isAcpForkEligibleForAgent', () => {
             machineId: 'machine_source',
             remoteSessionId: 'opencode_parent',
             source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
-            opencodeBackendMode: 'acp',
           },
+          opencodeBackendMode: 'acp',
         },
       }),
     ).toBe(true);
@@ -247,22 +247,44 @@ describe('isAcpForkEligibleForAgent', () => {
     ).toBe(false);
   });
 
-  it('recognizes retained legacy directSessionV1 backend mode through the canonical link reader', () => {
+  it('recognizes a retained legacy directSessionV1 Codex selector through the canonical link reader', () => {
     expect(
       isAcpForkEligibleForAgent({
-        agentId: 'opencode',
+        agentId: 'codex',
         metadata: {
           directSessionV1: {
             v: 1,
-            providerId: 'opencode',
+            providerId: 'codex',
             machineId: 'machine_source',
-            remoteSessionId: 'opencode_parent',
-            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
-            opencodeBackendMode: 'acp',
+            remoteSessionId: 'codex_parent',
+            source: { kind: 'codexHome', home: 'user' },
+            codexBackendMode: 'acp',
           },
         },
       }),
     ).toBe(true);
+  });
+
+  it('keeps a linked-session runtime descriptor opaque without a released selector key', () => {
+    expect(
+      isAcpForkEligibleForAgent({
+        agentId: 'codex',
+        metadata: {
+          externalSessionV1: {
+            v: 1,
+            agentId: 'codex',
+            machineId: 'machine_source',
+            remoteSessionId: 'codex_parent',
+            source: { kind: 'codexHome', home: 'user' },
+            runtimeDescriptorV1: {
+              v: 1,
+              agentId: 'codex',
+              agent: { backendMode: 'acp' },
+            },
+          },
+        },
+      }),
+    ).toBe(false);
   });
 
   it('does not treat provider-specific legacy mode aliases as generic ACP eligibility', () => {

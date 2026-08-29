@@ -44,6 +44,8 @@ const hoisted = vi.hoisted(() => {
   const resolveMergedContributionRegistry = vi.fn();
   const createRuntimeProviderSpawnAuthorizationAttempt = vi.fn();
   const getActiveAccountSettingsSnapshot = vi.fn<() => unknown>(() => null);
+  const fetchForkChildSessionOrThrow = vi.fn();
+  const updateSessionMetadataWithRetry = vi.fn();
   const ensureSessionDirectory = vi.fn<() => Promise<MockEnsureSessionDirectoryResult>>(async () => ({
     ok: false,
     response: {
@@ -63,6 +65,8 @@ const hoisted = vi.hoisted(() => {
     resolveMergedContributionRegistry,
     createRuntimeProviderSpawnAuthorizationAttempt,
     getActiveAccountSettingsSnapshot,
+    fetchForkChildSessionOrThrow,
+    updateSessionMetadataWithRetry,
     ensureSessionDirectory,
   };
 });
@@ -193,6 +197,16 @@ vi.mock('../sessionAttachFile', () => ({
 vi.mock('../processSupervision/sessionRunnerRespawnDescriptor', () => ({
   SessionRunnerRespawnDescriptorV1Schema: z.any(),
   buildTrackedSessionRespawnEnvironmentVariables: vi.fn(),
+}));
+
+vi.mock('@/session/actions/lifecycle/fork/forkChildSessionRecovery', () => ({
+  fetchForkChildSessionOrThrow: hoisted.fetchForkChildSessionOrThrow,
+  cleanupForkChildBestEffort: vi.fn(async () => undefined),
+  archiveSessionBestEffort: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
+  updateSessionMetadataWithRetry: hoisted.updateSessionMetadataWithRetry,
 }));
 
 function createParams() {
@@ -615,6 +629,13 @@ describe('executeSpawnSessionRequest', () => {
     hoisted.createRuntimeProviderSpawnAuthorizationAttempt.mockReset();
     hoisted.getActiveAccountSettingsSnapshot.mockReset();
     hoisted.getActiveAccountSettingsSnapshot.mockReturnValue(null);
+    hoisted.fetchForkChildSessionOrThrow.mockReset();
+    hoisted.fetchForkChildSessionOrThrow.mockResolvedValue({
+      id: 'child-acp',
+      metadata: '{}',
+    });
+    hoisted.updateSessionMetadataWithRetry.mockReset();
+    hoisted.updateSessionMetadataWithRetry.mockResolvedValue(undefined);
     // `mockClear` keeps queued `mockResolvedValueOnce` values, so a test that
     // legitimately never reaches workspace creation used to hand its queued
     // result to the next test. Reset the mock and re-establish the default so
@@ -818,7 +839,7 @@ describe('executeSpawnSessionRequest', () => {
     });
   });
 
-  it('tracks the exact persisted Provider resume selection sent to the child when the request omits it', async () => {
+  it('keeps the persisted Provider resume selection authoritative over a profile model default', async () => {
     const setup = await configureProviderBoundExistingSessionSpawn();
     const proposal = {
       v: 1 as const,
@@ -856,6 +877,30 @@ describe('executeSpawnSessionRequest', () => {
         },
       },
       catalogAgentId: 'codex',
+    });
+    hoisted.getActiveAccountSettingsSnapshot.mockReturnValue({
+      settings: {
+        profiles: [{
+          v: 2,
+          id: 'focused',
+          name: 'Focused',
+          extraEnvironmentVariables: [],
+          defaultPermissionModeByTargetKey: {},
+          defaultPersistenceModeByTargetKey: {},
+          compatibilityByTargetKey: { 'backend:codex': true },
+          preferredModelSelection: {
+            v: 1,
+            updatedAt: 100,
+            ref: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: null,
+              modelId: 'profile-default',
+            },
+          },
+          createdAt: 1,
+          updatedAt: 100,
+        }],
+      },
     });
     const {
       resolveDaemonSessionModelTransitionAuthority,
@@ -895,6 +940,7 @@ describe('executeSpawnSessionRequest', () => {
         ...createParams().options,
         resume: undefined,
         existingSessionId: 'existing-session-1',
+        profileId: 'focused',
         machineId: 'machine-a',
         backendTarget: {
           kind: 'backend',
@@ -966,6 +1012,59 @@ describe('executeSpawnSessionRequest', () => {
     expect(resolveSpawnChildEnvironment).not.toHaveBeenCalled();
     expect(routeSpawnModeAndWaitForWebhook).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['absent', []],
+    ['duplicated', [
+      {
+        v: 2, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
+        defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
+        compatibilityByTargetKey: { 'backend:codex': true }, createdAt: 1, updatedAt: 1,
+      },
+      {
+        v: 2, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
+        defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
+        compatibilityByTargetKey: { 'backend:codex': true }, createdAt: 1, updatedAt: 1,
+      },
+    ]],
+    ['malformed', [{ v: 99, id: 'focused' }]],
+    ['incompatible', [{
+      v: 2, id: 'focused', name: 'Focused', extraEnvironmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {},
+      compatibilityByTargetKey: { 'backend:codex': false }, createdAt: 1, updatedAt: 1,
+    }]],
+  ])('refuses an %s V2 launch profile before workspace or Session creation', async (_case, profiles) => {
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: '',
+      effectiveResume: '',
+      effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
+      sessionAttachPayload: null,
+      catalogAgentId: 'codex',
+    });
+    hoisted.getActiveAccountSettingsSnapshot.mockReturnValue({ settings: { profiles } });
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+
+    const result = await executeSpawnSessionRequest({
+      ...createParams(),
+      options: {
+        ...createParams().options,
+        resume: undefined,
+        profileId: 'focused',
+        backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
+      },
+    });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    });
+    expect(hoisted.acquireAuthoritativePluginRuntimeRegistryLease).not.toHaveBeenCalled();
+    expect(hoisted.ensureSessionDirectory).not.toHaveBeenCalled();
+    expect(routeSpawnModeAndWaitForWebhook).not.toHaveBeenCalled();
   });
 
   it('uses static support without an adapter for a safe native V2 profile and releases after spawn commit', async () => {
@@ -2535,6 +2634,117 @@ describe('executeSpawnSessionRequest', () => {
     });
     expect(releaseRuntimeRegistryLease).toHaveBeenCalledTimes(1);
     expect(hoisted.resolveMergedContributionRegistry).not.toHaveBeenCalled();
+  });
+
+  it('carries a supported configured ACP fork through real daemon spawn preparation', async () => {
+    const configuredTarget = {
+      kind: 'backend',
+      sourceKind: 'configured',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+    } as const;
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: '',
+      effectiveResume: 'vendor-child-acp',
+      effectiveBackendTargetV2: configuredTarget,
+      sessionAttachPayload: null,
+      catalogAgentId: null,
+    });
+    hoisted.ensureSessionDirectory.mockResolvedValueOnce({
+      ok: true,
+      directoryCreated: false,
+    });
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: createAdmittedRuntimeRegistry({
+        'review-bot': 'active.plugin.review-bot',
+      }),
+      source: 'active',
+      release: vi.fn(async () => undefined),
+    });
+
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { attemptAcpLatestFork } = await import(
+      '@/session/actions/lifecycle/fork/attemptAcpLatestFork'
+    );
+    const { resolveSpawnChildEnvironment } = await import(
+      '../spawn/resolveSpawnChildEnvironment'
+    );
+    const { routeSpawnModeAndWaitForWebhook } = await import(
+      '../spawn/routeSpawnModeAndWaitForWebhook'
+    );
+    vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
+      ok: true,
+      cleanupOnFailure: null,
+      cleanupOnExit: null,
+      expandedEnvironmentVariables: {},
+      extraEnvForChild: {},
+    });
+    vi.mocked(routeSpawnModeAndWaitForWebhook).mockResolvedValueOnce({
+      type: 'success',
+      sessionId: 'child-acp',
+    });
+
+    const fork = vi.fn(async () => ({
+      providerSessionId: 'vendor-child-acp',
+      launch: {},
+    }));
+    const result = await attemptAcpLatestFork({
+      requestedStrategy: 'acp_fork_latest',
+      credentials: createParams().credentials,
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/project',
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'configured-acp-fork',
+      forkIsConfiguredAcp: true,
+      forkBackendResolution: {
+        ok: true,
+        catalogAgentId: null,
+        agentHintAgentId: 'acp:review-bot',
+        backendTargetV2: configuredTarget,
+        backendTarget: {
+          kind: 'configuredAcpBackend',
+          backendId: 'review-bot',
+        },
+        replayFlavor: 'acp:review-bot',
+        metadataOverlay: {},
+        configuredAcp: {
+          backendId: 'review-bot',
+          title: 'Review Bot',
+          providerSessionId: 'vendor-parent-acp',
+          resolvedBackend: {
+            backendId: 'review-bot',
+            capabilities: { supportsLoadSession: true },
+          },
+          accountSettings: { settingsVersion: 1 },
+        },
+      } as never,
+      inheritedForkOverrides: { metadata: {}, spawn: {} },
+      forkSurface: { fork },
+      spawnSession: async (options) => await executeSpawnSessionRequest({
+        ...createParams(),
+        options,
+      }),
+      stopSession: vi.fn(async () => false),
+    });
+
+    expect(result).toEqual({ ok: true, childSessionId: 'child-acp' });
+    expect(fork).toHaveBeenCalledOnce();
+    expect(hoisted.acquireAuthoritativePluginRuntimeRegistryLease).toHaveBeenCalledOnce();
+    expect(resolveSpawnChildEnvironment).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({
+        backendTarget: configuredTarget,
+        resume: 'vendor-child-acp',
+      }),
+    }));
+    expect(routeSpawnModeAndWaitForWebhook).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({
+        backendTarget: configuredTarget,
+        resume: 'vendor-child-acp',
+      }),
+    }));
   });
 
   it('uses an explicit initial transcript cursor only for the attach payload', async () => {

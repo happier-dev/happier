@@ -15,7 +15,13 @@ import { attemptProviderNativeFork } from './attemptProviderNativeFork';
  * the only place that decides whether a provider-native attempt happens, so the
  * intent has to be admitted here or the Native card can never produce a fork.
  */
-function callWithStrategy(requestedStrategy: string) {
+function callWithStrategy(
+  requestedStrategy: string,
+  configuredAcp: null | Readonly<{
+    providerSessionId: string | null;
+    supportsLoadSession: boolean;
+  }> = null,
+) {
   return attemptProviderNativeFork({
     requestedStrategy,
     credentials: { token: 'token' },
@@ -28,10 +34,26 @@ function callWithStrategy(requestedStrategy: string) {
     effectiveCutoffSeqInclusive: 11,
     spawnNonce: 'nonce:native',
     forkBackendResolution: {
-      catalogAgentId: 'codex',
-      configuredAcp: null,
-      agentHintAgentId: 'codex',
-      backendTargetV2: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      catalogAgentId: configuredAcp ? null : 'codex',
+      configuredAcp: configuredAcp
+        ? {
+            providerSessionId: configuredAcp.providerSessionId,
+            resolvedBackend: {
+              capabilities: {
+                supportsLoadSession: configuredAcp.supportsLoadSession,
+              },
+            },
+          }
+        : null,
+      agentHintAgentId: configuredAcp ? 'acp:review-bot' : 'codex',
+      backendTargetV2: configuredAcp
+        ? {
+            kind: 'backend',
+            backendId: 'review-bot',
+            configuredBackendId: 'review-bot',
+            sourceKind: 'configured',
+          }
+        : { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
     },
     inheritedForkOverrides: { spawn: {} },
     forkSurface: { fork: vi.fn() },
@@ -59,6 +81,22 @@ describe('attemptProviderNativeFork strategy admission', () => {
 
   it('does not attempt a provider-native fork for an explicit replay request', async () => {
     await expect(callWithStrategy('replay')).resolves.toBeNull();
+    expect(mocks.dispatchProviderNativeFork).not.toHaveBeenCalled();
+  });
+
+  it('admits configured ACP only from the canonical load-session capability and parent identity', async () => {
+    await callWithStrategy('provider_native', {
+      providerSessionId: 'provider-parent',
+      supportsLoadSession: true,
+    });
+    expect(mocks.dispatchProviderNativeFork).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { providerSessionId: 'provider-parent', supportsLoadSession: false },
+    { providerSessionId: null, supportsLoadSession: true },
+  ])('does not duck-type an unsupported configured ACP fork from %o', async (configuredAcp) => {
+    await expect(callWithStrategy('provider_native', configuredAcp)).resolves.toBeNull();
     expect(mocks.dispatchProviderNativeFork).not.toHaveBeenCalled();
   });
 

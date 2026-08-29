@@ -56,6 +56,28 @@ function readAgentKeyedBackendModeEligibility(
   return readBackendModeEligibility(metadata[`${agentId}BackendMode`]);
 }
 
+/**
+ * Released CLI writers persisted the runtime selector as an agent-keyed key
+ * directly on the linked-session envelope. The protocol link reader is the
+ * sole owner that admits those rows, so only a valid released envelope may
+ * expose that exact compatibility key here. The link's embedded runtime
+ * descriptor stays provider-owned and opaque.
+ */
+function readReleasedLinkedSessionRuntimeModeEligibility(
+  metadata: Record<string, unknown>,
+  link: NonNullable<ReturnType<typeof readNonAuthoritativeLinkedExternalSessionV1FromMetadata>>,
+  agentId: string,
+): boolean | null {
+  const envelope = isRecord(metadata.externalSessionV1)
+    ? metadata.externalSessionV1
+    : isRecord(metadata.directSessionV1)
+      ? metadata.directSessionV1
+      : null;
+  if (!envelope || !Object.hasOwn(envelope, `${agentId}BackendMode`)) return null;
+  if (link.agentId !== agentId) return null;
+  return readBackendModeEligibility(envelope[`${agentId}BackendMode`]);
+}
+
 function resolveLegacyRuntimeBackendModeEligibility(metadata: Record<string, unknown>, agentId: string): boolean | null {
   const legacyRuntimeDescriptorRaw = metadata[`${agentId}RuntimeDescriptorV1`];
   const legacyRuntimeDescriptor = isRecord(legacyRuntimeDescriptorRaw)
@@ -76,7 +98,8 @@ function resolveLegacyRuntimeBackendModeEligibility(metadata: Record<string, unk
 
   const externalSessionLink = readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata);
   if (externalSessionLink?.agentId === agentId) {
-    const externalSessionEligibility = readAgentKeyedBackendModeEligibility(externalSessionLink, agentId);
+    const externalSessionEligibility = readAgentKeyedBackendModeEligibility(externalSessionLink, agentId)
+      ?? readReleasedLinkedSessionRuntimeModeEligibility(metadata, externalSessionLink, agentId);
     if (externalSessionEligibility !== null) return externalSessionEligibility;
   }
 

@@ -354,7 +354,7 @@ export class ApiMachineClient {
     private connectedAccountDaemonRuntime: ConnectedAccountDaemonRuntime | null = null;
     private connectedAccountPurposeBindingRuntime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
-        'listActionFormConnectedAccountOptions'
+        'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
     > | null = null;
     private sessionSpawnV1OutcomeRequired = false;
     private agentCatalogObservation: AgentProviderCatalogObservationService | null = null;
@@ -671,6 +671,13 @@ export class ApiMachineClient {
                         this.lifecycleDependencies.createCapabilitiesApiClient,
                 }
                 : {}),
+            activateCapabilitiesPurposeBindings: (input) => {
+                const runtime = this.connectedAccountPurposeBindingRuntime;
+                if (!runtime) {
+                    throw new Error('Connected Account purpose authority is unavailable for this capability probe');
+                }
+                return runtime.activatePurposeBindings(input);
+            },
             getAgentCatalogObservation: () => this.agentCatalogObservation
                 ? { machineId: this.machine.id, service: this.agentCatalogObservation }
                 : null,
@@ -970,7 +977,7 @@ export class ApiMachineClient {
 
     registerConnectedAccountPurposeBindingRuntime(runtime: Pick<
         DaemonConnectedAccountPurposeBindingRuntime,
-        'listActionFormConnectedAccountOptions'
+        'activatePurposeBindings' | 'listActionFormConnectedAccountOptions'
     >): void {
         this.connectedAccountPurposeBindingRuntime = runtime;
     }

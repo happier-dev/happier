@@ -132,6 +132,15 @@ function contribution(overrides: Partial<SpeechContribution> = {}): SpeechContri
           presentation: { control: overrides.catalogs?.some((catalog) => catalog.kind === 'voices')
             ? 'select'
             : 'text' },
+        }, {
+          id: 'format',
+          title: 'Format',
+          schema: { type: 'string', enum: ['mp3', 'wav'] },
+          default: 'wav',
+          presentation: {
+            control: 'select',
+            options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }],
+          },
         }],
       }
     : {
@@ -365,6 +374,11 @@ describe('unified Voice speech machine RPC', () => {
           isCurrent,
           retirementSignal: new AbortController().signal,
         }),
+        resolveCurrentPluginMaterializationRef: () => ({
+          pluginId: target.pluginId,
+          machineId: 'machine-a',
+          materializationId: 'materialization-7',
+        }),
         resolveConnectedAccountPurposeBindingOwner: () => ({
           getBinding: async () => ({
             purpose: 'voice.speech',
@@ -588,6 +602,11 @@ describe('unified Voice speech machine RPC', () => {
           generation: 'immutable-generation-9',
           isCurrent: runtimeIsCurrent,
           retirementSignal: new AbortController().signal,
+        }),
+        resolveCurrentPluginMaterializationRef: () => ({
+          pluginId: target.pluginId,
+          machineId: 'machine-a',
+          materializationId: 'materialization-9',
         }),
         resolveConnectedAccountPurposeBindingOwner: () => ({
           getBinding: async () => {
@@ -1069,13 +1088,11 @@ describe('unified Voice speech machine RPC', () => {
     const uploadId = await upload(handlers, new Uint8Array([1, 2, 3]));
 
     await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE)?.({
-      target, requestId: 'stt-1', model: 'gemini-2.5-flash', language: null,
-      mimeType: 'audio/wav', uploadId,
+      target, requestId: 'stt-1', mimeType: 'audio/wav', uploadId,
     })).resolves.toEqual({ ok: true, requestId: 'stt-1', text: 'hello' });
     const oversizedUploadId = await upload(handlers, new Uint8Array([1, 2, 3, 4]));
     await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_TRANSCRIBE)?.({
-      target, requestId: 'stt-2', model: 'gemini-2.5-flash', language: null,
-      mimeType: 'audio/wav', uploadId: oversizedUploadId,
+      target, requestId: 'stt-2', mimeType: 'audio/wav', uploadId: oversizedUploadId,
     })).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters' });
     expect(transcribe).toHaveBeenCalledTimes(1);
     await registration.dispose();
@@ -1098,8 +1115,7 @@ describe('unified Voice speech machine RPC', () => {
     const recipient = createTransferRecipientKeyPair();
 
     await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
-      target, requestId: 'tts-over', input: 'Hello', model: null, voiceName: 'en-US-A',
-      languageCode: null, format: 'wav', speakingRate: null, pitch: null,
+      target, requestId: 'tts-over', input: 'Hello',
       recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
     })).resolves.toEqual({ ok: false, errorCode: 'provider_response_invalid' });
     await registration.dispose();
@@ -1114,8 +1130,7 @@ describe('unified Voice speech machine RPC', () => {
     });
 
     await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
-      target, requestId: 'tts-invalid-key', input: 'Hello', model: null, voiceName: 'en-US-A',
-      languageCode: null, format: 'wav', speakingRate: null, pitch: null,
+      target, requestId: 'tts-invalid-key', input: 'Hello',
       recipientPublicKeyBase64: Buffer.alloc(31).toString('base64'),
     })).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters' });
     expect(resolveSpeechRuntime).not.toHaveBeenCalled();
@@ -1139,8 +1154,7 @@ describe('unified Voice speech machine RPC', () => {
     const recipient = createTransferRecipientKeyPair();
 
     await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
-      target, requestId: 'tts-request-id', input: 'Hello', model: null, voiceName: 'en-US-A',
-      languageCode: null, format: 'wav', speakingRate: null, pitch: null,
+      target, requestId: 'tts-request-id', input: 'Hello',
       recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
     })).resolves.toEqual({ ok: false, errorCode: 'provider_response_invalid' });
     await registration.dispose();
@@ -1154,7 +1168,7 @@ describe('unified Voice speech machine RPC', () => {
     const synthesize = vi.fn(async (request, context) => {
       expect(request).toEqual({
         requestId: 'tts-1', input: 'Hello', model: null, voiceName: 'en-US-A',
-        languageCode: 'en-US', format: 'wav', speakingRate: null, pitch: null,
+        languageCode: null, format: 'wav', speakingRate: null, pitch: null,
       });
       expect(request).not.toHaveProperty('recipientPublicKeyBase64');
       expect(context.credentials).toBe(credentials);
@@ -1169,8 +1183,7 @@ describe('unified Voice speech machine RPC', () => {
     });
     const recipient = createTransferRecipientKeyPair();
     const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
-      target, requestId: 'tts-1', input: 'Hello', model: null, voiceName: 'en-US-A',
-      languageCode: 'en-US', format: 'wav', speakingRate: null, pitch: null,
+      target, requestId: 'tts-1', input: 'Hello',
       recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
     }) as Readonly<{ ok: true; downloadId: string }>;
     providerBytes.fill(8);
@@ -1185,6 +1198,67 @@ describe('unified Voice speech machine RPC', () => {
       encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64,
       recipientSecretKeySeed: recipient.recipientSecretKeySeed,
     })]).toEqual([1, 2, 3]);
+    await registration.dispose();
+  });
+
+  it('derives every ordinary synthesis setting from the admitted immutable daemon snapshot', async () => {
+    const { handlers, registrar } = manager();
+    const snapshotSettings = Object.freeze({
+      voiceName: 'snapshot-voice',
+      languageCode: 'fr-FR',
+      format: 'wav',
+      speakingRate: 1.25,
+      pitch: -2,
+    });
+    const definition = contribution({
+      roles: ['conversation_tts'],
+      settings: {
+        schemaVersion: 2,
+        fields: [
+          { id: 'voiceName', title: 'Voice', schema: { type: 'string', minLength: 1, maxLength: 256 }, default: 'default-voice', presentation: { control: 'text' } },
+          { id: 'languageCode', title: 'Language', schema: { type: 'string', maxLength: 64 }, default: '', presentation: { control: 'text' } },
+          { id: 'format', title: 'Format', schema: { type: 'string', enum: ['mp3', 'wav'] }, default: 'mp3', presentation: { control: 'select', options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }] } },
+          { id: 'speakingRate', title: 'Rate', schema: { type: 'number', minimum: 0.25, maximum: 4 }, default: 1, presentation: { control: 'number' } },
+          { id: 'pitch', title: 'Pitch', schema: { type: 'number', minimum: -20, maximum: 20 }, default: 0, presentation: { control: 'number' } },
+        ],
+      },
+    });
+    const synthesize = vi.fn(async (request) => {
+      expect(request).toEqual({
+        requestId: 'tts-snapshot',
+        input: 'Hello',
+        model: null,
+        ...snapshotSettings,
+      });
+      return { requestId: request.requestId, bytes: new Uint8Array([1]), mimeType: 'audio/wav' as const };
+    });
+    const registration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager: registrar as never,
+      resolveSpeechRuntime: vi.fn(async (): Promise<VoiceSpeechRuntimeLease> => ({
+        runtime: { kind: 'speech', synthesize },
+        contribution: definition,
+        readSettings: () => Object.freeze({
+          settings: snapshotSettings,
+          resolveCredentials: () => credentials,
+          isCurrent: () => true,
+        }),
+        createHttp: () => http,
+        isCurrent: () => true,
+        retirementSignal: new AbortController().signal,
+        release: vi.fn(async () => undefined),
+      })),
+    });
+    const recipient = createTransferRecipientKeyPair();
+
+    const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
+      target,
+      requestId: 'tts-snapshot',
+      input: 'Hello',
+      recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+    });
+
+    expect(response).toMatchObject({ ok: true, requestId: 'tts-snapshot', mimeType: 'audio/wav' });
+    expect(synthesize).toHaveBeenCalledOnce();
     await registration.dispose();
   });
 
@@ -1205,8 +1279,7 @@ describe('unified Voice speech machine RPC', () => {
     });
     const recipient = createTransferRecipientKeyPair();
     const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
-      target, requestId: 'tts-2', input: 'Hello', model: null, voiceName: 'en-US-A',
-      languageCode: null, format: 'wav', speakingRate: null, pitch: null,
+      target, requestId: 'tts-2', input: 'Hello',
       recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
     });
 
@@ -1322,6 +1395,11 @@ describe('unified Voice speech machine RPC', () => {
           isCurrent: current,
           retirementSignal: new AbortController().signal,
         }),
+        resolveCurrentPluginMaterializationRef: () => ({
+          pluginId: target.pluginId,
+          machineId: 'machine-a',
+          materializationId: 'materialization-8',
+        }),
         resolveConnectedAccountPurposeBindingOwner: () => ({
           materialize: connectedMaterialize,
         }),
@@ -1346,7 +1424,6 @@ describe('unified Voice speech machine RPC', () => {
     const response = await executeSettingsAction({
       target,
       actionId: settingsAction.id,
-      settings: providerConfig,
       expectedSettingsVersion: 1,
     });
     expect(execute).toHaveBeenCalledTimes(1);
@@ -1357,7 +1434,7 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
-  it('executes a declared speech settings action with its exact UI snapshot and fences a lagging daemon snapshot', async () => {
+  it('executes a declared speech settings action with its exact daemon snapshot and fences a lagging revision', async () => {
     const { handlers, registrar } = manager();
     const settingsActionCredentials: VoiceCredentialAccess<'settings'> = Object.freeze({
       phase: 'settings', mediated: null, raw: null,
@@ -1365,7 +1442,7 @@ describe('unified Voice speech machine RPC', () => {
     let current = true;
     let retireAfterExecution = false;
     const execute: NonNullable<VoiceSpeechRuntimeLease['runtime']['settingsActions']>['execute'] = vi.fn(async (input, context) => {
-      expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'ui-captured-voice' } });
+      expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'lagging-daemon-voice' } });
       expect(context.credentials).toBe(settingsActionCredentials);
       expect(context.credentials.phase).toBe('settings');
       expect(context.signal.aborted).toBe(false);
@@ -1427,7 +1504,6 @@ describe('unified Voice speech machine RPC', () => {
     await expect(executeSettingsAction({
       target,
       actionId: 'refresh-voice',
-      settings: { voiceName: 'ui-captured-voice' },
       expectedSettingsVersion: 6,
     })).resolves.toEqual({
       ok: false,
@@ -1438,7 +1514,6 @@ describe('unified Voice speech machine RPC', () => {
     await expect(executeSettingsAction({
       target,
       actionId: 'refresh-voice',
-      settings: { voiceName: 'ui-captured-voice' },
       expectedSettingsVersion: 7,
     })).resolves.toEqual({
       ok: true,
@@ -1450,7 +1525,6 @@ describe('unified Voice speech machine RPC', () => {
     await expect(executeSettingsAction({
       target,
       actionId: 'refresh-voice',
-      settings: { voiceName: 'ui-captured-voice' },
       expectedSettingsVersion: 7,
     })).resolves.toMatchObject({
       ok: false,

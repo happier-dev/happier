@@ -3,14 +3,26 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 /**
- * Canonical reader for "which Agents are installed right now".
+ * The one active-first reader for the current contribution registry.
  *
- * The module-level `getResolvedContributionRegistry()` cache holds whatever was
- * last primed — built-ins only until a prime runs, and never a plugin reload
- * that happened afterwards. The plugin reload controller's active registry is
- * the merged built-in + external projection, so it answers first whenever it is
- * current. Reading the cold cache directly makes an externally contributed
- * Agent invisible; every Agent-catalog reader goes through here.
+ * The built-in snapshot from `getResolvedContributionRegistry()` is immutable
+ * and never reflects an installed plugin or a reload. The plugin reload
+ * controller's active registry is the merged built-in + external projection,
+ * so it answers first whenever it is current; otherwise this falls back to the
+ * built-in snapshot. Readers must not reach into either source directly: the
+ * cold snapshot alone makes an externally contributed contribution invisible,
+ * and a retained active registry can outlive its generation.
+ */
+export function readCurrentContributionRegistry(): ResolvedContributionRegistry {
+  const activeRegistry = pluginReloadController.getState().activeRegistry;
+  if (activeRegistry && pluginReloadController.isRuntimeRegistryCurrent(activeRegistry)) {
+    return activeRegistry.contributes;
+  }
+  return getResolvedContributionRegistry();
+}
+
+/**
+ * Canonical reader for "which Agents are installed right now".
  *
  * `executionRunProfiles` travels with the same projection because the profile
  * that declares an Agent a review engine is contributed by the same plugin as
@@ -21,9 +33,5 @@ export function readAgentCatalogSnapshot(): Pick<
   ResolvedContributionRegistry,
   'agentDefinitionsById' | 'catalogEntriesById' | 'executionRunProfiles'
 > {
-  const activeRegistry = pluginReloadController.getState().activeRegistry;
-  if (activeRegistry && pluginReloadController.isRuntimeRegistryCurrent(activeRegistry)) {
-    return activeRegistry.contributes;
-  }
-  return getResolvedContributionRegistry();
+  return readCurrentContributionRegistry();
 }

@@ -19,6 +19,7 @@ const runtimeControlKeys = [
   'handleUserMessage',
   'preparePendingMessageComposerAdmission',
   'acceptPendingMessageComposerAdmission',
+  'abandonPendingMessageComposerAdmission',
 ] as const satisfies readonly (keyof SessionRuntimeControls)[];
 
 export function applySessionRuntimeControls(

@@ -17,9 +17,10 @@ type ParsedSessionMetadataLayout =
     }>;
 
 export function readSessionMetadataLayoutVersion(value: unknown): number {
+  if (value === undefined) return 0;
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     ? value
-    : 0;
+    : -1;
 }
 
 function tryParseSessionMetadataLayout(

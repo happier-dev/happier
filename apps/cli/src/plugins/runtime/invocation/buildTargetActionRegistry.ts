@@ -46,7 +46,10 @@ import type {
     PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
-import { readPluginActionInputParser } from '@happier-dev/plugin-sdk/host/registration';
+import {
+    readPluginActionInputParser,
+    readPluginActionResultParser,
+} from '@happier-dev/plugin-sdk/host/registration';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -220,6 +223,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             }
             const hostAccessIds = readStringArray(actionDefinition.hostAccess);
             const inputParser = readPluginActionInputParser(capturedHandler);
+            const resultParser = readPluginActionResultParser(capturedHandler);
             expectedActionKeys.delete(`${entry.pluginId}\u0000${entry.registration.localId}`);
             return [{
                 family: 'actions',
@@ -246,6 +250,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }),
                 },
                 ...(inputParser === undefined ? {} : { inputParser }),
+                ...(resultParser === undefined ? {} : { resultParser }),
                 handler: (input: JsonValue, context: PluginInvocationContext) => invokeCapturedDaemonActionHandler(
                     capturedHandler,
                     input,

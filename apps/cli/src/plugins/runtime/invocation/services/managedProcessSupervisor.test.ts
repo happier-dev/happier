@@ -664,6 +664,47 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         expect(durability.releaseEndpointProjection).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps a no-health managed spawn unhealthy and unpublished after terminal settlement during establishment', async () => {
+        const processResult = deferred<PluginProcessResult>();
+        const process = createProcess(4242, processResult);
+        const exec = createExec([process]);
+        const identityGate = deferred<void>();
+        const durability = createDurability();
+        const host = createManagedServiceProcessSupervisorHost({
+            createInstanceId: () => 'opaque-terminal-no-health',
+            durability,
+            // Suspending exact-process identity capture keeps establishment
+            // open while the supervised process settles, so the readiness
+            // decision at the end of establishment races a terminal fact.
+            captureProcessStartIdentity: async () => {
+                await identityGate.promise;
+                return 'start-4242';
+            },
+        });
+        const servers = host.bind({
+            generation: 'generation-terminal',
+            pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent',
+            sessionId: 'session-terminal',
+            isGenerationCurrent: () => true,
+            exec,
+        });
+
+        const supervision = servers.supervise(managedSpec('terminal-server'));
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        processResult.resolve(CLEAN_EXIT);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        identityGate.resolve();
+
+        const handle = await supervision;
+        expect(handle.snapshot().state).toBe('unhealthy');
+        expect(handle.snapshot().diagnostics.map(({ code }) => code))
+            .toContain('plugin_managed_server_process_exited');
+        expect(durability.publishEndpointProjection).not.toHaveBeenCalled();
+        await expect(handle.waitUntilHealthy({ timeoutMs: 30_000 })).rejects
+            .toMatchObject({ code: 'plugin_managed_server_process_exited' });
+    });
+
     it('resolves an authorized packaged runtime from the surviving runner snapshot after daemon authorization', async () => {
         const process = createProcess(5252);
         const exec = createExec([process]);

@@ -7,6 +7,8 @@ import {
     hasRawComposerAttachmentSelectionV1,
     readVoiceAgentTurnPayloadFromMeta,
     validatePluginHookPayloadV1,
+    SessionMediaMessageMetaV1Schema,
+    type SessionMediaMessageMetaV1,
     type ComposerAttachmentInputV1,
     type ComposerContentHandleV1,
 } from '@happier-dev/protocol';
@@ -74,6 +76,17 @@ type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
 type SessionEventType = 'ready';
 
+function readSessionMediaMetadata(meta: Readonly<Record<string, unknown>>): Readonly<{
+    key: 'happier' | 'happierMedia';
+    envelope: SessionMediaMessageMetaV1;
+}> | undefined {
+    for (const key of ['happierMedia', 'happier'] as const) {
+        const parsed = SessionMediaMessageMetaV1Schema.safeParse(meta[key]);
+        if (parsed.success) return { key, envelope: parsed.data };
+    }
+    return undefined;
+}
+
 type EnqueueCommittedTranscriptMessageParams = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
@@ -122,7 +135,10 @@ export type SessionInputAdmissionSettlement = Readonly<{
     onAccepted: () => Promise<void> | void;
     onDefinitiveAdmissionFailure: () => Promise<void> | void;
     /** Opaque target-daemon claims forwarded only through the Pending accepted fact. */
-    stagedMediaHandles?: readonly ComposerContentHandleV1[];
+  stagedMediaHandles?: readonly ComposerContentHandleV1[];
+  /** Existing finalizer facts used only to abandon a prepare before PATCH. */
+  createdWorkspaceRelativePaths?: readonly string[];
+  workingDirectory?: string;
 }>;
 
 export type SessionInputTransformBeforeCommitResult =
@@ -170,7 +186,13 @@ function normalizeSessionInputTransformBeforeCommitResult(
             settlement: {
                 onAccepted,
                 onDefinitiveAdmissionFailure,
-                ...(stagedMediaHandles ? { stagedMediaHandles } : {}),
+            ...(stagedMediaHandles ? { stagedMediaHandles } : {}),
+                ...(Array.isArray(settlement?.createdWorkspaceRelativePaths)
+                    ? { createdWorkspaceRelativePaths: settlement.createdWorkspaceRelativePaths as readonly string[] }
+                    : {}),
+                ...(typeof settlement?.workingDirectory === 'string'
+                    ? { workingDirectory: settlement.workingDirectory }
+                    : {}),
             },
         };
     }
@@ -273,6 +295,14 @@ export type SessionClientTranscriptApi = Readonly<{
         meta: Record<string, unknown>;
         composerAttachments: readonly ComposerAttachmentInputV1[];
         stagedMediaHandles: readonly ComposerContentHandleV1[];
+        sessionMediaMetadata?: Readonly<{
+            key: 'happier' | 'happierMedia';
+            envelope: import('@happier-dev/protocol').SessionMediaMessageMetaV1;
+        }>;
+        sessionMediaCleanup?: Readonly<{
+            workingDirectory: string;
+            createdWorkspaceRelativePaths: readonly string[];
+        }>;
     }>>;
     enqueueAgentMessageCommitted: (
         provider: ACPProvider,
@@ -661,13 +691,26 @@ export function createSessionClientTranscriptApi(
             });
             // Pending persistence is deliberately outside this API. Its canonical PATCH
             // owner decides acceptance; uncalled settlement callbacks retain custody.
+            const sessionMediaMetadata = readSessionMediaMetadata(transformed.meta);
             return {
                 text: transformed.text,
                 meta: transformed.meta,
                 composerAttachments: transformed.composerAttachments,
                 stagedMediaHandles: transformed.settlement?.stagedMediaHandles ?? [],
+                ...(sessionMediaMetadata ? { sessionMediaMetadata } : {}),
+                ...(transformed.settlement
+                    && transformed.settlement.workingDirectory
+                    && transformed.settlement.createdWorkspaceRelativePaths
+                    ? {
+                        sessionMediaCleanup: {
+                            workingDirectory: transformed.settlement.workingDirectory,
+                            createdWorkspaceRelativePaths: transformed.settlement.createdWorkspaceRelativePaths,
+                        },
+                    }
+                    : {}),
             };
         },
+
 
         async enqueueSessionEventCommitted(event, id) {
             const prepared = prepareSessionEventMessageViaPort(getTranscriptSendPort(), event, id);

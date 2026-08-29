@@ -275,12 +275,13 @@ describe('runtime provider services', () => {
       settingsSecretsReadKeys: [],
       scopeKey: 'account-a',
     }));
+    const resolveAddresses = vi.fn(async () => ['1.1.1.1']);
     const services = createRuntimeProviderServices({
       machineId: 'machine-a',
       happyHomeDir,
       registry,
       runtimeStore,
-      resolveAddresses: async () => ['1.1.1.1'],
+      resolveAddresses,
       client: createProviderProbeHttpClient({
         resolveAddresses: async () => ['1.1.1.1'],
         transport,
@@ -302,17 +303,23 @@ describe('runtime provider services', () => {
     await vi.waitFor(() => expect(releases).toHaveLength(4));
 
     const queued = services.probe({ connectionId, machineId: 'machine-a' });
-    await vi.waitFor(() => expect(scheduled).toHaveBeenCalledTimes(5));
+    // DNS is the first admitted Provider operation. It is queued behind the
+    // occupied catalog work, so no catalog request or resolver may start yet.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(scheduled).toHaveBeenCalledTimes(4);
+    expect(resolveAddresses).not.toHaveBeenCalled();
     const settingsReadsAtAdmission = getAccountSettingsSnapshot.mock.calls.length;
     enabled = false;
     for (const release of releases.splice(0)) release();
 
     await expect(queued).resolves.toMatchObject({
       status: 'error',
-      error: { code: 'provider_endpoint_unavailable' },
+      error: { code: 'provider_feature_disabled' },
     });
     await expect(Promise.all(occupied)).resolves.toHaveLength(4);
     expect(getAccountSettingsSnapshot).toHaveBeenCalledTimes(settingsReadsAtAdmission);
+    expect(resolveAddresses).not.toHaveBeenCalled();
+    expect(scheduled).toHaveBeenCalledTimes(4);
     expect(transport).not.toHaveBeenCalled();
     expect(runtimeStore.update).not.toHaveBeenCalled();
   });

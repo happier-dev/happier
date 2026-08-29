@@ -156,6 +156,40 @@ function createBridge(params: Readonly<{
   } as unknown as ReturnType<typeof getSessionHostBridge>;
 }
 
+function createConfiguredAcpBridge(params: Readonly<{
+  supportsLoadSession: boolean;
+  providerSessionId?: string | null;
+}>): ReturnType<typeof getSessionHostBridge> {
+  const bridge = createBridge({ forkSurface: { fork: vi.fn() } });
+  const resolveSessionForkBackendTarget = vi.fn(async () => ({
+    ok: true as const,
+    catalogAgentId: null,
+    agentHintAgentId: 'acp:review-bot',
+    backendTargetV2: {
+      kind: 'backend' as const,
+      backendId: 'review-bot',
+      sourceKind: 'configured' as const,
+      configuredBackendId: 'review-bot',
+    },
+    backendTarget: { kind: 'configuredAcpBackend' as const, backendId: 'review-bot' },
+    replayFlavor: 'acp:review-bot',
+    metadataOverlay: {},
+    configuredAcp: {
+      backendId: 'review-bot',
+      title: 'Review Bot',
+      providerSessionId: params.providerSessionId ?? 'provider-parent',
+      resolvedBackend: {
+        capabilities: { supportsLoadSession: params.supportsLoadSession },
+      },
+      accountSettings: {},
+    },
+  }));
+  return {
+    ...bridge,
+    resolveSessionForkBackendTarget,
+  } as unknown as ReturnType<typeof getSessionHostBridge>;
+}
+
 describe('createForkSessionLifecycleActionHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -182,6 +216,70 @@ describe('createForkSessionLifecycleActionHandler', () => {
     mocks.forkAgentId = 'codex';
     mocks.nativeForkOpenModes.length = 0;
     mocks.declarationSource = 'cold';
+  });
+
+  it('routes a load-session-capable configured ACP fork through daemon spawn preparation', async () => {
+    mocks.attemptAcpLatestFork.mockResolvedValue({ ok: true, childSessionId: 'child-acp' });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createConfiguredAcpBridge({ supportsLoadSession: true }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    })).resolves.toEqual({ ok: true, childSessionId: 'child-acp' });
+
+    expect(mocks.attemptAcpLatestFork).toHaveBeenCalledWith(expect.objectContaining({
+      forkIsConfiguredAcp: true,
+      forkBackendResolution: expect.objectContaining({
+        configuredAcp: expect.objectContaining({
+          providerSessionId: 'provider-parent',
+          resolvedBackend: expect.objectContaining({
+            capabilities: { supportsLoadSession: true },
+          }),
+        }),
+      }),
+    }));
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
+  });
+
+  it('falls back to replay for automatic configured ACP fork without load-session support', async () => {
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createConfiguredAcpBridge({ supportsLoadSession: false }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    })).resolves.toEqual({ ok: true, childSessionId: 'child-replay' });
+
+    expect(mocks.attemptAcpLatestFork).not.toHaveBeenCalled();
+    expect(mocks.createReplayForkSession).toHaveBeenCalledOnce();
+  });
+
+  it('returns a typed refusal for explicit configured ACP latest without load-session support', async () => {
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createConfiguredAcpBridge({ supportsLoadSession: false }),
+      handlers: { spawnSession: vi.fn(), stopSession: vi.fn() },
+    });
+
+    await expect(handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'acp_fork_latest',
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'INVALID_REQUEST',
+    });
+    expect(mocks.attemptAcpLatestFork).not.toHaveBeenCalled();
+    expect(mocks.createReplayForkSession).not.toHaveBeenCalled();
   });
 
   it('acknowledges a cancellation signal before entering the fork mutation owner', async () => {

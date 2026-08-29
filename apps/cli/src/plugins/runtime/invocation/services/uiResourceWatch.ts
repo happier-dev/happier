@@ -399,6 +399,10 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 fail('plugin_resource_subscription_busy', 'Resource watch subscription already has a poll in flight');
             }
             watch.lastPolledAtMs = nowMs();
+            if (nextParams.signal?.aborted) {
+                releaseWatch(watch, null);
+                return { status: 'idle' };
+            }
             if (!isWatchCurrent(watch)) {
                 releaseWatch(watch, null);
                 return {
@@ -423,7 +427,16 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                     if (watch.waiter === settle) watch.waiter = null;
                     resolve(result);
                 };
-                const onAbort = (): void => { settle({ status: 'idle' }); };
+                const onAbort = (): void => {
+                    settle({ status: 'idle' });
+                    // The transport owning this poll is gone and no further
+                    // call from this surface may ever arrive, so release the
+                    // exact watch now: the producer stops observing and the
+                    // subscription leaves the map. A client that still wants
+                    // the resource re-opens, which is the documented reconnect
+                    // path — this owner adds no timer sweeper or count cap.
+                    releaseWatch(watch, null);
+                };
                 const timer = setTimeout(() => { settle({ status: 'idle' }); }, waitMs);
                 timer.unref?.();
                 nextParams.signal?.addEventListener('abort', onAbort, { once: true });

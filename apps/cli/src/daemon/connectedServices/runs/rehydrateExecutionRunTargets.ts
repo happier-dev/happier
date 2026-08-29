@@ -1,4 +1,6 @@
 import {
+  ExecutionRunConnectedServicesCleanupReceiptV1Schema,
+  ExecutionRunConnectedServicesLaunchV1Schema,
   isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
   normalizePersistedExecutionRunConnectedServicesLaunchV1,
 } from '@happier-dev/protocol';
@@ -16,6 +18,66 @@ type CandidateMarker = Readonly<{
   executionRunConnectedServicesLaunchV1?: unknown;
   executionRunConnectedServicesCleanupReceiptV1?: unknown;
 }>;
+
+/**
+ * Re-attests one still-running current-writer run over the existing scoped
+ * runner/daemon channel. The public marker remains cleanup-only: its receipt
+ * can only join the runner-carried registration to the exact running
+ * run/activation/Agent and never supplies bindings, paths, or authority itself.
+ */
+export async function reattestRunningExecutionRunConnectedServices(input: Readonly<{
+  markers: readonly CandidateMarker[] | (() => Promise<readonly CandidateMarker[]>);
+  runId: string;
+  runnerPid: number;
+  registration: unknown;
+  proveRunnerLive: (marker: CandidateMarker) => boolean | Promise<boolean>;
+  adopt: ExecutionRunConnectedServicesBridge['adoptLiveMaterialization'];
+}>): Promise<boolean> {
+  const parsedRegistration =
+    ExecutionRunConnectedServicesLaunchV1Schema.safeParse(input.registration);
+  if (!parsedRegistration.success) return false;
+  const registration = parsedRegistration.data;
+  if (
+    !registration.activationId
+    || registration.runKey !== input.runId
+    || registration.materializationKey !== input.runId
+  ) {
+    return false;
+  }
+  const markers = typeof input.markers === 'function'
+    ? await input.markers()
+    : input.markers;
+  const matches = markers.filter((marker) => marker.runId === input.runId);
+  if (matches.length !== 1) return false;
+  const marker = matches[0]!;
+  if (
+    marker.pid !== input.runnerPid
+    || marker.happySessionId === null
+    || marker.status !== 'running'
+    || typeof marker.finishedAtMs === 'number'
+  ) {
+    return false;
+  }
+  const parsedReceipt =
+    ExecutionRunConnectedServicesCleanupReceiptV1Schema.safeParse(
+      marker.executionRunConnectedServicesCleanupReceiptV1,
+    );
+  if (
+    !parsedReceipt.success
+    || parsedReceipt.data.runKey !== registration.runKey
+    || parsedReceipt.data.activationId !== registration.activationId
+    || parsedReceipt.data.agentId !== registration.agentId
+    || !(await input.proveRunnerLive(marker))
+  ) {
+    return false;
+  }
+  return await input.adopt({
+    runId: input.runId,
+    runnerPid: input.runnerPid,
+    sessionId: marker.happySessionId,
+    persistedLaunch: registration,
+  });
+}
 
 /**
  * Rebuilds daemon-local run distribution and cleanup ownership only after runner liveness is

@@ -975,6 +975,13 @@ describe('immutable plugin generation store', () => {
     const packageEntryPath = join(packageRoot, 'dist', 'index.js');
     const daemonEntryPath = join(packageRoot, '.happier-plugin', 'daemon.js');
     const daemonBytes = 'export const activate = () => undefined;';
+    const packageMetadataBytes = JSON.stringify({
+      name: '@happier-dev/plugins-review-runtime-root-fixture',
+      type: 'module',
+      // The immutable artifact identifies its physical entry itself. It must
+      // not depend on the package root export being resolvable by the host.
+      exports: { './daemon': './.happier-plugin/daemon.js' },
+    });
     const record = {
       t: 'happier_plugin_generation_v1' as const,
       schemaVersion: 1 as const,
@@ -985,7 +992,7 @@ describe('immutable plugin generation store', () => {
       files: [
         { relativePath: '.happier-plugin/daemon.js', byteLength: Buffer.byteLength(daemonBytes) },
         { relativePath: 'dist/index.js', byteLength: Buffer.byteLength('export default 1') },
-        { relativePath: 'package.json', byteLength: 2 },
+        { relativePath: 'package.json', byteLength: Buffer.byteLength(packageMetadataBytes) },
       ],
     };
     try {
@@ -994,13 +1001,7 @@ describe('immutable plugin generation store', () => {
       await mkdir(join(packageRoot, '.happier-plugin'), { recursive: true });
       await writeFile(packageEntryPath, 'export default 1', 'utf8');
       await writeFile(daemonEntryPath, daemonBytes, 'utf8');
-      await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
-        name: '@happier-dev/plugins-review-runtime-root-fixture',
-        type: 'module',
-        // The immutable artifact identifies its physical entry itself. It must
-        // not depend on the package root export being resolvable by the host.
-        exports: { './daemon': './.happier-plugin/daemon.js' },
-      }), 'utf8');
+      await writeFile(join(packageRoot, 'package.json'), packageMetadataBytes, 'utf8');
 
       const current = await readCurrentCommittedPluginGenerations(paths, {
         bundledArtifacts: [{
@@ -1013,8 +1014,14 @@ describe('immutable plugin generation store', () => {
 
       expect(current?.generations.get(record.pluginId)).toMatchObject({
         immutableGenerationId: record.immutableGenerationId,
-        rootPath: await realpath(packageRoot),
+        rootPath: join(paths.generationsDir, record.immutableGenerationId),
       });
+      await expect(readFile(join(
+        paths.generationsDir,
+        record.immutableGenerationId,
+        '.happier-plugin',
+        'daemon.js',
+      ), 'utf8')).resolves.toBe(daemonBytes);
     } finally {
       packagedRuntime.root = '';
       await rm(happyHomeDir, { recursive: true, force: true });
@@ -1068,7 +1075,7 @@ describe('immutable plugin generation store', () => {
     }
   });
 
-  it('rejects a bundled artifact whose published daemon entry is absent from the package tree or its inventory', async () => {
+  it('keeps an adopted bundled daemon entry in immutable daemon custody after the mutable package tree changes', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-daemon-'));
     const packageRoot = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-daemon-package-'));
     const paths = resolvePluginStorePaths({ happyHomeDir });
@@ -1108,31 +1115,69 @@ describe('immutable plugin generation store', () => {
       const admitted = await readCurrentCommittedPluginGenerations(paths, options);
       expect(admitted?.generations.get(record.pluginId)).toMatchObject({
         immutableGenerationId: record.immutableGenerationId,
-        rootPath: await realpath(packageRoot),
+        rootPath: join(paths.generationsDir, record.immutableGenerationId),
       });
+      await expect(readFile(join(
+        paths.generationsDir,
+        record.immutableGenerationId,
+        '.happier-plugin',
+        'daemon.js',
+      ), 'utf8')).resolves.toBe(daemonBytes);
 
-      // A published daemon runtime that the package tree no longer carries must not be
-      // admitted behind an intact package root export.
       await rm(daemonEntryPath);
       const missingDaemon = await readCurrentCommittedPluginGenerations(paths, options);
+      expect(missingDaemon?.generations.get(record.pluginId)).toMatchObject({
+        immutableGenerationId: record.immutableGenerationId,
+        rootPath: join(paths.generationsDir, record.immutableGenerationId),
+      });
+      expect([...missingDaemon!.unavailableBundledPackageNames]).toEqual([]);
+      await expect(readFile(join(
+        paths.generationsDir,
+        record.immutableGenerationId,
+        '.happier-plugin',
+        'daemon.js',
+      ), 'utf8')).resolves.toBe(daemonBytes);
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a fresh home has not yet adopted the published bundled daemon entry', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-daemon-fresh-'));
+    const packageRoot = await mkdtemp(join(tmpdir(), 'happier-generation-bundled-daemon-fresh-package-'));
+    const paths = resolvePluginStorePaths({ happyHomeDir });
+    const packageEntryPath = join(packageRoot, 'dist', 'index.js');
+    const daemonBytes = 'export const activate = () => undefined;';
+    const record = {
+      t: 'happier_plugin_generation_v1' as const,
+      schemaVersion: 1 as const,
+      pluginId: 'happier.review.daemon-fixture',
+      immutableGenerationId: 'bundled-generation-daemon',
+      createdAtMs: 0,
+      manifestRelativePath: 'package.json',
+      files: [
+        { relativePath: '.happier-plugin/daemon.js', byteLength: Buffer.byteLength(daemonBytes) },
+        { relativePath: 'dist/index.js', byteLength: Buffer.byteLength('export default 1') },
+        { relativePath: 'package.json', byteLength: 2 },
+      ],
+    };
+    try {
+      await mkdir(join(packageRoot, 'dist'), { recursive: true });
+      await writeFile(packageEntryPath, 'export default 1', 'utf8');
+      await writeFile(join(packageRoot, 'package.json'), '{}', 'utf8');
+
+      const missingDaemon = await readCurrentCommittedPluginGenerations(paths, {
+        bundledArtifacts: [{
+          packageName: '@happier-dev/plugins-review-daemon-fixture',
+          packageEntryRelativePath: 'dist/index.js',
+          daemonEntryRelativePath: '.happier-plugin/daemon.js',
+          record,
+        }],
+        resolveBundledPackageEntry: async () => packageEntryPath,
+      });
       expect(missingDaemon?.generations.size).toBe(0);
       expect([...missingDaemon!.unavailableBundledPackageNames])
-        .toEqual(['@happier-dev/plugins-review-daemon-fixture']);
-
-      // A daemon runtime the generation inventory does not publish is not admitted either.
-      await writeFile(daemonEntryPath, daemonBytes, 'utf8');
-      const uninventoriedDaemon = await readCurrentCommittedPluginGenerations(paths, {
-        ...options,
-        bundledArtifacts: [{
-          ...artifact,
-          record: {
-            ...record,
-            files: record.files.filter((file) => file.relativePath !== '.happier-plugin/daemon.js'),
-          },
-        }],
-      });
-      expect(uninventoriedDaemon?.generations.size).toBe(0);
-      expect([...uninventoriedDaemon!.unavailableBundledPackageNames])
         .toEqual(['@happier-dev/plugins-review-daemon-fixture']);
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });

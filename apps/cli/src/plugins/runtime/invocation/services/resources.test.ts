@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createContext, Script } from 'node:vm';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -564,6 +565,33 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
 
         subscription.dispose();
         expect(invalidate).toBeNull();
+    });
+
+    it('accepts cross-realm Uint8Array dynamic resource bytes and rejects other views', async () => {
+        const realmBytes = new Script('new Uint8Array([7, 8, 9])').runInContext(createContext({})) as Uint8Array;
+        let produced: unknown = realmBytes;
+        const owner = await createStablePluginResourcesOwner({
+            registry: registry([dynamicContribution('acme.alpha', 'live')]),
+            generations: new Map(),
+            immutableGenerationIdsByPluginId: new Map([['acme.alpha', 'alpha-dynamic-9']]),
+            dynamicProducers: [{
+                pluginId: 'acme.alpha',
+                localId: 'live',
+                runtime: {
+                    read: () => produced,
+                    observe: () => ({ dispose: () => {} }),
+                },
+            }],
+        });
+        const service = owner.bind({
+            pluginId: 'acme.alpha', signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        });
+
+        await expect(service.read('live')).resolves.toMatchObject({ bytes: new Uint8Array([7, 8, 9]) });
+
+        produced = new Int8Array([7, 8, 9]);
+        await expect(service.read('live')).rejects.toMatchObject({ code: 'plugin_resource_producer_invalid' });
     });
 
     it('suppresses an invalidation whose bytes did not actually change', async () => {

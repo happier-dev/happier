@@ -30,6 +30,7 @@ export type {
 import type { CatalogAgentId, CatalogAgentLookupId, VendorResumeSupportLevel } from '@/agent/catalog/ids';
 import type {
   AgentCliSessionCommandBuildInputV1,
+  AgentCliSessionCommandOptionsV1,
   AgentConnectedAccountEnvironmentUseV1,
   AgentConnectedAccountFileEnvironmentUseV1,
   AgentConnectedAccountSwitchContinuityV1,
@@ -84,7 +85,7 @@ export type VendorResumeSupportParams = AgentExperimentalVendorResumeSupportInpu
 
 export type VendorResumeSupportFn = (params: VendorResumeSupportParams) => boolean;
 
-export type ProviderSessionRuntimePreferences = Readonly<Record<string, unknown>>;
+export type ProviderSessionRuntimePreferences = AgentCliSessionCommandOptionsV1;
 
 export type ProviderSessionRuntimePreferencesResolver = (
   params: AgentCliSessionCommandBuildInputV1,
@@ -272,7 +273,6 @@ export type AgentCatalogEntry = Readonly<{
    * Service ids whose refreshed credentials are applied without restarting this agent.
    * Account switches still use the connected-service switch coordinator.
    */
-  connectedServiceNoRestartRequiredServiceIds?: readonly ConnectedServiceId[];
   shouldRestartConnectedServiceOnCredentialUpdate?: (serviceId: ConnectedServiceId) => boolean;
   /**
    * Optional daemon-owned retained-home root resolver projected from provider connected-services

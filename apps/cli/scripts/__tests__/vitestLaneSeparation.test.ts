@@ -65,6 +65,7 @@ describe('Vitest lane separation', () => {
             'vitest run --config vitest.config.ts',
         );
         expect(unitLocal).toContain('test:import-cycles');
+        expect(unitLocal).toContain('node --test scripts/prepack-script.test.mjs scripts/stageManagedRuntimeArchives.test.mjs');
         expect(integrationWrapper).toContain('--script=test:integration:local');
         expect(integrationLocal).toContain(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',

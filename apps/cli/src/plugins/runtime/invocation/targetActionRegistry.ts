@@ -97,6 +97,7 @@ export type TargetActionInvocationRegistration = Readonly<{
     localId: string;
     definition: TargetActionDefinition;
     inputParser?: PluginActionInputParser;
+    resultParser?: PluginActionInputParser;
     handler: ActionHandler<JsonValue, JsonValue | void>;
 }>;
 
@@ -346,7 +347,8 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             && previous.registration.immutableGenerationId === registration.immutableGenerationId
             && previous.registration.definition.inputSchema === registration.definition.inputSchema
             && previous.registration.definition.resultSchema === registration.definition.resultSchema
-            && previous.registration.inputParser === registration.inputParser;
+            && previous.registration.inputParser === registration.inputParser
+            && previous.registration.resultParser === registration.resultParser;
     }
 
     function buildIndex(
@@ -404,6 +406,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
                     ...(registration.inputParser === undefined ? {} : { inputParser: registration.inputParser }),
                     ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
+                    ...(registration.resultParser === undefined ? {} : { resultParser: registration.resultParser }),
                     generationSignal,
                     isCurrent: isRegistrationCurrent,
                 });

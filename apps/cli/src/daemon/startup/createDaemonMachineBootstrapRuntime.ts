@@ -31,6 +31,7 @@ import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 import { MemorySettingsSecretsUnavailableError } from '@/settings/memorySettings';
 import type { DaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import type { ExternalActionIngressOwner } from '@/rpc/handlers/externalAction';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 
 type BootstrapRuntime = Omit<
   Parameters<typeof startDaemonMachineRegistration>[0]['bootstrapRuntime'],
@@ -191,6 +192,13 @@ export function createDaemonMachineBootstrapRuntime(
       }
     },
     startVoiceInferenceWorkerForMachine: async (runtimeMachineId, accountId) => {
+      if (resolveCliFeatureDecision({
+        featureId: 'voice.daemonInference',
+        env: process.env,
+        serverSnapshot: params.getServerFeaturesSnapshot?.(),
+      }).state !== 'enabled') {
+        return null;
+      }
       try {
         return await startVoiceInferenceWorker({
           ...(accountId

@@ -17,8 +17,13 @@ import { readStoredCredentials } from '@/persistence';
 import { commandRegistry, type CommandHandler } from '@/cli/commandRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { captureStderr, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+import {
+  captureConsoleLogAndMuteStdout,
+  captureStderr,
+  captureStdoutJsonOutput,
+} from '@/testkit/logger/captureOutput';
 import { CLI_API_TOKEN_HANDOFF_ENV } from '@/auth/cliApiToken';
+import packageJson from '../../package.json';
 
 import { dispatchCli } from './dispatch';
 
@@ -57,8 +62,8 @@ describe('dispatchCli API Token globals', () => {
 
   it('lets --api-token override HAPPIER_TOKEN and redacts the command context and debug argv', async () => {
     await withTempDir('happier-cli-api-token-', async (homeDir) => {
-      const envToken = 'hap_v1_envtoken_envsecret';
-      const flagToken = 'hap_v1_flagtoken_flagsecret';
+      const envToken = 'hap_v1_11111111-1111-4111-a111-111111111111_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const flagToken = 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
       let observedCredentials: Awaited<ReturnType<typeof readStoredCredentials>> = null;
       let observedRawArgv: string[] = [];
       (commandRegistry as Record<string, CommandHandler>)[probeCommand] = async (context) => {
@@ -97,8 +102,8 @@ describe('dispatchCli API Token globals', () => {
   });
 
   it.each([
-    ['token before server selection', ['--api-token', 'hap_v1_flagtoken_flagsecret', '--server-url', 'https://automation.example.test', probeCommand]],
-    ['server selection before token', ['--server-url', 'https://automation.example.test', '--api-token', 'hap_v1_flagtoken_flagsecret', probeCommand]],
+    ['token before server selection', ['--api-token', 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '--server-url', 'https://automation.example.test', probeCommand]],
+    ['server selection before token', ['--server-url', 'https://automation.example.test', '--api-token', 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', probeCommand]],
   ])('preserves global --server-url selection when %s', async (_label, args) => {
     await withTempDir('happier-cli-api-token-', async (homeDir) => {
       let observedServerUrl = '';
@@ -122,7 +127,7 @@ describe('dispatchCli API Token globals', () => {
 
       expect(observedServerUrl).toBe('https://automation.example.test');
       expect(observedCredentials).toEqual({
-        token: 'hap_v1_flagtoken_flagsecret',
+        token: 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         encryption: null,
         credentialProvenance: 'api_token',
       });
@@ -148,8 +153,8 @@ describe('dispatchCli API Token globals', () => {
       await writeStoredToken('stored-session-bearer');
 
       await dispatchCli({
-        args: ['--api-token', 'hap_v1_flagtoken_flagsecret', probeCommand],
-        rawArgv: ['happier', '--api-token', 'hap_v1_flagtoken_flagsecret', probeCommand],
+        args: ['--api-token', 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', probeCommand],
+        rawArgv: ['happier', '--api-token', 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', probeCommand],
         terminalRuntime: null,
       });
       await dispatchCli({
@@ -160,7 +165,7 @@ describe('dispatchCli API Token globals', () => {
 
       expect(observedCredentials).toEqual([
         {
-          token: 'hap_v1_flagtoken_flagsecret',
+          token: 'hap_v1_22222222-2222-4222-a222-222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
           encryption: null,
           credentialProvenance: 'api_token',
         },
@@ -181,8 +186,8 @@ describe('dispatchCli API Token globals', () => {
       };
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
-        HAPPIER_TOKEN: 'hap_v1_ambient_token_secret',
-        [CLI_API_TOKEN_HANDOFF_ENV]: 'hap_v1_flag_token_secret',
+        HAPPIER_TOKEN: 'hap_v1_33333333-3333-4333-a333-333333333333_ccccccccccccccccccccccccccccccccccccccccccc',
+        [CLI_API_TOKEN_HANDOFF_ENV]: 'hap_v1_44444444-4444-4444-a444-444444444444_ddddddddddddddddddddddddddddddddddddddddddd',
         HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_LOCAL_SERVER_URL: undefined,
@@ -200,7 +205,7 @@ describe('dispatchCli API Token globals', () => {
 
       expect(observedCredentials).toEqual([
         {
-          token: 'hap_v1_flag_token_secret',
+          token: 'hap_v1_44444444-4444-4444-a444-444444444444_ddddddddddddddddddddddddddddddddddddddddddd',
           encryption: null,
           credentialProvenance: 'api_token',
         },
@@ -214,7 +219,7 @@ describe('dispatchCli API Token globals', () => {
   });
 
   it('returns one redacted invalid_arguments envelope for a malformed --api-token', async () => {
-    const token = 'malformed-secret-value';
+    const token = ' hap_v1_55555555-5555-4555-a555-555555555555_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ';
     const stdout = captureStdoutJsonOutput<{
       v: number;
       ok: boolean;
@@ -245,7 +250,7 @@ describe('dispatchCli API Token globals', () => {
   });
 
   it('returns the same invalid_arguments envelope for a malformed HAPPIER_TOKEN', async () => {
-    const token = 'malformed-env-secret';
+    const token = ' hap_v1_55555555-5555-4555-a555-555555555555_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ';
     const stdout = captureStdoutJsonOutput<{
       v: number;
       ok: boolean;
@@ -273,6 +278,36 @@ describe('dispatchCli API Token globals', () => {
     } finally {
       stderr.restore();
       stdout.restore();
+    }
+  });
+
+  it.each([
+    ['root help', ['--help'], 'happier - AI CLI'],
+    ['nested help', ['actions', '--help'], 'happier actions'],
+    ['version', ['--version'], packageJson.version],
+    ['completion', ['completion', 'candidates', '--', 'spa'], 'spawn'],
+  ] as const)('ignores a malformed ambient HAPPIER_TOKEN for credential-free %s', async (_label, args, expectedOutput) => {
+    const output = captureConsoleLogAndMuteStdout();
+    const stderr = captureStderr();
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      envScope.patch({ HAPPIER_TOKEN: 'not-an-api-token' });
+
+      await dispatchCli({
+        args: [...args],
+        rawArgv: ['happier', ...args],
+        terminalRuntime: null,
+      });
+
+      expect(process.env.HAPPIER_TOKEN).toBeUndefined();
+      expect(process.exitCode).toBeUndefined();
+      expect(stderr.text()).not.toContain('Invalid HAPPIER_TOKEN');
+      expect([...output.logs, ...output.stdoutChunks].join('\n')).toContain(expectedOutput);
+    } finally {
+      process.exitCode = previousExitCode;
+      stderr.restore();
+      output.restore();
     }
   });
 });

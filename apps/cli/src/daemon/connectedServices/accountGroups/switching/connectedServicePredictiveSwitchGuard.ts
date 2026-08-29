@@ -1,9 +1,9 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 import { evaluatePredictiveSoftSwitchPolicy } from './predictiveSoftSwitchPolicy';
 
 export type ConnectedServicePredictiveSwitchGuardInput = Readonly<{
   sessionId: string;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   activeProfileId: string;
   agentId?: string | null;

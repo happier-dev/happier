@@ -23,7 +23,7 @@ const callerMaterialization = {
   materializationId: 'materialization-caller',
 } as const;
 const correspondenceSetup = {
-  kind: 'githubAccountEndpointV1',
+  kind: 'accountEndpointV1',
   credential: 'serverGenerated',
 } as const;
 

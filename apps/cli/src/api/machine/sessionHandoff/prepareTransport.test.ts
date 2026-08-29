@@ -29,6 +29,7 @@ describe('resolvePrepareAgentBundle', () => {
     if (payloadSource.kind !== 'file') throw new Error('Expected a file-backed agent bundle');
     const handoffId = 'handoff_binary_agent_bundle';
     const transferId = buildSessionHandoffAgentBundleTransferId(handoffId);
+    const onProgress = vi.fn();
 
     try {
       const bundle = await resolvePrepareAgentBundle({
@@ -57,16 +58,19 @@ describe('resolvePrepareAgentBundle', () => {
         },
         directPeerTransfer: {
           publishTransfer: vi.fn(() => []),
-          requestPayloadFile: vi.fn(async ({ destinationPath }) => {
+          requestPayloadFile: vi.fn(async ({ destinationPath, onProgress: reportProgress }) => {
             await copyFile(payloadSource.filePath, destinationPath);
+            await reportProgress?.(payloadSource.sizeBytes);
             return { destinationPath };
           }),
           clearPublishedTransfer: vi.fn(),
         },
         receivedAgentBundlePath: receivedBundlePath,
+        onProgress,
       } as Parameters<typeof resolvePrepareAgentBundle>[0] & { receivedAgentBundlePath: string });
 
       expect(bundle?.agentId).toBe('claude');
+      expect(onProgress).toHaveBeenLastCalledWith(payloadSource.sizeBytes);
       if (!bundle || bundle.agentId !== 'claude' || !bundle.transcriptFile) {
         throw new Error('Expected a file-backed Claude agent bundle');
       }

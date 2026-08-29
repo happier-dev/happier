@@ -53,6 +53,7 @@ import {
     type StructuredQuestionAnswersV1,
     buildAgentRequestSemanticSummary,
     formatPermissionRequestSummary,
+    redactBugReportSensitiveText,
     summarizeToolInputForNotification,
 } from '@happier-dev/protocol';
 import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
@@ -305,8 +306,17 @@ function decodeMediatedPendingPermissionCursor(
 
 const REMOTE_MEDIATION_TEXT_ENCODER = new TextEncoder();
 
+/**
+ * One credential-redacted text ingress for the complete remote
+ * `agentRequestSummary`. Redaction precedes normalization, byte accounting,
+ * truncation, persistence by downstream custody, and provider projection.
+ */
+function normalizeRedactedRemoteMediationText(value: string): string {
+    return redactBugReportSensitiveText(value).normalize('NFC');
+}
+
 function truncateRemoteMediationText(value: string, fallback: string, maxUtf8Bytes: number): string {
-    const normalized = (value.trim() || fallback).normalize('NFC');
+    const normalized = normalizeRedactedRemoteMediationText(value.trim() || fallback);
     if (REMOTE_MEDIATION_TEXT_ENCODER.encode(normalized).byteLength <= maxUtf8Bytes) return normalized;
 
     const ellipsis = '…';
@@ -325,7 +335,7 @@ function truncateRemoteMediationText(value: string, fallback: string, maxUtf8Byt
 function projectRemoteMediatedQuestion(
     question: AgentRequestQuestionSummary,
 ): MediatedPendingUserActionQuestion | null {
-    const questionText = question.question.normalize('NFC');
+    const questionText = normalizeRedactedRemoteMediationText(question.question);
     if (
         questionText.trim().length === 0
         || REMOTE_MEDIATION_TEXT_ENCODER.encode(questionText).byteLength
@@ -339,7 +349,7 @@ function projectRemoteMediatedQuestion(
     const choiceValues = new Set<string>();
     const choices: string[] = [];
     for (const choice of question.choices) {
-        const label = choice.label.normalize('NFC');
+        const label = normalizeRedactedRemoteMediationText(choice.label);
         if (
             label.trim().length === 0
             || REMOTE_MEDIATION_TEXT_ENCODER.encode(label).byteLength
@@ -424,7 +434,7 @@ function resolveRemoteMediatedQuestionValues(params: Readonly<{
     for (const value of values) {
         const normalizedValue = value.normalize('NFC');
         const matchingChoices = question.choices.filter((choice) => (
-            choice.label.normalize('NFC') === normalizedValue
+            normalizeRedactedRemoteMediationText(choice.label) === normalizedValue
         ));
         if (matchingChoices.length > 1) return null;
         if (matchingChoices.length === 1) {

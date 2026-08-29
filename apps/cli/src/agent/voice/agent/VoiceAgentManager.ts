@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
-import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
+import {
+  areExecutionRunBackendTargetsEqual,
+  resolveExecutionRunRuntimeBackendId,
+} from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import {
   extractVoiceActionsFromAssistantText,
-  buildBackendTargetKeyV2,
   readBackendTargetRefV2,
   type BackendTargetRefV1,
   type ProviderBoundModelRef,
@@ -54,7 +56,7 @@ function areVoiceModelSelectionsEqual(
   right: ProviderBoundModelRef | undefined,
 ): boolean {
   if (!left || !right) return left === right;
-  return left.agentTargetKey === right.agentTargetKey
+  return areExecutionRunBackendTargetsEqual(left.agentTargetKey, right.agentTargetKey)
     && left.providerConnectionId === right.providerConnectionId
     && left.modelId === right.modelId;
 }
@@ -64,8 +66,10 @@ function assertVoiceModelSelectionMatches(
   input: Readonly<{ backendTarget: BackendTargetRefV1; modelId: string; role: 'chat' | 'commit' }>,
 ): void {
   if (!selection) return;
-  const targetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
-  if (selection.agentTargetKey !== targetKey || selection.modelId !== input.modelId) {
+  if (
+    !areExecutionRunBackendTargetsEqual(selection.agentTargetKey, input.backendTarget)
+    || selection.modelId !== input.modelId
+  ) {
     throw new VoiceAgentError(
       'VOICE_AGENT_START_FAILED',
       `${input.role} model selection does not match the Voice Agent target and model`,

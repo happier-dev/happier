@@ -121,13 +121,15 @@ async function followSessionHistory(params: Readonly<{
   jsonl: boolean;
   signal?: AbortSignal;
   executor: SessionActionExecutor;
+  /** Lease release must outlive a caller cancellation. */
+  releaseExecutor: SessionActionExecutor;
   initialCursor: string;
-}>): Promise<void> {
+}>): Promise<Readonly<{ stopped: 'inactive' | 'aborted' }>> {
   const leaseId = randomUUID();
   const { followTranscriptSourceWithFiniteActions } = await import(
     '@happier-dev/agents/runtime/facets/transcriptSource'
   );
-  await followTranscriptSourceWithFiniteActions({
+  return await followTranscriptSourceWithFiniteActions({
     initialCursor: params.initialCursor,
     leaseId,
     follow: async ({ cursor, leaseId: activeLeaseId }) => {
@@ -142,7 +144,7 @@ async function followSessionHistory(params: Readonly<{
       return readFollowPage(normalized.data);
     },
     release: async ({ leaseId: activeLeaseId }) => {
-      const normalized = normalizeActionExecuteResult(await params.executor.execute(
+      const normalized = normalizeActionExecuteResult(await params.releaseExecutor.execute(
         'transcript.unfollow',
         { sessionId: params.sessionId, leaseId: activeLeaseId },
         { surface: 'cli', defaultSessionId: null },
@@ -254,7 +256,7 @@ export async function cmdSessionHistory(
   });
   const executor = deps.signal ? actionExecutor.bindInvocation(deps.signal) : actionExecutor;
   if (follow) {
-    await followSessionHistory({
+    const followResult = await followSessionHistory({
       sessionId: idOrPrefix,
       format,
       includeMeta,
@@ -263,7 +265,21 @@ export async function cmdSessionHistory(
       initialCursor: deps.initialFollowCursor ?? 'tail',
       ...(deps.signal ? { signal: deps.signal } : {}),
       executor,
+      releaseExecutor: actionExecutor,
     });
+    if (followResult.stopped === 'aborted') {
+      if (jsonl) {
+        await printJsonEnvelope({
+          ok: false,
+          kind: 'session_history',
+          error: { code: 'cancelled' },
+        }, { exitCode: 1 });
+      } else {
+        if (process.exitCode === undefined || process.exitCode === 0 || process.exitCode === '0') {
+          process.exitCode = 1;
+        }
+      }
+    }
     return;
   }
   const actionRes = await executor.execute(

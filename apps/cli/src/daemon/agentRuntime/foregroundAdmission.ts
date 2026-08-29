@@ -9,8 +9,10 @@ import type {
   ForegroundAgentRuntimeAdmissionResponseV1,
   ForegroundAgentRuntimeClaimRequestV1,
   ForegroundAgentRuntimeClaimResponseV1,
+  ForegroundAgentRuntimeSessionOptionsRequestV1,
+  ForegroundAgentRuntimeSessionOptionsResponseV1,
 } from '@/daemon/agentRuntime/foregroundAdmissionContract';
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import { type ProviderErrorV1 } from '@happier-dev/protocol';
 import type { AgentSessionRunnerBindingV1 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type {
   RunnerManagedDependencyRetentionV1,
@@ -19,6 +21,9 @@ import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session
 import type {
   RunnerAgentInvocationContext,
 } from '@/daemon/types';
+import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ProviderSessionRuntimePreferences } from '@/agent/catalog/types';
+import { normalizeAgentCliSessionCommandOptions } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 
 type Cleanup = () => void | Promise<void>;
 
@@ -29,6 +34,9 @@ export type PreparedForegroundAgentRuntimeAdmission = Readonly<{
   nativeHomeSourceEnvironmentKey?: string;
   retirementSignal: AbortSignal;
   isCurrent(): boolean;
+  resolveSessionRuntimePreferences?(
+    input: AgentCliSessionCommandBuildInputV1,
+  ): ProviderSessionRuntimePreferences | Promise<ProviderSessionRuntimePreferences>;
   claim(input: Readonly<{
     canonicalSessionId: string;
     httpPort: number;
@@ -71,6 +79,7 @@ type Admission = {
   retirementSignal: AbortSignal;
   isCurrent(): boolean;
   claim: PreparedForegroundAgentRuntimeAdmission['claim'];
+  resolveSessionRuntimePreferences?: PreparedForegroundAgentRuntimeAdmission['resolveSessionRuntimePreferences'];
   claimState: 'available' | 'claiming' | 'claimed';
   claimPromise: ReturnType<
     PreparedForegroundAgentRuntimeAdmission['claim']
@@ -263,6 +272,12 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           retirementSignal: prepared.retirementSignal,
           isCurrent: prepared.isCurrent,
           claim: prepared.claim,
+          ...(prepared.resolveSessionRuntimePreferences
+            ? {
+                resolveSessionRuntimePreferences:
+                  prepared.resolveSessionRuntimePreferences,
+              }
+            : {}),
           claimState: 'available',
           claimPromise: null,
           cleanup: prepared.cleanup,
@@ -325,6 +340,47 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
         if (!promoted) releaseReservation(request);
         pending.settle();
       }
+    },
+    async resolveSessionRuntimePreferences(
+      sessionOptionsRequest: ForegroundAgentRuntimeSessionOptionsRequestV1,
+    ): Promise<ForegroundAgentRuntimeSessionOptionsResponseV1> {
+      const admission = byAttemptId.get(sessionOptionsRequest.attemptId);
+      if (
+        !admission
+        || admission.released
+        || admission.request.sessionId !== sessionOptionsRequest.sessionId
+        || admission.request.foregroundPid !== sessionOptionsRequest.foregroundPid
+        || admission.claimState !== 'available'
+      ) {
+        throw new Error('Foreground Agent runtime admission is unavailable');
+      }
+      if (
+        admission.retirementSignal.aborted
+        || !admission.isCurrent()
+      ) {
+        await releaseAdmission(admission);
+        throw new Error(
+          'Foreground Agent runtime admission belongs to a retired plugin generation',
+        );
+      }
+      const resolver = admission.resolveSessionRuntimePreferences;
+      if (!resolver) return { ok: true, options: {} };
+      const resolvedOptions = await resolver(sessionOptionsRequest.input);
+      const options = normalizeAgentCliSessionCommandOptions({
+        ok: true,
+        options: resolvedOptions,
+      });
+      if (
+        admission.released
+        || admission.retirementSignal.aborted
+        || !admission.isCurrent()
+      ) {
+        await releaseAdmission(admission);
+        throw new Error(
+          'Foreground Agent runtime admission belongs to a retired plugin generation',
+        );
+      }
+      return { ok: true, options };
     },
     async claimEnvironment(
       claimRequest: ForegroundAgentRuntimeClaimRequestV1,
@@ -412,6 +468,11 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           };
         }
         const retainedAgent = claimed.authority.retainedAgent;
+        // The binding's `agentId` is the canonical host routing id under both
+        // binding kinds (factory and host-declarative ACP); the always-
+        // qualified `qualifiedAgentId` is activation/service authority only
+        // and is never substituted for it here.
+        const expectedDescriptorAgentId = retainedAgent.agentId;
         const invocationContext: RunnerAgentInvocationContext =
           Object.freeze({
             cwd: claimed.invocationContext.cwd,
@@ -427,7 +488,12 @@ export function createForegroundAgentRuntimeAdmissionOwner(dependencies: Readonl
           });
         if (
           retainedAgent.pluginId !== descriptor.pluginId
-          || retainedAgent.agentId !== descriptor.agentId
+          || expectedDescriptorAgentId !== descriptor.agentId
+          || (
+            descriptor.agentDeclaration
+            && retainedAgent.localAgentId
+              !== descriptor.agentDeclaration.definition.id
+          )
           || retainedAgent.immutableGenerationId
             !== (descriptor.immutableGenerationId ?? descriptor.generation)
         ) {

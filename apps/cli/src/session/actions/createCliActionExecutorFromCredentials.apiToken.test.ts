@@ -1000,6 +1000,48 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     expect(createCliActionExecutor).not.toHaveBeenCalled();
   });
 
+  it('forwards session.handoff targetPath through the PAT adapter input', async () => {
+    const requests: Array<Readonly<{ actionId: string; body: unknown }>> = [];
+    const fetch = vi.fn<FetchLike>((input, init) => {
+      const actionId = decodeURIComponent(String(input).split('/').at(-1) ?? '');
+      const body = JSON.parse(String(init?.body));
+      requests.push({ actionId, body });
+      return actionId === 'session.list'
+        ? apiSuccess('session.list', {
+            sessions: [sessionListItem(exactSessionId, 'active-work')],
+            nextCursor: null,
+            hasNext: false,
+          })
+        : apiSuccess('session.handoff', { handoffId: 'handoff-1' });
+    });
+    installPatActionTransportMock(fetch);
+
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'hap_v1_token_secret',
+        encryption: null,
+        credentialProvenance: 'api_token',
+      },
+    });
+
+    await expect(executor.execute(
+      'session.handoff',
+      { sessionId: 'active-work', targetMachineId: 'machine-2', targetPath: '/target/repo' },
+      { surface: 'api', actionRequestId: 'request-handoff' },
+    )).resolves.toEqual({ ok: true, result: { handoffId: 'handoff-1' } });
+
+    expect(requests.at(-1)).toEqual({
+      actionId: 'session.handoff',
+      body: {
+        v: 1,
+        requestId: 'request-handoff',
+        target: { kind: 'session', sessionId: exactSessionId },
+        input: { sessionId: exactSessionId, targetMachineId: 'machine-2', targetPath: '/target/repo' },
+      },
+    });
+  });
+
   it('rejects a non-public PAT Action before any local or HTTP execution', async () => {
     const fetch = vi.fn<FetchLike>();
     installPatActionTransportMock(fetch);

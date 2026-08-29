@@ -1,7 +1,9 @@
-import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
+import {
+  buildQualifiedPluginContributionKey,
+  type ConnectedAccountServiceKey,
+} from '@happier-dev/protocol';
 
 import type { ConnectedServiceBindingSelection } from '../parseConnectedServicesBindings';
-import { resolveFirstPartyConnectedAccountServiceId } from './firstPartyConnectedAccountRequestAuthAdapter';
 import type { AgentSpawnQualifiedPurposeBindingSnapshot } from './prepareConnectedAccountRequestAuthForSpawn';
 
 export class ConnectedServiceQualifiedPurposeAuthorityError extends Error {
@@ -34,7 +36,7 @@ export function assertQualifiedPurposeAuthorityForSelections(params: Readonly<{
       const service = binding.target.kind === 'account'
         ? binding.target.account.service
         : binding.target.service;
-      if (resolveFirstPartyConnectedAccountServiceId(service) !== selection.serviceId) {
+      if (buildQualifiedPluginContributionKey(service) !== selection.serviceId) {
         return false;
       }
       return selection.kind === 'profile'

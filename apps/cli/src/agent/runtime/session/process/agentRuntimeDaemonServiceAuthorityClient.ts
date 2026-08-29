@@ -655,6 +655,38 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
       })) {
         throw createRunnerAgentRuntimeDaemonServiceAuthorityTransitionError();
       }
+      // Only the route's two post-dispatch custody responses prove dispatch
+      // occurred. A merely well-formed typed 503 may still be a pre-dispatch
+      // refusal and therefore is not evidence of an ambiguous effect. The
+      // privileged effect behind these responses may already have
+      // run, so the only honest classification is outcome unknown — never a
+      // proven pre-dispatch miss. Every other 503 shape (the daemon-quiescing
+      // refusal or an unparseable body) was refused before dispatch.
+      if (response.status === 503) {
+        let settledCandidate: unknown = null;
+        try {
+          settledCandidate = rawBody.trim()
+            ? JSON.parse(rawBody) as unknown
+            : null;
+        } catch {
+          settledCandidate = null;
+        }
+        const settled = settledCandidate === null
+          ? null
+          : AgentRuntimeDaemonServiceResponseV1Schema.safeParse(settledCandidate);
+        if (
+          settled?.success
+          && settled.data.ok === false
+          && (
+            settled.data.error.code
+              === 'agent_runtime_daemon_service_admission_custody_unavailable'
+            || settled.data.error.code
+              === 'agent_runtime_daemon_service_admission_invalid'
+          )
+        ) {
+          return unknownOutcomeResponse();
+        }
+      }
       return unavailableResponse();
     }
     const parsedBody = rawBody.trim()

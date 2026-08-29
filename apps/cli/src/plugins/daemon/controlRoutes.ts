@@ -157,6 +157,7 @@ const PluginActionExecuteRequestSchema = z.object({
   actionId: NonEmptyStringSchema,
   input: z.unknown(),
   surface: z.enum(['cli', 'mcp', 'agent']),
+  authority: z.enum(['account_automation', 'present_user']),
   defaultSessionId: NonEmptyStringSchema.optional(),
   expectedContributorImmutableGenerationId: ImmutableGenerationIdSchema.optional(),
 }).strict();

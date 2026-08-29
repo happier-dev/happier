@@ -56,12 +56,23 @@ export async function attemptProviderNativeFork(params: Readonly<{
         params.requestedStrategy === 'auto'
         || params.requestedStrategy === 'native'
         || params.requestedStrategy === 'provider_native';
-
-    if (
-        !shouldAttemptProviderNative
-        || params.forkBackendResolution.configuredAcp !== null
-        || !params.forkBackendResolution.catalogAgentId
-    ) {
+    if (!shouldAttemptProviderNative) {
+        return null;
+    }
+    const configuredAcp = params.forkBackendResolution.configuredAcp;
+    if (configuredAcp !== null) {
+        // A configured ACP Session crosses the real daemon fork path only when
+        // its configured catalog proves load-session support and the parent
+        // carries the provider-session identity to load. Anything else falls
+        // back (auto Replay) or is explicitly refused downstream: an
+        // unsupported backend is never blindly attempted.
+        if (
+            configuredAcp.providerSessionId === null
+            || configuredAcp.resolvedBackend?.capabilities.supportsLoadSession !== true
+        ) {
+            return null;
+        }
+    } else if (!params.forkBackendResolution.catalogAgentId) {
         return null;
     }
 

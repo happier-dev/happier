@@ -116,11 +116,12 @@ it('projects an admitted bundled generation through the canonical machine Availa
     nowMs: () => 123,
   });
 
+  await store.initialize();
   await expect(store.readAvailabilityInventory()).resolves.toEqual({
-    revision: 0,
+    revision: 1,
     releasePublications: [],
     materializations: [{
-      materializationId: 'bundled-first-party:bundled-generation-fixture',
+      materializationId: expect.stringMatching(/^materialization-/u),
       pluginId: 'happier.fixture.availability',
       version: '0.0.0',
       sourceClass: 'bundledFirstParty',
@@ -141,6 +142,88 @@ it('projects an admitted bundled generation through the canonical machine Availa
       observedAt: 123,
     }],
   });
+  await Promise.all([
+    rm(happyHomeDir, { recursive: true, force: true }),
+    rm(packageRoot, { recursive: true, force: true }),
+  ]);
+});
+
+it('keeps bundled materialization epochs stable across host generations and advances revision only for semantic availability changes', async () => {
+  const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-availability-epoch-home-'));
+  const packageRoot = await mkdtemp(join(tmpdir(), 'happier-bundled-availability-epoch-package-'));
+  await mkdir(join(packageRoot, '.happier-plugin'), { recursive: true });
+  await mkdir(join(packageRoot, 'dist'), { recursive: true });
+  await writeFile(join(packageRoot, '.happier-plugin', 'plugin.json'), '{}');
+  await writeFile(join(packageRoot, 'dist', 'index.js'), 'export {};');
+  await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-availability-epoch-fixture',
+    version: '1.0.0',
+  }));
+  const artifact = (generation: string): BundledImmutablePluginArtifact => Object.freeze({
+    packageName: '@happier-dev/plugins-availability-epoch-fixture',
+    packageEntryRelativePath: 'dist/index.js',
+    record: Object.freeze({
+      t: 'happier_plugin_generation_v1',
+      schemaVersion: 1,
+      pluginId: 'happier.fixture.availability.epoch',
+      immutableGenerationId: generation,
+      createdAtMs: 0,
+      manifestRelativePath: '.happier-plugin/plugin.json',
+      files: [
+        { relativePath: '.happier-plugin/plugin.json', byteLength: 2 },
+        { relativePath: 'dist/index.js', byteLength: 'export {};'.length },
+        { relativePath: 'package.json', byteLength: JSON.stringify({ name: '@happier-dev/plugins-availability-epoch-fixture', version: '1.0.0' }).length },
+      ],
+    }),
+  });
+  const createStore = (generation: string, nowMs: () => number) => createPluginRegistryStateStore({
+    happyHomeDir,
+    bundledArtifacts: [artifact(generation)],
+    resolveBundledPackageEntry: async () => join(packageRoot, 'dist', 'index.js'),
+    nowMs,
+  });
+
+  const first = createStore('bundled-generation-a', () => 100);
+  await first.initialize();
+  const firstInventory = await first.readAvailabilityInventory();
+  const firstMaterialization = firstInventory.materializations[0];
+  if (!firstMaterialization) throw new Error('Expected bundled materialization');
+
+  const second = createStore('bundled-generation-b', () => 200);
+  await second.initialize();
+  const secondInventory = await second.readAvailabilityInventory();
+  expect(secondInventory.revision).toBe(firstInventory.revision);
+  expect(secondInventory.materializations[0]).toMatchObject({
+    materializationId: firstMaterialization.materializationId,
+    observedAt: firstMaterialization.observedAt,
+    version: '1.0.0',
+  });
+
+  await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-availability-epoch-fixture',
+    version: '1.0.1',
+  }));
+  const semanticUpdate = createStore('bundled-generation-c', () => 300);
+  await semanticUpdate.initialize();
+  const semanticUpdateInventory = await semanticUpdate.readAvailabilityInventory();
+  expect(semanticUpdateInventory.revision).toBeGreaterThan(secondInventory.revision);
+  expect(semanticUpdateInventory.materializations[0]).toMatchObject({
+    materializationId: firstMaterialization.materializationId,
+    observedAt: 300,
+    version: '1.0.1',
+  });
+
+  await createPluginRegistryStateStore({ happyHomeDir, bundledArtifacts: [], nowMs: () => 400 }).initialize();
+  await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-availability-epoch-fixture',
+    version: '1.0.1',
+  }));
+  const reintroduced = createStore('bundled-generation-d', () => 500);
+  await reintroduced.initialize();
+  const reintroducedInventory = await reintroduced.readAvailabilityInventory();
+  expect(reintroducedInventory.materializations[0]?.materializationId).toEqual(expect.stringMatching(/^materialization-/u));
+  expect(reintroducedInventory.materializations[0]?.materializationId).not.toBe(firstMaterialization.materializationId);
+
   await Promise.all([
     rm(happyHomeDir, { recursive: true, force: true }),
     rm(packageRoot, { recursive: true, force: true }),

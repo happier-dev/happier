@@ -53,6 +53,9 @@ import {
     resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
 import { loadRetainedAgentRuntimeLeaf } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import {
+    resolveAgentContributionQualifiedId,
+} from '@/plugins/projection/registry/agentRoutingIdentity';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import {
     attachExactRunnerRetainedPluginGenerations,
@@ -781,10 +784,13 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     contribution: companion,
                     identity: {
                         pluginId: binding.pluginId,
-                        agentId: binding.localAgentId,
+                        agentId: binding.agentId,
                         generation: binding.immutableGenerationId,
                         contributionQualifiedId:
-                            `${binding.pluginId}/agents/${binding.localAgentId}`,
+                            resolveAgentContributionQualifiedId({
+                                pluginId: binding.pluginId,
+                                localId: binding.localAgentId,
+                            }),
                         immutableGenerationId:
                             binding.immutableGenerationId,
                     },
@@ -1188,6 +1194,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
         identity: Object.freeze({
             pluginId: binding.pluginId,
             pluginVersion: binding.pluginVersion,
+            // The admitted binding already carries the exact host routing id,
+            // including released first-party ids whose spelling is not the
+            // manifest-local id. Never re-derive an alias here.
             agentId: binding.agentId,
             backendId: binding.agentId,
             generation: binding.immutableGenerationId,
@@ -1235,7 +1244,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     contribution: Object.freeze({
                         id: binding.localAgentId,
                         qualifiedId:
-                            `${binding.pluginId}/agents/${binding.localAgentId}`,
+                            resolveAgentContributionQualifiedId({
+                                pluginId: binding.pluginId,
+                                localId: binding.localAgentId,
+                            }),
                     }),
                     generation: binding.immutableGenerationId,
                     correlationId: params.sessionId,
@@ -1426,7 +1438,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 contribution: Object.freeze({
                     id: binding.localAgentId,
                     qualifiedId:
-                        `${binding.pluginId}/agents/${binding.localAgentId}`,
+                        resolveAgentContributionQualifiedId({
+                            pluginId: binding.pluginId,
+                            localId: binding.localAgentId,
+                        }),
                 }),
                 generation: params.generation,
                 correlationId: params.correlationId,

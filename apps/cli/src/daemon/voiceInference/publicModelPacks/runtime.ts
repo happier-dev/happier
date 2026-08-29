@@ -49,6 +49,7 @@ import {
   projectInstalledDaemonPluginVoiceModelPackCatalogV1,
   type DaemonVoiceModelPackCatalogEntryV1,
 } from '../pluginModelPackCatalog';
+import { resolveDaemonVoiceRuntimeFamilyCapabilities } from '../runtime/runtimeFamilyRegistry';
 import {
   createDaemonPublicVoiceModelPackStateStore,
   parseInstalledVoiceModelPackMetadataV1,
@@ -96,6 +97,8 @@ export type DaemonPublicVoiceModelPackRuntime = Readonly<{
     artifactBinding: VoiceModelPackArtifactBindingV1;
   }>): Promise<DaemonPublicVoiceModelPackEntry>;
   remove(key: string): Promise<void>;
+  /** Reload is the existing admission-currentness event for public packs. */
+  subscribeInvalidations?: (listener: (changedPluginIds: readonly string[]) => void) => () => void;
 }>;
 
 type PublicPackInstallerHostInput = Readonly<{
@@ -112,6 +115,7 @@ function buildLegacyManifest(descriptor: EffectiveVoiceModelPackDescriptorV1): M
     model: manifest.model,
     version: manifest.version,
     ...(manifest.voices ? { voices: manifest.voices } : {}),
+    ...(manifest.defaultVoiceId ? { defaultVoiceId: manifest.defaultVoiceId } : {}),
     files: manifest.files,
   });
 }
@@ -140,10 +144,7 @@ export function resolveDefaultDaemonVoiceModelPackHostCapabilities(
     hostVersion: packageJson.version,
     platform: platform as 'darwin' | 'linux' | 'win32',
     architecture: architecture as 'arm64' | 'x64',
-    runtimeFamilies: {
-      sherpa_zipformer_streaming: { abiVersion: 1 },
-      sherpa_kokoro_offline: { abiVersion: 1 },
-    },
+    runtimeFamilies: resolveDaemonVoiceRuntimeFamilyCapabilities(),
   };
 }
 
@@ -605,5 +606,8 @@ export function createDaemonPublicVoiceModelPackRuntime(params: Readonly<{
       verifiedInstallKeys.clear();
       verifiedPhysicalFingerprints.clear();
     },
+    subscribeInvalidations: (listener) => pluginReloadController.subscribe((result) => {
+      if (result.changedPluginIds.length > 0) listener(result.changedPluginIds);
+    }),
   });
 }

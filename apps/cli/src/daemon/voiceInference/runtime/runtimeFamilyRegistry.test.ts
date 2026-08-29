@@ -5,6 +5,7 @@ import { getModelPackCatalogEntry } from '@happier-dev/protocol';
 import {
   assertDaemonVoiceRuntimeManifestCompatible,
   isDaemonVoiceRuntimeFamilySupported,
+  resolveDaemonVoiceRuntimeFamilyCapabilities,
   resolveDaemonVoiceRuntimePackAdapter,
 } from './runtimeFamilyRegistry';
 
@@ -45,6 +46,19 @@ function zipformerCatalogManifest() {
 }
 
 describe('daemon voice runtime-family registry', () => {
+  it('owns the advertised ABI capability map for every supported runtime family', () => {
+    const capabilities = resolveDaemonVoiceRuntimeFamilyCapabilities();
+    expect(capabilities).toEqual({
+      sherpa_zipformer_streaming: { abiVersion: 1 },
+      sherpa_kokoro_offline: { abiVersion: 1 },
+    });
+    expect(Object.isFrozen(capabilities)).toBe(true);
+    expect(Object.values(capabilities).every((entry) => Object.isFrozen(entry))).toBe(true);
+    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_zipformer_streaming')).toBe(true);
+    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_kokoro_offline')).toBe(true);
+    expect(isDaemonVoiceRuntimeFamilySupported('sherpa_parakeet_offline')).toBe(false);
+  });
+
   it('admits verified Zipformer support files but resolves only executable runtime paths', () => {
     const { manifest: published } = zipformerCatalogManifest();
     expect(() => assertDaemonVoiceRuntimeManifestCompatible(ZIPFORMER_PACK_ID, published)).not.toThrow();

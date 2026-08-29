@@ -13,6 +13,7 @@ import {
   PluginPermissionInstalledGenerationIdSchema,
   PluginPermissionGrantListActionInputV1Schema,
   PluginPermissionGrantListActionOutputV1Schema,
+  PluginMachineMaterializationRefV1Schema,
   PluginPermissionSubjectV1Schema,
   QualifiedConnectedAccountRefSchema,
   SavedSecretSchema,
@@ -23,6 +24,7 @@ import {
   type ConnectedServiceCredentialRevisionV1,
   type PluginInstallReviewPrincipalDigest,
   type PluginInstallReviewPrincipalPresentationV1,
+  type PluginMachineMaterializationRefV1,
   type PluginPermissionGrantAuthoritySourceV1,
   type PluginPermissionSubjectV1,
   type QualifiedConnectedAccountRef,
@@ -95,6 +97,8 @@ export type PluginRawCredentialMaterializerBinding = Readonly<{
   realm: 'web' | 'ios' | 'android' | 'daemon';
   phase: VoiceCredentialAccessPhase;
   machineId: string | null;
+  /** Exact host-stamped plugin materialization whose runtime is requesting disclosure. */
+  materialization?: PluginMachineMaterializationRefV1;
   /** Immutable registry-owned generation that admitted this exact runtime. */
   immutableGenerationId: string;
   /** Host-owned exact admitted-runtime policy, including generation retirement. */
@@ -103,6 +107,7 @@ export type PluginRawCredentialMaterializerBinding = Readonly<{
 
 export type PluginRawCredentialMaterializer = Readonly<{
   inspectAuthorization(
+    request: VoiceRawCredentialMaterializationRequest,
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginRawCredentialAuthorizationInspection>;
   materialize(
@@ -129,6 +134,7 @@ export type PluginRawCredentialAuthorizationInspection = Readonly<{
 
 export type PluginRawCredentialAuthorizationInspector = Readonly<{
   inspectAuthorization(
+    request: VoiceRawCredentialMaterializationRequest,
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<PluginRawCredentialAuthorizationInspection>;
 }>;
@@ -155,8 +161,6 @@ export type PluginRawCredentialDisclosureRow = Readonly<{
 type DeclarationAuthority = Readonly<{
   contribution: VoiceProviderContribution;
   identity: NonNullable<ReturnType<typeof deriveVoiceCredentialBindingIdentityV1>>;
-  accessDeclarationDigest: ReturnType<typeof CredentialAccessDeclarationDigestSchema.parse>;
-  disclosures: readonly PluginRawCredentialDisclosureRow[];
 }>;
 
 type SelectedSource = Readonly<{
@@ -170,7 +174,6 @@ type SelectedSource = Readonly<{
     callbackCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }> | null;
   selectedAuthorityDigest: ReturnType<typeof CredentialAccessSelectedAuthorityDigestSchema.parse>;
-  selectedRawAccessDigest: ReturnType<typeof CredentialAccessSelectedRawAccessDigestSchema.parse>;
   fingerprint: string;
 }>;
 
@@ -328,54 +331,39 @@ function sourceDisclosureClass(
   });
 }
 
-function disclosureRows(
+function exactDisclosureRows(
   ownerPluginId: string,
-  contribution: VoiceProviderContribution,
+  selected: VoiceCredentialSource,
+  binding: Pick<PluginRawCredentialMaterializerBinding, 'realm' | 'phase'>,
+  request: VoiceRawCredentialMaterializationRequest,
 ): readonly PluginRawCredentialDisclosureRow[] {
-  const rows: PluginRawCredentialDisclosureRow[] = [];
-  for (const source of contribution.credentials?.sources ?? []) {
-    const sourceClass = sourceDisclosureClass(ownerPluginId, source);
-    for (const grant of source.rawGrants ?? []) {
-      const request = canonicalRequest(grant.request);
-      if (request.kind === 'httpHeaders') {
-        for (const destination of request.headerNames) {
-          rows.push(Object.freeze({
-            sourceClass,
-            realm: grant.realm,
-            phase: grant.phase,
-            materialization: 'httpHeaders',
-            origin: request.origin,
-            destination,
-          }));
-        }
-      } else if (request.kind === 'environment') {
-        for (const destination of request.keys) {
-          rows.push(Object.freeze({
-            sourceClass,
-            realm: grant.realm,
-            phase: grant.phase,
-            materialization: 'environment',
-            destination,
-          }));
-        }
-      } else {
-        for (const destination of request.fileIds) {
-          rows.push(Object.freeze({
-            sourceClass,
-            realm: grant.realm,
-            phase: grant.phase,
-            materialization: 'files',
-            destination,
-          }));
-        }
-      }
-    }
+  const sourceClass = sourceDisclosureClass(ownerPluginId, selected);
+  const canonical = canonicalRequest(request);
+  const common = Object.freeze({
+    sourceClass,
+    realm: binding.realm,
+    phase: binding.phase,
+  });
+  if (canonical.kind === 'httpHeaders') {
+    return Object.freeze(canonical.headerNames.map((destination) => Object.freeze({
+      ...common,
+      materialization: 'httpHeaders' as const,
+      origin: canonical.origin,
+      destination,
+    })));
   }
-  return Object.freeze(rows.sort((left, right) => {
-    const leftKey = JSON.stringify(left);
-    const rightKey = JSON.stringify(right);
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-  }));
+  if (canonical.kind === 'environment') {
+    return Object.freeze(canonical.keys.map((destination) => Object.freeze({
+      ...common,
+      materialization: 'environment' as const,
+      destination,
+    })));
+  }
+  return Object.freeze(canonical.fileIds.map((destination) => Object.freeze({
+    ...common,
+    materialization: 'files' as const,
+    destination,
+  })));
 }
 
 function deriveDeclarationAuthorityUnsafe(
@@ -407,20 +395,7 @@ function deriveDeclarationAuthorityUnsafe(
   )))) {
     throw invalidRequest();
   }
-  const disclosures = disclosureRows(binding.manifest.id, contribution);
-  const disclosureKeys = disclosures.map((row) => JSON.stringify(row));
-  if (new Set(disclosureKeys).size !== disclosureKeys.length) throw invalidRequest();
-  const digestInput = JSON.stringify({
-    v: 1,
-    rows: disclosures,
-  });
-  const accessDeclarationDigest = CredentialAccessDeclarationDigestSchema.parse(
-    createHash('sha256')
-      .update(DECLARATION_DIGEST_DOMAIN, 'utf8')
-      .update(digestInput, 'utf8')
-      .digest('hex'),
-  );
-  return Object.freeze({ contribution, identity, accessDeclarationDigest, disclosures });
+  return Object.freeze({ contribution, identity });
 }
 
 function deriveDeclarationAuthority(
@@ -451,21 +426,17 @@ function digest(domain: string, value: unknown): string {
 }
 
 function selectedRawAccessDigest(
-  source: VoiceCredentialSource,
+  binding: Pick<PluginRawCredentialMaterializerBinding, 'realm' | 'phase'>,
+  request: VoiceRawCredentialMaterializationRequest,
 ): ReturnType<typeof CredentialAccessSelectedRawAccessDigestSchema.parse> {
-  const tuples = (source.rawGrants ?? []).map((grant) => Object.freeze({
-    realm: grant.realm,
-    phase: grant.phase,
-    request: canonicalRequest(grant.request),
-  })).sort((left, right) => {
-    const leftKey = JSON.stringify(left);
-    const rightKey = JSON.stringify(right);
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-  });
-  if (tuples.length === 0) throw unavailable();
   return CredentialAccessSelectedRawAccessDigestSchema.parse(digest(
     SELECTED_RAW_ACCESS_DIGEST_DOMAIN,
-    { v: 1, tuples },
+    Object.freeze({
+      v: 1,
+      realm: binding.realm,
+      phase: binding.phase,
+      request: canonicalRequest(request),
+    }),
   ));
 }
 
@@ -480,7 +451,6 @@ function selectedAuthorityDigest(
 
 function savedSecretCallbackCredentialRevision(input: Readonly<{
   selectedAuthorityDigest: ReturnType<typeof CredentialAccessSelectedAuthorityDigestSchema.parse>;
-  selectedRawAccessDigest: ReturnType<typeof CredentialAccessSelectedRawAccessDigestSchema.parse>;
   updatedAt: number;
 }>): ConnectedServiceCredentialRevisionV1 {
   // Callback callers must be able to fence a reused raw-access object without
@@ -532,7 +502,6 @@ async function selectedSourceFromSnapshot(
           .find((candidate) => candidate.id === resolved.savedSecret?.secretId)
       : undefined;
     if (!savedSecret || !source.secretKinds.includes(savedSecret.kind)) throw unavailable();
-    const selectedRawAccess = selectedRawAccessDigest(source);
     const selectedAuthority = selectedAuthorityDigest({
       source: 'savedSecret',
       accountSettingsScopeKey: snapshot.scopeKey ?? null,
@@ -549,12 +518,10 @@ async function selectedSourceFromSnapshot(
         secretId: resolved.savedSecret.secretId,
         callbackCredentialRevision: savedSecretCallbackCredentialRevision({
           selectedAuthorityDigest: selectedAuthority,
-          selectedRawAccessDigest: selectedRawAccess,
           updatedAt: savedSecret.updatedAt,
         }),
       }),
       selectedAuthorityDigest: selectedAuthority,
-      selectedRawAccessDigest: selectedRawAccess,
       fingerprint: [
         accountSettingsLifetimeToken,
         selectedAccountScopeKey,
@@ -563,7 +530,6 @@ async function selectedSourceFromSnapshot(
         resolved.savedSecret.secretId,
         savedSecret.kind,
         savedSecret.updatedAt,
-        selectedRawAccess,
       ].join('\0'),
     });
   }
@@ -610,7 +576,6 @@ async function selectedSourceFromSnapshot(
   ) {
     throw unavailable();
   }
-  const selectedRawAccess = selectedRawAccessDigest(source);
   return Object.freeze({
     source,
     qualifiedConnectedAccountService,
@@ -625,7 +590,6 @@ async function selectedSourceFromSnapshot(
       service: effectiveAccount.data.service,
       accountId: effectiveAccount.data.accountId,
     }),
-    selectedRawAccessDigest: selectedRawAccess,
     fingerprint: [
       accountSettingsLifetimeToken,
       selectedAccountScopeKey,
@@ -633,7 +597,6 @@ async function selectedSourceFromSnapshot(
       JSON.stringify(resolved.selection.target),
       contributionKey(effectiveAccount.data.service),
       effectiveAccount.data.accountId,
-      selectedRawAccess,
     ].join('\0'),
   });
 }
@@ -825,7 +788,20 @@ function permissionSubject(
   authority: DeclarationAuthority,
   selected: SelectedSource,
   principal: CurrentPluginInstallReviewPrincipal,
+  request: VoiceRawCredentialMaterializationRequest,
 ): ReturnType<typeof PluginPermissionSubjectV1Schema.parse> {
+  const canonical = canonicalRequest(request);
+  const exactRawAccessDigest = selectedRawAccessDigest(binding, canonical);
+  const exactAccessDeclarationDigest = CredentialAccessDeclarationDigestSchema.parse(digest(
+    DECLARATION_DIGEST_DOMAIN,
+    Object.freeze({
+      v: 1,
+      sourceClass: sourceDisclosureClass(binding.manifest.id, selected.source),
+      realm: binding.realm,
+      phase: binding.phase,
+      request: canonical,
+    }),
+  ));
   return PluginPermissionSubjectV1Schema.parse({
     kind: 'credential_access_disclosure',
     contribution: authority.identity.contribution,
@@ -833,9 +809,9 @@ function permissionSubject(
       authority.identity.credentialSlotId,
     ),
     purpose: authority.identity.purpose.purpose,
-    accessDeclarationDigest: authority.accessDeclarationDigest,
+    accessDeclarationDigest: exactAccessDeclarationDigest,
     selectedAuthorityDigest: selected.selectedAuthorityDigest,
-    selectedRawAccessDigest: selected.selectedRawAccessDigest,
+    selectedRawAccessDigest: exactRawAccessDigest,
     installedGenerationId: PluginPermissionInstalledGenerationIdSchema.parse(
       binding.immutableGenerationId,
     ),
@@ -853,6 +829,7 @@ async function inspectCurrentAuthorization(
   authority: DeclarationAuthority,
   signal: AbortSignal,
   allowWarm: boolean,
+  request: VoiceRawCredentialMaterializationRequest,
 ): Promise<CurrentAuthorizationInspection> {
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
@@ -865,6 +842,7 @@ async function inspectCurrentAuthorization(
   // read by `authorize` around the grant list and by `materialize` around the
   // credential use.
   const firstSelected = await readSelectedSource(input, authority, signal, allowWarm);
+  assertDeclaredTuple(firstSelected, input.binding, request);
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
   const principal = await input.currentInstallReviewPrincipal.readCurrent({
@@ -883,7 +861,13 @@ async function inspectCurrentAuthorization(
   signal.throwIfAborted();
   assertRuntimeCurrent(input.binding);
   if (authoritySource?.kind !== 'machine_installation') throw unavailable();
-  const parsedSubject = permissionSubject(input.binding, authority, firstSelected, principal);
+  const parsedSubject = permissionSubject(
+    input.binding,
+    authority,
+    firstSelected,
+    principal,
+    request,
+  );
   if (parsedSubject.kind !== 'credential_access_disclosure') throw unavailable();
   const subject = Object.freeze({
     ...parsedSubject,
@@ -902,7 +886,12 @@ async function inspectCurrentAuthorization(
       targetScope: ACCOUNT_TARGET_SCOPE,
       subject,
       authoritySource: authorization.authoritySource,
-      disclosures: Object.freeze([...authority.disclosures]),
+      disclosures: exactDisclosureRows(
+        input.binding.manifest.id,
+        firstSelected.source,
+        input.binding,
+        request,
+      ),
     }),
   });
 }
@@ -912,10 +901,16 @@ function createAuthorizationInspector(
   authority: DeclarationAuthority,
 ): PluginRawCredentialAuthorizationInspector {
   return Object.freeze({
-    async inspectAuthorization(options = {}) {
+    async inspectAuthorization(request, options = {}) {
       const signal = options.signal ?? new AbortController().signal;
       try {
-        return (await inspectCurrentAuthorization(input, authority, signal, true)).inspection;
+        return (await inspectCurrentAuthorization(
+          input,
+          authority,
+          signal,
+          true,
+          canonicalRequest(request),
+        )).inspection;
       } catch {
         signal.throwIfAborted();
         throw unavailable();
@@ -977,21 +972,35 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
   ): Promise<Authorization> => {
     signal.throwIfAborted();
     assertRuntimeCurrent(input.binding);
+    const caller = PluginMachineMaterializationRefV1Schema.safeParse(
+      input.binding.materialization,
+    );
+    if (
+      !caller.success
+      || caller.data.pluginId !== input.binding.manifest.id
+      || (
+        input.binding.machineId !== null
+        && caller.data.machineId !== input.binding.machineId
+      )
+    ) {
+      throw unavailable();
+    }
     const inspected = await inspectCurrentAuthorization(
       authorizationDependencies,
       authority,
       signal,
       true,
+      request,
     );
-    const { selected, subject } = inspected.authorization;
+    const { subject } = inspected.authorization;
     const currentAuthoritySource = inspected.authorization.authoritySource;
-    assertDeclaredTuple(selected, input.binding, request);
     if (subject.kind !== 'credential_access_disclosure') throw unavailable();
     const listInput = PluginPermissionGrantListActionInputV1Schema.parse({
       pluginId: input.binding.manifest.id,
       capability: RAW_CREDENTIAL_CAPABILITY,
       targetScope: ACCOUNT_TARGET_SCOPE,
       subject,
+      caller: caller.data,
       includeRevoked: false,
       includeResolvedRequests: false,
       limit: 200,
@@ -1006,6 +1015,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
       authority,
       signal,
       false,
+      request,
     );
     if (
       !sameAuthorization(inspected.authorization, current.authorization)

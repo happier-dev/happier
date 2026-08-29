@@ -299,6 +299,11 @@ function createHarness(input: Readonly<{
     realm: 'daemon' as const,
     phase: 'speech' as const,
     machineId: null,
+    materialization: {
+      pluginId: contribution.pluginId,
+      machineId: 'machine-a',
+      materializationId: 'materialization-a',
+    },
     immutableGenerationId: input.immutableGenerationId ?? 'generation-a',
     isRuntimeAuthorityCurrent: input.isRuntimeAuthorityCurrent
       ?? (() => generationCurrent),
@@ -356,27 +361,21 @@ describe('plugin raw credential materializer', () => {
       getAccountSettingsSnapshot: () => snapshot(),
     });
 
-    const inspection = await inspector.inspectAuthorization();
+    const inspection = await inspector.inspectAuthorization(connectedHeaderRequest);
     expect(inspection).toMatchObject({
       pluginId: contribution.pluginId,
       capability: 'credentials.materialize.raw',
       targetScope: { kind: 'account' },
       subject: { installReviewPrincipalDigest: principalA },
     });
-    expect(inspection.disclosures).toEqual(expect.arrayContaining([{
+    expect(inspection.disclosures).toEqual([{
       sourceClass: { kind: 'connectedAccount', service },
       realm: 'daemon',
       phase: 'speech',
       materialization: 'httpHeaders',
       origin: 'https://speech.example.test',
       destination: 'authorization',
-    }, {
-      sourceClass: { kind: 'savedSecret', secretKinds: ['apiKey'] },
-      realm: 'daemon',
-      phase: 'speech',
-      materialization: 'files',
-      destination: 'voice-token',
-    }]));
+    }]);
     expect(Object.isFrozen(inspection.disclosures)).toBe(true);
     expect(inspection.disclosures.every((row) => (
       Object.isFrozen(row) && Object.isFrozen(row.sourceClass)
@@ -386,7 +385,7 @@ describe('plugin raw credential materializer', () => {
   it('inspects the exact bound permission subject without reading grants or credentials', async () => {
     const harness = createHarness();
 
-    const inspection = await harness.materializer.inspectAuthorization();
+    const inspection = await harness.materializer.inspectAuthorization(connectedHeaderRequest);
 
     expect(inspection).toMatchObject({
       pluginId: contribution.pluginId,
@@ -409,9 +408,50 @@ describe('plugin raw credential materializer', () => {
     expect(harness.listInputs).toHaveLength(0);
   });
 
+  it('grants and revokes each exact realm/phase/materialization tuple independently', async () => {
+    const environmentRequest = { kind: 'environment' as const, keys: ['VOICE_TOKEN'] };
+    const saved = createHarness({ initialSnapshot: snapshot({ source: 'savedSecret' }) });
+    const headerInspection = await saved.materializer.inspectAuthorization(connectedHeaderRequest);
+    const environmentInspection = await saved.materializer.inspectAuthorization(environmentRequest);
+    expect(headerInspection.subject).not.toEqual(environmentInspection.subject);
+    expect(headerInspection.disclosures).toEqual([expect.objectContaining({
+      materialization: 'httpHeaders',
+      destination: 'authorization',
+    })]);
+    expect(environmentInspection.disclosures).toEqual([expect.objectContaining({
+      materialization: 'environment',
+      destination: 'VOICE_TOKEN',
+    })]);
+
+    const headerOnly = createHarness({
+      initialSnapshot: snapshot({ source: 'savedSecret' }),
+      grantSubject: headerInspection.subject,
+    });
+    await expect(headerOnly.materializer.materialize(environmentRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+    await expect(headerOnly.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: 'saved-secret-raw' },
+    });
+
+    const environmentOnly = createHarness({
+      initialSnapshot: snapshot({ source: 'savedSecret' }),
+      grantSubject: environmentInspection.subject,
+    });
+    await expect(environmentOnly.materializer.materialize(environmentRequest)).resolves.toEqual({
+      kind: 'environment',
+      env: { VOICE_TOKEN: 'saved-secret-raw' },
+    });
+    environmentOnly.setGrantActive(false);
+    await expect(environmentOnly.materializer.materialize(environmentRequest)).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+  });
+
   it('confines a raw-credential grant to the machine installation that approved it', async () => {
     const approved = createHarness();
-    const inspection = await approved.materializer.inspectAuthorization();
+    const inspection = await approved.materializer.inspectAuthorization(connectedHeaderRequest);
     expect(inspection.authoritySource).toEqual(machineA);
     await expect(approved.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
       kind: 'httpHeaders',
@@ -450,7 +490,7 @@ describe('plugin raw credential materializer', () => {
     // The authority gate belongs ahead of the source branch, not inside the
     // connected-account leaf: a SavedSecret disclosure is confined identically.
     const savedApproved = createHarness({ initialSnapshot: snapshot({ source: 'savedSecret' }) });
-    const savedInspection = await savedApproved.materializer.inspectAuthorization();
+    const savedInspection = await savedApproved.materializer.inspectAuthorization(connectedHeaderRequest);
     await expect(savedApproved.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
       kind: 'httpHeaders', headers: { authorization: 'saved-secret-raw' },
     });
@@ -467,7 +507,7 @@ describe('plugin raw credential materializer', () => {
 
   it('fails closed when this installation has no resolvable grant authority', async () => {
     const unidentified = createHarness({ currentAuthoritySource: null });
-    await expect(unidentified.materializer.inspectAuthorization()).rejects.toMatchObject({
+    await expect(unidentified.materializer.inspectAuthorization(connectedHeaderRequest)).rejects.toMatchObject({
       code: 'plugin_voice_credential_access_unavailable',
     });
     await expect(unidentified.materializer.materialize(connectedHeaderRequest)).rejects.toMatchObject({
@@ -477,7 +517,7 @@ describe('plugin raw credential materializer', () => {
 
   it('does not let a raw-credential grant follow selected authority or installed generation', async () => {
     const approved = createHarness();
-    const inspection = await approved.materializer.inspectAuthorization();
+    const inspection = await approved.materializer.inspectAuthorization(connectedHeaderRequest);
 
     const retained = createHarness({ grantSubject: inspection.subject });
     await expect(retained.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
@@ -506,7 +546,7 @@ describe('plugin raw credential materializer', () => {
       initialSnapshot: snapshot({ groupId: 'speech-group-g' }),
       resolvedGroupAccountId: 'account-a',
     });
-    const groupInspection = await groupApproved.materializer.inspectAuthorization();
+    const groupInspection = await groupApproved.materializer.inspectAuthorization(connectedHeaderRequest);
     const groupToOtherGroup = createHarness({
       initialSnapshot: snapshot({ groupId: 'speech-group-h' }),
       resolvedGroupAccountId: 'account-a',
@@ -532,7 +572,7 @@ describe('plugin raw credential materializer', () => {
         secret: 'old-value',
       }),
     });
-    const savedInspection = await savedApproved.materializer.inspectAuthorization();
+    const savedInspection = await savedApproved.materializer.inspectAuthorization(connectedHeaderRequest);
     const savedTurnover = createHarness({
       initialSnapshot: snapshot({
         source: 'savedSecret',
@@ -572,7 +612,7 @@ describe('plugin raw credential materializer', () => {
 
   it('fails closed without a selected source and never exposes selected authority material', async () => {
     const unselected = createHarness({ initialSnapshot: null });
-    await expect(unselected.materializer.inspectAuthorization()).rejects.toMatchObject({
+    await expect(unselected.materializer.inspectAuthorization(connectedHeaderRequest)).rejects.toMatchObject({
       code: 'plugin_voice_credential_access_unavailable',
     });
 
@@ -585,7 +625,7 @@ describe('plugin raw credential materializer', () => {
         secret: sensitiveSecret,
       }),
     });
-    const inspection = await selected.materializer.inspectAuthorization();
+    const inspection = await selected.materializer.inspectAuthorization(connectedHeaderRequest);
     expect(JSON.stringify(inspection.subject)).not.toContain(sensitiveScope);
     expect(JSON.stringify(inspection.subject)).not.toContain(sensitiveSecret);
     expect(JSON.stringify(inspection.subject)).not.toContain('saved-secret-raw');
@@ -610,7 +650,7 @@ describe('plugin raw credential materializer', () => {
         return principalSnapshot(principalA);
       },
     });
-    await expect(runtimeTurnover.materializer.inspectAuthorization()).rejects.toMatchObject({
+    await expect(runtimeTurnover.materializer.inspectAuthorization(connectedHeaderRequest)).rejects.toMatchObject({
       code: 'plugin_voice_credential_access_unavailable',
     });
   });

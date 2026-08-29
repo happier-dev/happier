@@ -166,6 +166,31 @@ describe('startSingleFlightIntervalLoop', () => {
     }
   });
 
+  it('honors task-requested retry-after for automatic ticks while manual trigger bypasses it', async () => {
+    vi.useFakeTimers();
+    try {
+      const task = vi.fn(async () => ({ nextAutomaticRunAfterMs: 60_000 }));
+      const loop = startSingleFlightIntervalLoop({
+        intervalMs: 10,
+        task,
+      });
+
+      await vi.advanceTimersByTimeAsync(11);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      loop.trigger();
+      await Promise.resolve();
+      expect(task).toHaveBeenCalledTimes(2);
+
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('manual trigger bypasses failure backoff', async () => {
     vi.useFakeTimers();
     try {
@@ -187,6 +212,89 @@ describe('startSingleFlightIntervalLoop', () => {
       expect(task).toHaveBeenCalledTimes(2);
 
       loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces explicit triggers issued while a run is in flight into exactly one forced rerun', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = createDeferred();
+      const task = vi.fn(() => first.promise);
+      const loop = startSingleFlightIntervalLoop({
+        intervalMs: 60_000,
+        task,
+      });
+
+      loop.trigger();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      loop.trigger();
+      loop.trigger();
+      loop.trigger();
+
+      first.resolve();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(task).toHaveBeenCalledTimes(2);
+
+      loop.stop();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(task).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stop() prevents a coalesced forced rerun from launching after the in-flight run settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = createDeferred();
+      const task = vi.fn(() => first.promise);
+      const loop = startSingleFlightIntervalLoop({
+        intervalMs: 60_000,
+        task,
+      });
+
+      loop.trigger();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      loop.trigger();
+      loop.stop();
+      first.resolve();
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(task).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pause() prevents a coalesced forced rerun and resume() does not launch it', async () => {
+    vi.useFakeTimers();
+    try {
+      const first = createDeferred();
+      const task = vi.fn(() => first.promise);
+      const loop = startSingleFlightIntervalLoop({
+        intervalMs: 60_000,
+        task,
+      });
+
+      loop.trigger();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      loop.trigger();
+      loop.pause();
+      first.resolve();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      loop.resume();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(task).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

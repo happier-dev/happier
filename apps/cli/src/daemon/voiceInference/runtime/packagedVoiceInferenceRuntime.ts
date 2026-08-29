@@ -216,8 +216,16 @@ function resolveVoiceSpeakerId(input: VoiceInferenceRuntimeSynthesizeInput): num
     }
 
     const voiceCatalog = (input.manifest as ModelPackManifest).voices ?? [];
-    const matchedVoice = voiceCatalog.find((voice) => voice.id === input.voiceId) ?? null;
-    return typeof matchedVoice?.sid === 'number' ? matchedVoice.sid : 0;
+    const requestedVoiceId = input.voiceId
+        ?? (input.manifest as ModelPackManifest).defaultVoiceId
+        ?? voiceCatalog[0]?.id
+        ?? null;
+    if (!requestedVoiceId) return 0;
+    const matchedVoice = voiceCatalog.find((voice) => voice.id === requestedVoiceId) ?? null;
+    if (!matchedVoice) {
+        throw createVoiceInferenceError('invalid_audio_input', 'voice_inference_tts_voice_unavailable');
+    }
+    return typeof matchedVoice.sid === 'number' ? matchedVoice.sid : 0;
 }
 
 async function createTtsRuntime(input: VoiceInferenceRuntimeSynthesizeInput): Promise<CachedTtsRuntime> {

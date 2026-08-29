@@ -759,27 +759,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 : {}),
         };
         let richDefinition: PluginAgentContributionV2;
-        if (params.sessions && params.executionRuns) {
-            richDefinition = {
-                ...commonDefinition,
-                primary: 'sessions',
-                capabilities: {
-                    sessions: {
-                        open: [...(params.sessionOpen ?? ['create'])],
-                        delivery: ['newTurn'],
-                        cancel: true,
-                    },
-                    executionRuns: {
-                        open: [...(params.executionRunOpen ?? ['create'])],
-                        checkpoint: true,
-                        stop: true,
-                    },
-                    ...(params.externalSessions
-                        ? { surfaces: ['externalSessions' as const] }
-                        : {}),
-                },
-            };
-        } else if (params.sessions) {
+        if (params.sessions) {
             richDefinition = {
                 ...commonDefinition,
                 primary: 'sessions',

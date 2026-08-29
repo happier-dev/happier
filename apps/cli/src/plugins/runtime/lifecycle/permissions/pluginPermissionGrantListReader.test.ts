@@ -5,12 +5,19 @@ import {
   PluginInstallReviewPrincipalDigestSchema,
   PluginPermissionSubjectV1Schema,
 } from '@happier-dev/protocol';
+import { createDefaultPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import { createServerPluginPermissionGrantListReader } from './pluginPermissionGrantListReader';
 
 vi.mock('axios');
+vi.mock('@/plugins/installations/publisherProof', () => ({
+  createDefaultPluginInstallationPublisherHeader: vi.fn(),
+}));
 
 describe('server plugin permission grant list reader', () => {
-  beforeEach(() => vi.mocked(axios.post).mockReset());
+  beforeEach(() => {
+    vi.mocked(axios.post).mockReset();
+    vi.mocked(createDefaultPluginInstallationPublisherHeader).mockReset();
+  });
 
   it('posts the exact canonical query with account authentication and parses the response', async () => {
     const subject = PluginPermissionSubjectV1Schema.parse({
@@ -55,16 +62,49 @@ describe('server plugin permission grant list reader', () => {
       includeRevoked: false,
       includeResolvedRequests: false,
       limit: 200,
+      caller: {
+        pluginId: 'acme.voice',
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+      },
     } as const;
+    vi.mocked(createDefaultPluginInstallationPublisherHeader).mockResolvedValue('publisher-proof');
 
     await expect(reader.list(query, { signal: controller.signal })).resolves.toEqual(output);
+    expect(createDefaultPluginInstallationPublisherHeader).toHaveBeenCalledWith({
+      method: 'POST',
+      path: '/v1/plugins/permissions/grants/list',
+      body: query,
+    });
     expect(axios.post).toHaveBeenCalledWith(
       expect.stringMatching(/\/v1\/plugins\/permissions\/grants\/list$/u),
       query,
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer account-token' }),
+        headers: expect.objectContaining({
+          Authorization: 'Bearer account-token',
+          'x-happier-plugin-installation-manifest-publisher': 'publisher-proof',
+        }),
         signal: controller.signal,
       }),
     );
+  });
+
+  it('does not send caller provenance when the matching publisher proof is unavailable', async () => {
+    const reader = createServerPluginPermissionGrantListReader({
+      credentials: { token: 'account-token' } as never,
+    });
+
+    await expect(reader.list({
+      pluginId: 'acme.voice',
+      caller: {
+        pluginId: 'acme.voice',
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+      },
+      includeRevoked: false,
+      includeResolvedRequests: false,
+      limit: 50,
+    })).rejects.toThrow('plugin_permission_grant_publisher_proof_unavailable');
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });

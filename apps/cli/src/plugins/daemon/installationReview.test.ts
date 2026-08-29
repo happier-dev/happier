@@ -160,6 +160,7 @@ describe('projectPluginInstallationReview', () => {
       kind: 'npm',
       locator: '@acme/install-review@1.0.0',
       integrity: 'sha512-example',
+      integrityBasis: 'expected',
       packageName: '@acme/install-review',
       registryOrigin: 'https://registry.example.test',
       publisher: { status: 'unavailable' },

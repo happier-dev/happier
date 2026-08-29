@@ -65,7 +65,7 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
       peerApplicationEncryption: {
         ...baseBinding,
-        applicationKind: 'agent_realtime',
+        applicationKind: 'agent_realtime' as never,
       },
     })).resolves.toMatchObject({ ok: false, error: 'voice_inference_invalid_stream_state' });
     await expect(manager.start({

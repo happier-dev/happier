@@ -157,12 +157,15 @@ import {
   FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
   FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
   FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
+  FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH,
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
   ForegroundAgentRuntimeAdmissionResponseV1Schema,
   ForegroundAgentRuntimeClaimRequestV1Schema,
   ForegroundAgentRuntimeClaimResponseV1Schema,
   ForegroundAgentRuntimeReleaseRequestV1Schema,
   ForegroundAgentRuntimeReleaseResponseV1Schema,
+  ForegroundAgentRuntimeSessionOptionsRequestV1Schema,
+  ForegroundAgentRuntimeSessionOptionsResponseV1Schema,
 } from './agentRuntime/foregroundAdmissionContract';
 import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.types';
 import {
@@ -1282,7 +1285,7 @@ export function createDaemonControlApp({
             request.input,
             {
               surface: request.surface,
-              authority: request.surface === 'cli' ? 'present_user' : 'account_automation',
+              authority: request.authority,
               actionCaller: { kind: 'host' },
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
             },
@@ -3078,6 +3081,35 @@ export function createDaemonControlApp({
     return await foregroundAgentRuntimeAdmission.claimEnvironment(
       request.body,
     );
+  });
+
+  typed.post(FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH, {
+    schema: {
+      body: ForegroundAgentRuntimeSessionOptionsRequestV1Schema,
+      response: {
+        200: ForegroundAgentRuntimeSessionOptionsResponseV1Schema,
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!foregroundAgentRuntimeAdmission) {
+      return {
+        ok: false as const,
+        error: createProviderErrorV1(
+          'provider_agent_runtime_unsupported',
+          { machineId },
+        ),
+      };
+    }
+    return await foregroundAgentRuntimeAdmission.resolveSessionRuntimePreferences({
+      ...request.body,
+    });
   });
 
   typed.post(FOREGROUND_AGENT_RUNTIME_RELEASE_PATH, {

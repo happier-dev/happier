@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 
 export type LocalPluginInstallTrustDecision = Readonly<{
   trustPolicy: PluginSourceSpecV1['trustPolicy'];
@@ -52,7 +53,7 @@ export async function resolveLocalPluginInstallTrust(params: Readonly<{
           message: [
             `Dev install requested for '${params.pluginRootPath}', but that path is outside the current workspace root '${resolve(params.workspaceRoot ?? '')}'.`,
             `The plugin remains trustPolicy:'prompt' and executable daemon code will not load until trust is approved.`,
-            `Install from within the workspace containing the plugin, or run 'happier plugins install . --dev' from the plugin root.`,
+            `Install from within the workspace containing the plugin, or run '${resolveInvokerName() ?? 'happier'} plugins install . --dev' from the plugin root.`,
           ].join(' '),
         } satisfies PluginCompatibilityDiagnostic];
     return {

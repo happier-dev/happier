@@ -216,7 +216,13 @@ function resolveModuleRuntimeAuthority(
     if (moduleTree === 'src') {
       return { root: moduleProjectRoot, provenance: 'source-module' };
     }
-    if (moduleTree === 'dist') {
+    // `.dist.hstack-backup` is the stack PM's rename-aside layout for `dist`
+    // while a rebuild is in flight, and `bin/_resolveRuntimeEntrypoint.mjs`
+    // boots it as a supported runtime tree. A module executing from it must
+    // classify its owning checkout exactly like `dist`; leaving it
+    // unrecognized makes the plugin-authoring toolchain fail closed with an
+    // unavailable runtime root even though the checkout is right there.
+    if (moduleTree === 'dist' || moduleTree === '.dist.hstack-backup') {
       return {
         root: moduleProjectRoot,
         provenance: existsSync(join(moduleProjectRoot, 'src'))

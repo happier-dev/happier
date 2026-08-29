@@ -72,7 +72,6 @@ export type HostAcpCapabilityFlags = Readonly<{
   supportsInFlightSteer?: boolean;
   supportsModelSwitch?: boolean;
   customMessageKinds?: readonly string[];
-  supportsLoadSession?: boolean;
   supportsModes?: boolean | 'yes' | 'no' | 'unknown';
   supportsModels?: boolean | 'yes' | 'no' | 'unknown';
   supportsConfigOptions?: boolean | 'yes' | 'no' | 'unknown';

@@ -4858,6 +4858,51 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         }
     });
 
+    it('relays only normalized rate-limit evidence from a terminal provider result', async () => {
+        const retryNotBeforeMs = 1_786_000_060_000;
+        const accepted = harness({
+            invoke: async () => ({
+                status: 'unavailable',
+                diagnostic: { code: 'provider_rate_limited', severity: 'error' },
+                failureClass: 'rateLimit',
+                retryNotBeforeMs,
+            }),
+        });
+        await accepted.owner.beginConnect({ service, modeId: 'manual' });
+        await expect(accepted.owner.submitManual({
+            attemptId: 'attempt-1',
+            fields: { token: 'candidate' },
+        })).resolves.toEqual({
+            status: 'unavailable',
+            attemptId: 'attempt-1',
+            code: 'provider_rate_limited',
+            diagnostic: { code: 'provider_rate_limited', severity: 'error' },
+            failureClass: 'rateLimit',
+            retryNotBeforeMs,
+        });
+
+        for (const invalidEvidence of [
+            { failureClass: 'transient', retryNotBeforeMs },
+            { failureClass: 'rateLimit', retryNotBeforeMs: -1 },
+        ]) {
+            const rejected = harness({
+                invoke: async () => ({
+                    status: 'unavailable',
+                    diagnostic: { code: 'provider_rate_limited', severity: 'error' },
+                    ...invalidEvidence,
+                }),
+            });
+            await rejected.owner.beginConnect({ service, modeId: 'manual' });
+            await expect(rejected.owner.submitManual({
+                attemptId: 'attempt-1',
+                fields: { token: 'candidate' },
+            })).resolves.toMatchObject({
+                status: 'reconnectRequired',
+                code: 'connected_account_authentication_outcome_unknown',
+            });
+        }
+    });
+
     it('bounds attempt credential staging before any settlement can persist it', async () => {
         const h = harness({
             invoke: async ({ context }) => {
@@ -4969,6 +5014,78 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             attemptId: 'attempt-1',
             code: 'connected_account_attempt_expired',
         });
+    });
+
+    it('reclaims an expired attempt and closes its durable transaction through the earliest-expiry timer without new traffic', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        try {
+            const durable = durableOAuthTransactions();
+            const h = harness({
+                now: () => Date.now(),
+                attemptTtlMs: 60_000,
+                admittedMode: oauthMode({ outcomeReconciliation: 'none' }),
+                oauthTransactions: durable.owner,
+            });
+            await h.owner.beginConnect({ service, modeId: 'oauth' });
+            await waitForAttemptStatus(h.owner, 'attempt-1', 'awaitingOAuth');
+            expect(durable.readRecord()).not.toBeNull();
+
+            // No unrelated begin or read arrives. The single earliest-expiry
+            // timer physically reclaims the durable RepeatKey-backed
+            // transaction and expires the attempt on its own.
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(durable.readRecord()).toBeNull();
+            await expect(h.owner.read({ attemptId: 'attempt-1' })).resolves.toEqual({
+                status: 'unavailable',
+                attemptId: 'attempt-1',
+                code: 'connected_account_attempt_expired',
+            });
+            expect(h.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
+            h.owner.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('keeps one expiry timer and cancels it when attempts are empty or the owner is disposed', async () => {
+        vi.useFakeTimers();
+        try {
+            const h = harness({
+                now: () => Date.now(),
+                attemptTtlMs: 60_000,
+            });
+            await expect(h.owner.beginConnect({
+                service,
+                modeId: 'manual',
+            })).resolves.toEqual({
+                status: 'awaitingManual',
+                attemptId: 'attempt-1',
+            });
+            expect(vi.getTimerCount()).toBe(1);
+
+            await expect(h.owner.cancel({ attemptId: 'attempt-1' })).resolves.toEqual({
+                status: 'cancelled',
+                attemptId: 'attempt-1',
+            });
+            expect(vi.getTimerCount()).toBe(0);
+
+            await expect(h.owner.beginConnect({
+                service,
+                modeId: 'manual',
+            })).resolves.toEqual({
+                status: 'awaitingManual',
+                attemptId: 'attempt-2',
+            });
+            expect(vi.getTimerCount()).toBe(1);
+
+            h.owner.dispose();
+            expect(vi.getTimerCount()).toBe(0);
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(h.destroyAttemptConfiguration).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('retains expired attempt capacity until its exact cleanup succeeds', async () => {

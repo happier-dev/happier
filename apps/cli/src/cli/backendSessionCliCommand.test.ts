@@ -24,6 +24,7 @@ const foregroundAdmissionMocks = vi.hoisted(() => ({
   admit: vi.fn(),
   claim: vi.fn(),
   release: vi.fn(),
+  resolveSessionOptions: vi.fn(),
 }));
 const ensureDaemonRunningForSessionCommandMock = vi.hoisted(() => vi.fn());
 const terminalPromptMocks = vi.hoisted(() => ({
@@ -64,6 +65,8 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => {
     ...actual,
     admitDaemonForegroundAgentRuntime: foregroundAdmissionMocks.admit,
     releaseDaemonForegroundAgentRuntime: foregroundAdmissionMocks.release,
+    resolveDaemonForegroundAgentRuntimeSessionOptions:
+      foregroundAdmissionMocks.resolveSessionOptions,
   };
 });
 
@@ -99,6 +102,7 @@ vi.mock(
 );
 
 import {
+  buildAgentCliSessionCommandBuildInput,
   runBackendSessionCliCommand as runBackendSessionCliCommandProduction,
 } from './runBackendSessionCliCommand';
 import * as authModule from '@/ui/auth';
@@ -185,6 +189,10 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  foregroundAdmissionMocks.admit.mockReset();
+  foregroundAdmissionMocks.claim.mockReset();
+  foregroundAdmissionMocks.release.mockReset();
+  foregroundAdmissionMocks.resolveSessionOptions.mockReset();
   foregroundAdmissionMocks.admit.mockResolvedValue({
     ok: true,
     capability: {
@@ -199,6 +207,7 @@ beforeEach(() => {
         agentId: 'codex',
         backendId: 'codex',
         generation: 'generation-1',
+        immutableGenerationId: 'immutable-generation-1',
       },
     },
     launchPolicy: {
@@ -213,6 +222,13 @@ beforeEach(() => {
     sensitiveEnvironmentVariableNames: [],
   });
   foregroundAdmissionMocks.release.mockResolvedValue(undefined);
+  foregroundAdmissionMocks.resolveSessionOptions.mockImplementation(async (request: any) => ({
+    ok: true,
+    options: await catalogHooksModule.resolveProviderSessionRuntimePreferences(
+      foregroundAdmissionMocks.admit.mock.calls.at(-1)?.[0]?.agentId ?? 'codex',
+      request.input,
+    ),
+  }));
   ensureDaemonRunningForSessionCommandMock.mockResolvedValue(undefined);
 });
 
@@ -224,6 +240,27 @@ describe('runBackendSessionCliCommand', () => {
   function readRunBackendSessionCliCommandSource(): string {
     return readFileSync(new URL('./runBackendSessionCliCommand.ts', import.meta.url), 'utf8');
   }
+
+  it('omits non-string process environment entries from Agent CLI session command build input', () => {
+    const input = buildAgentCliSessionCommandBuildInput({
+      settings: {},
+      processEnv: { KEEP: 'value', OMIT: undefined, DROP_NUMBER: 1 } as unknown as Record<string, string | undefined>,
+      startedBy: 'terminal',
+      isExplicitCliSubcommand: true,
+      parsed: {
+        startingMode: undefined,
+        directory: undefined,
+        resume: undefined,
+        providerArgs: [],
+      } as any,
+    });
+
+    expect(input.environment).toEqual({ KEEP: 'value' });
+    expect(input.environment).not.toHaveProperty('OMIT');
+    expect(input.environment).not.toHaveProperty('DROP_NUMBER');
+    expect(JSON.stringify(input)).not.toContain('OMIT');
+    expect(JSON.stringify(input)).not.toContain('DROP_NUMBER');
+  });
 
   function makeJwtWithSub(sub: string): string {
     const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
@@ -279,7 +316,7 @@ describe('runBackendSessionCliCommand', () => {
     expect(foregroundAdmissionMocks.admit).toHaveBeenCalledTimes(1);
   });
 
-  it('passes host-resolved Session preference facts through the canonical catalog hook', async () => {
+  it('passes host-resolved Session preference facts through the daemon foreground admission owner', async () => {
     const credentials = { token: 'x' } as Credentials;
     const profile = AIBackendProfileSchema.parse({
       id: 'work',
@@ -311,6 +348,10 @@ describe('runBackendSessionCliCommand', () => {
     const resolvePreferences = vi
       .spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences')
       .mockResolvedValue({});
+    foregroundAdmissionMocks.resolveSessionOptions.mockResolvedValue({
+      ok: true,
+      options: { sessionPreference: 'from-daemon' },
+    });
     runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
       await resolveLateSessionCommandOptions(options);
     });
@@ -321,21 +362,32 @@ describe('runBackendSessionCliCommand', () => {
       agentIdForAccountSettings: 'codex' as any,
     });
 
-    expect(resolvePreferences).toHaveBeenCalledWith(
-      'codex',
+    expect(resolvePreferences).not.toHaveBeenCalled();
+    const admitted = foregroundAdmissionMocks.admit.mock.calls[0]?.[0];
+    expect(foregroundAdmissionMocks.resolveSessionOptions).toHaveBeenCalledWith(
       expect.objectContaining({
-        settings,
-        environment: expect.objectContaining({
-          R0_61_PREFERENCE_ENV: 'profile-value',
+        v: 1,
+        attemptId: admitted?.attemptId,
+        sessionId: admitted?.sessionId,
+        foregroundPid: process.pid,
+        input: expect.objectContaining({
+          settings,
+          environment: expect.objectContaining({
+            R0_61_PREFERENCE_ENV: 'profile-value',
+          }),
+          startOrigin: 'terminal',
+          isExplicitCliSubcommand: true,
+          parsed: expect.objectContaining({ agentArgs: expect.any(Array) }),
         }),
-        startOrigin: 'terminal',
-        isExplicitCliSubcommand: true,
-        parsed: expect.objectContaining({ agentArgs: expect.any(Array) }),
       }),
+      expect.any(Object),
     );
-    const preferenceInput = resolvePreferences.mock.calls[0]?.[1] as Record<string, unknown>;
+    const preferenceInput = foregroundAdmissionMocks.resolveSessionOptions.mock.calls[0]?.[0]?.input as Record<string, unknown>;
     expect(preferenceInput).not.toHaveProperty('processEnv');
     expect(preferenceInput).not.toHaveProperty('startedBy');
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('codex', expect.objectContaining({
+      sessionPreference: 'from-daemon',
+    }));
   });
 
   it('claims native-home state sharing from the exact plugin-resolved launch environment', async () => {
@@ -534,14 +586,14 @@ describe('runBackendSessionCliCommand', () => {
     vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'cache',
-      settings: {
+      settings: AccountSettingsSchema.parse({
         connectedServicesDefaultAuthByAgentIdV1: {
           v: 1,
           bindingsByAgentId: {
             codex: {
               v: 1,
               bindingsByServiceId: {
-                'openai-codex': {
+                'happier.agent.codex/openai-codex': {
                   source: 'connected',
                   selection: 'group',
                   groupId: 'team',
@@ -550,7 +602,7 @@ describe('runBackendSessionCliCommand', () => {
             },
           },
         },
-      },
+      }),
       settingsVersion: 1,
       loadedAtMs: Date.now(),
       whenRefreshed: null,
@@ -574,7 +626,7 @@ describe('runBackendSessionCliCommand', () => {
       connectedServices: expect.objectContaining({
         v: 1,
         bindingsByServiceId: expect.objectContaining({
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected',
             selection: 'group',
             groupId: 'team',
@@ -1421,6 +1473,110 @@ describe('runBackendSessionCliCommand', () => {
           'DEEPSEEK_AUTH_TOKEN',
         ],
       });
+  });
+
+  it('refuses Profile secret recovery retry when foreground admission generation changed', async () => {
+    const credentials: Credentials = {
+      token: 'x',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const profile = AIBackendProfileSchema.parse({
+      id: 'deepseek',
+      name: 'DeepSeek',
+      envVarRequirements: [{
+        name: 'DEEPSEEK_AUTH_TOKEN',
+        kind: 'secret',
+        required: true,
+      }],
+      compatibility: {},
+      isBuiltIn: false,
+      createdAt: 0,
+      updatedAt: 0,
+      version: '1.0.0',
+    });
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'network',
+      settings: { profiles: [profile] } as any,
+      settingsVersion: 9,
+      scopeKey: 'scope-test',
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+    terminalPromptMocks.isInteractiveTerminal.mockReturnValue(true);
+    terminalPromptMocks.promptSecret.mockResolvedValue('prompted-secret');
+    foregroundAdmissionMocks.claim.mockResolvedValueOnce({
+      ok: false,
+      error: createProviderErrorV1('provider_agent_runtime_unsupported'),
+      profileSecretRecovery: { requirementNames: ['DEEPSEEK_AUTH_TOKEN'] },
+    });
+    foregroundAdmissionMocks.admit
+      .mockResolvedValueOnce({
+        ok: true,
+        capability: {
+          attemptId: 'attempt-test',
+          admissionFilePath: '/private/foreground-admission.json',
+          bootstrapFilePath: '/private/foreground-bootstrap.json',
+          authorityFilePath: '/private/foreground-authority.json',
+          descriptor: {
+            v: 1,
+            pluginId: 'codex-plugin',
+            pluginVersion: '1.0.0',
+            agentId: 'codex',
+            backendId: 'codex',
+            generation: 'generation-1',
+            immutableGenerationId: 'immutable-generation-1',
+          },
+        },
+        launchPolicy: { reservedEnvironmentVariableNames: [], profileSecretRequirementNamesMissingBinding: [] },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        capability: {
+          attemptId: 'attempt-retry',
+          admissionFilePath: '/private/foreground-admission-retry.json',
+          bootstrapFilePath: '/private/foreground-bootstrap-retry.json',
+          authorityFilePath: '/private/foreground-authority-retry.json',
+          descriptor: {
+            v: 1,
+            pluginId: 'codex-plugin',
+            pluginVersion: '1.0.0',
+            agentId: 'codex',
+            backendId: 'codex',
+            generation: 'generation-2',
+            immutableGenerationId: 'immutable-generation-2',
+          },
+        },
+        launchPolicy: { reservedEnvironmentVariableNames: [], profileSecretRequirementNamesMissingBinding: [] },
+      });
+    runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
+      await resolveLateSessionCommandOptions(options);
+    });
+    const fatalSpy = vi.spyOn(logger, 'fatal').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`exit:${String(code)}`);
+    }) as never);
+
+    await expect(runBackendSessionCliCommand({
+      context: { args: ['codex', '--profile', 'deepseek'], terminalRuntime: null } as any,
+      backendIdForSessionRuntime: 'codex',
+      agentIdForAccountSettings: 'codex' as any,
+    })).rejects.toThrow('exit:1');
+
+    expect(foregroundAdmissionMocks.admit).toHaveBeenCalledTimes(2);
+    expect(foregroundAdmissionMocks.claim).toHaveBeenCalledTimes(1);
+    expect(runSessionCommandSpy).toHaveBeenCalledTimes(1);
+    const generationError = fatalSpy.mock.calls[0]?.[0];
+    expect(generationError).toBeInstanceOf(Error);
+    expect((generationError as Error).message).toBe(
+      'Foreground Agent runtime admission policy changed during Profile secret recovery',
+    );
+    expect(errorSpy.mock.calls.flat().join('\n')).toContain(
+      'Foreground Agent runtime admission policy changed during Profile secret recovery',
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it('keeps daemon-authorized Provider auth ahead of Profile and ambient Agent auth', async () => {

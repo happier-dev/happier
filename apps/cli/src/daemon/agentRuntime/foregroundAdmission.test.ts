@@ -425,7 +425,7 @@ describe('foreground Agent runtime admission', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('admits an installed Agent whose descriptor carries its contribution identity while retained custody keeps its routing id', async () => {
+  it('rejects a descriptor that respells the installed Agent identity and admits only the canonical host routing id', async () => {
     const cleanup = vi.fn(async () => undefined);
     const retirement = new AbortController();
     const retained = createAgentSessionRunnerFactoryBinding({
@@ -434,56 +434,82 @@ describe('foreground Agent runtime admission', () => {
       agentId: 'acme.alpha/assistant',
       localAgentId: 'assistant',
     });
-    const prepared = createPrepared(
-      cleanup,
-      retirement,
-      vi.fn(async () => ({
-        ok: true as const,
-        environment: {},
-        unsetEnvironmentVariableNames: [],
-        sensitiveEnvironmentVariableNames: [],
-        invocationContext: invocationContext({}),
-        authority: {
-          ...claimAuthority(),
-          retainedAgent: retained,
-        },
-      })),
-    );
-    const owner = createForegroundAgentRuntimeAdmissionOwner({
-      prepare: async () => ({
-        ok: true,
-        prepared: {
-          ...prepared,
-          authorization: {
-            ...prepared.authorization,
-            descriptor: {
-              ...prepared.authorization.descriptor,
-              pluginId: 'acme.alpha',
-              agentId: 'acme.alpha/agents/assistant',
-              agentDeclaration: {
-                provenance: 'external',
-                source: { kind: 'path' },
-                definition: {
-                  kindVersion: 1,
-                  id: 'assistant',
-                  title: 'Assistant',
-                  runtime: { kind: 'custom' },
-                  primary: 'sessions',
-                  capabilities: {
-                    sessions: {
-                      open: ['create'],
-                      delivery: ['newTurn'],
-                      cancel: true,
+    const createOwnerWithDescriptorAgentId = (agentId: string) => {
+      const prepared = createPrepared(
+        cleanup,
+        retirement,
+        vi.fn(async () => ({
+          ok: true as const,
+          environment: {},
+          unsetEnvironmentVariableNames: [],
+          sensitiveEnvironmentVariableNames: [],
+          invocationContext: invocationContext({}),
+          authority: {
+            ...claimAuthority(),
+            retainedAgent: retained,
+          },
+        })),
+      );
+      return createForegroundAgentRuntimeAdmissionOwner({
+        prepare: async () => ({
+          ok: true,
+          prepared: {
+            ...prepared,
+            authorization: {
+              ...prepared.authorization,
+              descriptor: {
+                ...prepared.authorization.descriptor,
+                pluginId: 'acme.alpha',
+                agentId,
+                agentDeclaration: {
+                  provenance: 'external',
+                  source: { kind: 'path' },
+                  definition: {
+                    kindVersion: 1,
+                    id: 'assistant',
+                    title: 'Assistant',
+                    runtime: { kind: 'custom' },
+                    primary: 'sessions',
+                    capabilities: {
+                      sessions: {
+                        open: ['create'],
+                        delivery: ['newTurn'],
+                        cancel: true,
+                      },
                     },
                   },
                 },
               },
             },
           },
-        },
-      }),
-    });
-    const admitted = await owner.admit({
+        }),
+      });
+    };
+    // Admit is descriptor-custody only; the retained runtime authority is
+    // available only at claim time, where the respelled descriptor must refuse.
+    const respelled = createOwnerWithDescriptorAgentId(
+      'acme.alpha/agents/assistant',
+    );
+    await expect(respelled.admit({
+      ...admissionRequest,
+      agentId: 'acme.alpha/assistant',
+      backendTarget: {
+        ...admissionRequest.backendTarget,
+        backendId: 'acme.alpha/assistant',
+      },
+    })).resolves.toMatchObject({ ok: true });
+    await expect(respelled.claimEnvironment({
+      ...claimRequest(),
+      pluginId: 'acme.alpha',
+      agentId: 'acme.alpha/agents/assistant',
+    })).rejects.toThrow(
+      'Foreground Agent runtime authority binding is invalid',
+    );
+    await respelled.dispose();
+    const admittedOwner = createOwnerWithDescriptorAgentId(
+      'acme.alpha/assistant',
+    );
+    const admitted = await admittedOwner.admit({
       ...admissionRequest,
       agentId: 'acme.alpha/assistant',
       backendTarget: {
@@ -492,11 +518,131 @@ describe('foreground Agent runtime admission', () => {
       },
     });
     expect(admitted).toMatchObject({ ok: true });
-    await expect(owner.claimEnvironment({
+    await expect(admittedOwner.claimEnvironment({
       ...claimRequest(),
       pluginId: 'acme.alpha',
-      agentId: 'acme.alpha/agents/assistant',
+      agentId: 'acme.alpha/assistant',
     })).resolves.toMatchObject({ ok: true });
+    await admittedOwner.dispose();
+  });
+
+  it('resolves foreground session options for the exact attempt/session/pid and may recompute', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const retirement = new AbortController();
+    const input = {
+      isExplicitCliSubcommand: false,
+      parsed: { agentArgs: [] },
+      settings: {},
+      pluginSettings: {},
+      environment: {},
+      startOrigin: 'daemon' as const,
+    };
+    const resolver = vi.fn(async (seenInput: unknown) => {
+      expect(seenInput).toBe(input);
+      return { model: 'codex-latest', omitted: undefined };
+    });
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({
+        ok: true,
+        prepared: {
+          ...createPrepared(cleanup, retirement),
+          resolveSessionRuntimePreferences: resolver,
+        },
+      }),
+    });
+
+    await owner.admit(admissionRequest);
+    await expect(owner.resolveSessionRuntimePreferences({
+      v: 1,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: 1234,
+      input,
+    })).resolves.toEqual({ ok: true, options: { model: 'codex-latest' } });
+    await expect(owner.resolveSessionRuntimePreferences({
+      v: 1,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: 1234,
+      input,
+    })).resolves.toEqual({ ok: true, options: { model: 'codex-latest' } });
+    await expect(owner.resolveSessionRuntimePreferences({
+      v: 1,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: 9999,
+      input,
+    })).rejects.toThrow('unavailable');
+    expect(resolver).toHaveBeenCalledTimes(2);
+    await owner.dispose();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns empty foreground session options when no resolver is declared', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const retirement = new AbortController();
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({
+        ok: true,
+        prepared: createPrepared(cleanup, retirement),
+      }),
+    });
+    await owner.admit(admissionRequest);
+    await expect(owner.resolveSessionRuntimePreferences({
+      v: 1,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: 1234,
+      input: {
+        isExplicitCliSubcommand: false,
+        parsed: { agentArgs: [] },
+        settings: {},
+        pluginSettings: {},
+        environment: {},
+        startOrigin: 'daemon',
+      },
+    })).resolves.toEqual({ ok: true, options: {} });
+    await owner.dispose();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses and cleans up foreground session options that go stale while awaiting the callback', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const retirement = new AbortController();
+    let settle!: () => void;
+    const gate = new Promise<void>((resolve) => { settle = resolve; });
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({
+        ok: true,
+        prepared: {
+          ...createPrepared(cleanup, retirement),
+          isCurrent: () => !retirement.signal.aborted,
+          resolveSessionRuntimePreferences: async () => {
+            await gate;
+            return { model: 'stale-model' };
+          },
+        },
+      }),
+    });
+    await owner.admit(admissionRequest);
+    const resolving = owner.resolveSessionRuntimePreferences({
+      v: 1,
+      attemptId: 'attempt-1',
+      sessionId: 'session-1',
+      foregroundPid: 1234,
+      input: {
+        isExplicitCliSubcommand: false,
+        parsed: { agentArgs: [] },
+        settings: {},
+        pluginSettings: {},
+        environment: {},
+        startOrigin: 'daemon',
+      },
+    });
+    retirement.abort();
+    settle();
+    await expect(resolving).rejects.toThrow('retired plugin generation');
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
   it('allows only one concurrent claimant before late preparation settles', async () => {

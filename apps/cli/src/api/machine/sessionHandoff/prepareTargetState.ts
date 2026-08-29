@@ -132,6 +132,7 @@ export function buildPreparePendingStatus(input: Readonly<{
   transportStrategy: SessionHandoffPrepareTargetRequest['negotiatedTransportStrategy'];
   recoveryActions: SessionHandoffStatus['recoveryActions'];
   phaseDetail: string;
+  sessionTransfer?: Readonly<{ currentBytes: number; totalBytes: number }>;
 }>): SessionHandoffStatus {
   return {
     handoffId: input.handoffId,
@@ -142,9 +143,9 @@ export function buildPreparePendingStatus(input: Readonly<{
     recoveryActions: [...input.recoveryActions],
     progress: {
       updatedAtMs: Date.now(),
-      checkpoint: 'stage_target',
-      planned: {},
-      transferred: {},
+      checkpoint: 'import_session',
+      planned: input.sessionTransfer ? { totalBytes: input.sessionTransfer.totalBytes } : {},
+      transferred: input.sessionTransfer ? { bytes: input.sessionTransfer.currentBytes } : {},
       applied: {},
       remaining: {},
       current: {

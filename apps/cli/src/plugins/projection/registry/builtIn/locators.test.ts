@@ -8,7 +8,11 @@ import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contribution
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../sources/generatedBundledPluginManifests';
-import { loadBundledPluginLocators, type BundledPluginLocator } from './locators';
+import {
+    loadBundledPluginLocators,
+    projectManagedRuntimePublicationManifest,
+    type BundledPluginLocator,
+} from './locators';
 
 const requireFromTest = createRequire(import.meta.url);
 
@@ -124,6 +128,43 @@ describe('bundled plugin locators', () => {
         expect(() => loadBundledPluginLocators([locator(), locator()])).toThrow(
             /Duplicate bundled plugin locator/,
         );
+    });
+
+    it('removes only the source-only artifact managed facet while retaining external provider parity', () => {
+        const providerLocator = locator({
+            manifest: {
+                schemaVersion: 2,
+                id: 'happier.provider.fixture',
+                version: '1.0.0',
+                displayName: 'Fixture',
+                engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+                hostAccess: { required: [], optional: [] },
+                contributes: {
+                    providers: [{
+                        id: 'fixture',
+                        name: 'Fixture provider',
+                        kind: 'aggregator',
+                        endpointTemplates: [],
+                        managedRuntime: { kind: 'managed', endpointTemplateIds: [] },
+                    }],
+                },
+            },
+        });
+        const key = 'happier.provider.fixture\u0000fixture';
+        const unmatched = new Set([key]);
+        const projected = projectManagedRuntimePublicationManifest(
+            providerLocator,
+            new Set([key]),
+            unmatched,
+        ) as { contributes: { providers: readonly Record<string, unknown>[] } };
+
+        expect(projected.contributes.providers).toEqual([
+            expect.objectContaining({ id: 'fixture', name: 'Fixture provider', kind: 'aggregator' }),
+        ]);
+        expect(projected.contributes.providers[0]).not.toHaveProperty('managedRuntime');
+        expect(unmatched).toEqual(new Set());
+        expect(projectManagedRuntimePublicationManifest(providerLocator, new Set(), new Set()))
+            .toBe(providerLocator.manifest);
     });
 
     it.each([

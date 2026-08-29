@@ -8,7 +8,6 @@ import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { projectProviderRuntimeBindingBasis } from '../spawn/runtimeBindingBasis';
 
 import {
-  resolveProviderAuthorizationApplyPolicy,
   resolveProviderAuthorizationApplyPolicyForActiveBinding,
   sameProviderAuthorizationRuntimeBindingDimensions,
   sameProviderRuntimeBindingBasis,
@@ -22,6 +21,24 @@ type ManagedAuthorization = Extract<
   ProviderSpawnAuthorization,
   { deployment: { kind: 'managedLocal' } }
 >;
+
+function resolveApplyPolicyForObservedAuthorization(input: Readonly<{
+  current: ProviderSpawnAuthorization;
+  next: ProviderSpawnAuthorization;
+}>) {
+  const active = withRuntimeBindingBasis(input.current);
+  return resolveProviderAuthorizationApplyPolicyForActiveBinding({
+    activeSelection: {
+      agentTargetKey: active.binding.agentTargetKey,
+      providerConnectionId: ProviderConnectionIdSchema.parse(
+        active.binding.selection.connectionId,
+      ),
+      modelId: active.binding.selection.model.id,
+    },
+    activeSessionBindingMetadata: active.sessionBindingMetadata,
+    next: input.next,
+  });
+}
 
 function authorization(modelId: string): ExternalAuthorization {
   const connectionId = ProviderConnectionIdSchema.parse('pc_work');
@@ -392,6 +409,7 @@ function withChangedManagedRequestAuthOrigin(
 
 function withRuntimeBindingBasis(input: ExternalAuthorization): ExternalAuthorization;
 function withRuntimeBindingBasis(input: ManagedAuthorization): ManagedAuthorization;
+function withRuntimeBindingBasis(input: ProviderSpawnAuthorization): ProviderSpawnAuthorization;
 function withRuntimeBindingBasis(
   input: ProviderSpawnAuthorization,
 ): ProviderSpawnAuthorization {
@@ -466,9 +484,9 @@ function createLaunchBindingSecurityFingerprint(
   });
 }
 
-describe('resolveProviderAuthorizationApplyPolicy', () => {
+describe('resolveProviderAuthorizationApplyPolicyForActiveBinding', () => {
   it('allows an exact model-only change when the Agent proves live support', () => {
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current: authorization('old'),
       next: authorization('next'),
     })).toBe('live');
@@ -526,7 +544,7 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
       },
     })],
   ] as const)('requires restart when the authorized %s changes', (_label, mutate) => {
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current: authorization('old'),
       next: mutate(authorization('next')) as ReturnType<typeof authorization>,
     })).toBe('restart_session');
@@ -534,7 +552,7 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
 
   it('ignores display-only renames and object key order', () => {
     const next = authorization('next');
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current: authorization('old'),
       next: {
         ...next,
@@ -566,7 +584,7 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
         },
       },
     };
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current: currentWithHeaders,
       next: {
         ...next,
@@ -589,11 +607,11 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
   });
 
   it('requires restart instead of silently adopting different managed-purpose facts', () => {
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current: managedAuthorization('old', 'account-a'),
       next: managedAuthorization('next', 'account-a'),
     })).toBe('live');
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current: managedAuthorization('old', 'account-a'),
       next: managedAuthorization('next', 'account-b'),
     })).toBe('restart_session');
@@ -764,11 +782,11 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
         current,
         reordered,
       )).toBe(true);
-      expect(resolveProviderAuthorizationApplyPolicy({
+      expect(resolveApplyPolicyForObservedAuthorization({
         current,
         next: reordered,
       })).toBe('live');
-      expect(resolveProviderAuthorizationApplyPolicy({
+      expect(resolveApplyPolicyForObservedAuthorization({
         current,
         next: retitled,
       })).toBe('live');
@@ -783,11 +801,11 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
         activeSessionBindingMetadata: launch.sessionBindingMetadata,
         next: reordered,
       })).toBe('live');
-      expect(resolveProviderAuthorizationApplyPolicy({
+      expect(resolveApplyPolicyForObservedAuthorization({
         current,
         next: changed,
       })).toBe('restart_session');
-      expect(resolveProviderAuthorizationApplyPolicy({
+      expect(resolveApplyPolicyForObservedAuthorization({
         current,
         next: withChangedManagedConnectedAccountMaterializationKinds(reordered),
       })).toBe('restart_session');
@@ -813,11 +831,11 @@ describe('resolveProviderAuthorizationApplyPolicy', () => {
       current,
       reordered,
     )).toBe(true);
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current,
       next: reordered,
     })).toBe('live');
-    expect(resolveProviderAuthorizationApplyPolicy({
+    expect(resolveApplyPolicyForObservedAuthorization({
       current,
       next: withChangedManagedRequestAuthOrigin(reordered),
     })).toBe('restart_session');

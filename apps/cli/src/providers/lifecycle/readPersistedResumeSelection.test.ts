@@ -53,10 +53,9 @@ describe('readPersistedProviderResumeState', () => {
   });
 
   it('returns null for a native session and accepts a Provider proposal before its first binding exists', () => {
-    expect(readPersistedProviderResumeState({ modelSelectionIntentV1: null })).toEqual({
-      selection: null,
-      binding: null,
-    });
+    // Absence stays absence: an omitted key and nullish metadata are native.
+    expect(readPersistedProviderResumeState({})).toEqual({ selection: null, binding: null });
+    expect(readPersistedProviderResumeState(null)).toEqual({ selection: null, binding: null });
     expect(readPersistedProviderResumeState({
       modelSelectionIntentV1: {
         v: 1,
@@ -266,6 +265,9 @@ describe('readPersistedProviderResumeState', () => {
 
   it('refuses every present-invalid canonical intent instead of falling back to native launch', () => {
     for (const modelSelectionIntentV1 of [
+      // A root null is present corrupted state, not a cleared intent: treating
+      // it as absent would silently defer to a legacy override.
+      null,
       'malformed-intent',
       { v: 1, updatedAt: 123 },
       {

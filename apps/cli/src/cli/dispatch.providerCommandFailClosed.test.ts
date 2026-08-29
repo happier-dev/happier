@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
-const { defaultHandlerSpy, resolveMergedContributionRegistryMock, primeResolvedContributionRegistryMock } = vi.hoisted(() => ({
+const { defaultHandlerSpy, resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
   defaultHandlerSpy: vi.fn(async () => {}),
   resolveMergedContributionRegistryMock: vi.fn(async () => ({
     agents: [],
@@ -13,7 +13,6 @@ const { defaultHandlerSpy, resolveMergedContributionRegistryMock, primeResolvedC
     backendDefinitionsById: new Map(),
     pluginDiagnosticsByPluginId: {},
   })),
-  primeResolvedContributionRegistryMock: vi.fn(async () => {}),
 }));
 
 vi.mock('@/agent/catalog/registry', async (importOriginal) => {
@@ -31,7 +30,6 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
   return {
     ...actual,
     resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
-    primeResolvedContributionRegistry: primeResolvedContributionRegistryMock,
   };
 });
 
@@ -41,7 +39,6 @@ describe('dispatchCli provider compatibility alias', () => {
   beforeEach(() => {
     defaultHandlerSpy.mockClear();
     resolveMergedContributionRegistryMock.mockClear();
-    primeResolvedContributionRegistryMock.mockClear();
     process.exitCode = undefined;
   });
 

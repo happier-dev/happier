@@ -3,6 +3,7 @@ import {
   isHistoricalBuiltInAiLaunchProfileIdV1,
   readAiLaunchProfileCollection,
   readProviderSettingsFromAccountSettingsV1,
+  type LaunchProfileV2,
   validateLaunchProfileV2ReservedEnvironment,
 } from '@happier-dev/protocol';
 
@@ -12,6 +13,15 @@ type SpawnProfileValidationResult =
 
 const RETAINED_LEGACY_PROFILE_IDS = new Set(['azure-openai', 'gemini-api-key', 'gemini-vertex']);
 
+export type CanonicalSpawnProfileResolution =
+  | Readonly<{ ok: true; kind: 'none' | 'legacy' }>
+  | Readonly<{
+      ok: true;
+      kind: 'slim';
+      profile: LaunchProfileV2;
+    }>
+  | Readonly<{ ok: false; reason: 'profile_overlay_mismatch'; message: string }>;
+
 function rawProfileId(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const id = Reflect.get(value, 'id');
@@ -19,16 +29,16 @@ function rawProfileId(value: unknown): string | null {
 }
 
 /**
- * Validates profile-derived spawn input against the canonical synced profile.
- * Legacy V1 rows remain on their explicit compatibility path; only V2 rows
- * are subject to the no-routing-env invariant.
+ * Resolves one spawn profile from the canonical Account snapshot.
+ *
+ * Both daemon defaulting and the final provider overlay validation use this
+ * owner so legacy migration exceptions and malformed/duplicate handling cannot
+ * drift between the two admission stages.
  */
-export function validateSpawnProfileEnvironment(input: Readonly<{
+export function resolveCanonicalSpawnProfile(input: Readonly<{
   rawSettings: Readonly<Record<string, unknown>> | null | undefined;
   profileId: string | null | undefined;
-  providedEnvironmentVariables: Readonly<Record<string, string>>;
-  reservedEnvironmentVariableNames: ReadonlySet<string>;
-}>): SpawnProfileValidationResult {
+}>): CanonicalSpawnProfileResolution {
   const profileId = input.profileId?.trim() ?? '';
   if (!profileId) return { ok: true, kind: 'none' };
   if (!input.rawSettings) {
@@ -39,7 +49,7 @@ export function validateSpawnProfileEnvironment(input: Readonly<{
     };
   }
 
-  const rawProfiles = input.rawSettings?.profiles;
+  const rawProfiles = input.rawSettings.profiles;
   const collection = readAiLaunchProfileCollection(rawProfiles);
   const rawMatches = (Array.isArray(rawProfiles) ? rawProfiles : [])
     .filter((entry) => rawProfileId(entry) === profileId);
@@ -68,7 +78,25 @@ export function validateSpawnProfileEnvironment(input: Readonly<{
     };
   }
   const profile = parsedMatches[0]!.profile;
-  if (!isLaunchProfileV2(profile)) return { ok: true, kind: 'legacy' };
+  return isLaunchProfileV2(profile)
+    ? { ok: true, kind: 'slim', profile }
+    : { ok: true, kind: 'legacy' };
+}
+
+/**
+ * Validates profile-derived spawn input against the canonical synced profile.
+ * Legacy V1 rows remain on their explicit compatibility path; only V2 rows
+ * are subject to the no-routing-env invariant.
+ */
+export function validateSpawnProfileEnvironment(input: Readonly<{
+  rawSettings: Readonly<Record<string, unknown>> | null | undefined;
+  profileId: string | null | undefined;
+  providedEnvironmentVariables: Readonly<Record<string, string>>;
+  reservedEnvironmentVariableNames: ReadonlySet<string>;
+}>): SpawnProfileValidationResult {
+  const resolved = resolveCanonicalSpawnProfile(input);
+  if (!resolved.ok || resolved.kind !== 'slim') return resolved;
+  const { profile } = resolved;
 
   try {
     validateLaunchProfileV2ReservedEnvironment(profile, input.reservedEnvironmentVariableNames);

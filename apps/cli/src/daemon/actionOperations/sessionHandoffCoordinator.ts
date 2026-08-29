@@ -137,16 +137,21 @@ function publishTargetStatusProgress(
     import_session: 'Importing session state',
     finalize: 'Finalizing handoff',
   };
-  const label = labels[progress.checkpoint];
+  const isSessionTransfer = progress.checkpoint === 'import_session'
+    && typeof progress.planned.totalBytes === 'number'
+    && progress.planned.totalBytes > 0
+    && typeof progress.transferred.bytes === 'number'
+    && progress.transferred.bytes < progress.planned.totalBytes;
+  const label = isSessionTransfer ? 'Transferring session data' : labels[progress.checkpoint];
   if (
-    progress.checkpoint === 'transfer_blobs'
+    (progress.checkpoint === 'transfer_blobs' || isSessionTransfer)
     && typeof progress.planned.totalBytes === 'number'
     && progress.planned.totalBytes > 0
     && typeof progress.transferred.bytes === 'number'
   ) {
     const relativePath = progress.current?.relativePath?.trim();
     publishOwnerUpdate({ progress: {
-      phase: 'workspace_transfer_blobs',
+      phase: isSessionTransfer ? 'session_transfer' : 'workspace_transfer_blobs',
       current: Math.min(progress.transferred.bytes, progress.planned.totalBytes),
       total: progress.planned.totalBytes,
       label: relativePath ? `${label} · ${relativePath}` : label,

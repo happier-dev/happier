@@ -286,6 +286,12 @@ function resolveManagedPurposeBindingIntents(
   )) {
     return null;
   }
+  if (
+    deployment.managedRuntime.connectedAccountPurposeBindingPolicy?.minimumBound === 1
+    && Object.keys(defaults).length === 0
+  ) {
+    return null;
+  }
   const parsed = QualifiedConnectedAccountPurposeBindingsV1Schema.safeParse({
     v: 1,
     bindings: Object.entries(defaults).map(([purpose, target]) => ({

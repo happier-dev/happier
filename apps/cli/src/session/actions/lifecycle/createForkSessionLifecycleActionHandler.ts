@@ -140,6 +140,10 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         }
 
         const forkIsConfiguredAcp = forkBackendResolution.configuredAcp !== null;
+        const configuredAcpCanLoadSession = forkBackendResolution.configuredAcp !== null
+            && forkBackendResolution.configuredAcp.providerSessionId !== null
+            && forkBackendResolution.configuredAcp.resolvedBackend
+                ?.capabilities.supportsLoadSession === true;
         const forkAgentId = forkBackendResolution.catalogAgentId;
         const nativeForkOpenDeclared = forkAgentId !== null
             && readAgentSessionCapabilities(
@@ -247,7 +251,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 (genericNativeIntent || requestedStrategy === 'acp_fork_latest') &&
                 forkPoint.type === 'latest' &&
                 (
-                    forkIsConfiguredAcp ||
+                    (forkIsConfiguredAcp && configuredAcpCanLoadSession) ||
                     (forkAgentId !== null && isAcpForkEligibleForAgent({
                         agentId: forkAgentId,
                         metadata: parentMetadata,

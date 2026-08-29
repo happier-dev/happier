@@ -789,9 +789,6 @@ describe('createCliActionDeps hook dispatch', () => {
           modelId: 'gpt-5',
         },
       },
-      environmentVariables: {
-        TOKEN: 'first-admission-only',
-      },
       title: 'Atomic title',
       initialInput: {
         text: 'Inspect the repository',
@@ -856,9 +853,6 @@ describe('createCliActionDeps hook dispatch', () => {
         }],
       },
       buildInitialInputHandoff: expect.any(Function),
-      environmentVariables: {
-        TOKEN: 'first-admission-only',
-      },
       machineAdmissionTransport,
       spawnNonce: expect.stringMatching(/^session\.spawn_new\.action:/u),
       sessionCreationCorrespondence: expect.objectContaining({
@@ -883,8 +877,7 @@ describe('createCliActionDeps hook dispatch', () => {
         }),
       }),
     }));
-    expect(JSON.stringify(createSpawnedSession.mock.calls[0]?.[0]?.sessionCreationCorrespondence))
-      .not.toContain('first-admission-only');
+    expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('environmentVariables');
     expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('pendingFirstInput');
     expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('tag');
     expect(createSpawnedSession.mock.calls[0]?.[0]).not.toHaveProperty('path');
@@ -1590,6 +1583,7 @@ describe('createCliActionDeps hook dispatch', () => {
       credentials: {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        credentialProvenance: 'stored_session',
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -1601,10 +1595,11 @@ describe('createCliActionDeps hook dispatch', () => {
       approvalsUpdate,
     });
 
-    await expect(executor.execute('approval.request.decide', {
+    const approvalDecision = await executor.execute('approval.request.decide', {
       artifactId: 'approval-remote-dev-1',
       decision: 'approve',
-    }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
+    }, { surface: 'cli', authority: 'present_user' });
+    expect(approvalDecision).toMatchObject({ ok: true });
 
     const expectedCreationKey = 'approval-artifact:approval-remote-dev-1';
     const expectedSessionCreationTag = deriveSessionCreationTagV1({
@@ -4493,6 +4488,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
     await expect(deps.sessionHandoffStart?.({
       sessionId: 'session-1',
       targetMachineId: 'machine-target',
+      targetPath: '/target/repo',
       targetSessionStorageMode: 'direct',
       signal,
     })).resolves.toEqual({ handoffId: 'handoff-1' });
@@ -4507,6 +4503,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
         sourceMachineId: 'machine-source',
         targetMachineId: 'machine-target',
         sessionStorageMode: 'persisted',
+        targetPath: '/target/repo',
         targetSessionStorageMode: 'direct',
         preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
       },

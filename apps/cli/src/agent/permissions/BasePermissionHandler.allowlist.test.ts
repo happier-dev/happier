@@ -476,6 +476,121 @@ describe('BasePermissionHandler allowlist', () => {
     });
   });
 
+  it('redacts credentials from the one bounded remote summary while preserving safe command, path, prompt, and choice context', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const sourceAuthority = {
+      kind: 'mediatedExternal',
+      mediatorPluginId: 'happier.channels',
+      sourceRef: 'binding:ops',
+      sourceRevisionOrEpoch: '42',
+      admittedPermissionCeiling: 'default',
+      remoteApprovalMaxScope: 'request',
+    } as const;
+    const causalPermissionAuthority = {
+      kind: 'admittedSessionInputV1' as const,
+      admittedPermissionCeiling: 'default' as const,
+      sourceAuthority,
+    };
+    const commandPending = handler.request('remote-redacted-command', 'Bash', {
+      command: 'curl https://alice:hunter2@example.test/private?access_token=query-secret',
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-redacted-command',
+        causalPermissionAuthority,
+      },
+    });
+    const pathPending = handler.request('remote-safe-path', 'Read', {
+      filePath: '/work/project/report.txt',
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-safe-path',
+        causalPermissionAuthority,
+      },
+    });
+    const questionPending = handler.request('remote-redacted-question', 'AskUserQuestion', {
+      questions: [{
+        id: 'credential-choice',
+        question: 'Use client_secret=hunter2 for deployment?',
+        options: [{ id: 'secret-choice', label: 'token=top-secret' }, { id: 'safe-choice', label: 'Skip' }],
+      }],
+    }, {
+      causalPermissionContext: {
+        turnId: 'turn-remote-redacted-question',
+        causalPermissionAuthority,
+      },
+    });
+
+    try {
+      const projected = handler.listMediatedPendingRequests({
+        mediatorPluginId: 'happier.channels',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+      });
+      const serialized = JSON.stringify(projected);
+      expect(serialized).not.toContain('hunter2');
+      expect(serialized).not.toContain('query-secret');
+      expect(serialized).not.toContain('top-secret');
+      expect(serialized).toContain('[REDACTED]');
+      expect(projected.requests.find(({ requestId }) => requestId === 'remote-redacted-command'))
+        .toMatchObject({
+          agentRequestSummary: {
+            kind: 'permission',
+            toolLabel: 'Bash',
+            title: expect.stringContaining('curl'),
+          },
+        });
+      expect(projected.requests.find(({ requestId }) => requestId === 'remote-safe-path'))
+        .toMatchObject({
+          agentRequestSummary: {
+            kind: 'permission',
+            title: 'Read: /work/project/report.txt',
+            detail: 'File: project/report.txt',
+          },
+        });
+      const projectedQuestion = projected.requests.find(
+        ({ requestId }) => requestId === 'remote-redacted-question',
+      );
+      expect(projectedQuestion).toMatchObject({
+        agentRequestSummary: {
+          kind: 'user_action',
+          questions: [{
+            question: 'Use client_secret: [REDACTED] for deployment?',
+            choices: ['token: [REDACTED]', 'Skip'],
+          }],
+        },
+      });
+
+      const answer = (handler as unknown as Readonly<{
+        respondToMediatedPendingUserAction: (input: Readonly<{
+          sessionId: string;
+          turnId: string;
+          requestId: string;
+          sourceRef: string;
+          sourceRevisionOrEpoch: string;
+          answers: readonly Readonly<{ questionIndex: number; values: readonly string[] }>[];
+          mediator: Readonly<{ pluginId: string; contributionLocalId: string }>;
+        }>) => Promise<unknown>;
+      }>).respondToMediatedPendingUserAction;
+      await expect(answer.call(handler, {
+        sessionId: session.sessionId,
+        turnId: 'turn-remote-redacted-question',
+        requestId: 'remote-redacted-question',
+        sourceRef: 'binding:ops',
+        sourceRevisionOrEpoch: '42',
+        answers: [{ questionIndex: 0, values: ['token: [REDACTED]'] }],
+        mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+      })).resolves.toEqual({ status: 'applied', requestId: 'remote-redacted-question' });
+      await expect(questionPending).resolves.toEqual({
+        decision: 'approved',
+        answers: { 'credential-choice': ['secret-choice'] },
+      });
+    } finally {
+      await handler.reset();
+      await Promise.allSettled([commandPending, pathPending, questionPending]);
+    }
+  });
+
   it('does not certify exact absence when a live source-bound question exceeds the remote projection', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);

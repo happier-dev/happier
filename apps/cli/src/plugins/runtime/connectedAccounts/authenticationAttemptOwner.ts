@@ -101,6 +101,11 @@ type ProviderResult =
     | Awaited<ReturnType<DeviceAuthenticationRuntime['poll']>>
     | Awaited<ReturnType<NonNullable<AuthenticationRuntime['reconcile']>>>;
 
+type ValidatedProviderResult = ProviderResult & Readonly<{
+    failureClass?: 'rateLimit';
+    retryNotBeforeMs?: number;
+}>;
+
 export type ConnectedAccountAttemptSettlementRequest = Readonly<{
     intent: 'connect' | 'reconnect';
     service: PluginContributionRef;
@@ -230,7 +235,20 @@ export type ConnectedAccountAttemptResponse =
         attemptId: string;
         code: 'connected_account_attempt_cleanup_pending';
     }>
-    | Readonly<{ status: 'rejected' | 'unavailable' | 'conflict'; attemptId?: string; code: string; diagnostic?: unknown }>;
+    | Readonly<{
+        status: 'rejected' | 'unavailable';
+        attemptId?: string;
+        code: string;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit';
+        retryNotBeforeMs?: number;
+    }>
+    | Readonly<{
+        status: 'conflict';
+        attemptId?: string;
+        code: string;
+        diagnostic?: unknown;
+    }>;
 
 type AttemptResponse = ConnectedAccountAttemptResponse;
 
@@ -429,7 +447,7 @@ function isSafeProviderUrl(value: unknown): value is string {
     }
 }
 
-function isProviderResult(value: unknown): value is ProviderResult {
+function isProviderResult(value: unknown): value is ValidatedProviderResult {
     const record = readStrictConnectedAccountProducerRecord(value, [
         'status',
         'accountId',
@@ -444,6 +462,8 @@ function isProviderResult(value: unknown): value is ProviderResult {
         'pollIntervalMs',
         'retryAfterMs',
         'diagnostic',
+        'failureClass',
+        'retryNotBeforeMs',
     ], ['status']);
     return record !== null && typeof record.status === 'string';
 }
@@ -452,7 +472,7 @@ function validateProviderResult(
     operation: ConnectedAccountAttemptProviderOperation,
     value: unknown,
     nowMs: number,
-): ProviderResult | null {
+): ValidatedProviderResult | null {
     const envelope = readStrictConnectedAccountProducerRecord(value, [
         'status',
         'accountId',
@@ -467,6 +487,8 @@ function validateProviderResult(
         'pollIntervalMs',
         'retryAfterMs',
         'diagnostic',
+        'failureClass',
+        'retryNotBeforeMs',
     ], ['status']);
     if (!envelope || typeof envelope.status !== 'string') return null;
     const record = envelope;
@@ -597,12 +619,42 @@ function validateProviderResult(
     }
     if (status === 'rejected' || status === 'unavailable' || status === 'outcomeUnknown') {
         const diagnostic = cloneBoundedConnectedAccountDiagnostic(record.diagnostic);
+        const hasFailureEvidence = record.failureClass !== undefined
+            || record.retryNotBeforeMs !== undefined;
         return operation.kind !== 'cancel'
             && Reflect.ownKeys(record).every((key) => (
-                typeof key === 'string' && ['status', 'diagnostic'].includes(key)
+                typeof key === 'string' && [
+                    'status',
+                    'diagnostic',
+                    'failureClass',
+                    'retryNotBeforeMs',
+                ].includes(key)
             ))
             && diagnostic
-            ? Object.freeze({ status, diagnostic }) as ProviderResult
+            && (
+                !hasFailureEvidence
+                || (
+                    status !== 'outcomeUnknown'
+                    && record.failureClass === 'rateLimit'
+                    && (
+                        record.retryNotBeforeMs === undefined
+                        || (
+                            Number.isSafeInteger(record.retryNotBeforeMs)
+                            && Number(record.retryNotBeforeMs) >= 0
+                        )
+                    )
+                )
+            )
+            ? Object.freeze({
+                status,
+                diagnostic,
+                ...(record.failureClass === undefined
+                    ? {}
+                    : { failureClass: record.failureClass }),
+                ...(record.retryNotBeforeMs === undefined
+                    ? {}
+                    : { retryNotBeforeMs: Number(record.retryNotBeforeMs) }),
+            }) as ProviderResult
             : null;
     }
     return null;
@@ -738,6 +790,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     }>): Promise<AttemptResponse>;
     cancel(input: Readonly<{ attemptId: string }>): Promise<AttemptResponse>;
     read(input: Readonly<{ attemptId: string }>): Promise<AttemptResponse>;
+    dispose(): void;
 }> {
     if (!Number.isInteger(params.maxAttempts) || params.maxAttempts < 1) {
         throw new TypeError('Connected-account attempt capacity must be a positive integer');
@@ -877,6 +930,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }
         if (attempts.get(attempt.id) === attempt) {
             attempts.delete(attempt.id);
+            scheduleExpiryReclaim();
         }
         if (options?.retainTerminalResponse !== false) {
             terminalResponses.set(attempt.id, {
@@ -950,6 +1004,73 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }
             }
         }
+    }
+
+    // Expired attempts — and the durable OAuth/device transactions they still
+    // hold open in the server RepeatKey store — were previously reclaimed only
+    // passively, when a later begin reserved capacity or the exact attempt was
+    // touched again. This single timer arms for the earliest live-attempt
+    // expiry and physically reclaims (closes/clears the durable transactions,
+    // then destroys the in-memory state) without waiting for unrelated
+    // traffic. There is exactly one timer per owner; it is re-armed for the
+    // next earliest expiry after each run and replaced whenever a newer
+    // attempt expires earlier than the armed target.
+    let disposed = false;
+    let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+    let expiryTimerTargetMs: number | null = null;
+
+    function earliestLiveAttemptExpiryMs(): number | null {
+        let earliest: number | null = null;
+        for (const attempt of attempts.values()) {
+            if (
+                attempt.phase === 'cleanupPending'
+                || attempt.phase === 'restoring'
+            ) continue;
+            const expiresAtMs = attempt.createdAtMs + params.attemptTtlMs;
+            if (earliest === null || expiresAtMs < earliest) {
+                earliest = expiresAtMs;
+            }
+        }
+        return earliest;
+    }
+
+    function clearExpiryTimer(): void {
+        if (expiryTimer) {
+            clearTimeout(expiryTimer);
+        }
+        expiryTimer = null;
+        expiryTimerTargetMs = null;
+    }
+
+    function scheduleExpiryReclaim(): void {
+        if (disposed) return;
+        const earliest = earliestLiveAttemptExpiryMs();
+        if (earliest === null) {
+            clearExpiryTimer();
+            return;
+        }
+        if (expiryTimer && expiryTimerTargetMs === earliest) return;
+        clearExpiryTimer();
+        const delayMs = Math.max(0, earliest - params.now());
+        const timer = setTimeout(() => {
+            expiryTimer = null;
+            expiryTimerTargetMs = null;
+            void reclaimExpiredAttemptCapacity()
+                .then(() => {
+                    if (!disposed) {
+                        scheduleExpiryReclaim();
+                    }
+                })
+                .catch(() => {
+                    // Reclaim already isolates per-attempt cleanup failures;
+                    // an unexpected failure stops automatic re-arming until
+                    // the next admission or restoration arms the timer again.
+                });
+        }, delayMs);
+        // Attempt reclamation must never keep a daemon process alive on its own.
+        timer.unref?.();
+        expiryTimer = timer;
+        expiryTimerTargetMs = earliest;
     }
 
     async function reserveAttemptId(): Promise<string | null> {
@@ -1077,6 +1198,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         lastResponse: response,
                         cleanupTerminalResponse: null,
                     });
+                    scheduleExpiryReclaim();
                 }
                 return response;
             }
@@ -1143,6 +1265,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         };
         reservedAttemptIds.delete(attemptId);
         attempts.set(attemptId, attempt);
+        scheduleExpiryReclaim();
         const operationAdmissionFailure =
             await rejectAttemptWhenEffectfulOperationIsDisallowed(attempt);
         if (operationAdmissionFailure) return operationAdmissionFailure;
@@ -1995,7 +2118,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         attempt: ActiveStoredAttempt,
         rawResult: unknown,
     ): Promise<AttemptResponse> {
-        const result: ProviderResult = isProviderResult(rawResult)
+        const result: ValidatedProviderResult = isProviderResult(rawResult)
             ? rawResult
             : {
                 status: 'outcomeUnknown',
@@ -2292,6 +2415,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     : 'connected_account_authentication_unavailable',
             ),
             diagnostic: result.diagnostic,
+            ...(result.failureClass === undefined
+                ? {}
+                : { failureClass: result.failureClass }),
+            ...(result.retryNotBeforeMs === undefined
+                ? {}
+                : { retryNotBeforeMs: result.retryNotBeforeMs }),
         };
         attempt.lastResponse = response;
         await destroyAttempt(attempt, response);
@@ -2826,6 +2955,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             const beforeActivation = attemptOwnershipFailure(restoration);
             if (beforeActivation) return { response: beforeActivation };
             attempts.set(attempt.id, attempt);
+            scheduleExpiryReclaim();
             return { attempt };
     }
 
@@ -3242,6 +3372,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         attemptOwnershipFailure(restoration);
                     if (beforeActivation) return beforeActivation;
                     attempts.set(attempt.id, attempt);
+                    scheduleExpiryReclaim();
                     return await settlePrepared(attempt, false, true);
                 }
                 attempt.lastResponse = response;
@@ -3249,6 +3380,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     attemptOwnershipFailure(restoration);
                 if (beforeActivation) return beforeActivation;
                 attempts.set(attempt.id, attempt);
+                scheduleExpiryReclaim();
                 return response;
         },
         async continueConnect(input) {
@@ -3718,6 +3850,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             }
             const expired = await expireAttemptIfNeeded(attempt);
             return expired ?? attempt.lastResponse ?? unavailable(input.attemptId);
+        },
+        dispose() {
+            disposed = true;
+            clearExpiryTimer();
         },
     });
 }

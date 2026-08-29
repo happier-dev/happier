@@ -332,9 +332,9 @@ function createFixture(input: Readonly<{
     }
     if (input.duplicateAgentDefinition) {
         agentDefinitionsById.set(
-            'happier.agent.fixture/agents/duplicate',
+            'happier.agent.fixture/duplicate',
             {
-                id: 'happier.agent.fixture/agents/duplicate',
+                id: 'happier.agent.fixture/duplicate',
                 identity: agent,
                 richDefinition: externalSessionRichDefinition,
             },

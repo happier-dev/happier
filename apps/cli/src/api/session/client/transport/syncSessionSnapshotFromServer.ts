@@ -10,6 +10,7 @@ import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshR
 import type { LatestTurnStatusSnapshot } from '../../sessionTurnStatusSnapshot';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 
 export async function syncSessionSnapshotFromServer(
     params: Readonly<{
@@ -63,11 +64,16 @@ export async function syncSessionSnapshotFromServer(
     if (update.metadataTuple) {
         params.setMetadataEnvelopeTupleSnapshot(update.metadataTuple);
     } else if (update.metadata) {
-        params.setMetadataSnapshot(
-            update.metadata.metadata,
-            update.metadata.metadataVersion,
-            update.metadataLayoutVersion ?? params.currentMetadataLayoutVersion,
-        );
+        const metadataLayoutVersion = update.metadataLayoutVersion === undefined
+            ? params.currentMetadataLayoutVersion
+            : readSessionMetadataLayoutVersion(update.metadataLayoutVersion);
+        if (metadataLayoutVersion >= 0) {
+            params.setMetadataSnapshot(
+                update.metadata.metadata,
+                update.metadata.metadataVersion,
+                metadataLayoutVersion,
+            );
+        }
     }
 
     if (!update.metadataTuple && update.agentState) {

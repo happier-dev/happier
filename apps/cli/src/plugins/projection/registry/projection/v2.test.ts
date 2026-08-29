@@ -1606,6 +1606,17 @@ describe('buildPluginProjectionV2', () => {
             registry,
             generation: 9,
             installedPackages: [],
+            settingsRollbackDeclarationsByPluginId: new Map([
+                ['acme.hooks', new Map([
+                    ['daemon', {
+                        generation: 'generation-prev',
+                        supported: true,
+                        // The canonical producer has already excluded the
+                        // retained secret declaration from this public fact.
+                        fieldIds: ['enabled'],
+                    }],
+                ])],
+            ]),
         });
 
         expect(projection.settingsById['acme.hooks/settings']).toEqual({
@@ -1613,6 +1624,11 @@ describe('buildPluginProjectionV2', () => {
             pluginId: 'acme.hooks',
             version: 1,
             title: 'Acme settings',
+            rollback: {
+                generation: 'generation-prev',
+                supported: true,
+                fieldIds: ['enabled'],
+            },
             scope: { kind: 'daemon' },
             presentation: {
                 sections: [],

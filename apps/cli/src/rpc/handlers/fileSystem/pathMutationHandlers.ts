@@ -1,6 +1,9 @@
 import { realpathSync } from 'node:fs';
-import { mkdir, rename, rm, stat } from 'fs/promises';
+import { mkdir, open, rename, rm, stat } from 'fs/promises';
 import { basename, dirname, resolve as resolvePath } from 'path';
+import { createHash } from 'node:crypto';
+
+import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1, type WorkspaceStatFileRequestV1 } from '@happier-dev/protocol';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
@@ -9,7 +12,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { validatePath } from '../pathSecurity';
 import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
 
-type StatFileRequest = Readonly<{ path: string }>;
+type StatFileRequest = WorkspaceStatFileRequestV1;
 type StatFileResponse =
   | Readonly<{
       success: true;
@@ -17,18 +20,10 @@ type StatFileResponse =
       kind?: 'file' | 'directory' | 'other';
       sizeBytes?: number;
       modifiedMs?: number;
-      /**
-       * The file's status-change time.
-       *
-       * Size and modification time do not answer for content: a rewrite that
-       * preserves length and restores mtime, and any filesystem whose mtime
-       * granularity is coarser than the edit, both leave them identical for
-       * different bytes. A write always advances the status-change time and no
-       * `utimes` call can put it back, so this is the byte-sensitive fact
-       * callers need to tell one revision of a file from the next. Optional
-       * because an older daemon does not report it.
-       */
+      /** Metadata status-change time, retained for older metadata consumers. */
       changedMs?: number;
+      /** SHA-256 of the current bytes when the file is within the inline read ceiling. */
+      contentHash?: string;
     }>
   | Readonly<{ success: false; error: string }>;
 
@@ -58,6 +53,23 @@ function isRootPath(resolvedPath: string, workingDirectory: string): boolean {
   return normalizedTarget === normalizedWorkingDir;
 }
 
+/** Read one exact, bounded candidate buffer for an opt-in content revision. */
+async function readFileWithinContentHashLimit(path: string): Promise<Buffer> {
+  const handle = await open(path, 'r');
+  try {
+    const bytes = Buffer.alloc(HARD_OPENABLE_CONTENT_MAX_BYTES_V1 + 1);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.byteLength - offset, offset);
+      if (bytesRead <= 0) break;
+      offset += bytesRead;
+    }
+    return bytes.subarray(0, offset);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
 export function registerPathMutationHandlers(
   rpcHandlerManager: RpcHandlerRegistrar,
   deps: Readonly<{
@@ -79,13 +91,27 @@ export function registerPathMutationHandlers(
     try {
       const stats = await stat(validation.resolvedPath);
       const kind = stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other';
+      let contentHash: string | undefined;
+      let sizeBytes = stats.size;
+      if (data?.includeContentHash === true && kind === 'file' && stats.size <= HARD_OPENABLE_CONTENT_MAX_BYTES_V1) {
+        const bytes = await readFileWithinContentHashLimit(validation.resolvedPath);
+        // Name the exact buffer hashed, rather than pairing a pre-read stat
+        // size with post-read bytes if a concurrent write changed the length.
+        // A growth race that crosses the existing inline boundary is not
+        // hashed; the next stat can truthfully report it as unsupported.
+        if (bytes.byteLength <= HARD_OPENABLE_CONTENT_MAX_BYTES_V1) {
+          sizeBytes = bytes.byteLength;
+          contentHash = createHash('sha256').update(bytes).digest('hex');
+        }
+      }
       return {
         success: true,
         exists: true,
         kind,
-        sizeBytes: stats.size,
+        sizeBytes,
         modifiedMs: stats.mtimeMs,
         changedMs: stats.ctimeMs,
+        ...(contentHash ? { contentHash } : {}),
       };
     } catch (error) {
       const nodeError = error as NodeJS.ErrnoException;

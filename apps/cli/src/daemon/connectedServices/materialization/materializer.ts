@@ -1,29 +1,25 @@
 import { rm } from 'node:fs/promises';
 
 import type {
-  ConnectedServiceCredentialRecordV1,
   ConnectedServiceCredentialRevisionV1,
   ConnectedAccountServiceKey,
-  ConnectedServiceId,
   QualifiedConnectedAccountPurposeBindingV1,
 } from '@happier-dev/protocol';
 
 export type ConnectedServiceResolvedSelection =
   | Readonly<{
       kind: 'profile';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       profileId: string;
-      record: ConnectedServiceCredentialRecordV1;
       credentialRevision?: ConnectedServiceCredentialRevisionV1;
     }>
   | Readonly<{
       kind: 'group';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       activeProfileId: string;
       fallbackProfileId: string;
       generation: number;
-      record: ConnectedServiceCredentialRecordV1;
       credentialRevision?: ConnectedServiceCredentialRevisionV1;
       policy: unknown;
     }>;
@@ -91,37 +87,48 @@ export type ConnectedServicesMaterializationAuthority =
       kind: 'legacy_unfenced_one_shot';
     }>;
 
-export function createBestEffortCleanupDirectory(path: string): () => void {
-  let cleaned = false;
+/**
+ * Idempotent cleanup receipt for one private materialized directory.
+ *
+ * The returned cleanup publishes an awaitable receipt: it resolves only after
+ * the recursive removal completed. Best-effort callers suppress a failed
+ * attempt and may retry; canonical custody callers opt into a typed, retryable
+ * rejection when removal did not complete, so lifecycle owners can await real absence
+ * before publishing their own settlement (terminal cleanup receipts, run
+ * release, resource-scope retirement) instead of detaching the removal and
+ * suppressing its outcome. Concurrent calls join the in-flight attempt; a
+ * failed attempt stays retryable instead of latching success. The
+ * connected-services orphan scheduler remains the crash backstop for callers
+ * that never settle. `remove` is injected only by tests.
+ */
+export function createBestEffortCleanupDirectory(
+  path: string,
+  remove: (path: string) => Promise<void> = (target) =>
+    rm(target, { recursive: true, force: true }),
+  options: Readonly<{
+    failureMode?: 'suppress' | 'reject';
+  }> = {},
+): () => Promise<void> {
+  let removed = false;
+  let inFlight: Promise<void> | null = null;
   return () => {
-    if (cleaned) return;
-    cleaned = true;
-    void rm(path, { recursive: true, force: true }).catch(() => {});
-  };
-}
-
-export function createBestEffortConnectedServicesMaterialization(params: Readonly<{
-  rootDir: string;
-  env: Record<string, string>;
-  cleanupOnExit?: boolean;
-}>): ConnectedServicesMaterialization {
-  const cleanup = createBestEffortCleanupDirectory(params.rootDir);
-  return {
-    env: params.env,
-    targetMaterializedRoot: params.rootDir,
-    cleanupOnFailure: cleanup,
-    cleanupOnExit: params.cleanupOnExit === false ? null : cleanup,
-  };
-}
-
-export function createRetainedConnectedServicesMaterialization(params: Readonly<{
-  rootDir: string;
-  env: Record<string, string>;
-}>): ConnectedServicesMaterialization {
-  return {
-    env: params.env,
-    targetMaterializedRoot: params.rootDir,
-    cleanupOnFailure: null,
-    cleanupOnExit: null,
+    if (removed) return Promise.resolve();
+    inFlight ??= remove(path)
+      .then(() => {
+        removed = true;
+      })
+      .catch((cause: unknown) => {
+        if (options.failureMode !== 'reject') return;
+        throw Object.assign(
+          new Error(
+            'Connected-service materialized directory cleanup did not complete',
+          ),
+          { code: 'connected_service_materialized_cleanup_incomplete', cause },
+        );
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
   };
 }

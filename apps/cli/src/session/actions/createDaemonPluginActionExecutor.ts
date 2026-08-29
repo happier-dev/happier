@@ -39,6 +39,7 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
     actionId: string;
     input: unknown;
     surface: 'cli' | 'mcp' | 'agent';
+    authority: NonNullable<ActionExecutorContext['authority']>;
     defaultSessionId?: string;
     expectedContributorImmutableGenerationId?: string;
   }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<PluginActionExecutionAttempt>;
@@ -59,6 +60,7 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
           actionId: normalizedActionId,
           input,
           surface,
+          authority: context?.authority ?? 'account_automation',
           ...(typeof context?.defaultSessionId === 'string'
             ? { defaultSessionId: context.defaultSessionId }
             : {}),

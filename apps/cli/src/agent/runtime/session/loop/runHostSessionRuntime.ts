@@ -10,6 +10,7 @@ import type {
   SessionActiveModelSelectionV1,
   AgentSessionRuntimeEvent,
   SessionPendingMessageComposerAdmissionAcceptedRequestV1,
+  SessionPendingMessageComposerAdmissionAbandonedRequestV1,
   SessionMetadataPublisherPreconditionV1,
 } from '@happier-dev/protocol';
 import type {
@@ -233,6 +234,8 @@ function createScopedSessionInputTransformer(
         onAccepted: async () => await settle('accepted'),
         onDefinitiveAdmissionFailure: async () => await settle('definitiveFailure'),
         stagedMediaHandles: stagedMedia.settlement.releaseIntents.map(({ handle }) => handle),
+        createdWorkspaceRelativePaths: stagedMedia.settlement.createdWorkspaceRelativePaths,
+        workingDirectory: stagedMedia.settlement.workingDirectory,
       },
     };
   };
@@ -307,6 +310,52 @@ function createPendingMessageComposerAdmissionAcceptedControl(
       });
     }
 
+  };
+}
+
+function createPendingMessageComposerAdmissionAbandonedControl(
+  bridge: SessionLoopLifecycleDeps['daemonTurnContributionsBridge'],
+  getSessionId: () => string,
+): ((request: SessionPendingMessageComposerAdmissionAbandonedRequestV1) => Promise<void>) | undefined {
+  if (!bridge) return undefined;
+  return async (request) => {
+    const sessionId = getSessionId();
+    if (request.sessionId !== sessionId) {
+      throw new Error('Pending Composer abandonment belongs to a different Session');
+    }
+    const stagedAttachments = (request.structuredInput.composerAttachments ?? []).filter(
+      (attachment) => attachment.content?.kind === 'sessionMedia',
+    );
+    const releaseIntents = request.stagedMediaHandles.flatMap((handle, index) => {
+      const attachment = stagedAttachments[index];
+      return attachment
+        ? [{
+            handle,
+            executionTarget: handle.executionTarget,
+            owner: handle.owner,
+            claimant: {
+              composer: { kind: 'session' as const, sessionId },
+              attachmentInstanceId: attachment.instanceId,
+            },
+          }]
+        : [];
+    });
+    if (releaseIntents.length !== request.stagedMediaHandles.length) {
+      throw new Error('Abandoned pending Composer media settlement is missing its attachment custody');
+    }
+    if (!bridge.settleComposerStagedMedia) {
+      throw new Error('Daemon staged-media settlement authority is unavailable');
+    }
+    await bridge.settleComposerStagedMedia({
+      sessionId,
+      outcome: 'definitiveFailure',
+      settlement: {
+        v: 1,
+        releaseIntents,
+        createdWorkspaceRelativePaths: [...request.sessionMediaCleanup.createdWorkspaceRelativePaths],
+        workingDirectory: request.sessionMediaCleanup.workingDirectory,
+      },
+    });
   };
 }
 
@@ -2441,6 +2490,11 @@ export async function runHostSessionRuntime(
         daemonTurnContributionsBridge,
         () => currentLifecycleSession.sessionId,
       );
+    const abandonPendingMessageComposerAdmission =
+      createPendingMessageComposerAdmissionAbandonedControl(
+        daemonTurnContributionsBridge,
+        () => currentLifecycleSession.sessionId,
+      );
     const voiceAuthority = config.agentSessionRealtimeVoiceAuthority;
     if (voiceAuthority) {
       disposeAgentSessionRealtimeVoiceRpc =
@@ -2479,6 +2533,7 @@ export async function runHostSessionRuntime(
         : {}),
       ...(typeof nativeRuntime.handleUserMessage === 'function' ? { handleUserMessage: nativeRuntime.handleUserMessage.bind(nativeRuntime) } : {}),
       ...(acceptPendingMessageComposerAdmission ? { acceptPendingMessageComposerAdmission } : {}),
+      ...(abandonPendingMessageComposerAdmission ? { abandonPendingMessageComposerAdmission } : {}),
     });
     await config.lifecycleHooks?.onRuntimeCreated?.({ session, runtime: nativeRuntime });
   }

@@ -207,7 +207,7 @@ describe('Automation Event adopted-definition host factory', () => {
 
     await expect(transport.read({
       caller: stampedCaller,
-      input: { transport: { kind: 'checkpointedPull' }, pageSize: 1 },
+      input: { transport: { kind: 'checkpointedPull' } },
       signal: new AbortController().signal,
     })).resolves.toEqual(page);
     expect(transportMocks.createPublisherHeader).toHaveBeenCalledWith({
@@ -216,7 +216,7 @@ describe('Automation Event adopted-definition host factory', () => {
       body: {
         v: 1,
         caller: stampedCaller,
-        input: { transport: { kind: 'checkpointedPull' }, pageSize: 1 },
+        input: { transport: { kind: 'checkpointedPull' }, pageSize: 500 },
       },
     });
     expect(transportMocks.post).toHaveBeenCalledWith(
@@ -232,7 +232,7 @@ describe('Automation Event adopted-definition host factory', () => {
     });
     await expect(transport.read({
       caller: stampedCaller,
-      input: { transport: { kind: 'checkpointedPull' }, pageSize: 1, knownRevision: '7' },
+      input: { transport: { kind: 'checkpointedPull' }, knownRevision: '7' },
     })).rejects.toThrow();
   });
 

@@ -7,6 +7,7 @@ import {
     type RecipientOperationV1,
     type VoiceCredentialAccessPhase,
     type VoiceCredentialBindingIdentityV1,
+    type VoiceCredentialOperationAuthorization,
     type VoiceCredentialOperationSelectedSource,
     type VoiceProviderContribution,
 } from '@happier-dev/protocol';
@@ -20,6 +21,7 @@ import type {
 import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
 
 import type { VoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type {
     StablePluginHttpCredentialBindingHost,
 } from './service';
@@ -159,18 +161,36 @@ function findVoiceProviderDeclaration(
     return matching.length === 1 ? matching[0]! : null;
 }
 
-function selectedSavedSecretSource(
+function selectedOperationSource(
     credentialResolver: VoiceCredentialResolver,
     identity: VoiceCredentialBindingIdentityV1,
-): VoiceCredentialOperationSelectedSource {
+): Readonly<{
+    authorizationSource: VoiceCredentialOperationSelectedSource;
+    selection: NonNullable<ReturnType<VoiceCredentialResolver['resolveSelectedSource']>>;
+}> {
     let selection: ReturnType<VoiceCredentialResolver['resolveSelectedSource']>;
     try {
         selection = credentialResolver.resolveSelectedSource(identity);
     } catch {
         throw unauthorized();
     }
-    if (selection?.kind !== 'savedSecret') throw credentialUnavailable();
-    return Object.freeze({ kind: 'savedSecret' });
+    if (!selection || selection.kind === 'none') throw credentialUnavailable();
+    if (selection.kind === 'savedSecret') {
+        return Object.freeze({
+            authorizationSource: Object.freeze({ kind: 'savedSecret' as const }),
+            selection,
+        });
+    }
+    const service = selection.target.kind === 'account'
+        ? selection.target.account.service
+        : selection.target.service;
+    return Object.freeze({
+        authorizationSource: Object.freeze({
+            kind: 'connectedAccount' as const,
+            service: Object.freeze({ ...service }),
+        }),
+        selection,
+    });
 }
 
 function hasExactNetworkScope(input: Readonly<{
@@ -286,7 +306,7 @@ function recordResponseDiagnosticBestEffort(
 function projectJsonResponseMaterial(
     body: Uint8Array,
     maxBytes: number,
-    sourceCredential: string,
+    sourceCredentials: readonly string[],
 ): Uint8Array | null {
     if (body.byteLength > maxBytes) return null;
     try {
@@ -295,7 +315,7 @@ function projectJsonResponseMaterial(
         const projectedText = JSON.stringify(parsed);
         if (
             projectedText === undefined
-            || containsProviderRegisteredSensitiveValue(projectedText, [sourceCredential])
+            || containsProviderRegisteredSensitiveValue(projectedText, sourceCredentials)
         ) return null;
         const projected = new TextEncoder().encode(projectedText);
         return projected.byteLength <= maxBytes ? projected : null;
@@ -328,6 +348,8 @@ type AuthorizedVoiceAccountOperation = Readonly<{
     operation: RecipientOperationV1;
     materialized: ReturnType<typeof materializeRecipientOperationRequestV1FromOperation>;
     credentialIdentity: VoiceCredentialBindingIdentityV1;
+    selectedSource: ReturnType<typeof selectedOperationSource>;
+    credentialAuthorization: VoiceCredentialOperationAuthorization;
     /**
      * The stored approval this call must still match, or `null` when the
      * recipient carries no re-approval fence (a first-party bundled
@@ -390,23 +412,23 @@ function authorizeVoiceAccountOperation(input: Readonly<{
     if (!credentialIdentity || credentialIdentity.credentialSlotId !== operation.credentialSlotId) {
         throw unauthorized();
     }
-    const selectedSource = selectedSavedSecretSource(input.credentialResolver, credentialIdentity);
+    const selectedSource = selectedOperationSource(input.credentialResolver, credentialIdentity);
     const credentialAuthorization = resolveVoiceCredentialOperationAuthorization({
         pluginId: declaration.pluginId,
         contributionId: declaration.identity.localId,
         contribution: declaration.definition,
-        selectedSource,
+        selectedSource: selectedSource.authorizationSource,
         phase: input.phase,
         operationId: operation.id,
     });
-    if (!credentialAuthorization || credentialAuthorization.projection.kind !== 'recipientCredential') {
-        throw unauthorized();
-    }
+    if (!credentialAuthorization) throw unauthorized();
     return Object.freeze({
         declaration,
         operation,
         materialized,
         credentialIdentity,
+        selectedSource,
+        credentialAuthorization,
         requiredRecipientApprovalDigest,
     });
 }
@@ -421,6 +443,8 @@ async function executeVoiceAccountOperation(input: Readonly<{
     authorized: AuthorizedVoiceAccountOperation;
     authority: VoiceAccountOperationAuthority;
     credentialResolver: VoiceCredentialResolver;
+    connectedAccounts?: Pick<ConnectedAccountPurposeBindingOwner, 'materialize'>;
+    signal: AbortSignal;
     execute: VoiceAccountOperationExecute;
     recordResponseDiagnostic?: (diagnostic: VoiceAccountOperationResponseDiagnostic) => void;
 }>): Promise<VoiceAccountOperationResponse> {
@@ -428,27 +452,22 @@ async function executeVoiceAccountOperation(input: Readonly<{
         operation,
         materialized,
         credentialIdentity,
+        selectedSource,
+        credentialAuthorization,
         requiredRecipientApprovalDigest,
     } = input.authorized;
     try {
-        return await input.credentialResolver.withSecret({
-            identity: credentialIdentity,
-            ...(requiredRecipientApprovalDigest
-                ? { recipientContractDigest: requiredRecipientApprovalDigest }
-                : {}),
-            use: async (sourceCredential) => {
+        const executeWithCredentialHeaders = async (
+            headers: Readonly<Record<string, string>>,
+            sourceCredentials: readonly string[],
+        ): Promise<VoiceAccountOperationResponse> => {
                 assertCurrent(input.authority);
                 if (!hasExactDeclaredOrigin(materialized.url, operation.request.origin)) {
                     throw unauthorized();
                 }
-                const credentialValue = operation.request.credential.format === 'bearer'
-                    ? `Bearer ${sourceCredential}`
-                    : sourceCredential;
                 const response = await input.execute(Object.freeze({
-                    headers: Object.freeze({
-                        [operation.request.credential.name]: credentialValue,
-                    }),
-                    secretHeaderNames: Object.freeze([operation.request.credential.name]),
+                    headers,
+                    secretHeaderNames: Object.freeze(Object.keys(headers)),
                 }));
                 assertCurrent(input.authority);
                 const responseDiagnostic = responseContractDiagnostic({
@@ -471,7 +490,7 @@ async function executeVoiceAccountOperation(input: Readonly<{
                 const projectedBody = projectJsonResponseMaterial(
                     response.body,
                     operation.response.maxBytes,
-                    sourceCredential,
+                    sourceCredentials,
                 );
                 if (!projectedBody) {
                     recordResponseDiagnosticBestEffort(
@@ -499,8 +518,62 @@ async function executeVoiceAccountOperation(input: Readonly<{
                     }),
                     body: projectedBody,
                 });
-            },
+        };
+        if (credentialAuthorization.projection.kind === 'recipientCredential') {
+            if (selectedSource.selection.kind !== 'savedSecret') throw unauthorized();
+            return await input.credentialResolver.withSecret({
+                identity: credentialIdentity,
+                ...(requiredRecipientApprovalDigest
+                    ? { recipientContractDigest: requiredRecipientApprovalDigest }
+                    : {}),
+                use: async (sourceCredential) => {
+                    const credentialValue = operation.request.credential.format === 'bearer'
+                        ? `Bearer ${sourceCredential}`
+                        : sourceCredential;
+                    return await executeWithCredentialHeaders(
+                        Object.freeze({ [operation.request.credential.name]: credentialValue }),
+                        Object.freeze([sourceCredential, credentialValue]),
+                    );
+                },
+            });
+        }
+        if (selectedSource.selection.kind !== 'connectedAccount' || !input.connectedAccounts) {
+            throw credentialUnavailable();
+        }
+        const projection = credentialAuthorization.projection;
+        const target = selectedSource.selection.target;
+        const service = target.kind === 'account' ? target.account.service : target.service;
+        const materialization = await input.connectedAccounts.materialize({
+            // Selection and binding currentness belong to the credential slot
+            // purpose. The distinct recipient operation purpose was consumed
+            // above by `resolveVoiceCredentialOperationAuthorization` and is
+            // retained in response diagnostics/audit.
+            purpose: credentialIdentity.purpose,
+            serviceRefs: Object.freeze([service]),
+            ...(target.kind === 'account' ? { expectedAccount: target.account } : {}),
+            request: projection.request,
+            signal: input.signal,
         });
+        assertCurrent(input.authority);
+        if (materialization.kind !== 'httpHeaders') throw unauthorized();
+        const allowed = new Set(projection.allowedHeaderNames.map((name) => name.toLowerCase()));
+        const required = new Set(projection.requiredHeaderNames.map((name) => name.toLowerCase()));
+        const normalized = new Map<string, string>();
+        for (const [rawName, value] of Object.entries(materialization.headers)) {
+            const name = rawName.trim().toLowerCase();
+            if (
+                !/^[a-z0-9!#$%&'*+.^_`|~-]+$/u.test(name)
+                || typeof value !== 'string'
+                || value.length === 0
+                || /[\r\n]/u.test(value)
+                || normalized.has(name)
+                || !allowed.has(name)
+            ) throw unauthorized();
+            normalized.set(name, value);
+        }
+        if ([...required].some((name) => !normalized.has(name))) throw credentialUnavailable();
+        const headers = Object.freeze(Object.fromEntries(normalized));
+        return await executeWithCredentialHeaders(headers, Object.freeze([...normalized.values()]));
     } catch (error) {
         if (isPluginError(error) && (
             error.code === 'plugin_fetch_voice_account_operation_unauthorized'
@@ -568,6 +641,7 @@ export function createVoiceAccountPluginHttpCredentialBindingHost(params: Readon
                 authorized,
                 authority,
                 credentialResolver: params.credentialResolver,
+                signal: input.seed.signal,
                 execute: input.execute,
                 ...(params.recordResponseDiagnostic
                     ? {
@@ -598,6 +672,7 @@ export function createVoiceAccountOperationService(params: Readonly<{
     /** Exact lifecycle phase owned by the host calling this operation service. */
     phase: VoiceCredentialAccessPhase;
     credentialResolver: VoiceCredentialResolver;
+    connectedAccounts?: Pick<ConnectedAccountPurposeBindingOwner, 'materialize'>;
     isCurrent(): boolean;
     isCredentialCurrent?(): boolean;
     signal: AbortSignal;
@@ -631,6 +706,8 @@ export function createVoiceAccountOperationService(params: Readonly<{
                 authorized,
                 authority,
                 credentialResolver: params.credentialResolver,
+                ...(params.connectedAccounts ? { connectedAccounts: params.connectedAccounts } : {}),
+                signal: request.signal,
                 execute: async (injection) => await params.transport.request(
                     Object.freeze({
                         url: materialized.url,

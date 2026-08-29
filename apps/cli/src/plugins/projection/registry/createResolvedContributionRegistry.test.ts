@@ -12,7 +12,6 @@ import {
 import {
   createResolvedContributionRegistry,
   getResolvedContributionRegistry,
-  primeResolvedContributionRegistry,
   resolveMergedContributionRegistry,
 } from './createResolvedContributionRegistry';
 import {
@@ -219,10 +218,9 @@ describe('getResolvedContributionRegistry', () => {
       expect(registry.catalogEntriesById[agentId]?.id).toBe(agentId);
     }
 
-    // A manifest-local CLI command may intentionally differ from the host's
-    // canonical Agent identity. The registry keys by catalog id; it must not
-    // rewrite or reject the independently authored command spelling.
-    expect(registry.catalogEntriesById.ohMyPi?.cliSubcommand).toBe('ohmypi');
+    // Bundled compatibility definitions own released command spellings even
+    // when the manifest-local contribution id is normalized differently.
+    expect(registry.catalogEntriesById.ohMyPi?.cliSubcommand).toBe('ohMyPi');
 
     expect(registry).not.toHaveProperty('agentRuntimes');
     expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
@@ -236,18 +234,21 @@ describe('getResolvedContributionRegistry', () => {
     expect('providerDefinitionsById' in registry).toBe(false);
   });
 
-  it('keeps the built-in snapshot isolated after priming merged contributes', async () => {
+  it('keeps the built-in snapshot isolated after resolving merged contributes', async () => {
     const builtInRegistry = getResolvedContributionRegistry();
     expect(Object.keys(builtInRegistry.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
 
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-prime-isolated-home-'));
     try {
-      const mergedRegistry = await primeResolvedContributionRegistry({ happyHomeDir });
+      const mergedRegistry = await resolveMergedContributionRegistry({ happyHomeDir });
       expect(mergedRegistry.catalogEntriesById.codex?.id).toBe('codex');
 
-      const builtInAfterPrime = getResolvedContributionRegistry();
-      expect(Object.keys(builtInAfterPrime.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
-      expect(builtInAfterPrime.catalogEntriesById['acme.ohmypi']).toBeUndefined();
+      // The built-in snapshot is immutable and shared: an explicit merged
+      // resolution must never mutate it or any other registry authority.
+      const builtInAfterMerge = getResolvedContributionRegistry();
+      expect(builtInAfterMerge).toBe(builtInRegistry);
+      expect(Object.keys(builtInAfterMerge.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
+      expect(builtInAfterMerge.catalogEntriesById['acme.ohmypi']).toBeUndefined();
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
     }
@@ -657,58 +658,6 @@ describe('getResolvedContributionRegistry', () => {
         },
       ]),
     })).toThrow("Duplicate event contribution 'alpha.plugin/task/complete' from plugin 'alpha.plugin'");
-  });
-
-  it('rejects duplicate settings field ids within a single plugin namespace', () => {
-    expect(() => createResolvedContributionRegistry({
-      agents: Object.freeze([]),
-            settings: Object.freeze([
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'alpha.plugin',
-          manifestPath: '/plugins/alpha/plugin.json',
-          daemonEntryPath: '/plugins/alpha/daemon.mjs',
-          definition: {
-            id: 'settings-one',
-            version: 1,
-            title: 'Settings one',
-            target: { kind: 'plugin' },
-            scope: 'daemon',
-            fields: [
-              {
-                id: 'endpoint',
-                title: 'Endpoint',
-                schema: { type: 'string' },
-              },
-            ],
-            presentation: { sections: [], subagentSections: [] },
-          },
-        },
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'alpha.plugin',
-          manifestPath: '/plugins/alpha/plugin.json',
-          daemonEntryPath: '/plugins/alpha/daemon.mjs',
-          definition: {
-            id: 'settings-two',
-            version: 1,
-            title: 'Settings two',
-            target: { kind: 'plugin' },
-            scope: 'daemon',
-            fields: [
-              {
-                id: 'endpoint',
-                title: 'Endpoint',
-                schema: { type: 'string' },
-              },
-            ],
-            presentation: { sections: [], subagentSections: [] },
-          },
-        },
-      ]),
-    })).toThrow("Duplicate settings field 'endpoint' for plugin 'alpha.plugin'");
   });
 
   it('keeps generic settings field ids plugin-local instead of requiring plugin-id prefixes', () => {

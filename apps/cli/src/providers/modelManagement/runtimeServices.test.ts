@@ -715,6 +715,71 @@ describe('runtime provider model-management composition', () => {
     if (warm.status !== 'success') throw new Error('Expected model projection');
     expect(warm.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
       .toEqual(['cold-model']);
+
+    // A cold read whose own demand refresh FAILS must return the refresh's
+    // typed failure instead of a success whose group is silently missing: the
+    // UI cannot distinguish "no models" from "unreachable endpoint" otherwise.
+    transport.mockImplementation(async () => ({
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}', 'utf8'),
+    }));
+    state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    const failingCold = await services.projectModels({
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+    });
+    expect(failingCold.status).toBe('success');
+    if (failingCold.status !== 'success') throw new Error('Expected model projection');
+    expect(failingCold.groups).toEqual([]);
+    expect(failingCold.refreshFailures).toEqual([{
+      connectionId: 'pc_cold',
+      error: expect.objectContaining({ code: 'provider_endpoint_unavailable' }),
+    }]);
+
+    // Explicit Retry must enter the existing forced scheduler branch instead
+    // of replaying the cached failure from the automatic picker demand.
+    transport.mockImplementation(async () => ({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ data: [{ id: 'recovered-model' }] }), 'utf8'),
+    }));
+    const recovered = await services.projectModels({
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      forceRefresh: true,
+    });
+    expect(recovered.status).toBe('success');
+    if (recovered.status !== 'success') throw new Error('Expected recovered model projection');
+    expect(recovered.refreshFailures).toBeUndefined();
+    expect(recovered.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
+      .toEqual(['recovered-model']);
+
+    // Catalog success is authoritative model truth. A later health failure is
+    // represented on row health and must not elevate the whole projection to a
+    // catalog refresh failure.
+    state = createEmptyProviderRuntimeStateFileV1('machine-a');
+    transport
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ data: [{ id: 'healthy-catalog-model' }] }), 'utf8'),
+      })
+      .mockResolvedValueOnce({
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from('{}', 'utf8'),
+      });
+    const catalogSucceeded = await services.projectModels({
+      machineId: 'machine-a',
+      agentTargetKey: 'backend:codex',
+      forceRefresh: true,
+    });
+    expect(catalogSucceeded.status).toBe('success');
+    if (catalogSucceeded.status !== 'success') throw new Error('Expected catalog projection');
+    expect(catalogSucceeded.refreshFailures).toBeUndefined();
+    expect(catalogSucceeded.groups.flatMap((group) => group.rows).map((row) => row.ref.modelId))
+      .toEqual(['healthy-catalog-model']);
   });
 
   it('submits picker demand to the sole scheduler and retains no tail the scheduler refused', async () => {

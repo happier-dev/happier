@@ -13,7 +13,7 @@ function review() {
     version: '1.0.0',
     packageIdentity: { name: '@happier/plugin-voice-openai', version: '1.0.0' },
     publisherIdentity: { status: 'unverified', id: 'happier', displayName: 'Happier' },
-    source: { kind: 'npm', locator: '@happier/plugin-voice-openai@1.0.0', integrity: 'sha512-old' },
+    source: { kind: 'npm', locator: '@happier/plugin-voice-openai@1.0.0', integrity: 'sha512-old', integrityBasis: 'expected' },
     updateChannel: {
       kind: 'npm',
       packageName: '@happier/plugin-voice-openai',

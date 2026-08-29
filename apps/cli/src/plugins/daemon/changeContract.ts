@@ -166,9 +166,16 @@ export type PluginInstallationReview = Readonly<{
         locator: string;
       }>
     | Readonly<{
-        kind: 'archive' | 'npm';
+        kind: 'archive';
         locator: string;
-        integrity?: string;
+        integrity: string;
+        integrityBasis: 'observed' | 'expected';
+      }>
+    | Readonly<{
+        kind: 'npm';
+        locator: string;
+        integrity: string;
+        integrityBasis: 'expected';
       }>;
   updateChannel:
     | Readonly<{ kind: 'path'; locator: string; development: boolean }>
@@ -348,12 +355,14 @@ export const PluginInstallationReviewSchema: z.ZodType<PluginInstallationReview>
     z.object({
       kind: z.literal('archive'),
       locator: ReviewNonEmptyStringSchema,
-      integrity: ReviewNonEmptyStringSchema.optional(),
+      integrity: ReviewNonEmptyStringSchema,
+      integrityBasis: z.enum(['observed', 'expected']),
     }).strict(),
     z.object({
       kind: z.literal('npm'),
       locator: ReviewNonEmptyStringSchema,
-      integrity: ReviewNonEmptyStringSchema.optional(),
+      integrity: ReviewNonEmptyStringSchema,
+      integrityBasis: z.literal('expected'),
     }).strict(),
   ]),
   updateChannel: z.discriminatedUnion('kind', [

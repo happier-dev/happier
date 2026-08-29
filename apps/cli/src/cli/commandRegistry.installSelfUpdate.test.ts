@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { kiroHandlerSpy, primeResolvedContributionRegistryMock } = vi.hoisted(() => ({
+const { kiroHandlerSpy, resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
   kiroHandlerSpy: vi.fn(async () => {}),
-  primeResolvedContributionRegistryMock: vi.fn(async () => ({
+  resolveMergedContributionRegistryMock: vi.fn(async () => ({
     commands: [],
     catalogEntriesById: {
       kiro: {
@@ -26,7 +26,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () =
     },
     agentDefinitionsById: new Map(),
   }),
-  primeResolvedContributionRegistry: primeResolvedContributionRegistryMock,
+  resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
 }));
 
 vi.mock('@/configuration', () => ({

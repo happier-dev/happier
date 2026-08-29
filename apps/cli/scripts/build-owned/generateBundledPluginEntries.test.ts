@@ -29,6 +29,48 @@ describe('generator workspace lock policy', () => {
     expect(shouldHoldGeneratorWorkspaceLockDuringGeneration('check')).toBe(false);
     expect(shouldHoldGeneratorWorkspaceLockDuringGeneration('write')).toBe(true);
   });
+
+  it('publishes Plugin SDK API governance after generated inputs and before runtime staging', () => {
+    const synchronization = sourceBetween(
+      'async function synchronizeGeneratorAuthoringRuntimeClosure(',
+      'type PluginAuthorRuntimeModules =',
+    );
+
+    expect(synchronization).toContain("if (mode === 'write') {");
+    expect(synchronization).toContain('await publishPluginSdkApiGovernanceOutputs();');
+    expect(synchronization).toContain(
+      "await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);",
+    );
+    expect(synchronization.indexOf('await publishPluginSdkApiGovernanceOutputs();'))
+      .toBeLessThan(synchronization.indexOf('const hostWorkspaceNames ='));
+  });
+
+  it('prepares Plugin SDK vendored declarations before API governance materialization', () => {
+    const publication = sourceBetween(
+      'async function publishPluginSdkApiGovernanceOutputs()',
+      '/**\n * `--mode check`',
+    );
+
+    expect(publication).toContain("'scripts/bundleWorkspaceDeps.mjs'");
+    expect(publication).toContain("['--declarations', '--run-script=api-governance:prepared']");
+    expect(publication).not.toContain("'scripts/apiSurfaceCli.mjs'");
+    expect(publication).not.toContain("'scripts/workspaces/buildTypeScriptPackageDist.mjs'");
+  });
+
+  it('prepares the authoring runtime for scoped workspace publication too', () => {
+    const mainSource = sourceBetween(
+      'export async function main(',
+      "if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href)",
+    );
+
+    expect(mainSource).toContain('if (!options.aggregateOnly) {');
+    expect(mainSource).not.toContain(
+      'options.workspaceNames.length === 0 && !options.aggregateOnly',
+    );
+    expect(mainSource).toContain(
+      'await synchronizeGeneratorAuthoringRuntimeClosure(options.mode, inheritedLockValue);',
+    );
+  });
 });
 
 describe('CLI bundled plugin registry projection', () => {
@@ -62,7 +104,7 @@ describe('CLI bundled plugin registry projection', () => {
   it('emits the contribution-identity owner subpath instead of the Protocol root barrel', () => {
     const registryRenderer = sourceBetween(
       'function renderCliBundledPluginManifestEntriesTs(',
-      'function renderCliBundledPluginArtifactsTs(',
+      'function renderCliBundledPluginArtifactRecordsTs(',
     );
 
     expect(registryRenderer).toContain(
@@ -79,12 +121,30 @@ describe('CLI bundled plugin registry projection', () => {
   it('keeps generated manifest locators data-only without target semantic sidecars', () => {
     const registryRenderer = sourceBetween(
       'function renderCliBundledPluginManifestEntriesTs(',
-      'function renderCliBundledPluginArtifactsTs(',
+      'function renderCliBundledPluginArtifactRecordsTs(',
     );
 
     expect(registryRenderer).not.toContain('targeted-contributions');
     expect(registryRenderer).not.toContain('semanticPointRefs');
     expect(registryRenderer).not.toContain('@happier-dev/plugin-sdk');
+  });
+
+  it('keeps the source-integrity inventory in the build-owned publisher corridor', () => {
+    const runtimeRenderer = sourceBetween(
+      'function renderCliBundledPluginArtifactRecordsTs(',
+      'function renderBundledPluginSourceIntegritiesJson(',
+    );
+    const buildInventoryRenderer = sourceBetween(
+      'function renderBundledPluginSourceIntegritiesJson(',
+      'function requireBundledPluginSourceArtifactIntegrity(',
+    );
+
+    expect(runtimeRenderer).not.toContain('BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+    expect(runtimeRenderer).not.toContain('digest: string');
+    expect(buildInventoryRenderer).toContain('BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+    expect(generatorSource).toContain(
+      'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
+    );
   });
 
   it('publishes serialized manifest locators through the aggregate final-artifact owner', () => {

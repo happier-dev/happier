@@ -34,6 +34,8 @@ import type { DaemonPatVerifier } from '../auth/daemonPatVerifier';
 import type { ExternalActionExecutor, ResolveExternalActionTarget } from './executeExternalAction';
 import { registerDaemonExternalActionRoute } from './registerDaemonExternalActionRoute';
 
+const PAT = `hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}`;
+
 type CanonicalActionExecutor = Pick<
   ReturnType<typeof import('@happier-dev/protocol/actions').createActionExecutor>,
   'execute'
@@ -120,7 +122,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: { v: 1, input: {} },
       });
 
@@ -144,7 +146,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: {
           v: 1,
           requestId: 'request-1',
@@ -161,7 +163,7 @@ describe('registerDaemonExternalActionRoute', () => {
         requestId: 'request-1',
         execution: { ok: true, result: { sessionId: 'session-1' } },
       });
-      expect(verifyPat).toHaveBeenCalledWith('pat-secret', expect.any(AbortSignal));
+      expect(verifyPat).toHaveBeenCalledWith(PAT, expect.any(AbortSignal));
       expect(verifyPat).toHaveBeenCalledTimes(1);
       expect(target).toHaveBeenCalledWith(expect.objectContaining({
         actionId: 'session.spawn_new',
@@ -222,7 +224,7 @@ describe('registerDaemonExternalActionRoute', () => {
         '--json',
       ], {
         readCredentialsFn: async () => ({
-          token: 'pat-secret',
+          token: PAT,
           encryption: null,
           credentialProvenance: 'api_token',
         }),
@@ -252,7 +254,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/memory.search',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: { v: 1, input: actionInput },
       });
       expect(response.statusCode).toBe(200);
@@ -305,7 +307,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const deepResponse = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: { v: 1, input: {} },
       });
 
@@ -323,7 +325,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const nextResponse = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: { v: 1, input: {} },
       });
       expect(nextResponse.statusCode).toBe(200);
@@ -346,7 +348,7 @@ describe('registerDaemonExternalActionRoute', () => {
     const request = {
       method: 'POST' as const,
       url: '/v1/actions/session.spawn_new',
-      headers: { authorization: 'Bearer pat-secret' },
+      headers: { authorization: `Bearer ${PAT}` },
       payload: { v: 1, requestId: 'response-limit', input: {} },
     };
     try {
@@ -409,6 +411,7 @@ describe('registerDaemonExternalActionRoute', () => {
       for (const headers of [
         {},
         { authorization: 'Bearer not-a-valid-token' },
+        { authorization: `Bearer hap_v1_${'x'.repeat(2_000)}` },
       ]) {
         const response = await app.inject({
           method: 'POST',
@@ -424,7 +427,7 @@ describe('registerDaemonExternalActionRoute', () => {
         expect(response.json()).toEqual({ error: 'invalid_token' });
       }
 
-      expect(verifyPat).toHaveBeenCalledTimes(1);
+      expect(verifyPat).not.toHaveBeenCalled();
       expect(parse).not.toHaveBeenCalled();
       expect(execute).not.toHaveBeenCalled();
     } finally {
@@ -458,7 +461,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: { v: 1, input: {}, authority: 'present_user' },
       });
 
@@ -490,7 +493,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: '{}',
       });
 
@@ -514,7 +517,7 @@ describe('registerDaemonExternalActionRoute', () => {
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
         headers: {
-          authorization: 'Bearer pat-secret',
+          authorization: `Bearer ${PAT}`,
           'content-type': contentType,
         },
         payload,
@@ -537,7 +540,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/not-a-public-action',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: { v: 1, input: {} },
       });
 
@@ -561,7 +564,7 @@ describe('registerDaemonExternalActionRoute', () => {
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
         headers: {
-          authorization: 'Bearer pat-secret',
+          authorization: `Bearer ${PAT}`,
           'content-type': 'application/json',
         },
         payload: exactLimitPayload,
@@ -579,7 +582,7 @@ describe('registerDaemonExternalActionRoute', () => {
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
         headers: {
-          authorization: 'Bearer pat-secret',
+          authorization: `Bearer ${PAT}`,
           'content-type': 'application/json',
         },
         payload: oneByteOverLimitPayload,
@@ -597,7 +600,7 @@ describe('registerDaemonExternalActionRoute', () => {
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
         headers: {
-          authorization: 'Bearer pat-secret',
+          authorization: `Bearer ${PAT}`,
           'content-type': 'application/json',
         },
         payload: { v: 1, input: { executor: 'still-usable' } },
@@ -627,7 +630,7 @@ describe('registerDaemonExternalActionRoute', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/v1/actions/session.spawn_new',
-        headers: { authorization: 'Bearer pat-secret' },
+        headers: { authorization: `Bearer ${PAT}` },
         payload: {
           v: 1,
           input: { blob: 'x'.repeat((8 * 1024 * 1024) + 1) },

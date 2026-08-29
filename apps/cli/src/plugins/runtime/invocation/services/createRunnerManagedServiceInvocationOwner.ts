@@ -52,6 +52,7 @@ import {
     type RunnerManagedServicesExactHandleRequestPortV1,
 } from '@/agent/runtime/session/process/runnerManagedServicesCustody';
 import type { PluginStorePaths } from '@/plugins/store/paths';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import {
     readCurrentPluginHardRevocationRevision,
 } from '@/plugins/store/registry/generationStore';
@@ -992,7 +993,10 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
             resolveProjectedManagedServiceRequest: (projection) => {
                 const binding = input.retainedAgent;
                 const contributionQualifiedId =
-                    `${binding.pluginId}/agents/${binding.localAgentId}`;
+                    resolveAgentContributionQualifiedId({
+                        pluginId: binding.pluginId,
+                        localId: binding.localAgentId,
+                    });
                 if (
                     projection.sessionId !== input.authority.sessionId
                     || projection.pluginId !== binding.pluginId
@@ -1234,7 +1238,10 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
         resolveScope(seed, context) {
             const binding = input.retainedAgent;
             const contributionQualifiedId =
-                `${binding.pluginId}/agents/${binding.localAgentId}`;
+                resolveAgentContributionQualifiedId({
+                    pluginId: binding.pluginId,
+                    localId: binding.localAgentId,
+                });
             if (
                 seed.pluginId !== binding.pluginId
                 || seed.generation
@@ -1654,7 +1661,10 @@ export async function createRunnerManagedServiceInvocationOwner(input: Readonly<
         bindAgentExternalSessionsManagedEndpoint(readInput) {
             const runnerBinding = input.retainedAgent;
             const contributionQualifiedId =
-                `${runnerBinding.pluginId}/agents/${runnerBinding.localAgentId}`;
+                resolveAgentContributionQualifiedId({
+                    pluginId: runnerBinding.pluginId,
+                    localId: runnerBinding.localAgentId,
+                });
             if (
                 readInput.identity.pluginId !== runnerBinding.pluginId
                 || readInput.identity.agentId !== runnerBinding.localAgentId

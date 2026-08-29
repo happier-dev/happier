@@ -317,8 +317,12 @@ export function registerExecutionRunRpcHandlers(
       }).state === 'enabled';
     },
     ...(materializeReviewHostAction ? { materializeReviewHostAction } : {}),
-    checkConnectedServicesGenerationCurrent: async ({ runId }) => {
-      const result = await checkExecutionRunConnectedServicesGenerationCurrent({ runId, runnerPid: process.pid });
+    checkConnectedServicesGenerationCurrent: async ({ runId, registration }) => {
+      const result = await checkExecutionRunConnectedServicesGenerationCurrent({
+        runId,
+        runnerPid: process.pid,
+        registration,
+      });
       return { current: result.ok === true && result.current === true };
     },
     ...profileCatalogOptions,

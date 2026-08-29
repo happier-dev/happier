@@ -190,9 +190,9 @@ export type RuntimeProviderServices = Readonly<{
   ): Promise<RuntimeProviderCatalogContext>;
   scheduleDemandRefresh(
     identity: RuntimeProviderIdentity,
-    trigger: 'detail_open' | 'picker_open',
+    trigger: 'detail_open' | 'picker_open' | 'manual_refresh',
     scope?: RuntimeProviderOperationScope,
-  ): Promise<void>;
+  ): Promise<ProviderErrorV1 | null>;
   runtimeStore: ProviderRuntimeStateStore;
   probeInfrastructure: Readonly<{
     client: ReturnType<typeof createProviderProbeHttpClient>;
@@ -388,7 +388,7 @@ export function createRuntimeProviderServices(input: Readonly<{
   });
   const providerProbeUnavailable = (
     identity: Readonly<{ connectionId: string; machineId: string }>,
-  ): ProviderCatalogRefreshResult => ({
+  ): Readonly<{ status: 'error'; error: ProviderErrorV1 }> => ({
     status: 'error',
     error: createProviderErrorV1('provider_endpoint_unavailable', identity),
   });
@@ -397,7 +397,7 @@ export function createRuntimeProviderServices(input: Readonly<{
   // report it separately from an endpoint outage.
   const providerProbeCapacityExhausted = (
     identity: Readonly<{ connectionId: string; machineId: string }>,
-  ): ProviderCatalogRefreshResult => ({
+  ): Readonly<{ status: 'error'; error: ProviderErrorV1 }> => ({
     status: 'error',
     error: createProviderErrorV1('provider_probe_capacity_exhausted', identity),
   });
@@ -508,6 +508,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           registry,
           ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
           admitResolution: scheduler.runDns,
+          isCurrent: isProviderFeatureEnabled,
           lifetime: scope.lifetime,
         });
       } catch (error) {
@@ -1138,46 +1139,58 @@ export function createRuntimeProviderServices(input: Readonly<{
     ? enableProbe(rawInput, waiterLifetime)
     : manualProbe(rawInput, waiterLifetime);
 
+  /**
+   * Runs one admitted demand refresh and reports its typed outcome: `null`
+   * when the connection ends with a usable observation (fresh or newly
+   * probed), and the existing typed Provider error when the refresh cannot
+   * produce one. Awaited cold reads and explicit retries consume this outcome;
+   * warm automatic callers may ignore it, exactly as before.
+   */
   const scheduleDemandRefresh = async (
     identity: Readonly<{ connectionId: string; machineId: string }>,
-    trigger: 'detail_open' | 'picker_open',
+    trigger: 'detail_open' | 'picker_open' | 'manual_refresh',
     scope?: RuntimeProviderOperationScope,
-  ): Promise<void> => {
+  ): Promise<ProviderErrorV1 | null> => {
+    let catalogUsable = false;
     try {
-      if (!isProviderFeatureEnabled()) return;
+      if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity).error;
       const operationScope = withOperationLifetime(scope);
       const catalog = await resolveSaved(identity, 'catalog', operationScope);
-      if (!catalog.ok || !isProviderFeatureEnabled()) return;
+      if (!catalog.ok) return catalog.error;
+      if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity).error;
       const resolvedDnsEvidenceByConnectionId = operationScope.dnsEvidenceByConnectionId
         ?? new Map([[identity.connectionId, catalog.value.dnsEvidenceByEndpointUrl]]);
       const resolvedAccountSettingsBasis = operationScope.accountSettingsBasis
         ?? catalog.value.accountSettingsBasis;
       if (!await hasFreshExactCatalogObservation(catalog.value.request)) {
-        if (!isProviderFeatureEnabled()) return;
+        if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity).error;
         const admittedScope: RuntimeProviderOperationScope = {
           registry: catalog.value.registry,
           ...(operationScope.resolveContributedCatalogParsers
-            ? {
-                resolveContributedCatalogParsers:
-                  operationScope.resolveContributedCatalogParsers,
-              }
+            ? { resolveContributedCatalogParsers: operationScope.resolveContributedCatalogParsers }
             : {}),
           ...(resolvedAccountSettingsBasis
             ? { accountSettingsBasis: resolvedAccountSettingsBasis }
             : {}),
           dnsEvidenceByConnectionId: resolvedDnsEvidenceByConnectionId,
-          // Work admitted by the scheduler is shared. Retain the caller's
+          // The scheduler owns admitted catalog work independently of any one
+          // picker waiter. Preserve this operation's already-started wall
           // deadline and exact registry projection, but not its cancellation.
           lifetime: { wallDeadlineAtMs: operationScope.lifetime.wallDeadlineAtMs },
         };
-        await runResolvedCatalogProbe(
+        const catalogRefresh = await runResolvedCatalogProbe(
           { ...catalog.value.request, operationScope: admittedScope },
           trigger,
           withProviderFeatureCurrentness(),
           admittedScope.lifetime,
         );
+        if (catalogRefresh.status === 'error') return catalogRefresh.error;
       }
-      if (!isProviderFeatureEnabled()) return;
+      // From here onward the projection has a usable catalog. Health remains an
+      // independent row fact and must never turn that catalog into a failed
+      // projection, even when health resolution, admission, or transport fails.
+      catalogUsable = true;
+      if (!isProviderFeatureEnabled()) return null;
       const health = await resolveSaved(identity, 'health', {
         ...operationScope,
         ...(resolvedAccountSettingsBasis
@@ -1185,16 +1198,13 @@ export function createRuntimeProviderServices(input: Readonly<{
           : {}),
         dnsEvidenceByConnectionId: resolvedDnsEvidenceByConnectionId,
       });
-      if (!health.ok || !isProviderFeatureEnabled() || health.value.request.probes.length !== 1) return;
-      if (await hasFreshExactHealthObservation(health.value.request)) return;
-      if (!isProviderFeatureEnabled()) return;
+      if (!health.ok || !isProviderFeatureEnabled() || health.value.request.probes.length !== 1) return null;
+      if (await hasFreshExactHealthObservation(health.value.request)) return null;
+      if (!isProviderFeatureEnabled()) return null;
       const admittedScope: RuntimeProviderOperationScope = {
         registry: health.value.registry,
         ...(operationScope.resolveContributedCatalogParsers
-          ? {
-              resolveContributedCatalogParsers:
-                operationScope.resolveContributedCatalogParsers,
-            }
+          ? { resolveContributedCatalogParsers: operationScope.resolveContributedCatalogParsers }
           : {}),
         ...(resolvedAccountSettingsBasis
           ? { accountSettingsBasis: resolvedAccountSettingsBasis }
@@ -1208,8 +1218,9 @@ export function createRuntimeProviderServices(input: Readonly<{
         withProviderFeatureCurrentness(),
         admittedScope.lifetime,
       );
+      return null;
     } catch {
-      // Demand refresh is advisory; callers project the current cached state.
+      return catalogUsable ? null : providerProbeUnavailable(identity).error;
     }
   };
 

@@ -161,7 +161,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
     > & Readonly<{
         legacyCredentialApi?: RevisionedLegacyRevocationInput['api'];
     }>;
-}>): ConnectedAccountDaemonRuntime {
+}>): ConnectedAccountDaemonRuntime & Readonly<{ dispose(): void }> {
     const isPluginGenerationCurrent = async (input: Readonly<{
         pluginId: string;
         generation: string;
@@ -413,6 +413,9 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
     }
 
     return Object.freeze({
+        dispose() {
+            attempts.dispose();
+        },
         async control(command, options) {
             try {
                 assertNotAborted(options?.signal);

@@ -350,11 +350,29 @@ describe('connected-account contribution registry', () => {
         ]);
     });
 
-    it('rejects duplicate qualified descriptors', () => {
-        expect(() => createConnectedAccountContributionRegistry({
-            generation: '12', descriptors: [descriptor('acme.alpha'), descriptor('acme.alpha')],
+    it('isolates a duplicate qualified descriptor through the existing unavailable diagnostic owner', () => {
+        const unavailable = vi.fn();
+        const registry = createConnectedAccountContributionRegistry({
+            generation: '12', descriptors: [
+                descriptor('acme.alpha'),
+                descriptor('acme.alpha'),
+                descriptor('acme.healthy'),
+            ],
             activateOnDemand: async () => {}, readRegistrations: () => [], isGenerationCurrent: () => true,
-        })).toThrow(/duplicate connected-account descriptor/i);
+            onDescriptorUnavailable: unavailable,
+        });
+
+        expect(registry.list().map((entry) => entry.ref)).toEqual([
+            { pluginId: 'acme.healthy', localId: 'shared' },
+        ]);
+        expect(registry.describe({ pluginId: 'acme.alpha', localId: 'shared' })).toBeNull();
+        expect(unavailable).toHaveBeenCalledOnce();
+        expect(unavailable).toHaveBeenCalledWith(
+            { pluginId: 'acme.alpha', localId: 'shared' },
+            expect.objectContaining({
+                message: expect.stringMatching(/duplicate connected-account descriptor/i),
+            }),
+        );
     });
 
     it('reports an unresolvable service as a null lease instead of an untyped throw', async () => {

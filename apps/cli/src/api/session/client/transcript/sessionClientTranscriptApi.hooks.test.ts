@@ -394,6 +394,38 @@ describe('createSessionClientTranscriptApi hook dispatch', () => {
         });
     });
 
+    it('retains abandonment cleanup custody when preparation created no workspace files', async () => {
+        const onAccepted = vi.fn();
+        const onDefinitiveAdmissionFailure = vi.fn();
+        const { api } = createTranscriptApi({
+            transformSessionInputBeforeCommit: async (payload) => ({
+                transformed: payload,
+                settlement: {
+                    onAccepted,
+                    onDefinitiveAdmissionFailure,
+                    stagedMediaHandles: [],
+                    workingDirectory: '/workspace',
+                    createdWorkspaceRelativePaths: [],
+                },
+            }),
+        });
+
+        await expect(api.preparePendingMessageComposerAdmission({
+            localId: 'pending-empty-cleanup',
+            text: 'prepared text',
+            meta: {},
+        })).resolves.toMatchObject({
+            text: 'prepared text',
+            stagedMediaHandles: [],
+            sessionMediaCleanup: {
+                workingDirectory: '/workspace',
+                createdWorkspaceRelativePaths: [],
+            },
+        });
+        expect(onAccepted).not.toHaveBeenCalled();
+        expect(onDefinitiveAdmissionFailure).not.toHaveBeenCalled();
+    });
+
     it('admits an attachment-only message through the pre-persistence transform with its stable local identity', async () => {
         const transformSessionInputBeforeCommit = vi.fn(async (payload: Record<string, unknown>) => ({
             ...payload,

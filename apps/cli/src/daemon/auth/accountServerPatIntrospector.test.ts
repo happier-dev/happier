@@ -10,13 +10,20 @@ vi.mock("@/api/client/serverHttpBaseUrl", () => ({
 
 import { createAccountServerPatIntrospector } from "./accountServerPatIntrospector";
 
-const PAT = "hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_daemon_pat_only_in_request_body";
+const PAT = `hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${"A".repeat(43)}`;
 const CREDENTIAL_ID = "2c67deea-5ae7-4706-9ad6-b5b992df1cba";
 const SERVER_BASE_URL = "https://account.example.test/";
 
 describe("createAccountServerPatIntrospector", () => {
     beforeEach(() => {
         post.mockReset();
+    });
+
+    it("rejects malformed PATs locally instead of presenting introspection as unavailable", async () => {
+        const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token", serverBaseUrl: SERVER_BASE_URL });
+
+        await expect(introspect(`hap_v1_${"x".repeat(2_000)}`)).resolves.toEqual({ ok: false, code: "invalid_token" });
+        expect(post).not.toHaveBeenCalled();
     });
 
     it("uses the daemon's existing Account connection to request only the minimal verified PAT principal", async () => {

@@ -87,13 +87,15 @@ function sanitizePackageName(pluginId: string): string {
 function createPackageJson(params: Readonly<{
   packageName: string;
   displayName: string;
+  invokerName: string;
   ui?: PluginScaffoldUiMode;
 }>): unknown {
+  const invoker = params.invokerName;
   const scripts: Record<string, string> = {
-    build: 'happier plugins dev build .',
-    typecheck: 'happier plugins dev typecheck .',
-    test: 'happier plugins test .',
-    'pack:plugin': 'happier plugins pack .',
+    build: `${invoker} plugins dev build .`,
+    typecheck: `${invoker} plugins dev typecheck .`,
+    test: `${invoker} plugins test .`,
+    'pack:plugin': `${invoker} plugins pack .`,
   };
   const dependencies: Record<string, string> = {
     '@happier-dev/plugin-sdk': PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.dependencies['@happier-dev/plugin-sdk'],
@@ -200,7 +202,7 @@ function createTypeScriptConfig(): string {
  * public entrypoints and symbols, while the compatibility packet supplies the
  * exact SDK version a fresh workspace receives.
  */
-function createPluginAuthoringSkillSource(ui?: PluginScaffoldUiMode): string {
+function createPluginAuthoringSkillSource(invokerName: string, ui?: PluginScaffoldUiMode): string {
   const sdkVersion = PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1.dependencies[PUBLIC_PLUGIN_SDK_PACKAGE_NAME];
   return [
     '---',
@@ -223,29 +225,30 @@ function createPluginAuthoringSkillSource(ui?: PluginScaffoldUiMode): string {
     '',
     '## Cross-plugin integrations',
     '',
-    `For the supported beginner cross-plugin shape, read \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/examples/operation-only-channel-provider/\`. It consumes the public \`@happier-dev/channels-protocol/v1\` contract by binding this plugin's Actions to the target-owned \`happier.channels/providers\` point; it does not declare a target, descriptor, or surface. Its \`external-author-supported\` classification and the relevant capability-matrix rows remain the availability authority. For the advanced public descriptor and embedded-surface shape, use the \`action-contract-producer\` and \`action-contract-consumer\` pair instead; the same public contracts serve external and bundled plugins, while the capability matrix separately records source availability and loaded proof. The examples resolve from this workspace once dependencies are prepared; a documentation-site path does not. This beginner scaffold does not declare a feature integration.`,
+    `For the beginner cross-plugin shape, read \`node_modules/${PUBLIC_PLUGIN_SDK_PACKAGE_NAME}/examples/operation-only-channel-provider/\`. It consumes the public \`@happier-dev/channels-protocol/v1\` contract by binding this plugin's Actions to the target-owned \`happier.channels/providers\` point; it does not declare a target, descriptor, or surface. Its \`maintained-public-reference\` classification describes evidence maturity; capability availability remains owned only by the capability matrix. For the advanced public descriptor and embedded-surface shape, use the \`action-contract-producer\` and \`action-contract-consumer\` pair instead; the same public contracts serve external and bundled plugins. The examples resolve from this workspace once dependencies are prepared; a documentation-site path does not. This beginner scaffold does not declare a feature integration.`,
     '',
     '## Normal author loop',
     '',
     'Work in a normal Happier Agent Session rooted at this source directory. Use the same public lifecycle as a human author:',
     '',
-    '1. Start or continue live development with `happier plugins dev`. It prepares declared dependencies automatically; do not run `happier plugins dev install .` first. It prompts once to trust this source root, so when no present user can answer that prompt use the headless route below instead.',
+    `1. Start or continue live development with \`${invokerName} plugins dev\`. It prepares declared dependencies automatically; do not run \`${invokerName} plugins dev install .\` first. It prompts once to trust this source root, so when no present user can answer that prompt use the headless route below instead.`,
+    `Exception — dependency refresh: that cold-start preparation materializes an author root exactly once, only when nothing resolvable is installed yet. After you change declared dependencies in \`package.json\`, or your \`node_modules\` is stale or wiped, run \`${invokerName} plugins dev install .\` once to refresh the tree; the watch loop does not reinstall on every start.`,
     '2. The generated prepublication SDK version resolves automatically through the running Happier CLI during managed author commands; do not add a workspace alias, file dependency, author-owned `pnpm-workspace.yaml`, or ad hoc local registry.',
-    'When deliberately preparing from an approved registry origin, pass `--sdk-registry <origin>` to `happier plugins dev`, `happier plugins dev install .`, or `happier plugins pack .`.',
-    '3. Make the smallest source change, then use `happier plugins dev typecheck .`, `happier plugins dev build .`, and `happier plugins test .` for focused checks. Validate through the managed source-development lifecycle; do not create or install a local release archive as an additional feature-QA gate.',
-    '4. Use `happier plugins doctor .` to diagnose an import or top-level evaluation issue; it evaluates once and does not prove repeated evaluation is pure.',
+    `When deliberately preparing from an approved registry origin, pass \`--sdk-registry <origin>\` to \`${invokerName} plugins dev\`, \`${invokerName} plugins dev install .\`, or \`${invokerName} plugins pack .\`.`,
+    `3. Make the smallest source change, then use \`${invokerName} plugins dev typecheck .\`, \`${invokerName} plugins dev build .\`, and \`${invokerName} plugins test .\` for focused checks. Validate through the managed source-development lifecycle; do not create or install a local release archive as an additional feature-QA gate.`,
+    `4. Use \`${invokerName} plugins doctor .\` to diagnose an import or top-level evaluation issue; it evaluates once and does not prove repeated evaluation is pure.`,
     '5. Use the installed `node_modules/@happier-dev/plugin-sdk/examples/` as copyable public patterns, then adapt the smallest matching example through documented SDK exports. For a custom persistent Session Agent, start from `node_modules/@happier-dev/plugin-sdk/examples/session-agent/` after the generic scaffold; its package-root entry and import-safe Session runner leaf are the maintained executable reference. Use `node_modules/@happier-dev/plugin-sdk/examples/advanced-package-root/` only when the same package also needs an External Sessions companion, a managed Provider, Connected Accounts, Resources, or daemon-generation background work.',
     '',
     'The daemon owns prepared-change custody, activation, and the retained last-known-good generation. If dependency preparation, evaluation, or a UI build fails, fix the source and let the normal development cycle retry; do not start another watcher or loader.',
     '',
     '## Headless first install',
     '',
-    '`happier plugins install . --dev --trust --json` carries one explicit non-interactive authorization for that exact local development source, so the first install of a source root needs no terminal prompt. It decides source-root trust and package trust for that one path, selects no optional host resources, and cancels the pending change with `plugin_explicit_trust_target_mismatch` if the daemon review names any other source. `--trust` is valid only together with `--dev` on a local path.',
-    'Later iterations need nothing further: a trusted development source root short-circuits review, so `happier plugins reload --json` applies subsequent edits. `happier plugins dev` has no `--trust` equivalent, so use this route when no present user can answer its source-root prompt.',
+    `\`${invokerName} plugins install . --dev --trust --json\` carries one explicit non-interactive authorization for that exact local development source, so the first install of a source root needs no terminal prompt. It decides source-root trust and package trust for that one path, selects no optional host resources, and cancels the pending change with \`plugin_explicit_trust_target_mismatch\` if the daemon review names any other source. \`--trust\` is valid only together with \`--dev\` on a local path.`,
+    `Later iterations need nothing further: a trusted development source root short-circuits review, so \`${invokerName} plugins reload --json\` applies subsequent edits. \`${invokerName} plugins dev\` has no \`--trust\` equivalent, so use this route when no present user can answer its source-root prompt.`,
     '',
     '## Reviews and reconnecting',
     '',
-    '`--trust` above is the only non-interactive approval. Without it, a `--json` or noninteractive request never auto-approves: it returns a daemon-issued pending ID for a present user to decide. Preserve that ID and rejoin the same change with `happier plugins change status <pendingChangeId> --json`; a present user decides it with `happier plugins change approve <pendingChangeId> --json` or `happier plugins change reject <pendingChangeId> --json`, or from Settings -> Plugins on that machine. Do not submit a second change request while a review or apply is pending. Consequential updates, optional host resources, and secrets always stay with a present user.',
+    `\`--trust\` above is the only non-interactive approval. Without it, a \`--json\` or noninteractive request never auto-approves: it returns a daemon-issued pending ID for a present user to decide. Preserve that ID and rejoin the same change with \`${invokerName} plugins change status <pendingChangeId> --json\`; a present user decides it with \`${invokerName} plugins change approve <pendingChangeId> --json\` or \`${invokerName} plugins change reject <pendingChangeId> --json\`, or from Settings -> Plugins on that machine. Do not submit a second change request while a review or apply is pending. Consequential updates, optional host resources, and secrets always stay with a present user.`,
     'A pending ID can be rejoined only during the same daemon lifetime. If status reports `expired` after a daemon restart, rerun the original development or install request and review its newly prepared facts; do not reuse the old pending ID. `outcome_unknown` is different: inspect installed state before replaying a mutation.',
     '',
   ].join('\n');
@@ -811,12 +814,14 @@ export async function scaffoldLocalPlugin(params: Readonly<{
   baseDir?: string;
   pluginId: string;
   displayName: string;
+  invokerName?: string;
   ui?: PluginScaffoldUiMode;
 }>): Promise<ScaffoldLocalPluginResult> {
   const rawTargetDir = params.targetDir.trim();
   const pluginId = params.pluginId.trim();
   const displayName = params.displayName.trim();
   const ui = params.ui;
+  const invokerName = params.invokerName?.trim() || 'happier';
 
   if (!rawTargetDir) {
     return {
@@ -891,6 +896,7 @@ export async function scaffoldLocalPlugin(params: Readonly<{
       `${JSON.stringify(createPackageJson({
         packageName: sanitizePackageName(pluginId),
         displayName,
+        invokerName,
         ui,
       }), null, 2)}\n`,
       'utf8',
@@ -902,7 +908,7 @@ export async function scaffoldLocalPlugin(params: Readonly<{
     );
     await writeFile(testEntryPath, createPluginTestSource({ pluginId, displayName, ui }), 'utf8');
     await writeFile(tsconfigPath, createTypeScriptConfig(), 'utf8');
-    await writeFile(authoringSkillPath, createPluginAuthoringSkillSource(ui), 'utf8');
+    await writeFile(authoringSkillPath, createPluginAuthoringSkillSource(invokerName, ui), 'utf8');
     if (uiEntryPath && ui !== undefined) {
       await writeFile(
         uiEntryPath,

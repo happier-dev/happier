@@ -8,7 +8,7 @@ vi.mock('@/plugins/devLoop/actions', () => ({
   executePluginDevLoopAction,
 }));
 
-import { createCliActionExecutor } from './createCliActionExecutor';
+import { createCliActionExecutor, resolveCliActionAuthority } from './createCliActionExecutor';
 
 function createExecutor(credentialProvenance: 'api_token' | 'stored_session') {
   const token = credentialProvenance === 'api_token'
@@ -28,6 +28,25 @@ function createExecutor(credentialProvenance: 'api_token' | 'stored_session') {
 }
 
 describe('createCliActionExecutor credential authority', () => {
+  it('uses credential provenance as an authority ceiling', () => {
+    const storedSessionCredentials = {
+      token: 'stored-session-bearer',
+      encryption: null,
+      credentialProvenance: 'stored_session' as const,
+    };
+    const apiTokenCredentials = {
+      token: 'hap_v1_api-token',
+      encryption: null,
+      credentialProvenance: 'api_token' as const,
+    };
+
+    expect(resolveCliActionAuthority(storedSessionCredentials, undefined)).toBe('present_user');
+    expect(resolveCliActionAuthority(undefined, undefined)).toBe('account_automation');
+    expect(resolveCliActionAuthority(apiTokenCredentials, undefined)).toBe('account_automation');
+    expect(resolveCliActionAuthority(storedSessionCredentials, 'account_automation')).toBe('account_automation');
+    expect(resolveCliActionAuthority(apiTokenCredentials, 'present_user')).toBe('account_automation');
+  });
+
   beforeEach(() => {
     executePluginDevLoopAction.mockReset();
   });

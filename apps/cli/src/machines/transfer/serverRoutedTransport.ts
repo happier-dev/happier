@@ -936,6 +936,7 @@ export async function requestServerRoutedTransferToFile(params: Readonly<{
   destinationPath: string;
   openBody?: unknown;
   timeoutMs?: number;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
 }>): Promise<TransferPayloadFileResult> {
   const maxBytes = resolveServerRoutedTransferMaxBytes();
   const sink = await createTransferPayloadFileSink({
@@ -956,6 +957,7 @@ export async function requestServerRoutedTransferToFile(params: Readonly<{
         }
         receivedBytes = nextBytes;
         await sink.appendChunk(chunk);
+        await params.onProgress?.(receivedBytes);
       },
       onFinish: async (manifestHash) => {
         if (maxBytes !== null && isServerRoutedTransferOverSizeLimit(receivedBytes, maxBytes)) {

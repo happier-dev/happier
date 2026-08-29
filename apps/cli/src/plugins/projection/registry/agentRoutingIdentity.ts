@@ -33,6 +33,25 @@ export function resolveContributedAgentRoutingId(params: Readonly<{
 }
 
 /**
+ * Resolves the qualified Plugin contribution key for one contributed Agent:
+ * the always-qualified `"<pluginId>/agents/<localId>"` spelling carried by activation
+ * and managed-service authority bindings (`qualifiedAgentId`,
+ * `contributionQualifiedId`).
+ *
+ * This is a distinct fact from {@link resolveContributedAgentRoutingId}: the
+ * routing id is how the host addresses the Agent (unqualified for bundled
+ * first-party Agents), while the qualified contribution key always carries the
+ * owning Plugin id. Runner bindings carry both facts plus the structured
+ * `{pluginId, localId}` identity fields; no spelling maps one onto the other.
+ */
+export function resolveAgentContributionQualifiedId(params: Readonly<{
+    pluginId: string;
+    localId: string;
+}>): string {
+    return `${params.pluginId}/agents/${encodeURIComponent(params.localId)}`;
+}
+
+/**
  * Indexes selected Agent contributions by their durable `{pluginId, localId}`
  * identity so identity-addressed consumers resolve the same routing id the
  * projection assigned, instead of re-deriving one.

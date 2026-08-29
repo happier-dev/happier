@@ -42,6 +42,8 @@ import {
     DaemonPluginReactNativeCrashReportResponseV1Schema,
     DaemonPluginReactNativeBundleCacheIdentityV1Schema,
     DaemonPluginHostedWebArtifactCacheIdentityV1Schema,
+    isSameDaemonPluginReactNativeBundleCacheIdentityV1,
+    isSameDaemonPluginHostedWebArtifactCacheIdentityV1,
     isSameDaemonPluginReactNativeCrashBindingTokenV1,
     type FeatureDecision,
     type DaemonHostedWebFrameCapabilityV1,
@@ -1841,6 +1843,12 @@ async function resolveProjection(
             pluginUiHostRuntime,
             brandAssetsByPluginId,
             pluginExecutionOriginsByPluginId,
+            ...(lease.runtimeRegistry?.settingsRollbackDeclarations
+                ? {
+                    settingsRollbackDeclarationsByPluginId:
+                        lease.runtimeRegistry.settingsRollbackDeclarations,
+                }
+                : {}),
             ...(lease.runtimeRegistry?.resolveActionPresentUserGatePolicy
                 ? {
                     resolveActionPresentUserGatePolicy:
@@ -1973,30 +1981,14 @@ function reactNativeIdentityMatches(
     left: DaemonPluginReactNativeBundleCacheIdentityV1,
     right: DaemonPluginReactNativeBundleCacheIdentityV1,
 ): boolean {
-    return left.pluginId === right.pluginId
-        && left.contributionId === right.contributionId
-        && left.artifactDigest === right.artifactDigest
-        && left.hostAppVersion === right.hostAppVersion
-        && left.hostUiApiVersion === right.hostUiApiVersion
-        && left.reactVersion === right.reactVersion
-        && left.reactNativeVersion === right.reactNativeVersion
-        && (left.expoRuntimeVersion ?? '') === (right.expoRuntimeVersion ?? '')
-        && (left.hermesVersion ?? '') === (right.hermesVersion ?? '')
-        && left.platform === right.platform
-        && left.channel === right.channel
-        && left.nativeCapabilitiesDigest === right.nativeCapabilitiesDigest
-        && left.projectionGeneration === right.projectionGeneration;
+    return isSameDaemonPluginReactNativeBundleCacheIdentityV1(left, right);
 }
 
 function hostedWebIdentityMatches(
     left: DaemonPluginHostedWebArtifactCacheIdentityV1,
     right: DaemonPluginHostedWebArtifactCacheIdentityV1,
 ): boolean {
-    return left.pluginId === right.pluginId
-        && left.contributionId === right.contributionId
-        && left.artifactDigest === right.artifactDigest
-        && left.platform === right.platform
-        && left.projectionGeneration === right.projectionGeneration;
+    return isSameDaemonPluginHostedWebArtifactCacheIdentityV1(left, right);
 }
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {

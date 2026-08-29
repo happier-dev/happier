@@ -148,6 +148,38 @@ describe("createDaemonPatVerifier", () => {
         expect(calls).toBe(2);
     });
 
+    it("bounds cached authority from cold introspection start rather than its delayed response", async () => {
+        let monotonicNowMs = 0;
+        let calls = 0;
+        let releaseIntrospection!: () => void;
+        const introspectionReleased = new Promise<void>((resolve) => {
+            releaseIntrospection = resolve;
+        });
+        const verifyPat = createDaemonPatVerifier({
+            accountId: "account-a",
+            now: () => monotonicNowMs,
+            monotonicNow: () => monotonicNowMs,
+            introspect: async () => {
+                calls += 1;
+                if (calls === 1) {
+                    await introspectionReleased;
+                }
+                return verifiedPat({ credentialId: "credential-" + calls });
+            },
+        });
+
+        const first = verifyPat(PAT);
+        monotonicNowMs = 15_000;
+        releaseIntrospection();
+        await expect(first).resolves.toEqual(verifiedPat({ credentialId: "credential-1" }));
+
+        // The first verifier may return its fresh server decision, but it must
+        // not cache beyond 60 seconds from the cold miss that established it.
+        monotonicNowMs = 60_000;
+        await expect(verifyPat(PAT)).resolves.toEqual(verifiedPat({ credentialId: "credential-2" }));
+        expect(calls).toBe(2);
+    });
+
     it("keeps the promised 60-second positive TTL when the wall clock rolls backwards", async () => {
         let wallNow = 1_000_000;
         let monotonicNowMs = 0;

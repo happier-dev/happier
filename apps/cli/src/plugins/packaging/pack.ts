@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -553,8 +553,18 @@ async function preparePackOperationAuthoringSource(
   // Package-root author projects prepare only the operation copy. That keeps
   // dependency resolution, author evaluation, declared UI output, runtime
   // bundling, and archive traversal on one immutable-for-the-operation view.
-  if (operation.authoringKind !== 'code' || operation.authoringEntryKind !== 'packageRoot') {
-    return null;
+  if (operation.authoringKind !== 'code') return null;
+
+  // A literal standalone file has no package dependency owner. A single-file
+  // locator inside a package still resolves through that package's copied
+  // manifest and therefore needs the same SDK/dependency preparation as a
+  // package-root locator before evaluation.
+  if (operation.authoringEntryKind === 'singleFile') {
+    try {
+      await access(join(operation.operationRootPath, 'package.json'));
+    } catch {
+      return null;
+    }
   }
 
   const preparation = await preparePluginAuthorDependencies({

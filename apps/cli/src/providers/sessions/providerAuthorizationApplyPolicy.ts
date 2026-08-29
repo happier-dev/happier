@@ -10,11 +10,6 @@ import {
 import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { projectProviderRuntimeBindingBasis } from '../spawn/runtimeBindingBasis';
 
-export type ProviderAuthorizationApplyPolicyInput = Readonly<{
-  current: ProviderSpawnAuthorization;
-  next: ProviderSpawnAuthorization;
-}>;
-
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (!value || typeof value !== 'object') return value;
@@ -82,29 +77,6 @@ export function activeProviderBindingMetadataMatchesRuntimeBasis(
     selection: input.activeSelection,
     binding: input.activeSessionBindingMetadata,
   });
-}
-
-export function resolveProviderAuthorizationApplyPolicy(
-  input: ProviderAuthorizationApplyPolicyInput,
-): ModelSelectionApplyPolicy {
-  const agentPolicy = input.next.support.applyPolicy;
-  if (agentPolicy === 'unsupported') return 'unsupported';
-  if (input.current.binding.agentTargetKey !== input.next.binding.agentTargetKey) {
-    return 'unsupported';
-  }
-  if (
-    input.current.binding.selection.connectionId
-      !== input.next.binding.selection.connectionId
-  ) {
-    return 'restart_session';
-  }
-  if (agentPolicy !== 'live') return agentPolicy;
-  return sameProviderAuthorizationRuntimeBindingDimensions(
-    input.current,
-    input.next,
-  )
-    ? 'live'
-    : 'restart_session';
 }
 
 export function resolveProviderAuthorizationApplyPolicyForActiveBinding(

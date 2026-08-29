@@ -39,29 +39,32 @@ function mockProviderCliResolution(): void {
   }));
 }
 
-function mockPrimeResolvedContributionRegistry(
-  primeResolvedContributionRegistry: () => Promise<ResolvedContributionRegistry>,
+function mockResolveMergedContributionRegistry(
+  resolveMergedContributionRegistry: () => Promise<ResolvedContributionRegistry>,
 ): void {
   vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
-    primeResolvedContributionRegistry,
+    resolveMergedContributionRegistry,
+    getResolvedContributionRegistry: () => {
+      throw new Error('built-in registry is unavailable in this harness');
+    },
   }));
 }
 
 describe('registerCapabilitiesHandlers prewarm', () => {
-  it('waits for merged registry priming before resolving generic capability support', async () => {
+  it('waits for the merged registry resolution before resolving generic capability support', async () => {
     vi.resetModules();
 
-    let releasePrime!: (value: ResolvedContributionRegistry) => void;
-    const primeResolvedContributionRegistrySpy = vi.fn(
+    let releaseSnapshot!: (value: ResolvedContributionRegistry) => void;
+    const resolveMergedContributionRegistrySpy = vi.fn(
       () => new Promise<ResolvedContributionRegistry>((resolve) => {
-        releasePrime = resolve;
+        releaseSnapshot = resolve;
       }),
     );
     const resolverSpy = vi.fn(async () => null);
 
     mockProviderCliResolution();
 
-    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
+    mockResolveMergedContributionRegistry(resolveMergedContributionRegistrySpy);
     mockPreflightAdapterResolution(resolverSpy);
 
     vi.doMock('@/agent/catalog/registry', () => {
@@ -84,10 +87,10 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(1);
+    expect(resolveMergedContributionRegistrySpy).toHaveBeenCalledTimes(1);
     expect(resolverSpy).toHaveBeenCalledTimes(0);
 
-    releasePrime(createEmptyResolvedContributionRegistry());
+    releaseSnapshot(createEmptyResolvedContributionRegistry());
     await Promise.resolve();
     await Promise.resolve();
     expect(resolverSpy).toHaveBeenCalledTimes(1);
@@ -96,12 +99,12 @@ describe('registerCapabilitiesHandlers prewarm', () => {
   it('warms capability service during handler registration', async () => {
     vi.resetModules();
 
-    const primeResolvedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
+    const resolveMergedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
     const resolverSpy = vi.fn(async () => null);
 
     mockProviderCliResolution();
 
-    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
+    mockResolveMergedContributionRegistry(resolveMergedContributionRegistrySpy);
     mockPreflightAdapterResolution(resolverSpy);
 
     vi.doMock('@/agent/catalog/registry', () => {
@@ -125,7 +128,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     await vi.waitFor(() => {
       expect(resolverSpy).toHaveBeenCalledTimes(1);
     });
-    expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(1);
+    expect(resolveMergedContributionRegistrySpy).toHaveBeenCalledTimes(1);
 
     const result = await call<CapabilitiesDescribeResponse, Record<string, never>>(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
 
@@ -137,11 +140,11 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     vi.resetModules();
 
     let pluginReloadGeneration = 0;
-    const primeResolvedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
+    const resolveMergedContributionRegistrySpy = vi.fn(async () => createEmptyResolvedContributionRegistry());
     const resolverSpy = vi.fn(async () => null);
 
     mockProviderCliResolution();
-    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
+    mockResolveMergedContributionRegistry(resolveMergedContributionRegistrySpy);
     mockPreflightAdapterResolution(resolverSpy);
 
     vi.doMock('@/plugins/runtime/reload/singleton', () => ({
@@ -194,6 +197,6 @@ describe('registerCapabilitiesHandlers prewarm', () => {
     expect(afterReload.capabilities.find((entry: { id: string }) => entry.id === 'cli.codex')?.title)
       .toBe('Codex CLI');
     expect(resolverSpy).toHaveBeenCalledTimes(2);
-    expect(primeResolvedContributionRegistrySpy).toHaveBeenCalledTimes(2);
+    expect(resolveMergedContributionRegistrySpy).toHaveBeenCalledTimes(2);
   });
 });

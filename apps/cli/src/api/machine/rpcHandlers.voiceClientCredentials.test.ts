@@ -131,6 +131,11 @@ describe('Voice client raw credential machine RPC', () => {
           }],
         },
         resolveVoiceProviderRuntimeLifecycle,
+        resolveCurrentPluginMaterializationRef: () => ({
+          pluginId: contribution.pluginId,
+          machineId: 'machine-a',
+          materializationId: 'materialization-a',
+        }),
         resolveConnectedAccountPurposeBindingOwner: () => ({
           getBinding: async () => ({
             purpose: 'voice.browser',
@@ -282,6 +287,11 @@ describe('Voice client raw credential machine RPC', () => {
         },
         resolveVoiceProviderRuntimeLifecycle: () => ({
           generation: '12', isCurrent: () => true, retirementSignal: new AbortController().signal,
+        }),
+        resolveCurrentPluginMaterializationRef: () => ({
+          pluginId: contribution.pluginId,
+          machineId: 'machine-a',
+          materializationId: 'materialization-a',
         }),
         resolveConnectedAccountPurposeBindingOwner: () => ({ materialize }),
       },

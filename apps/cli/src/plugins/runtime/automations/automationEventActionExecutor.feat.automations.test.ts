@@ -514,6 +514,88 @@ describe('createAutomationEventActionExecutor', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('resolves a session-socket admit to the socket adopted set by membership', async () => {
+    const execute = vi.fn(async () => ({
+      results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }],
+      continuation: readyAdmissionContinuation,
+    }));
+    const checkpointedSet: AutomationEventPublicProjectionOwner = {
+      refresh: async () => ({ kind: 'adopted', revision: '7' }),
+      readPublicProjection: () => ({ kind: 'available', revision: '7', definitions: [] }),
+      listPublicProjection: async () => ({ kind: 'unchanged', revision: '7' }),
+      prepareAdmission: async () => null,
+    };
+    const prepareAdmission = vi.fn(async (params: Parameters<AutomationEventPublicProjectionOwner['prepareAdmission']>[0]) => oneShotAdmissionRequests([{
+      v: 1,
+      caller: params.caller,
+      input: AutomationEventAdmitInputV1Schema.parse(params.input),
+      hostEvidence: {
+        v: 1,
+        t: 'plain',
+        accountCurrentness: { mode: 'plain', version: 10, contentKeyFingerprint: null },
+      },
+    }]));
+    const socketSet: AutomationEventPublicProjectionOwner = {
+      refresh: async () => ({ kind: 'adopted', revision: '7' }),
+      readPublicProjection: () => ({
+        kind: 'available' as const,
+        revision: '7',
+        definitions: [{
+          automationId: 'automation-1',
+          triggerId: triggerIdFor('automation-1'),
+          triggerRevision,
+          eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+          sourceSelectorId,
+          sourceContractVersion: 1,
+          sourceConfig: {},
+          observationTransport: {
+            kind: 'socket' as const,
+            watcherMaterializationRef: callerMaterialization,
+          },
+          filter: null,
+          maximumObservationAgeMs: null,
+        }],
+      }),
+      listPublicProjection: async () => ({ kind: 'unchanged', revision: '7' }),
+      prepareAdmission,
+    };
+    const resolveAdoptedDefinitionSet = vi.fn((
+      _caller: PluginMachineMaterializationRefV1,
+      _generationId: string,
+      transport: AutomationEventSourcesListInputV1['transport'],
+    ) => (transport.kind === 'socket' ? socketSet : checkpointedSet));
+    const executor = createAutomationEventActionExecutor({
+      credentials,
+      transport: { execute },
+      revalidateCallerMaterialization: async () => true,
+      revalidateCallerImmutableGeneration: async () => true,
+      resolveAccountId: async () => 'account-1',
+      resolveAdoptedDefinitionSet,
+    });
+    const input = AutomationEventAdmitInputV1Schema.parse({
+      eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+      occurrenceId: 'delivery-socket-1',
+      occurredAt: 1,
+      observationReceivedAt: 2,
+      payload: { action: 'opened' },
+      definitions: [selectorFor('automation-1')],
+    });
+
+    await expect(executor({
+      actionId: 'automation.event.admit',
+      input,
+      caller: actionCaller,
+    })).resolves.toEqual({
+      results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }],
+    });
+    expect(resolveAdoptedDefinitionSet).toHaveBeenCalledWith(
+      callerMaterialization,
+      immutableGenerationId,
+      { kind: 'socket' },
+    );
+    expect(prepareAdmission).toHaveBeenCalled();
+  });
+
   it('requires the host-held current webhook invocation before an Event producer can list durable sources', async () => {
     const listPublicProjection = vi.fn(async () => ({
       kind: 'page' as const,

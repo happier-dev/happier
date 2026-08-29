@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 
 import { buildExecutionRunConfiguration } from './openInputs';
 
 describe('buildExecutionRunConfiguration', () => {
-    it('builds a bounded configuration snapshot for the exact Provider selection', () => {
+    it('builds a bounded configuration snapshot for the canonical qualified Provider selection', () => {
+        const agentTargetKey = buildBackendTargetKeyV2({
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+        });
         expect(buildExecutionRunConfiguration({
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
             modelId: 'gpt-5.1-codex',
             modelSelection: ProviderBoundModelRefSchema.parse({
-                agentTargetKey: 'backend:codex',
+                agentTargetKey,
                 providerConnectionId: 'pc_openai',
                 modelId: 'gpt-5.1-codex',
             }),
@@ -24,7 +28,7 @@ describe('buildExecutionRunConfiguration', () => {
             updatedAtMs: 11,
         })).toEqual({
             modelSelection: {
-                agentTargetKey: 'backend:codex',
+                agentTargetKey,
                 providerConnectionId: 'pc_openai',
                 modelId: 'gpt-5.1-codex',
             },

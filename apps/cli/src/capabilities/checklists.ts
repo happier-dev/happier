@@ -1,7 +1,5 @@
-import { AGENTS } from '@/agent/catalog/registry';
-import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
-import type { AgentCatalogEntry } from '@/agent/catalog/types';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
     BUILT_IN_INSTALLABLES_REGISTRY,
     type InstallablesRegistry,
@@ -11,18 +9,23 @@ import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistI
 import type { CapabilityDetectRequest } from './types';
 import { createInstallableCapabilityRequests } from './registry/installables';
 
-function createCliAgentRequests(): CapabilityDetectRequest[] {
-    return (Object.values(AGENTS) as AgentCatalogEntry[]).map((entry) => ({
+type AgentRegistryChecklistSnapshot = Pick<ResolvedContributionRegistry, 'agents' | 'agentDefinitionsById'>;
+
+function createCliAgentRequests(
+    agentRegistrySnapshot: AgentRegistryChecklistSnapshot,
+): CapabilityDetectRequest[] {
+    return agentRegistrySnapshot.agents.map((entry) => ({
         id: `cli.${entry.id}`,
     }));
 }
 
 function mergeChecklistContributions(
     base: Record<ChecklistId, CapabilityDetectRequest[]>,
+    agentRegistrySnapshot: AgentRegistryChecklistSnapshot,
 ): Record<ChecklistId, CapabilityDetectRequest[]> {
     const next: Record<ChecklistId, CapabilityDetectRequest[]> = { ...base };
 
-    for (const [agentId, contribution] of readAgentCatalogSnapshot().agentDefinitionsById) {
+    for (const [agentId, contribution] of agentRegistrySnapshot.agentDefinitionsById) {
         if (contribution.richDefinition?.definition.catalog?.resumeChecklist?.includeLoginStatus !== true) {
             continue;
         }
@@ -37,20 +40,13 @@ function mergeChecklistContributions(
     return next;
 }
 
-const resumeChecklistEntries = CATALOG_AGENT_IDS.reduce<Record<`resume.${CatalogAgentId}`, CapabilityDetectRequest[]>>(
-    (entries, id) => {
-        entries[resumeChecklistId(id)] = [];
-        return entries;
-    },
-    {} as Record<`resume.${CatalogAgentId}`, CapabilityDetectRequest[]>,
-);
-
 export function createCapabilityChecklists(
     installablesRegistry: Pick<InstallablesRegistry, 'descriptors'> = BUILT_IN_INSTALLABLES_REGISTRY,
+    agentRegistrySnapshot: AgentRegistryChecklistSnapshot = getResolvedContributionRegistry(),
 ): Record<ChecklistId, CapabilityDetectRequest[]> {
-    const cliAgentRequests = createCliAgentRequests();
+    const cliAgentRequests = createCliAgentRequests(agentRegistrySnapshot);
     const installableDependencyRequests = createInstallableCapabilityRequests(installablesRegistry);
-    const baseChecklists = {
+    const baseChecklists: Record<ChecklistId, CapabilityDetectRequest[]> = {
         [CHECKLIST_IDS.NEW_SESSION]: [
             ...cliAgentRequests,
             { id: 'tool.tmux' },
@@ -64,17 +60,20 @@ export function createCapabilityChecklists(
             { id: 'tool.executionRuns' },
             ...installableDependencyRequests,
         ],
-        ...resumeChecklistEntries,
-    } satisfies Record<ChecklistId, CapabilityDetectRequest[]>;
+    };
 
-    return mergeChecklistContributions(baseChecklists);
+    for (const entry of agentRegistrySnapshot.agents) {
+        baseChecklists[resumeChecklistId(entry.id)] = [];
+    }
+
+    return mergeChecklistContributions(baseChecklists, agentRegistrySnapshot);
 }
 
 /**
- * Built fresh on every access. `AGENTS` is a live projection of the current Agent
- * catalog (`readAgentCatalogSnapshot`), so an Agent contributed by a plugin that
- * activated after the first read must still appear here; memoizing this table
- * froze the checklist set to whichever catalog happened to exist first.
+ * Built fresh on every access from the current merged contribution registry, so
+ * an Agent contributed by a plugin that activated after the first read must still
+ * appear here; memoizing this table froze the checklist set to whichever catalog
+ * happened to exist first.
  */
 function resolveChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
     return createCapabilityChecklists();

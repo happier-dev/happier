@@ -372,6 +372,7 @@ function createPlainExecutor(extra: Partial<Parameters<typeof createCliActionExe
     token: 'token',
     credentials: {
       token: 'token',
+      credentialProvenance: 'stored_session',
       encryption: {
         type: 'legacy',
         secret: new Uint8Array([1, 2, 3, 4]),
@@ -391,6 +392,7 @@ function createDataKeyExecutor(extra: Partial<Parameters<typeof createCliActionE
     token: 'token',
     credentials: {
       token: 'token',
+      credentialProvenance: 'stored_session',
       encryption: {
         type: 'dataKey',
         publicKey,
@@ -754,6 +756,7 @@ describe('createCliActionExecutor', () => {
       actionId: PLUGIN_ACTION_ID,
       input: { scope: 'diff' },
       surface: 'cli',
+      authority: 'present_user',
       defaultSessionId: 'sess-1',
     });
   });
@@ -776,6 +779,7 @@ describe('createCliActionExecutor', () => {
       actionId: 'action.spec.search',
       input: { limit: 10 },
       surface: 'cli',
+      authority: 'present_user',
     });
   });
 

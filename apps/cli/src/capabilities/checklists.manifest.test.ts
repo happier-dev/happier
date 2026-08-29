@@ -1,25 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
-
-const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
-  readAgentCatalogSnapshot: vi.fn(),
-}));
-
-vi.mock('@/agent/catalog/registry', () => ({
-  get AGENTS() {
-    return { codex: { id: 'codex' } };
-  },
-}));
-
-vi.mock('@/agent/catalog/snapshot', () => ({
-  readAgentCatalogSnapshot,
-}));
+import { describe, expect, it } from 'vitest';
 
 import { resumeChecklistId } from './checklistIds';
 import { createCapabilityChecklists } from './checklists';
 
 describe('manifest Agent checklist policy', () => {
   it('adds the closed resume login-status policy at the existing checklist owner', () => {
-    readAgentCatalogSnapshot.mockReturnValue({
+    const agentRegistrySnapshot = {
+      agents: [{ id: 'codex' }],
       agentDefinitionsById: new Map([[
         'codex',
         {
@@ -33,11 +20,9 @@ describe('manifest Agent checklist policy', () => {
           },
         },
       ]]),
-      catalogEntriesById: {},
-      executionRunProfiles: [],
-    });
+    } as any;
 
-    expect(createCapabilityChecklists()[resumeChecklistId('codex')]).toEqual([
+    expect(createCapabilityChecklists(undefined, agentRegistrySnapshot)[resumeChecklistId('codex')]).toEqual([
       { id: 'cli.codex', params: { includeLoginStatus: true } },
     ]);
   });

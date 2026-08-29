@@ -1882,13 +1882,20 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         });
 
         if (!spec.healthCheck) {
-            setSnapshot({
-                ...snapshot,
-                state: 'healthy',
-                lastHealthyAtMs: now(),
-            });
-            await publishEndpointProjection();
-            startWatchdog();
+            // The no-health readiness commit fences through the same
+            // currentness/stopping/running owners as the probed path: a process
+            // that settled terminal while establishment was suspended keeps its
+            // unhealthy observation and publishes nothing, instead of being
+            // promoted over its own terminal fact.
+            if (!isStopping() && !isStopped() && !processTerminal && isGenerationUsable()) {
+                setSnapshot({
+                    ...snapshot,
+                    state: 'healthy',
+                    lastHealthyAtMs: now(),
+                });
+                await publishEndpointProjection();
+                startWatchdog();
+            }
         }
         return handle;
         };

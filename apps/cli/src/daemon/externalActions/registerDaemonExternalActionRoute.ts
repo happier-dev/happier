@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
+import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol';
 import {
   EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
   projectExternalActionHttpErrorV1,
@@ -23,7 +24,10 @@ type ExternalActionRouteParams = Readonly<{
 function readBearerAuthorization(value: string | string[] | undefined): string | null {
   if (typeof value !== 'string') return null;
   const match = /^Bearer ([^\s]+)$/.exec(value);
-  return match ? match[1] : null;
+  const token = match?.[1];
+  return token && parseAccountApiTokenBearerV1(token) !== null
+    ? token
+    : null;
 }
 
 function sendExternalActionJson(reply: FastifyReply, statusCode: number, payload: unknown): FastifyReply {

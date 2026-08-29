@@ -29,11 +29,17 @@ export function createServerPluginPermissionGrantRequester(input: Readonly<{
   return Object.freeze({
     async request(rawInput, options = {}) {
       const body = PluginPermissionGrantRequestActionInputV1Schema.parse(rawInput);
+      if (!body.caller) {
+        throw new Error('plugin_permission_grant_publisher_proof_required');
+      }
       const publisherHeader = await createDefaultPluginInstallationPublisherHeader({
         method: 'POST',
         path: REQUEST_PATH,
         body,
       });
+      if (!publisherHeader) {
+        throw new Error('plugin_permission_grant_publisher_proof_unavailable');
+      }
       options.signal?.throwIfAborted();
       const response = await axios.post(
         `${resolveServerHttpBaseUrl()}${REQUEST_PATH}`,
@@ -42,9 +48,7 @@ export function createServerPluginPermissionGrantRequester(input: Readonly<{
           headers: {
             ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
             Authorization: `Bearer ${input.credentials.token}`,
-            ...(publisherHeader
-              ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader }
-              : {}),
+            [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader,
           },
           timeout: configuration.sessionControlHttpTimeoutMs,
           validateStatus: (status) => status >= 200 && status < 300,

@@ -24,6 +24,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { SessionCatalogControlAdapterParams } from '@/session/catalogControls/sessionCatalogControlTypes';
 import type {
   SessionGoalControlAdapter,
@@ -215,7 +216,10 @@ async function buildControlContext(params: Readonly<{
     plugin: Object.freeze({ id: params.lease.pluginId, version: params.lease.pluginVersion }),
     contribution: Object.freeze({
       id: params.lease.localAgentId,
-      qualifiedId: `${params.lease.pluginId}/agents/${params.lease.localAgentId}`,
+      qualifiedId: resolveAgentContributionQualifiedId({
+        pluginId: params.lease.pluginId,
+        localId: params.lease.localAgentId,
+      }),
     }),
     surface: 'agent' as const,
     invokedAtMs,

@@ -5,7 +5,7 @@ import {
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 
 export type ConnectedServiceNotificationProfileSummary = Readonly<{
   profileId: string;
@@ -37,7 +37,7 @@ export function resolveConnectedServiceNotificationDisplayName(
 ): string | null {
   const service = parseQualifiedPluginContributionKey(serviceId);
   if (!service) return null;
-  const contribution = getResolvedContributionRegistry()
+  const contribution = readCurrentContributionRegistry()
     .connectedAccountDescriptors
     ?.find((candidate) => (
       candidate.pluginId === service.pluginId

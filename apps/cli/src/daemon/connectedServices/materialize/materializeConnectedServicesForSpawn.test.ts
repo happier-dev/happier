@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -144,6 +145,49 @@ describe('materializeConnectedServicesForSpawn', () => {
     if (process.platform !== 'win32') {
       expect((await lstat(materializedRoot)).mode & 0o777).toBe(0o700);
     }
+  });
+
+  it('awaits promoted-root absence before the promoted spawn cleanup resolves', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
+    const materializedRoot = resolveConnectedServiceMaterializedRootDir({
+      baseDir,
+      agentId: 'opencode',
+      materializationKey: 'session-cleanup-receipt',
+    });
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: 123,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: 'id',
+        scope: 'openid profile',
+        tokenType: 'Bearer',
+        providerAccountId: 'acct',
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'opencode',
+      materializationKey: 'session-cleanup-receipt',
+      activeServerDir,
+      baseDir,
+      recordsByServiceId: new Map([['openai-codex', record]]),
+      connectedAccountMaterializationAuthority: LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.cleanupOnExit).not.toBeNull();
+    expect(existsSync(materializedRoot)).toBe(true);
+
+    await result!.cleanupOnExit!();
+    expect(existsSync(materializedRoot)).toBe(false);
+    await expect(result!.cleanupOnExit!()).resolves.toBeUndefined();
   });
 
   it('removes managed Codex home shares when settings are isolated', async () => {

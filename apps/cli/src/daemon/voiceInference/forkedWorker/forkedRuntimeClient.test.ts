@@ -1265,6 +1265,7 @@ describe('forked voice inference runtime client', () => {
     const client = createForkedVoiceInferenceRuntimeClient({
       channelFactory: async () => wrapped,
       requestTimeoutMs: 1_000,
+      warmPrimeRequestTimeoutMs: 1_000,
     });
 
     const pending = client.synthesizeTts({
@@ -1279,6 +1280,32 @@ describe('forked voice inference runtime client', () => {
     expect(error).toMatchObject({ code: 'runtime_timeout' });
     // The wedged child is marked unhealthy: the channel is terminated so the supervisor respawns.
     expect(terminateCount).toBeGreaterThanOrEqual(1);
+    await client.stop();
+  });
+
+  it('uses the measured native-operation deadline for synchronous synthesis', async () => {
+    vi.useFakeTimers();
+    const fake = createFakeChannel({ onRequest: () => {} });
+    const client = createForkedVoiceInferenceRuntimeClient({
+      channelFactory: async () => fake.channel,
+      requestTimeoutMs: 1_000,
+      warmPrimeRequestTimeoutMs: 5_000,
+    });
+    const pending = client.synthesizeTts({
+      requestId: 'tts-native-budget', text: 'healthy native work', packId: 'pack-1',
+      packDir: '/tmp/pack-1', manifest, voiceId: null, speed: null,
+      output: { codec: 'wav', mimeType: 'audio/wav' },
+    }).catch((error) => error);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    await expect(pending).resolves.toMatchObject({ code: 'runtime_timeout' });
     await client.stop();
   });
 
@@ -1385,6 +1412,7 @@ describe('forked voice inference runtime client', () => {
         },
       }),
       requestTimeoutMs: 1_000,
+      warmPrimeRequestTimeoutMs: 1_000,
       onSnapshot: (snapshot) => snapshots.push(`${snapshot.packId}:${snapshot.runtimeState}`),
       policy: {
         kind: 'other',
@@ -1503,6 +1531,7 @@ describe('forked voice inference runtime client', () => {
       },
       random: () => 0,
       requestTimeoutMs: 1_000,
+      warmPrimeRequestTimeoutMs: 1_000,
       policy: {
         kind: 'other',
         restart: { mode: 'on_unexpected_exit', maxRestarts: null, baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0 },

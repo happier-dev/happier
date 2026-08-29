@@ -122,7 +122,7 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
     });
     return {
         bridge,
-        resolveAuthForSpawn,
+        resolveAuthForSpawn: overrides.resolveAuthForSpawn ?? resolveAuthForSpawn,
         registerRunTargets,
         unregisterRunTargets,
         clearTerminalCleanupReceipt,
@@ -988,6 +988,44 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             runnerPid: 4242,
             sessionId: 'session-1',
         }));
+    });
+
+    it('bounds and redacts plugin-authored materialization prose at the runner bridge', async () => {
+        const secretToken = 'sk-abcdef1234567890';
+        const localPath = '/Users/alice/.happier/materialized/run_abc';
+        const { bridge, resolveAuthForSpawn } = createBridge({
+            resolveAuthForSpawn: vi.fn(async () => {
+                throw new ConnectedServiceMaterializationBlockedError([{
+                    code: 'connected_service_credential_reconnect_required',
+                    severity: 'blocking',
+                    reason: `upstream 401 for bearer ${secretToken} at ${localPath}`,
+                }]);
+            }),
+        });
+
+        const result = await bridge.materialize(MATERIALIZE_INPUT);
+
+        if (result.ok !== false) throw new Error('expected a blocked bridge result');
+        expect(result.errorCode).toBe('connected_service_run_materialization_blocked');
+        // The bridge result is the one payload crossing to the runner process;
+        // raw credential/path prose must never survive it un-redacted.
+        const serialized = JSON.stringify(result);
+        expect(serialized).not.toContain(secretToken);
+        expect(serialized).not.toContain(localPath);
+        expect(resolveAuthForSpawn).toHaveBeenCalledOnce();
+
+        // An unclassified resolution failure is the same plugin-adjacent prose
+        // surface and passes the same Connected Service diagnostic privacy owner.
+        const failing = createBridge({
+            resolveAuthForSpawn: vi.fn(async () => {
+                throw new Error(`credential refresh failed for ${secretToken} under ${localPath}`);
+            }),
+        });
+        const failureResult = await failing.bridge.materialize(MATERIALIZE_INPUT);
+        if (failureResult.ok !== false) throw new Error('expected a blocked bridge result');
+        const failureSerialized = JSON.stringify(failureResult);
+        expect(failureSerialized).not.toContain(secretToken);
+        expect(failureSerialized).not.toContain(localPath);
     });
 
     it('rotates the old capability during exact restart adoption and retires the new authority on release', async () => {

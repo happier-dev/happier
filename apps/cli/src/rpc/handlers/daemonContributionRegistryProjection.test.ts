@@ -4077,47 +4077,6 @@ describe('daemon contribution registry projection rpc handler', () => {
         expect(createPluginSettingsService).not.toHaveBeenCalled();
     });
 
-    it('fails closed when daemon settings contributions reuse a field id', async () => {
-        const registry = {
-            ...createResolvedContributionRegistry({}),
-            settings: Object.freeze(['first', 'second'].map((id) => ({
-                provenance: 'external' as const,
-                source: { kind: 'path' as const },
-                pluginId: 'acme.collision',
-                definition: {
-                    id,
-                    version: 1 as const,
-                    title: id,
-                    target: { kind: 'plugin' as const },
-                    scope: 'daemon' as const,
-                    fields: [{ id: 'shared', title: 'Shared', schema: { type: 'string' as const } }],
-                    presentation: { sections: [], subagentSections: [] },
-                },
-            }))),
-        };
-        const { handlers, registrar } = createRegistrar();
-        const projectionModule = await import('./daemonContributionRegistryProjection');
-        projectionModule.registerDaemonContributionRegistryProjectionHandler(registrar as never, {
-            resolveRuntimeRegistry: async () => createRuntimeRegistry(registry),
-            resolvePluginProjectionExecutionOriginContext: async () => ({
-                serverIdentityId: 'srv_settings_fixture',
-                machineId: 'machine-1',
-            }),
-        });
-
-        await expect(handlers.get(RPC_METHODS.DAEMON_PLUGIN_SETTINGS_GET)?.({
-            serverIdentityId: 'srv_settings_fixture',
-            machineId: 'machine-1',
-            pluginId: 'acme.collision',
-            scope: { kind: 'daemon' },
-        })).rejects.toMatchObject({
-            code: 'PLUGIN_SETTINGS_FIELD_ID_CONFLICT',
-            pluginId: 'acme.collision',
-            contributionId: 'second',
-            fieldId: 'shared',
-        });
-    });
-
     it('fails closed instead of falling back across declared Settings scopes', async () => {
         const registry = {
             ...createResolvedContributionRegistry({}),

@@ -11,6 +11,7 @@ import type { SpeechProviderRuntime } from '@happier-dev/plugin-sdk/voice/speech
 import { readCanonicalPluginManifest } from '../../plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '../../plugins/testkit/manifestV2Fixture';
 import { createVoiceProviderRecipientContract } from '@/plugins/voiceProviderRecipientContract';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 
 const runtimeLeaseMocks = vi.hoisted(() => ({
   acquire: vi.fn(),
@@ -95,6 +96,7 @@ function mediatedOnlySpeechManifest(options: Readonly<{
   declareProjection?: boolean;
   declareUnprojectedOperation?: boolean;
   declareRawAlternative?: boolean;
+  connectedAccountMediation?: boolean;
 }> = {}) {
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
     id: target.pluginId,
@@ -110,7 +112,7 @@ function mediatedOnlySpeechManifest(options: Readonly<{
           slot: { id: 'api_key', purpose: 'voice.speech', title: 'API key' },
           requirement: { kind: 'always' },
           sources: [
-            {
+            ...(options.connectedAccountMediation ? [] : [{
               kind: 'savedSecret',
               secretKinds: ['apiKey'],
               ...(options.declareProjection === false
@@ -123,7 +125,23 @@ function mediatedOnlySpeechManifest(options: Readonly<{
                     format: 'bearer',
                   }],
                 }),
-            },
+            }]),
+            ...(options.connectedAccountMediation ? [{
+              kind: 'connectedAccount',
+              service: { pluginId: 'acme.identity', localId: 'oauth' },
+              operationProjections: [{
+                kind: 'materializedHttpHeaders',
+                operation: 'list-models',
+                phase: 'speech',
+                request: {
+                  kind: 'httpHeaders',
+                  origin: ORIGIN,
+                  headerNames: ['authorization', 'x-workspace-id'],
+                },
+                requiredHeaderNames: ['authorization'],
+                allowedHeaderNames: ['authorization', 'x-workspace-id'],
+              }],
+            }] : []),
             ...(options.declareRawAlternative
               ? [{
                 kind: 'connectedAccount',
@@ -181,7 +199,7 @@ function approvedDigestFor(contribution: SpeechContribution): string {
 function accountSnapshot(options: Readonly<{
   contribution: SpeechContribution;
   approvedRecipientContractDigest?: string;
-  credentialSource?: 'savedSecret' | 'none';
+  credentialSource?: 'savedSecret' | 'connectedAccount' | 'none';
   settingsVersion?: number;
   includeUnrelatedProvider?: boolean;
   model?: string;
@@ -223,6 +241,21 @@ function accountSnapshot(options: Readonly<{
           credentialBindings: { account: { api_key: 'external-speech-key' } },
         }],
       },
+      ...(options.credentialSource === 'connectedAccount' ? {
+        connectedAccountPurposeBindingsV1: {
+          v: 1,
+          bindings: [{
+            purpose: { consumer: target, purpose: 'voice.speech' },
+            target: {
+              kind: 'account',
+              account: {
+                service: { pluginId: 'acme.identity', localId: 'oauth' },
+                accountId: 'speech-account',
+              },
+            },
+          }],
+        },
+      } : {}),
     } as never,
   };
 }
@@ -246,6 +279,7 @@ function registerCatalog(options: Readonly<{
   isCurrent?: () => boolean;
   snapshot?: ReturnType<typeof accountSnapshot>;
   readSnapshot?: () => ReturnType<typeof accountSnapshot>;
+  connectedAccounts?: Pick<ConnectedAccountPurposeBindingOwner, 'materialize'>;
 }>) {
   const { handlers, registrar } = manager();
   const contribution = options.manifest.contributes.voiceProviders?.[0];
@@ -282,6 +316,12 @@ function registerCatalog(options: Readonly<{
         isCurrent,
         retirementSignal: new AbortController().signal,
       }),
+      resolveCurrentPluginMaterializationRef: () => ({
+        pluginId: target.pluginId,
+        machineId: 'machine-a',
+        materializationId: 'materialization-4',
+      }),
+      resolveConnectedAccountPurposeBindingOwner: () => options.connectedAccounts ?? null,
     },
     release: runtimeLeaseMocks.release,
   });
@@ -306,6 +346,87 @@ function jsonResponse(body: unknown) {
 }
 
 describe('daemon speech host-mediated Voice Account operations', () => {
+  it('selects a Connected Account by slot purpose and materializes it for the distinct operation purpose', async () => {
+    transportMocks.request.mockReset();
+    transportMocks.request.mockResolvedValueOnce(jsonResponse({
+      models: [{ id: 'connected-stt-1', name: 'Connected STT' }],
+    }));
+    const manifest = mediatedOnlySpeechManifest({ connectedAccountMediation: true });
+    const contribution = manifest.contributes.voiceProviders?.[0];
+    if (!contribution || contribution.kind !== 'speech') throw new Error('fixture');
+    const materialize = vi.fn(async () => ({
+      kind: 'httpHeaders' as const,
+      headers: {
+        Authorization: 'Bearer connected-token',
+        'X-Workspace-Id': 'workspace-a',
+      },
+    }));
+    const { handlers, registration } = registerCatalog({
+      manifest,
+      snapshot: accountSnapshot({ contribution, credentialSource: 'connectedAccount' }),
+      connectedAccounts: { materialize },
+      list: async (_request, context) => {
+        const result = await context.credentials.mediated!.request({
+          operationId: 'list-models',
+          parameters: {},
+          signal: context.signal,
+        });
+        return (JSON.parse(new TextDecoder().decode(result.body)) as { models: any[] }).models;
+      },
+    });
+
+    await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+      target,
+      catalog: 'models',
+    })).resolves.toMatchObject({ ok: true });
+    expect(materialize).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: { consumer: target, purpose: 'voice.speech' },
+      serviceRefs: [{ pluginId: 'acme.identity', localId: 'oauth' }],
+      expectedAccount: expect.objectContaining({ accountId: 'speech-account' }),
+    }));
+    expect(transportMocks.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: {
+          authorization: 'Bearer connected-token',
+          'x-workspace-id': 'workspace-a',
+        },
+      }),
+      expect.anything(),
+    );
+    await registration.dispose();
+  });
+  it.each([
+    ['undeclared', { authorization: 'Bearer token', 'x-extra': 'nope' }],
+    ['missing required', { 'x-workspace-id': 'workspace-a' }],
+    ['empty', { authorization: '' }],
+    ['newline', { authorization: 'Bearer token\r\nInjected: yes' }],
+    ['case conflict', { authorization: 'Bearer token', Authorization: 'Bearer other' }],
+  ])('rejects %s Connected Account speech headers before transport', async (_label, headers) => {
+    transportMocks.request.mockReset();
+    const manifest = mediatedOnlySpeechManifest({ connectedAccountMediation: true });
+    const contribution = manifest.contributes.voiceProviders?.[0];
+    if (!contribution || contribution.kind !== 'speech') throw new Error('fixture');
+    const { handlers, registration } = registerCatalog({
+      manifest,
+      snapshot: accountSnapshot({ contribution, credentialSource: 'connectedAccount' }),
+      connectedAccounts: {
+        materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers })),
+      },
+      list: async (_request, context) => {
+        await context.credentials.mediated!.request({
+          operationId: 'list-models', parameters: {}, signal: context.signal,
+        });
+        return [];
+      },
+    });
+
+    await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG)?.({
+      target,
+      catalog: 'models',
+    })).resolves.toMatchObject({ ok: false });
+    expect(transportMocks.request).not.toHaveBeenCalled();
+    await registration.dispose();
+  });
   it('executes a mediated-only external speech provider operation and keeps raw access absent', async () => {
     transportMocks.request.mockReset();
     transportMocks.request.mockResolvedValueOnce(jsonResponse({

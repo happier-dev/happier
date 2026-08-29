@@ -369,10 +369,13 @@ export async function ensureMergedAgentCommandRegistryLoaded(): Promise<void> {
   }
   const pending = (async () => {
     const { configuration } = await import('@/configuration');
-    const { primeResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
-    const registry = await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
+    const { resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+    // Explicit ephemeral merged snapshot for the standalone CLI command
+    // surface: it feeds only this command registry and is never written back
+    // into any shared registry authority.
+    const registry = await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
     // Some command-registry harnesses intentionally replace only the Agent catalog boundary.
-    // Production priming always returns the resolved snapshot; absent snapshots cannot admit plugin roots.
+    // Production always resolves the merged snapshot; absent snapshots cannot admit plugin roots.
     if (registry) {
       syncAgentCommandRegistryFromCatalogSnapshot(registry);
       synchronizePluginCommandContributions(registry);

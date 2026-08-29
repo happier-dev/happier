@@ -809,109 +809,6 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       .toEqual(['generated-next', generated.id]);
   });
 
-  it('recomputes SavedSecret retention from the Account Settings CAS winner', async () => {
-    resetActiveAccountSettingsSnapshotForTests();
-    const credentials = {
-      token: 'token-1',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array(32).fill(4),
-      },
-    };
-    const generated = savedSecret('generated-old', 'Connected Account clientSecret');
-    const baseSettings = {
-      secrets: [generated],
-      [CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY]: {
-        v: 1,
-        entries: [{
-          service,
-          modeId: 'oauth',
-          revision: 'configuration-current',
-          values: {},
-          secretRefs: { clientSecret: generated.id },
-        }],
-      },
-    };
-    const winnerSettings = {
-      ...baseSettings,
-      secretBindingsByProfileId: {
-        profile_a: { TOKEN: generated.id },
-      },
-    };
-    commitActiveAccountSettingsSnapshot({
-      source: 'network',
-      settings: accountSettingsParse(baseSettings),
-      rawSettings: baseSettings,
-      settingsVersion: 1,
-      loadedAtMs: 100,
-      settingsSecretsReadKeys: [],
-      scopeKey: resolveAccountSettingsScopeKey(credentials),
-    });
-    const writes: AccountSettingsStoredContentEnvelope[] = [];
-    const updateSettings = vi.fn(async (request: Readonly<{
-      expectedVersion: number;
-      content: AccountSettingsStoredContentEnvelope | null;
-    }>) => {
-      if (request.content) writes.push(request.content);
-      if (writes.length === 1) {
-        return {
-          success: false as const,
-          error: 'version-mismatch' as const,
-          currentVersion: 2,
-          currentContent: { t: 'plain' as const, v: winnerSettings },
-        };
-      }
-      return { success: true as const, version: 3 };
-    });
-    const persistence = createQualifiedConnectedAccountDaemonPersistence({
-      credentials,
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      createConfigurationRevision: () => 'configuration-next',
-      createSecretId: () => 'generated-next',
-      accountSettingsUpdateDeps: {
-        fetchSettings: async () => ({
-          content: { t: 'plain' as const, v: baseSettings },
-          version: 1,
-        }),
-        resolveAccountEncryptionMode: async () => 'plain',
-        updateSettings,
-        writeCache: async () => {},
-        resolveCachePath: () => '/tmp/connected-account-settings',
-      },
-    });
-
-    try {
-      await expect(persistence.configuration.replaceForControl!({
-        target: { kind: 'service', service, modeId: 'oauth' },
-        expectedRevision: 'configuration-current',
-        values: {},
-        currentSecretRefs: secretReferences({ clientSecret: generated.id }),
-        secretValues: { clientSecret: 'replacement-value' },
-        generation: 'generation-1',
-        immutableGenerationId: 'artifact-1',
-      })).resolves.toMatchObject({ status: 'committed' });
-
-      expect(writes).toHaveLength(2);
-      const settled = writes[1];
-      expect(settled?.t).toBe('plain');
-      if (settled?.t !== 'plain') throw new Error('Expected a plain Settings CAS winner');
-      expect((settled.v.secrets as readonly { id: string }[])
-        .map((candidate) => candidate.id))
-        .toEqual(['generated-next', generated.id]);
-    } finally {
-      resetActiveAccountSettingsSnapshotForTests();
-    }
-  });
-
   it('does not create an orphan SavedSecret when service configuration CAS is stale', async () => {
     let settings: Readonly<Record<string, unknown>> = {
       secrets: [],
@@ -2568,7 +2465,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
               payload: replacement,
               randomBytes: (length) => new Uint8Array(length).fill(9),
             });
-      await expect(persistence.configuration.read(target)).resolves.toBeNull();
+      await expect(persistence.configuration.read(target)).rejects.toThrow(
+        'Connected-account configuration content does not match the persisted Account encryption mode',
+      );
 
       await expect(persistence.configuration.replace({
         target,

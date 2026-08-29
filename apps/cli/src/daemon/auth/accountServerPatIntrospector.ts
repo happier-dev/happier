@@ -3,6 +3,7 @@ import {
     ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
     AccountApiTokenIntrospectionSubjectFailureV1Schema,
     AccountApiTokenIntrospectionSuccessV1Schema,
+    parseAccountApiTokenBearerV1,
     type AccountApiTokenIntrospectionRequestV1,
 } from "@happier-dev/protocol";
 
@@ -35,6 +36,9 @@ export function createAccountServerPatIntrospector(
     return async (token, signal) => {
         try {
             signal?.throwIfAborted();
+            if (parseAccountApiTokenBearerV1(token) === null) {
+                return { ok: false, code: "invalid_token" };
+            }
             const requestBody = { token } satisfies AccountApiTokenIntrospectionRequestV1;
             const response = await axios.post<unknown>(
                 url,

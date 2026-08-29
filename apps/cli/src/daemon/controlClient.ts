@@ -4,7 +4,7 @@
  */
 
 import { isPidPresent, isPidProvablyAbsent } from '@happier-dev/cli-common/process';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import {
   clearReplaceableDaemonLock,
@@ -29,17 +29,22 @@ import {
   FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
   FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
   FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
+  FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH,
   ForegroundAgentRuntimeAdmissionRequestV1Schema,
   ForegroundAgentRuntimeAdmissionResponseV1Schema,
   ForegroundAgentRuntimeClaimRequestV1Schema,
   ForegroundAgentRuntimeClaimResponseV1Schema,
   ForegroundAgentRuntimeReleaseRequestV1Schema,
   ForegroundAgentRuntimeReleaseResponseV1Schema,
+  ForegroundAgentRuntimeSessionOptionsRequestV1Schema,
+  ForegroundAgentRuntimeSessionOptionsResponseV1Schema,
   type ForegroundAgentRuntimeAdmissionRequestV1,
   type ForegroundAgentRuntimeAdmissionResponseV1,
   type ForegroundAgentRuntimeClaimRequestV1,
   type ForegroundAgentRuntimeClaimResponseV1,
   type ForegroundAgentRuntimeReleaseRequestV1,
+  type ForegroundAgentRuntimeSessionOptionsRequestV1,
+  type ForegroundAgentRuntimeSessionOptionsResponseV1,
 } from './agentRuntime/foregroundAdmissionContract';
 import {
   createProviderErrorV1,
@@ -664,6 +669,7 @@ export async function requestDaemonPluginActionExecution(request: Readonly<{
   actionId: string;
   input: unknown;
   surface: 'cli' | 'mcp' | 'agent';
+  authority: NonNullable<ActionExecutorContext['authority']>;
   defaultSessionId?: string;
   /** Host-stamped turn admission fence; never Action input or SDK surface. */
   expectedContributorImmutableGenerationId?: string;
@@ -1151,6 +1157,19 @@ export async function claimDaemonForegroundAgentRuntime(
     },
   );
   return ForegroundAgentRuntimeClaimResponseV1Schema.parse(result);
+}
+
+export async function resolveDaemonForegroundAgentRuntimeSessionOptions(
+  request: ForegroundAgentRuntimeSessionOptionsRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<ForegroundAgentRuntimeSessionOptionsResponseV1> {
+  const body = ForegroundAgentRuntimeSessionOptionsRequestV1Schema.parse(request);
+  const result = await daemonPost(
+    FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH,
+    body,
+    options,
+  );
+  return ForegroundAgentRuntimeSessionOptionsResponseV1Schema.parse(result);
 }
 
 export async function releaseDaemonForegroundAgentRuntime(

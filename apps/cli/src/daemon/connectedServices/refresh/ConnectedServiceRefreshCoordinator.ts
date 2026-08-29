@@ -103,6 +103,9 @@ import {
   refreshQualifiedConnectedAccount,
 } from './refreshQualifiedConnectedAccount';
 import { sanitizeConnectedServiceDiagnosticError } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
+import {
+  boundConnectedServiceMaterializationDiagnosticValue,
+} from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 
 type BoundProfile = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
 
@@ -641,8 +644,8 @@ export async function persistConnectedServiceCredentialHealthForMaterializationF
   } catch (error) {
     logger.warn('[DAEMON RUN] Failed to update connected-service credential health after materialization failure', {
       serviceId: input.binding.serviceId,
-      materializationCode: input.diagnostic.code,
-      reason: input.diagnostic.reason ?? null,
+      materializationCode: boundConnectedServiceMaterializationDiagnosticValue(input.diagnostic.code),
+      reason: boundConnectedServiceMaterializationDiagnosticValue(input.diagnostic.reason),
       error: sanitizeConnectedServiceDiagnosticError(error, {
         redactedValues: [input.binding.profileId],
       }),
@@ -3317,7 +3320,7 @@ export class ConnectedServiceRefreshCoordinator {
             ? { purposeBindingSessionId: target.sessionId }
             : {}),
           ...(target.childSelectionsByServiceId
-            ? { selectionsByServiceId: this.buildResolvedSelectionsByServiceId(target.childSelectionsByServiceId, records) }
+            ? { selectionsByServiceId: this.buildResolvedSelectionsByServiceId(target.childSelectionsByServiceId) }
             : {}),
         });
       } catch (error) {
@@ -3335,10 +3338,9 @@ export class ConnectedServiceRefreshCoordinator {
         });
         logger.warn('[DAEMON RUN] Connected-service rematerialization blocked; skipping auth-update restart', {
           serviceId: targetBinding.serviceId,
-          profileId: targetBinding.profileId,
           agentId: target.agentId,
-          materializationCode: primaryDiagnostic.code,
-          reason: primaryDiagnostic.reason ?? null,
+          materializationCode: boundConnectedServiceMaterializationDiagnosticValue(primaryDiagnostic.code),
+          reason: boundConnectedServiceMaterializationDiagnosticValue(primaryDiagnostic.reason),
         });
         continue;
       }
@@ -3595,23 +3597,17 @@ export class ConnectedServiceRefreshCoordinator {
 
   private buildResolvedSelectionsByServiceId(
     childSelectionsByServiceId: NonNullable<SpawnTarget['childSelectionsByServiceId']>,
-    recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>,
-  ): ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection> {
-    const selectionsByServiceId = new Map<ConnectedServiceId, ConnectedServiceResolvedSelection>();
-    for (const [qualifiedServiceId, selection] of childSelectionsByServiceId.entries()) {
-      const serviceId =
-        resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
-          qualifiedServiceId,
-        );
-      if (!serviceId) continue;
-      const record = recordsByServiceId.get(serviceId);
-      if (!record) continue;
+  ): ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection> {
+    const selectionsByServiceId = new Map<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection>();
+    for (const [serviceId, selection] of childSelectionsByServiceId.entries()) {
       if (selection.kind === 'profile') {
         selectionsByServiceId.set(serviceId, {
           kind: 'profile',
           serviceId,
           profileId: selection.profileId,
-          record,
+          ...(selection.credentialRevision
+            ? { credentialRevision: selection.credentialRevision }
+            : {}),
         });
         continue;
       }
@@ -3623,7 +3619,9 @@ export class ConnectedServiceRefreshCoordinator {
         fallbackProfileId: selection.fallbackProfileId ?? selection.activeProfileId,
         generation: selection.generation,
         policy: selection.policy,
-        record,
+        ...(selection.credentialRevision
+          ? { credentialRevision: selection.credentialRevision }
+          : {}),
       });
     }
     return selectionsByServiceId;

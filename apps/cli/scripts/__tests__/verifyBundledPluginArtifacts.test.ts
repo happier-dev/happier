@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+    assertBundledPluginArtifactsMatchInventory,
     compareBundledPluginPackageTreeToInventory,
     formatBundledPluginArtifactVerification,
     isBundledPluginPublishedRuntimeRelativePath,
@@ -13,7 +14,7 @@ import {
     verifyBundledPluginArtifactsAgainstInventory,
 } from '../verifyBundledPluginArtifacts.mjs';
 
-const INVENTORY_RELATIVE_PATH = 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts';
+const INVENTORY_RELATIVE_PATH = 'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json';
 const PACKAGE_NAME = '@happier-dev/plugins-claude';
 
 const roots: string[] = [];
@@ -41,21 +42,6 @@ function digestOf(contents: string): string {
 }
 
 function writeInventory(repoRoot: string, files: ReadonlyArray<Readonly<{ relativePath: string; contents: string }>>): void {
-    const immutableArtifacts = [{
-        packageEntryRelativePath: 'dist/index.js',
-        packageName: PACKAGE_NAME,
-        record: {
-            createdAtMs: 0,
-            files: files.map((file) => ({
-                byteLength: Buffer.byteLength(file.contents, 'utf8'),
-                relativePath: file.relativePath,
-            })),
-            manifestRelativePath: '.happier-plugin/plugin.json',
-            pluginId: 'claude',
-            schemaVersion: 1,
-            t: 'happier_plugin_generation_v1',
-        },
-    }];
     const sourceArtifactIntegrities = [{
         packageName: PACKAGE_NAME,
         files: files.map((file) => ({
@@ -67,24 +53,12 @@ function writeInventory(repoRoot: string, files: ReadonlyArray<Readonly<{ relati
     writeFileAt(
         repoRoot,
         INVENTORY_RELATIVE_PATH,
-        // Mirrors the generator's split runtime-record/source-integrity emission.
-        [
-            '/** GENERATED FILE CONTRACT (WS4.T2/SVC11 bundled immutable artifacts). */',
-            "import type { BundledImmutablePluginArtifact } from '../../../store/registry/generationStore';",
-            '',
-            'export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(',
-            `${JSON.stringify(immutableArtifacts, null, 2)} satisfies readonly BundledImmutablePluginArtifact[]);`,
-            '',
-            'export type BundledFirstPartySourceArtifactIntegrity = Readonly<{',
-            '  packageName: string;',
-            '  files: readonly Readonly<{ relativePath: string; byteLength: number; digest: string }>[];',
-            '}>;',
-            '',
-            'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(',
-            `${JSON.stringify(sourceArtifactIntegrities, null, 2)} satisfies readonly BundledFirstPartySourceArtifactIntegrity[]);`,
-            '',
-        ].join('\n'),
+        `${JSON.stringify({
+            BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: sourceArtifactIntegrities,
+        }, null, 2)}\n`,
     );
+    writeFileAt(repoRoot, 'packages/plugins/claude/package.json', `${JSON.stringify({ name: PACKAGE_NAME })}\n`);
+    writeFileAt(repoRoot, 'packages/plugins/claude/src/manifest.ts', 'export const PLUGIN_MANIFEST = {};\n');
 }
 
 describe('verifyBundledPluginArtifactsAgainstInventory', () => {
@@ -234,6 +208,10 @@ describe('verifyBundledPluginArtifactsAgainstInventory', () => {
 
     it('does not treat the structural runtime record as the pack-time digest inventory', () => {
         const repoRoot = createRoot();
+        const runtimeRecordPath = resolve(
+            repoRoot,
+            'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+        );
         const immutableArtifacts = [{
             packageEntryRelativePath: 'dist/index.js',
             packageName: PACKAGE_NAME,
@@ -251,7 +229,7 @@ describe('verifyBundledPluginArtifactsAgainstInventory', () => {
         }];
         writeFileAt(
             repoRoot,
-            INVENTORY_RELATIVE_PATH,
+            'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
             [
                 "import type { BundledImmutablePluginArtifact } from '../../../store/registry/generationStore';",
                 '',
@@ -261,7 +239,8 @@ describe('verifyBundledPluginArtifactsAgainstInventory', () => {
             ].join('\n'),
         );
 
-        expect(() => readBundledPluginArtifactInventory({ repoRoot }))
+        expect(readBundledPluginArtifactInventory({ repoRoot })).toBeNull();
+        expect(() => readBundledPluginArtifactInventory({ repoRoot, inventoryPath: runtimeRecordPath }))
             .toThrow(/source-artifact integrity inventory/u);
     });
 
@@ -273,5 +252,71 @@ describe('verifyBundledPluginArtifactsAgainstInventory', () => {
             repoRoot,
             resolvePackageDir: () => repoRoot,
         })).toEqual([]);
+    });
+
+    it('fails closed when the inventory is missing while canonical bundled membership is non-empty', () => {
+        const repoRoot = createRoot();
+        // Canonical membership is derived by the membership owner from
+        // packages/plugins/*, never from the inventory or a copied list.
+        writeFileAt(repoRoot, 'packages/plugins/claude/package.json', '{"name":"@happier-dev/plugins-claude"}\n');
+        writeFileAt(repoRoot, 'packages/plugins/claude/src/manifest.ts', 'export const PLUGIN_MANIFEST = {};\n');
+
+        expect(readBundledPluginArtifactInventory({ repoRoot })).toBeNull();
+        expect(() => verifyBundledPluginArtifactsAgainstInventory({
+            repoRoot,
+            resolvePackageDir: () => repoRoot,
+        })).toThrow(/Missing bundled plugin source-artifact integrity inventory[\s\S]*generatedBundledPluginSourceIntegrities\.json[\s\S]*--mode write/u);
+        expect(() => assertBundledPluginArtifactsMatchInventory({
+            repoRoot,
+            resolvePackageDir: () => repoRoot,
+        })).toThrow(/Missing bundled plugin source-artifact integrity inventory/u);
+    });
+
+    it('fails closed when the inventory omits canonical bundled membership', () => {
+        const repoRoot = createRoot();
+        writeInventory(repoRoot, publishedFiles);
+        writeFileAt(repoRoot, 'packages/plugins/codex/package.json', '{"name":"@happier-dev/plugins-codex"}\n');
+        writeFileAt(repoRoot, 'packages/plugins/codex/src/manifest.ts', 'export const PLUGIN_MANIFEST = {};\n');
+
+        expect(() => verifyBundledPluginArtifactsAgainstInventory({
+            repoRoot,
+            resolvePackageDir: () => repoRoot,
+        })).toThrow(/membership disagrees[\s\S]*missing: @happier-dev\/plugins-codex[\s\S]*extra: \(none\)/u);
+    });
+
+    it('fails closed when the inventory carries a package outside canonical membership', () => {
+        const repoRoot = createRoot();
+        writeInventory(repoRoot, publishedFiles);
+        rmSync(resolve(repoRoot, 'packages/plugins/claude'), { recursive: true, force: true });
+
+        expect(() => verifyBundledPluginArtifactsAgainstInventory({
+            repoRoot,
+            resolvePackageDir: () => repoRoot,
+        })).toThrow(/membership disagrees[\s\S]*missing: \(none\)[\s\S]*extra: @happier-dev\/plugins-claude/u);
+    });
+    it('retains the missing-inventory exception only for a genuinely plugin-free repository', () => {
+        const repoRoot = createRoot();
+        // A reservation-only scaffold is not canonical bundled membership.
+        writeFileAt(
+            repoRoot,
+            'packages/plugins/_template/package.json',
+            `${JSON.stringify({
+                name: '@happier-dev/plugins-_template',
+                happier: { pluginScaffold: { shipping: 'reservation_only' } },
+            })}\n`,
+        );
+        writeFileAt(repoRoot, 'packages/plugins/reserved/package.json', `${JSON.stringify({
+            name: '@happier-dev/plugins-reserved',
+            happier: { pluginScaffold: { shipping: 'reservation_only' } },
+        })}\n`);
+
+        expect(verifyBundledPluginArtifactsAgainstInventory({
+            repoRoot,
+            resolvePackageDir: () => repoRoot,
+        })).toEqual([]);
+        expect(() => assertBundledPluginArtifactsMatchInventory({
+            repoRoot,
+            resolvePackageDir: () => repoRoot,
+        })).not.toThrow();
     });
 });

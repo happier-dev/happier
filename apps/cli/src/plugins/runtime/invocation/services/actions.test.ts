@@ -252,7 +252,7 @@ describe('plugin invocation ActionsService', () => {
         expect(execute).toHaveBeenCalledOnce();
     });
 
-    it('keeps permission decisions present-user gated while retaining host-stamped user-action outcomes', async () => {
+    it('keeps permission and user-action decisions present-user gated', async () => {
         const sessionUserActionAnswer = vi.fn<NonNullable<ActionExecutorDeps['sessionUserActionAnswer']>>(
             async (_args) => ({ ok: true }),
         );
@@ -281,14 +281,8 @@ describe('plugin invocation ActionsService', () => {
         await expect(service.execute('session.user_action.answer', {
             requestId: 'question-1',
             answers: [{ question: 'Continue?', values: ['Yes'] }],
-        })).resolves.toEqual({ ok: true });
-        expect(sessionUserActionAnswer).toHaveBeenCalledWith(expect.objectContaining({
-            sessionId: 'session-bound',
-            requestId: 'question-1',
-            answers: [{ question: 'Continue?', values: ['Yes'] }],
-            signal: expect.any(AbortSignal),
-        }));
-        expect(sessionUserActionAnswer.mock.calls[0]?.[0]).not.toHaveProperty('requesterPluginId');
+        })).rejects.toMatchObject({ code: 'present_user_required' });
+        expect(sessionUserActionAnswer).not.toHaveBeenCalled();
 
         await expect(Reflect.apply(service.execute, service, ['session.permission.respond', {
             sessionId: 'session-forged',
@@ -1087,8 +1081,25 @@ describe('plugin invocation ActionsService', () => {
         expect(execute).not.toHaveBeenCalled();
     });
 
-    it('keeps every raw Session-subagent Action unavailable to plugin callers', async () => {
-        const execute = vi.fn();
+    it('exposes bounded Session-subagent reads to plugin callers and keeps lifecycle mutations internal', async () => {
+        const subagentRef = {
+            id: 'subagent-1',
+            parentSessionId: 'session-bound',
+            origin: 'agent' as const,
+            kind: 'native' as const,
+            agentRef: { agentId: 'codex' },
+            status: 'pending' as const,
+            createdAt: 123,
+        };
+        const execute = vi.fn(async (actionId: string, _input: unknown, _context: unknown) => {
+            if (actionId === 'sessions.subagents.list') {
+                return { ok: true as const, result: [subagentRef] };
+            }
+            if (actionId === 'sessions.subagents.get') {
+                return { ok: true as const, result: subagentRef };
+            }
+            return { ok: true as const, result: { kind: 'snapshot' as const, subagents: [subagentRef] } };
+        });
         const service = createPluginInvocationActionsService({
             seed: {
                 plugin: { id: 'acme.caller', version: '1.0.0' },
@@ -1103,19 +1114,44 @@ describe('plugin invocation ActionsService', () => {
             invokeContributedAction: vi.fn(),
         });
 
+        await expect(Reflect.apply(service.execute, service, ['sessions.subagents.list', {}]))
+            .resolves.toEqual([subagentRef]);
+        await expect(Reflect.apply(service.execute, service, ['sessions.subagents.get', { id: 'subagent-1' }]))
+            .resolves.toEqual(subagentRef);
+        await expect(Reflect.apply(service.execute, service, ['sessions.subagents.watch', {}]))
+            .resolves.toEqual({ kind: 'snapshot', subagents: [subagentRef] });
+        expect(execute).toHaveBeenCalledTimes(3);
+        for (const call of execute.mock.calls) {
+            expect(call[2]).toMatchObject({
+                surface: 'plugin',
+                authority: 'account_automation',
+            });
+        }
+
+        const unavailableExecute = vi.fn();
+        const guardedService = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: 'acme.caller', version: '1.0.0' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.caller').resolveCurrentPluginMaterializationRef,
+                generation: 'generation-1',
+                surface: 'ui',
+                session: { id: 'session-bound' },
+                signal: new AbortController().signal,
+                isGenerationCurrent: () => true,
+            },
+            actionExecutor: { execute: unavailableExecute },
+            invokeContributedAction: vi.fn(),
+        });
         for (const actionId of [
-            'sessions.subagents.list',
-            'sessions.subagents.get',
-            'sessions.subagents.watch',
             'sessions.subagents.upsert',
             'sessions.subagents.updateStatus',
             'sessions.subagents.complete',
         ] as const) {
-            await expect(Reflect.apply(service.execute, service, [actionId, {}]))
+            await expect(Reflect.apply(guardedService.execute, guardedService, [actionId, {}]))
                 .rejects.toMatchObject({ code: 'plugin_action_not_available' });
         }
 
-        expect(execute).not.toHaveBeenCalled();
+        expect(unavailableExecute).not.toHaveBeenCalled();
     });
 
     it('invokes an executor-backed runtime action through its exact canonical schemas', async () => {

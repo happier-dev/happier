@@ -17,6 +17,7 @@ export async function requestDirectPeerTransferToFileWithRetry<TResult>(params: 
         expectedManifestHash?: string;
         openBody?: unknown;
         timeoutMs?: number;
+        onProgress?: (receivedBytes: number) => Promise<void> | void;
     }>) => Promise<TResult>;
     transferId: string;
     endpointCandidates: readonly TransferEndpointCandidate[];
@@ -25,6 +26,7 @@ export async function requestDirectPeerTransferToFileWithRetry<TResult>(params: 
     expectedManifestHash?: string;
     openBody?: unknown;
     timeoutMs?: number;
+    onProgress?: (receivedBytes: number) => Promise<void> | void;
     maxAttempts?: number;
     retryDelayMs?: number;
     onRetry?: () => Promise<void> | void;
@@ -54,6 +56,7 @@ export async function requestDirectPeerTransferToFileWithRetry<TResult>(params: 
                     : {}),
                 ...(params.openBody !== undefined ? { openBody: params.openBody } : {}),
                 ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
             });
         } catch (error) {
             lastError = error;

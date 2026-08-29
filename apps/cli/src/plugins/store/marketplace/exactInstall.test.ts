@@ -313,7 +313,7 @@ describe('requestExactMarketplaceInstall', () => {
           },
         },
         requestChange,
-      })).resolves.toMatchObject({ ok: false, code: 'install_unavailable' });
+      })).resolves.toMatchObject({ ok: false, code: 'source_changed' });
       expect(requestChange).not.toHaveBeenCalled();
     } finally {
       envScope.restore();

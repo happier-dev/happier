@@ -153,7 +153,7 @@ function actionResult(actionId: string): unknown {
         },
       };
     case 'session.wait.idle':
-      return { ok: true, result: { ok: true, sessionId, observedAt: 123 } };
+      return { ok: true, result: { ok: true, sessionId, idle: true, observedAt: 123 } };
     case 'session.stop':
       return { ok: true, result: { ok: true, sessionId, stopped: true } };
     case 'action.options.resolve':

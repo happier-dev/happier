@@ -15,6 +15,7 @@ import type {
 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { readPluginManifest } from '@/plugins/manifest/read';
+import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { PluginStorePaths } from '@/plugins/store/paths';
 import {
     readCurrentPluginImmutableGenerationIntegrityCurrentness,
@@ -300,8 +301,10 @@ export async function authorizeRunnerManagedServiceSupervision(
     input: RunnerManagedAgentServiceSupervisionAuthorizationInput,
 ): Promise<RunnerManagedServiceSupervisionAuthorization> {
     const binding = input.binding;
-    const contributionId =
-        `${binding.pluginId}/agents/${binding.localAgentId}`;
+    const contributionId = resolveAgentContributionQualifiedId({
+        pluginId: binding.pluginId,
+        localId: binding.localAgentId,
+    });
     if (
         input.request.contributionId !== contributionId
         || input.request.immutableGenerationId

@@ -14,12 +14,278 @@ import {
     createAccountSettingsBackedSettingsRecordStore,
     createPluginStorageBackedSettingsRecordStore,
     createStablePluginSettingsModel,
+    createStablePluginSettingsModels,
     createStablePluginSettingsHost,
     createStablePluginSettingsOwner,
     PLUGIN_SETTINGS_STORAGE_KEY,
+    readPluginSettingsValuesWithDefaults,
+    type PluginSettingsRollbackDeclarations,
     validateStablePluginSettingValue,
 } from './settings';
 import type { PluginInvocationServicesSeed } from './types';
+
+describe('supported rollback window retention and pruning', () => {
+    const accountDeclaration = (): PluginSettingsContributionV2 => ({
+        id: 'general',
+        version: 1,
+        title: { key: 'settings.general', fallback: 'General' },
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [
+            {
+                id: 'theme',
+                title: 'Theme',
+                schema: { type: 'string', enum: ['light', 'dark'] },
+                default: 'light',
+            },
+        ],
+        presentation: { sections: [], subagentSections: [] },
+    });
+
+    const supportedRollback = (
+        fieldIds: readonly string[] = ['legacyMode'],
+        generation = 'generation-rollback',
+    ): PluginSettingsRollbackDeclarations => new Map([
+        ['acme.plugin', new Map([
+            ['account', Object.freeze({
+                generation,
+                supported: true,
+                fieldIds,
+            })],
+        ] as const)],
+    ] as const);
+
+    function accountFixture(params: Readonly<{
+        /** Omit only when the candidate support state is genuinely unknown. */
+        candidateRollback?: PluginSettingsRollbackDeclarations;
+        conflictValues?: Readonly<Record<string, JsonValue>>;
+    }>) {
+        let record: Readonly<{
+            status: 'present';
+            revision: number;
+            values: Readonly<Record<string, JsonValue>>;
+        }> = Object.freeze({
+            status: 'present' as const,
+            revision: 3,
+            values: Object.freeze({
+                theme: 'dark',
+                // Removed from the current declaration; owned only by the
+                // retained rollback generation while its window is open.
+                legacyMode: 'turbo',
+                futureOpaque: { writtenBy: 'newer-client' },
+                removedSecretOpaque: 'must-not-be-in-a-public-declaration',
+            }),
+        });
+        let writeCount = 0;
+        const adapter = {
+            async readRecord() {
+                return record;
+            },
+            async writeRecord(_model: unknown, request: unknown) {
+                writeCount += 1;
+                if (params.conflictValues) {
+                    record = Object.freeze({
+                        status: 'present' as const,
+                        revision: 9,
+                        values: Object.freeze({ ...params.conflictValues }),
+                    });
+                    return Object.freeze({ status: 'conflict' as const, revision: 9 });
+                }
+                const values = (request as { values: Readonly<Record<string, JsonValue>> }).values;
+                record = Object.freeze({
+                    status: 'present' as const,
+                    revision: record.revision + 1,
+                    values: Object.freeze({ ...values }),
+                });
+                return Object.freeze({ status: 'updated' as const, revision: record.revision });
+            },
+        };
+        const host = createStablePluginSettingsHost({
+            declarations: [{ pluginId: 'acme.plugin', contribution: accountDeclaration() }],
+            recordStore: createAccountSettingsBackedSettingsRecordStore(adapter),
+            broker: createStablePluginEventsBroker(),
+            ...(params.candidateRollback === undefined
+                ? {}
+                : { rollbackDeclarations: params.candidateRollback }),
+        });
+        const bound = host.bind(seed(() => true));
+        if (!bound) throw new Error('settings host did not bind the fixture plugin');
+        const service = bound.forScope({ kind: 'account' });
+        return {
+            service,
+            host,
+            readRawValues: () => record.values,
+            readRevision: () => record.revision,
+            writes: () => writeCount,
+        };
+    }
+
+    it('hides a removed field from projection while the supported rollback artifact preserves its bytes', async () => {
+        const fixture = accountFixture({ candidateRollback: supportedRollback() });
+        await expect(fixture.service.snapshot()).resolves.toEqual({
+            scope: { kind: 'account' },
+            revision: '3',
+            values: { theme: 'dark' },
+        });
+        await expect(fixture.service.get('legacyMode')).rejects.toMatchObject({
+            code: 'plugin_settings_unknown_id',
+        });
+        // No maintenance write happens while the window is open.
+        expect(fixture.writes()).toBe(0);
+        expect(fixture.readRawValues()).toMatchObject({ theme: 'dark', legacyMode: 'turbo' });
+        // An unrelated current-field mutation preserves the rollback-owned value.
+        await fixture.service.set('theme', 'light');
+        expect(fixture.readRawValues()).toMatchObject({ theme: 'light', legacyMode: 'turbo' });
+    });
+
+    it('projects declaration defaults with persisted non-secret fields while excluding secrets', async () => {
+        const declaration = {
+            ...accountDeclaration(),
+            fields: [
+                ...accountDeclaration().fields,
+                {
+                    id: 'apiKey',
+                    title: 'API key',
+                    schema: { type: 'string' as const },
+                    secret: true as const,
+                },
+            ],
+        };
+        const host = createStablePluginSettingsHost({
+            declarations: [{ pluginId: 'acme.plugin', contribution: declaration }],
+            recordStore: createAccountSettingsBackedSettingsRecordStore({
+                async readRecord() {
+                    return Object.freeze({ status: 'present' as const, revision: 1, values: { theme: 'dark' } });
+                },
+                async writeRecord() {
+                    return Object.freeze({ status: 'updated' as const, revision: 2 });
+                },
+            }),
+            broker: createStablePluginEventsBroker(),
+        });
+        const service = host.bind(seed(() => true))?.forScope({ kind: 'account' });
+        if (!service) throw new Error('settings host did not bind the fixture plugin');
+        await expect(readPluginSettingsValuesWithDefaults(service)).resolves.toEqual({
+            theme: 'dark',
+        });
+    });
+
+    it('a rollback-generation declaration reads the preserved field again after rollback', () => {
+        const host = createStablePluginSettingsHost({
+            declarations: [{ pluginId: 'acme.plugin', contribution: {
+                ...accountDeclaration(),
+                fields: [
+                    ...accountDeclaration().fields,
+                    {
+                        id: 'legacyMode',
+                        title: 'Legacy mode',
+                        schema: { type: 'string', enum: ['turbo', 'safe'] },
+                        default: 'safe',
+                    },
+                ],
+            } }],
+            recordStore: createAccountSettingsBackedSettingsRecordStore({
+                async readRecord() {
+                    return Object.freeze({
+                        status: 'present' as const,
+                        revision: 3,
+                        values: Object.freeze({ theme: 'dark', legacyMode: 'turbo' } as Readonly<Record<string, JsonValue>>),
+                    });
+                },
+                async writeRecord() {
+                    throw new Error('rollback read must not write');
+                },
+            }),
+            broker: createStablePluginEventsBroker(),
+        });
+        const bound = host.bind(seed(() => true));
+        if (!bound) throw new Error('settings host did not bind');
+        const service = bound.forScope({ kind: 'account' });
+        return expect(service.get('legacyMode')).resolves.toBe('turbo');
+    });
+
+    it('ordinary reads stay side-effect free after retirement', async () => {
+        const fixture = accountFixture({ candidateRollback: new Map() });
+        await expect(fixture.service.snapshot()).resolves.toEqual({
+            scope: { kind: 'account' },
+            revision: '3',
+            values: { theme: 'dark' },
+        });
+        expect(fixture.writes()).toBe(0);
+        expect(fixture.readRawValues()).toMatchObject({ legacyMode: 'turbo' });
+    });
+
+    it('the artifact-retirement owner prunes only exact retired ids through one ordinary CAS', async () => {
+        const fixture = accountFixture({ candidateRollback: new Map() });
+        await expect(fixture.host.pruneRetiredRollbackDeclarations!(supportedRollback())).resolves.toEqual([
+            { pluginId: 'acme.plugin', scope: 'account', status: 'updated' },
+        ]);
+        expect(fixture.writes()).toBe(1);
+        expect(fixture.readRevision()).toBe(4);
+        expect(fixture.readRawValues()).toEqual({
+            theme: 'dark',
+            futureOpaque: { writtenBy: 'newer-client' },
+            removedSecretOpaque: 'must-not-be-in-a-public-declaration',
+        });
+        // Idempotent: replay observes the postcondition and performs no CAS.
+        await expect(fixture.host.pruneRetiredRollbackDeclarations!(supportedRollback())).resolves.toEqual([
+            { pluginId: 'acme.plugin', scope: 'account', status: 'already-absent' },
+        ]);
+        expect(fixture.writes()).toBe(1);
+    });
+
+    it('settles a losing CAS when the concurrent winner already removed the retired id without retrying', async () => {
+        const fixture = accountFixture({
+            candidateRollback: new Map(),
+            conflictValues: {
+                theme: 'light',
+                futureOpaque: { concurrent: true },
+                removedSecretOpaque: 'still-opaque',
+            },
+        });
+        await expect(fixture.host.pruneRetiredRollbackDeclarations!(supportedRollback())).resolves.toEqual([
+            { pluginId: 'acme.plugin', scope: 'account', status: 'already-absent' },
+        ]);
+        expect(fixture.writes()).toBe(1);
+        expect(fixture.readRawValues()).toEqual({
+            theme: 'light',
+            futureOpaque: { concurrent: true },
+            removedSecretOpaque: 'still-opaque',
+        });
+    });
+
+    it('reports an unsettled losing CAS without retrying or clobbering the concurrent winner', async () => {
+        const fixture = accountFixture({
+            candidateRollback: new Map(),
+            conflictValues: { theme: 'light', legacyMode: 'safe', futureOpaque: 42 },
+        });
+        await expect(fixture.host.pruneRetiredRollbackDeclarations!(supportedRollback())).resolves.toEqual([
+            { pluginId: 'acme.plugin', scope: 'account', status: 'unsettled' },
+        ]);
+        expect(fixture.writes()).toBe(1);
+        expect(fixture.readRawValues()).toEqual({ theme: 'light', legacyMode: 'safe', futureOpaque: 42 });
+    });
+
+    it('preserves every removed value when either generation support state is unknown', async () => {
+        const fixture = accountFixture({});
+        await expect(fixture.host.pruneRetiredRollbackDeclarations!(supportedRollback())).resolves.toEqual([]);
+        const knownCandidate = accountFixture({ candidateRollback: new Map() });
+        await expect(knownCandidate.host.pruneRetiredRollbackDeclarations!(undefined)).resolves.toEqual([]);
+        expect(fixture.writes()).toBe(0);
+        expect(fixture.readRawValues()).toMatchObject({ legacyMode: 'turbo', futureOpaque: { writtenBy: 'newer-client' } });
+        expect(knownCandidate.writes()).toBe(0);
+    });
+
+    it('does not prune ids still owned by the replacement rollback artifact', async () => {
+        const fixture = accountFixture({ candidateRollback: supportedRollback(['legacyMode'], 'generation-new-rollback') });
+        const previous = supportedRollback(['legacyMode', 'olderOnly']);
+        await expect(fixture.host.pruneRetiredRollbackDeclarations!(previous)).resolves.toEqual([
+            { pluginId: 'acme.plugin', scope: 'account', status: 'already-absent' },
+        ]);
+        expect(fixture.writes()).toBe(0);
+        expect(fixture.readRawValues()).toMatchObject({ legacyMode: 'turbo' });
+    });
+});
 
 function declaration(): PluginSettingsContributionV2 {
     return {
@@ -421,6 +687,50 @@ describe('stable typed settings foundation', () => {
             });
     });
 
+    it('settles an ambiguous Account write readback after caller cancellation without treating the commit as lost', async () => {
+        const controller = new AbortController();
+        let reads = 0;
+        const adapter = {
+            async readRecord(_model: unknown, options?: { signal?: AbortSignal }) {
+                reads += 1;
+                if (reads === 1) {
+                    expect(options?.signal).toBe(controller.signal);
+                    return { status: 'present' as const, revision: 3, values: { codexBackendMode: 'acp' } };
+                }
+                expect(options?.signal).toBeUndefined();
+                return { status: 'present' as const, revision: 4, values: { codexBackendMode: 'appServer' } };
+            },
+            async writeRecord() {
+                controller.abort();
+                return { status: 'outcomeUnknown' as const };
+            },
+        };
+        const model = createStablePluginSettingsModel({
+            pluginId: 'happier.agent.codex',
+            contribution: {
+                id: 'agent-settings',
+                version: 1,
+                title: 'Codex settings',
+                target: { kind: 'agent', agent: 'codex' },
+                scope: 'account',
+                fields: [{
+                    id: 'codexBackendMode',
+                    title: 'Backend mode',
+                    schema: { type: 'string', enum: ['appServer', 'acp'] },
+                    default: 'appServer',
+                }],
+                presentation: { sections: [], subagentSections: [] },
+            },
+        });
+        const service = createStablePluginSettingsOwner({
+            recordStore: createAccountSettingsBackedSettingsRecordStore(adapter),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+
+        await expect(service.set('codexBackendMode', 'appServer', { signal: controller.signal }))
+            .resolves.toEqual({ scope: { kind: 'account' }, revision: '4' });
+    });
+
     it('rejects retired Settings scopes instead of translating them into a supported owner', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-scopes-'));
         const recordStore = createPluginStorageBackedSettingsRecordStore({
@@ -492,6 +802,40 @@ describe('stable typed settings foundation', () => {
         expect(unavailable[0]?.message).toContain('invalid default');
     });
 
+    it('permits the same non-secret local id across account and daemon scopes', () => {
+        const accountEndpoint: PluginSettingsContributionV2 = {
+            ...declaration(),
+            scope: 'account',
+            fields: [{
+                id: 'endpoint',
+                title: 'Endpoint',
+                schema: { type: 'string', minLength: 4 },
+                default: 'https://account.example',
+            }],
+        };
+        const daemonEndpoint: PluginSettingsContributionV2 = {
+            ...declaration(),
+            fields: [{
+                id: 'endpoint',
+                title: 'Endpoint',
+                schema: { type: 'boolean' },
+                default: false,
+            }],
+        };
+
+        const models = createStablePluginSettingsModels({
+            pluginId: 'acme.plugin',
+            contributions: [accountEndpoint, daemonEndpoint],
+        });
+
+        expect(models.get('account')?.fields.map((field) => field.qualifiedId)).toContain(
+            'acme.plugin/settings/account/preferences/fields/endpoint',
+        );
+        expect(models.get('daemon')?.fields.map((field) => field.qualifiedId)).toContain(
+            'acme.plugin/settings/daemon/preferences/fields/endpoint',
+        );
+    });
+
     it('uses one plugin-local revision across every flattened settings contribution', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-flattened-'));
         const storage = createPluginStorageOwner({
@@ -539,6 +883,74 @@ describe('stable typed settings foundation', () => {
         });
         expect(await storage.daemon.get('typed-settings/preferences')).toBeNull();
         expect(await storage.daemon.get('typed-settings/appearance')).toBeNull();
+    });
+
+    it('hides removed fields while preserving their raw evidence across current-field writes', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-removed-field-'));
+        const storage = createPluginStorageOwner({
+            pluginId: 'acme.plugin',
+            paths: resolvePluginStorePaths({ happyHomeDir }),
+        });
+        await storage.daemon.set(PLUGIN_SETTINGS_STORAGE_KEY, {
+            t: 'happier_plugin_settings_record_v1',
+            revision: 4,
+            values: {
+                endpoint: 'https://current.example',
+                removedPreference: { retained: 'raw-evidence' },
+            },
+        });
+        const model = createStablePluginSettingsModel({
+            pluginId: 'acme.plugin',
+            contribution: declaration(),
+        });
+        const service = createStablePluginSettingsOwner({
+            recordStore: createPluginStorageBackedSettingsRecordStore({ storageForPlugin: () => storage.daemon }),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+
+        await expect(service.get('endpoint')).resolves.toBe('https://current.example');
+        await expect(service.snapshot()).resolves.toEqual({
+            scope: { kind: 'daemon' },
+            revision: '4',
+            values: { endpoint: 'https://current.example' },
+        });
+        await expect(service.set('enabled', true, { expectedRevision: '4' }))
+            .resolves.toEqual({ scope: { kind: 'daemon' }, revision: '5' });
+        expect(await storage.daemon.get(PLUGIN_SETTINGS_STORAGE_KEY)).toEqual({
+            t: 'happier_plugin_settings_record_v1',
+            revision: 5,
+            values: {
+                endpoint: 'https://current.example',
+                removedPreference: { retained: 'raw-evidence' },
+                enabled: true,
+            },
+        });
+    });
+
+    it('validates a retained raw field when that id is current again', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-reintroduced-field-'));
+        const storage = createPluginStorageOwner({
+            pluginId: 'acme.plugin',
+            paths: resolvePluginStorePaths({ happyHomeDir }),
+        });
+        await storage.daemon.set(PLUGIN_SETTINGS_STORAGE_KEY, {
+            t: 'happier_plugin_settings_record_v1',
+            revision: 4,
+            values: { endpoint: { incompatible: true } },
+        });
+        const model = createStablePluginSettingsModel({
+            pluginId: 'acme.plugin',
+            contribution: declaration(),
+        });
+        const service = createStablePluginSettingsOwner({
+            recordStore: createPluginStorageBackedSettingsRecordStore({ storageForPlugin: () => storage.daemon }),
+            broker: createStablePluginEventsBroker(),
+        }).bind({ model, seed: seed(() => true) });
+
+        await expect(service.get('endpoint'))
+            .rejects.toMatchObject({ code: 'plugin_settings_record_invalid' });
+        await expect(service.snapshot())
+            .rejects.toMatchObject({ code: 'plugin_settings_record_invalid' });
     });
 
     it('rejects an unpublished raw predecessor record instead of importing it', async () => {

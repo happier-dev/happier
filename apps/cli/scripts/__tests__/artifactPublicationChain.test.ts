@@ -13,7 +13,7 @@ import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempD
 const PLUGIN_PACKAGE_NAME = '@happier-dev/plugins-grok';
 const PLUGIN_WORKSPACE_NAME = 'plugins-grok';
 const INVENTORY_RELATIVE_PATH =
-  'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts';
+  'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json';
 
 function sha256Digest(bytes: Buffer): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -48,11 +48,9 @@ function writeArtifactInventory(repoRoot: string, packageDirsByName: ReadonlyMap
   mkdirSync(dirname(inventoryPath), { recursive: true });
   writeFileSync(
     inventoryPath,
-    [
-      'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(',
-      `${JSON.stringify(integrities, null, 2)} satisfies readonly unknown[]);`,
-      '',
-    ].join('\n'),
+    `${JSON.stringify({
+      BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: integrities,
+    }, null, 2)}\n`,
     'utf8',
   );
 }

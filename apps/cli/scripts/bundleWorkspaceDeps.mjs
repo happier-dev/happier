@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { dirname } from 'node:path';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
@@ -14,9 +14,10 @@ import {
   resolveCliSharedDepsBuildLockPath,
   withOptionalCliSharedDepsBuildLock,
 } from './optionalWorkspaceBundleLock.mjs';
+import { readBundledPluginPackageNames } from './build-owned/bundledPluginMembership.ts';
 import {
   formatBundledPluginArtifactVerification,
-  readBundledPluginArtifactInventory,
+  requireBundledPluginArtifactInventory,
   verifyBundledPluginArtifactsAgainstInventory,
 } from './verifyBundledPluginArtifacts.mjs';
 
@@ -56,57 +57,19 @@ function readBundledDependencyNames(rawPackageJson) {
     .filter((value) => value.length > 0);
 }
 
-function isReservationOnlyPluginPackage(rawPackageJson) {
-  return rawPackageJson?.happier?.pluginScaffold?.shipping === 'reservation_only';
-}
-
 function resolveDeclaredBundledPluginWorkspacePackageNames({ repoRoot }) {
-  const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
-  if (!existsSync(pluginsRoot)) return [];
-
-  const packageNames = [];
-  for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const pluginId = entry.name;
-    // Reserve underscore-prefixed directories for scaffolding/non-shippable templates.
-    if (pluginId.startsWith('_')) continue;
-    const pkgJsonPath = resolve(pluginsRoot, pluginId, 'package.json');
-    if (!existsSync(pkgJsonPath)) continue;
-    const raw = readJsonSync(pkgJsonPath);
-    if (isReservationOnlyPluginPackage(raw)) continue;
-
-    const manifestPath = resolve(pluginsRoot, pluginId, 'src/manifest.ts');
-    if (!existsSync(manifestPath)) {
-      throw new Error(
-        [
-          `[bundle-workspace-deps] Missing required plugin manifest for shippable plugin package`,
-          `path: ${manifestPath}`,
-          `package: ${PLUGINS_PACKAGE_PREFIX}${pluginId}`,
-        ].join('\n'),
-      );
-    }
-
-    const expectedPackageName = `${PLUGINS_PACKAGE_PREFIX}${pluginId}`;
-    if (raw?.name !== expectedPackageName) {
-      throw new Error(
-        [
-          `[bundle-workspace-deps] Invalid bundled plugin workspace package name`,
-          `path: ${pkgJsonPath}`,
-          `expected: ${expectedPackageName}`,
-          `actual: ${String(raw?.name ?? '')}`,
-        ].join('\n'),
-      );
-    }
-
-    packageNames.push(expectedPackageName);
-  }
-
-  packageNames.sort((a, b) => a.localeCompare(b));
-  return packageNames;
+  // Canonical bundled membership has one owner (bundledPluginMembership.ts). This
+  // used to be a second, similar-but-different package list; the guardrails below
+  // keep their pack-specific failure messages while discovery is delegated.
+  return [...readBundledPluginPackageNames(repoRoot)];
 }
 
 function resolveGeneratorOwnedBundledPluginPackageNames({ repoRoot }) {
-  const artifacts = readBundledPluginArtifactInventory({ repoRoot }) ?? [];
+  // Fail closed with the inventory: a missing inventory must not silently re-admit
+  // every generator-owned plugin to the ordinary workspace compiler (which would
+  // replace the staged immutable bundle/chunk trees with compiler-owned reexports
+  // before the exact verification below runs).
+  const artifacts = requireBundledPluginArtifactInventory({ repoRoot }) ?? [];
   return new Set(
     artifacts
       .map((artifact) => String(artifact?.packageName ?? '').trim())
@@ -232,12 +195,15 @@ export async function bundleWorkspaceDeps(opts = {}) {
       publicationMode,
     });
 
-    // Exact artifact publication is the only tree that reaches a tarball, and the
-    // generated bundled-plugin inventory travels inside that same tarball as the
-    // runtime's authority for every bundled plugin generation. Prove the shipped
-    // plugin bytes are the ones the inventory publishes before the pack step reads
-    // this tree. Live source-dev publication deliberately retains prior generation
-    // targets, so it has no exact tree to compare.
+    // Exact artifact publication is the only tree that reaches a tarball. The
+    // build-owned source-integrity inventory (apps/cli/scripts/build-owned/
+    // generatedBundledPluginSourceIntegrities.json) stays beside the publisher as a
+    // build/pack fact: it is not part of the tarball, and the shipped runtime module
+    // deliberately carries structural immutable-artifact records only — it is never a
+    // digest authority. Prove the shipped plugin bytes are the ones the inventory
+    // publishes before the pack step reads this tree. Live source-dev publication
+    // deliberately retains prior generation targets, so it has no exact tree to
+    // compare.
     if (publicationMode === 'artifact') {
       const bundledPluginPackageDirs = new Map(
         bundles.map((bundle) => [String(bundle?.packageName ?? '').trim(), bundle.destDir]),

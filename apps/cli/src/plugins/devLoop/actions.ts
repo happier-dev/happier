@@ -20,6 +20,7 @@ import { inspectPluginDevelopmentSource } from '@/plugins/authoring/sourceObserv
 import { runPluginAuthorToolchain, type PluginAuthorToolchainOperation } from '@/plugins/authoring/toolchain';
 import { runPluginAuthorDoctor } from '@/plugins/authoring/doctor';
 import { packLocalPlugin } from '@/plugins/packaging/pack';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 
 export type PluginDevLoopActionId = PluginDevLoopActionIdV1;
 
@@ -323,6 +324,7 @@ export async function executePluginDevLoopAction(
       baseDir: params.workspaceRoot,
       pluginId: readString(input, 'id'),
       displayName: readString(input, 'name'),
+      invokerName: resolveInvokerName() ?? 'happier',
       ...(() => {
         // One vocabulary: the scaffold UI mode is resolved through the schema
         // the `plugins.scaffold` action input already validates against.

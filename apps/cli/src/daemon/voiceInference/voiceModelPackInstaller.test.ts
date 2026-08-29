@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +58,18 @@ describe('voiceModelPackInstaller packId filesystem safety', () => {
 });
 
 describe('voiceModelPackInstaller download validation', () => {
+  it('removes the live pack and exact retained resumable scratch through the existing remove owner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-voice-pack-remove-'));
+    const packId = 'discard-me';
+    await mkdir(join(root, packId), { recursive: true });
+    await mkdir(join(root, `.${packId}.scratch`), { recursive: true });
+    await writeFile(join(root, `.${packId}.scratch`, 'partial.bin'), Buffer.from([1, 2, 3]));
+
+    await removeInstalledVoiceModelPack({ packsRootDir: root, packId });
+
+    await expect(stat(join(root, packId))).rejects.toThrow();
+    await expect(stat(join(root, `.${packId}.scratch`))).rejects.toThrow();
+  });
   it('rejects downloads whose actual size does not match the manifest sizeBytes', async () => {
     const http = await import('node:http');
     const { createHash } = await import('node:crypto');

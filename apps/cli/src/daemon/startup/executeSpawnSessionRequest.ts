@@ -70,6 +70,8 @@ import {
     scopeConnectedAccountSessionPurposeBindingLease,
 } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveSpawnLaunchProfileDefaults } from '../spawn/resolveSpawnLaunchProfileDefaults';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
@@ -135,10 +137,14 @@ async function refreshAccountSettingsForSpawn(
 export async function executeSpawnSessionRequest(
     params: ExecuteSpawnSessionRequestParams,
 ): Promise<SpawnSessionResult> {
-    const { options } = params;
+    let options = params.options;
 
     try {
-        const prepared = await prepareExecuteSpawnSessionRequest({
+        // A profile id is stable Account intent. Refresh before resolving it so
+        // the daemon, rather than an Action/UI caller, owns the profile overlay.
+        await refreshAccountSettingsForSpawn(params);
+
+        let prepared = await prepareExecuteSpawnSessionRequest({
             request: {
                 ...params,
                 options,
@@ -149,7 +155,32 @@ export async function executeSpawnSessionRequest(
             return prepared;
         }
 
-        await refreshAccountSettingsForSpawn(params);
+        const profileResolution = resolveSpawnLaunchProfileDefaults({
+            options,
+            effectiveBackendTarget: prepared.effectiveBackendTargetV2,
+            rawSettings: getActiveAccountSettingsSnapshot()?.settings,
+        });
+        if (!profileResolution.ok) return profileResolution.result;
+        if (profileResolution.options !== options) {
+            options = profileResolution.options;
+            prepared = {
+                ...prepared,
+                permissionMode: options.permissionMode,
+                permissionModeUpdatedAt: options.permissionModeUpdatedAt,
+                // Rejoin/resume metadata remains the canonical selection owner.
+                // A sparse profile model is only a fresh-launch default and
+                // must not turn an existing Session into a model transition.
+                modelSelection:
+                    prepared.persistedProviderResumeState.selection
+                    ?? options.modelSelection,
+                // The caller overlay was validated by preparation and the
+                // profile overlay came from the strict Protocol schema.
+                environmentVariablesValidation: {
+                    ok: true,
+                    env: options.environmentVariables ?? {},
+                },
+            };
+        }
 
         const {
             directory,

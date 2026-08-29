@@ -186,7 +186,11 @@ export interface SpawnSessionOptions {
   /** Legacy compatibility for the prior visible-console boolean selection. */
   windowsRemoteSessionConsole?: 'hidden' | 'visible';
   windowsTerminalWindowName?: string;
-  /** Session-scoped profile identity only; profile content is projected through the environment. */
+  /**
+   * Stable Account Launch Profile identity. The daemon resolves its sparse
+   * defaults at admission; explicit sparse fields remain authoritative while
+   * profile-owned environment names stay canonical.
+   */
   profileId?: string;
   environmentVariables?: Record<string, string>;
   /** Secret-free bindings resolved and materialized by the daemon. */

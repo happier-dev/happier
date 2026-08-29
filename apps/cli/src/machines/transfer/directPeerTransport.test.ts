@@ -3431,6 +3431,7 @@ describe('direct peer machine transfer', () => {
       });
     };
 
+    const onProgress = vi.fn();
     await requestDirectPeerTransferToFile({
       transferId: 'transfer_4',
       endpointCandidates: [
@@ -3444,9 +3445,11 @@ describe('direct peer machine transfer', () => {
       fetchFn: fetchFn as typeof fetch,
       now: () => 5_000,
       destinationPath,
+      onProgress,
     });
 
     await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    expect(onProgress).toHaveBeenLastCalledWith(payload.length);
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 

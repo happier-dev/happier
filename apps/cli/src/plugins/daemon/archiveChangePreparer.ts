@@ -231,6 +231,7 @@ export function createDaemonArchivePluginChangePreparer(params: Readonly<{
           kind: 'archive',
           locator: canonicalLocator,
           integrity: materialized.integrity,
+          integrityBasis: request.expectedIntegrity ? 'expected' : 'observed',
           packageName: staged.candidate.package.name,
           publisher: { status: 'unavailable' },
           signature: { status: 'notProvided' },

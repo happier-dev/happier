@@ -4,6 +4,7 @@ import {
   SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
   SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
   SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
+  SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema,
   SessionConnectedServiceAuthApplyGenerationRequestV1Schema,
   SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
   SessionConnectedServiceAuthInvalidateTransportsRequestV1Schema,
@@ -34,6 +35,8 @@ import {
   type SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
   type ComposerContentHandleV1,
   type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
+  type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
+  SessionMediaMessageMetaV1Schema,
 } from '@happier-dev/protocol';
 import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -120,9 +123,20 @@ export type SessionRuntimeControls = {
     text: string;
     meta: Record<string, unknown>;
     stagedMediaHandles?: readonly ComposerContentHandleV1[];
+    sessionMediaMetadata?: Readonly<{
+      key: 'happier' | 'happierMedia';
+      envelope: import('@happier-dev/protocol').SessionMediaMessageMetaV1;
+    }>;
+    sessionMediaCleanup?: Readonly<{
+      workingDirectory: string;
+      createdWorkspaceRelativePaths: readonly string[];
+    }>;
   }>>;
   acceptPendingMessageComposerAdmission?: (
     request: SessionPendingMessageComposerAdmissionAcceptedRequestV1,
+  ) => Promise<void> | void;
+  abandonPendingMessageComposerAdmission?: (
+    request: SessionPendingMessageComposerAdmissionAbandonedRequestV1,
   ) => Promise<void> | void;
 };
 
@@ -256,11 +270,40 @@ export function registerSessionControlHandlers(
         if (admitted.status !== 'admitted') {
           return { ok: false, error: 'composer_attachment_admission_invalid', errorCode: 'composer_attachment_admission_invalid' };
         }
+        const explicitMediaMetadata = prepared.sessionMediaMetadata
+          ? SessionMediaMessageMetaV1Schema.safeParse(prepared.sessionMediaMetadata.envelope)
+          : null;
+        const mediaMetadata = explicitMediaMetadata?.success
+          ? {
+              key: prepared.sessionMediaMetadata!.key,
+              envelope: explicitMediaMetadata.data,
+            }
+          : Object.entries(prepared.meta)
+              .filter(([key]) => key === 'happier' || key === 'happierMedia')
+              .map(([key, value]) => {
+                const envelope = SessionMediaMessageMetaV1Schema.safeParse(value);
+                return envelope.success
+                  ? { key: key as 'happier' | 'happierMedia', envelope: envelope.data }
+                  : null;
+              })
+              .find((value): value is Readonly<{
+                key: 'happier' | 'happierMedia';
+                envelope: import('@happier-dev/protocol').SessionMediaMessageMetaV1;
+              }> => value !== null);
+        if ((prepared.stagedMediaHandles?.length ?? 0) > 0 && !mediaMetadata) {
+          return {
+            ok: false,
+            error: 'composer_media_metadata_missing',
+            errorCode: 'composer_media_metadata_missing',
+          };
+        }
         return SessionPendingMessageComposerAdmissionPrepareResponseV1Schema.parse({
           ok: true,
           text: prepared.text,
           structuredInput: admitted.structuredInput,
           stagedMediaHandles: prepared.stagedMediaHandles ?? [],
+          ...(mediaMetadata ? { sessionMediaMetadata: mediaMetadata } : {}),
+          ...(prepared.sessionMediaCleanup ? { sessionMediaCleanup: prepared.sessionMediaCleanup } : {}),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'composer_attachment_admission_failed';
@@ -277,6 +320,18 @@ export function registerSessionControlHandlers(
       const accept = opts.sessionRuntimeControls?.acceptPendingMessageComposerAdmission;
       if (!accept) return unsupported(SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1);
       await accept(parsed.data);
+      return { ok: true };
+    },
+  );
+
+  rpc.registerHandler(
+    SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1,
+    async (raw: unknown) => {
+      const parsed = SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema.safeParse(raw);
+      if (!parsed.success) return invalidInput();
+      const abandon = opts.sessionRuntimeControls?.abandonPendingMessageComposerAdmission;
+      if (!abandon) return unsupported(SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1);
+      await abandon(parsed.data);
       return { ok: true };
     },
   );

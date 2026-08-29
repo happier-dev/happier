@@ -756,19 +756,8 @@ describe('happier providers command domain', () => {
             pluginId: 'happier.provider.cliproxyapi',
             localId: 'cliproxyapi',
           },
-          process: {
-            localServiceId: 'happier-cliproxyapi-managed',
-            manager: 'happier',
-            lifetime: 'session',
-            network: 'loopback',
-            restart: 'never',
-          },
-          dependency: {
-            kind: 'packaged-runtime-binary',
-            directorySegments: ['cliproxyapi', 'unpacked'],
-            executableBaseName: 'cliproxyapi',
-          },
           protocols: ['anthropic', 'openai-responses'],
+          connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
           connectedAccountPurposes: [{
             purpose: 'openai-upstream',
             service: {
@@ -790,6 +779,7 @@ describe('happier providers command domain', () => {
       },
       managedLocalOption: {
         targetMachineId: 'machine-a',
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
         connectedAccountPurposes: [{
           purpose: 'openai-upstream',
           service: {
@@ -821,6 +811,7 @@ describe('happier providers command domain', () => {
               pluginId: 'happier.provider.cliproxyapi',
               localId: 'cliproxyapi',
             },
+            connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
             connectedAccountPurposes: [{
               purpose: 'openai-upstream',
               target: {
@@ -831,6 +822,7 @@ describe('happier providers command domain', () => {
           },
         },
         managedLocalOption: {
+          connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
           connectedAccountPurposes: [{
             purpose: 'openai-upstream',
             materializationKinds: ['httpHeaders'],

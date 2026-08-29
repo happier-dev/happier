@@ -19,6 +19,7 @@ import {
   encodeBase64,
   evaluateAutomationEventFilterV1,
   isAutomationEventObservationFreshV1,
+  isAutomationEventSourcesListPageProgressingV1,
   isSameAutomationEventDeclarationReleaseV1,
   isValidPluginJsonSchemaValue,
   readAutomationEventAdmitHttpRequestCanonicalUtf8ByteLengthV1,
@@ -95,6 +96,7 @@ export type AutomationEventAdoptedDefinitionPublicProjectionResultV1 =
   | AutomationEventSourcesListResultV1
   | Readonly<{ kind: 'unavailable' }>;
 
+/** Pre-schema request shape; the canonical Action/HTTP schema owns the page-size default. */
 /** One private E3-to-E2 sequence of complete bounded admission requests. */
 export type AutomationEventAdmitPreparedRequestSequenceV1 = AsyncIterableIterator<
   AutomationEventAdmitHttpRequestV1,
@@ -353,7 +355,11 @@ function isExactAdoptedDefinitionForPreparation(params: Readonly<{
     || definition.observationTransport.kind !== params.transport.kind
   ) return false;
 
-  return definition.observationTransport.kind === 'checkpointedPull'
+  // Checkpointed-pull and session-socket definitions both place observation
+  // on one exact assigned watcher materialization; only durable push derives
+  // its target from the endpoint.
+  return (definition.observationTransport.kind === 'checkpointedPull'
+    || definition.observationTransport.kind === 'socket')
     ? sameMaterialization(
       definition.observationTransport.watcherMaterializationRef,
       params.caller,
@@ -648,7 +654,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       }
       if (!isCanonicalUnsignedRevision(result.revision)
         || (expectedRevision !== undefined && result.revision !== expectedRevision)
-        || (result.nextCursor !== null && result.definitions.length === 0)) {
+        || !isAutomationEventSourcesListPageProgressingV1(result)) {
         return { kind: 'discarded', reason: 'invalidPage' };
       }
       expectedRevision ??= result.revision;
@@ -704,7 +710,10 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
             && typeof webhookRoutingSourceInstanceId !== 'string'
           )
           || (
-            parsed.data.observationTransport.kind === 'checkpointedPull'
+            // Only durable push owns the generic endpoint-routing source
+            // instance; checkpointed-pull and session-socket definitions must
+            // not carry one.
+            parsed.data.observationTransport.kind !== 'durablePush'
             && webhookRoutingSourceInstanceId !== undefined
           )
         ) {

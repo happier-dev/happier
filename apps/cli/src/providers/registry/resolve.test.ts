@@ -63,6 +63,7 @@ function contribution(baseUrl?: string): ResolvedProviderContribution {
 
 function managedContribution(
   dependency = 'gateway-managed',
+  options: Readonly<{ required?: boolean; minimumBound?: 1 }> = {},
 ): ResolvedProviderContribution {
   const baseDefinition = providerDefinition();
   const definition = ProviderContributionV1Schema.parse({
@@ -75,13 +76,16 @@ function managedContribution(
       kind: 'managed',
       dependencies: [dependency],
       endpointTemplateIds: ['responses'],
+      ...(options.minimumBound === undefined
+        ? {}
+        : { connectedAccountPurposeBindingPolicy: { minimumBound: options.minimumBound } }),
       connectedAccounts: [{
         purpose: 'upstream',
         service: {
           pluginId: 'happier.connected-account.example',
           localId: 'example',
         },
-        required: true,
+        required: options.required ?? true,
         materializationKinds: ['httpHeaders'],
       }],
       requestAuthUses: [{
@@ -482,6 +486,34 @@ describe('machine-aware provider connection resolver', () => {
       }
       expect(resolution.record.deployment).not.toHaveProperty('facet');
     }
+  });
+
+  it('keeps an optional managed purpose unbound unless the producer explicitly requires one binding', () => {
+    const configured = connection('pc_managed_optional_unbound', {
+      deployment: { kind: 'managedLocal' },
+      purposeBindingDefaults: {},
+    });
+    const input = {
+      connectionId: configured.id,
+      machineId: 'machine-a',
+      accountSettings: { providerSettingsV1: settingsWith([configured]) },
+      dnsEvidenceByEndpointUrl: new Map(),
+    } as const;
+
+    expect(resolveProviderConnectionForMachine({
+      ...input,
+      registry: registry(managedContribution('gateway-managed', { required: false })),
+    })).toMatchObject({ status: 'resolved' });
+    expect(resolveProviderConnectionForMachine({
+      ...input,
+      registry: registry(managedContribution('gateway-managed', {
+        required: false,
+        minimumBound: 1,
+      })),
+    })).toMatchObject({
+      status: 'invalid',
+      reason: 'managed_purpose_bindings_invalid',
+    });
   });
 
   it('rejects managed purpose defaults outside the declared facet purpose and service', () => {

@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_MAX_SERIALIZED_UTF8_BYTES,
+} from '@happier-dev/agents/request-auth';
 
 import {
   digestConnectedAccountRequestAuthCapability,
@@ -177,6 +180,25 @@ describe('daemon-owned connected-account request-auth capability file', () => {
       subjectScopeDigest: 'a'.repeat(64),
       httpPort: 43_123,
     })).resolves.toMatchObject({ materializationId });
+  });
+
+  it('accepts the exact maximum canonical escaped carrier', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-'));
+    roots.push(root);
+    const materializationId = '\u0001'.repeat(256);
+    const descriptor = await writeConnectedAccountRequestAuthCapabilityFile({
+      rootDir: root,
+      materializationId,
+      subjectScopeDigest: 'a'.repeat(64),
+      httpPort: 65_535,
+    });
+
+    expect((await readFile(descriptor.path)).byteLength)
+      .toBe(CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_MAX_SERIALIZED_UTF8_BYTES);
+    await expect(verifyConnectedAccountRequestAuthCapabilityFile({
+      ...descriptor,
+      materializedRootDir: root,
+    })).resolves.toEqual(descriptor);
   });
 
   it('rejects noncanonical expected descriptor fields during exact verification', async () => {
@@ -358,6 +380,38 @@ describe('daemon-owned connected-account request-auth capability file', () => {
     ).resolves.toBeNull();
     await expect(inspectConnectedAccountRequestAuthCapabilityFile({
       path: descriptor.path,
+      materializedRootDir: root,
+    })).resolves.toBeNull();
+  });
+
+  it('rejects an oversized capability carrier instead of parsing padded bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-'));
+    roots.push(root);
+    const descriptor = await writeConnectedAccountRequestAuthCapabilityFile({
+      rootDir: root,
+      materializationId: 'managed-run-oversized-carrier',
+      subjectScopeDigest: 'e'.repeat(64),
+      httpPort: 43_123,
+    });
+    // Schema-valid five-field document padded to far beyond the canonical single-line
+    // carrier bound the writer emits; the host must refuse the carrier, not parse it.
+    const paddedDocument = `${JSON.stringify({
+      v: 2,
+      materializationId: 'managed-run-oversized-carrier',
+      subjectScopeDigest: 'e'.repeat(64),
+      capability: 'A'.repeat(43),
+      httpPort: 43_123,
+    })}${' '.repeat(8 * 1024)}`;
+    await writeFile(descriptor.path, paddedDocument, { mode: 0o600 });
+
+    await expect(
+      inspectConnectedAccountRequestAuthCapabilityFile({
+        path: descriptor.path,
+        materializedRootDir: root,
+      }),
+    ).resolves.toBeNull();
+    await expect(verifyConnectedAccountRequestAuthCapabilityFile({
+      ...descriptor,
       materializedRootDir: root,
     })).resolves.toBeNull();
   });

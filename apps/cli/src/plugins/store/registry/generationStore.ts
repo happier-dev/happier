@@ -370,6 +370,18 @@ const PluginInstallationStateRecordSchema: z.ZodType<PluginInstallationStateReco
   validateInstallReviewPrincipalPair(record, context);
 });
 
+export type BundledMaterializationEpochRecord = Readonly<{
+  materializationId: z.infer<typeof PortableStorageIdSchema>;
+  semanticKey: string;
+  observedAt: number;
+}>;
+
+const BundledMaterializationEpochRecordSchema: z.ZodType<BundledMaterializationEpochRecord> = z.object({
+  materializationId: PortableStorageIdSchema,
+  semanticKey: z.string().min(1),
+  observedAt: z.number().int().nonnegative(),
+}).strict();
+
 export type PluginInstallationStateRevision = {
   t: 'happier_plugin_installations_v1';
   schemaVersion: 1;
@@ -378,6 +390,7 @@ export type PluginInstallationStateRevision = {
   plugins: Record<PluginId, PluginInstallationStateRecord>;
   rollbackRetention: PluginRollbackRetentionRecord[];
   hardRevocationRevisions?: Record<PluginId, number>;
+  bundledMaterializationEpochs?: Record<PluginId, BundledMaterializationEpochRecord>;
   runtimeCatalog?: z.infer<typeof PluginStateFileV1Schema>;
   retainedRuntimeCatalog?: Record<
     z.infer<typeof PortableStorageIdSchema>,
@@ -395,6 +408,10 @@ const CanonicalPluginInstallationStateRevisionSchema: z.ZodType<PluginInstallati
   hardRevocationRevisions: z.record(
     asHostProtocolZod(PluginIdSchema),
     z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  ).optional(),
+  bundledMaterializationEpochs: z.record(
+    asHostProtocolZod(PluginIdSchema),
+    BundledMaterializationEpochRecordSchema,
   ).optional(),
   runtimeCatalog: PluginStateFileV1Schema.optional(),
   retainedRuntimeCatalog: z.record(PortableStorageIdSchema, PluginStateRecordSchema).optional(),

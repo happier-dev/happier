@@ -149,7 +149,7 @@ describe('requestUserPluginChange', () => {
     const output = formatPluginInstallationReviewForTerminal(completeReview({
       packageIdentity: { name: '@acme/example', version: '1.0.0' },
       publisherIdentity: { status: 'unverified', id: 'acme', displayName: 'Acme' },
-      source: { kind: 'npm', locator: 'https://registry.example.test/acme-example.tgz', integrity: 'sha512-exact' },
+      source: { kind: 'npm', locator: 'https://registry.example.test/acme-example.tgz', integrity: 'sha512-exact', integrityBasis: 'expected' },
       updateChannel: {
         kind: 'npm',
         packageName: '@acme/example',
@@ -397,7 +397,7 @@ describe('requestUserPluginChange', () => {
     const reviewPrompt = String(confirm.mock.calls[0]?.[0]);
     for (const reviewedFact of [
       '/tmp/example',
-      'Source integrity: Not provided',
+      'Source integrity: None',
       'Manifest, contributions, and UI artifact declarations: validated in the staged candidate',
       'daemon',
       'reactNative',

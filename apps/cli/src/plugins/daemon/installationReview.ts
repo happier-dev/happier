@@ -39,6 +39,7 @@ export type PluginInstallationReviewSourceFacts =
       kind: 'archive';
       locator: string;
       integrity: string;
+      integrityBasis: 'observed' | 'expected';
       packageName: string;
       publisher: Readonly<{ status: 'unavailable' }>;
       signature: Readonly<{ status: 'notProvided' }>;
@@ -50,6 +51,7 @@ export type PluginInstallationReviewSourceFacts =
       kind: 'npm';
       locator: string;
       integrity: string;
+      integrityBasis: 'expected';
       packageName: string;
       registryOrigin: string;
       registryProfileId?: string;
@@ -193,6 +195,31 @@ function projectUpdateChannel(
   });
 }
 
+function projectInstallationReviewSource(
+  source: PluginInstallationReviewSourceFacts,
+): PluginInstallationReview['source'] {
+  if (source.kind === 'path') {
+    return Object.freeze({
+      kind: 'path',
+      locator: source.locator,
+    });
+  }
+  if (source.kind === 'archive') {
+    return Object.freeze({
+      kind: 'archive',
+      locator: source.locator,
+      integrity: source.integrity,
+      integrityBasis: source.integrityBasis,
+    });
+  }
+  return Object.freeze({
+    kind: 'npm',
+    locator: source.locator,
+    integrity: source.integrity,
+    integrityBasis: source.integrityBasis,
+  });
+}
+
 function projectBlockedNewerVersions(
   blockedNewerVersions: NpmArtifactCompatibilitySelection['blockedNewerVersions'] | undefined,
 ): ReviewBlockedNewerVersions | undefined {
@@ -313,11 +340,7 @@ export function projectPluginInstallationReview(params: Readonly<{
       version: params.manifest.version,
     }),
     publisherIdentity: Object.freeze({ ...params.source.publisher }),
-    source: Object.freeze({
-      kind: params.source.kind,
-      locator: params.source.locator,
-      ...('integrity' in params.source ? { integrity: params.source.integrity } : {}),
-    }),
+    source: projectInstallationReviewSource(params.source),
     updateChannel: projectUpdateChannel(params.source),
     signature: Object.freeze({ ...params.source.signature }),
     provenance: Object.freeze({ ...params.source.provenance }),

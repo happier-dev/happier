@@ -1,4 +1,4 @@
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import {
   ConnectedServiceIdSchema,
   type ConnectedServiceId,
@@ -29,7 +29,7 @@ function readSupportedServiceIdsFromProviderDefinition(definition: unknown): rea
 }
 
 export function resolveConnectTargetServiceIds(targetId: string): ConnectedServiceId[] {
-  return resolveConnectTargetServiceIdsFromRegistry(targetId, getResolvedContributionRegistry());
+  return resolveConnectTargetServiceIdsFromRegistry(targetId, readCurrentContributionRegistry());
 }
 
 export function resolveConnectTargetServiceIdsFromRegistry(

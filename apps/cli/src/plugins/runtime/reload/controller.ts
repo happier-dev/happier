@@ -696,6 +696,21 @@ export function createPluginReloadController(params?: Readonly<{
                         'Prepared plugin runtime registry contains a blocking activation diagnostic',
                     );
                 }
+                if (previousRegistry) {
+                    // This is the artifact owner's one retirement transition:
+                    // the previous and candidate facts are both qualified
+                    // registry leases and the durable writer fence is still
+                    // held. Ordinary Settings reads never perform cleanup.
+                    const retirementOutcomes = await adoption.registry.pruneRetiredPluginSettings?.(
+                        previousRegistry.settingsRollbackDeclarations,
+                    );
+                    const unsettled = retirementOutcomes?.filter((outcome) => outcome.status === 'unsettled') ?? [];
+                    if (unsettled.length > 0) {
+                        logger.warn('[PLUGIN RUNTIME] Settings artifact-retirement cleanup did not settle', {
+                            settings: unsettled.map(({ pluginId, scope }) => ({ pluginId, scope })),
+                        });
+                    }
+                }
                 if (adoption.beforePublish) {
                     await adoption.beforePublish(adoption.registry, publish);
                 } else {

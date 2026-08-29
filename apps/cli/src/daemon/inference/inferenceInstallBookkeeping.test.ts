@@ -7,6 +7,95 @@ import { describe, expect, it, vi } from 'vitest';
 import { createInferenceInstallBookkeeping, type InferenceInstallProgress } from './inferenceInstallBookkeeping';
 
 describe('inferenceInstallBookkeeping', () => {
+  it('reconciles prior-process transient installs through the canonical artifact verifier', async () => {
+    const persisted = {
+      modelsById: {
+        verified: {
+          modelId: 'verified', state: 'installing', version: '1', manifestHash: 'a'.repeat(64),
+          kind: 'tts_sherpa', model: 'kokoro', updatedAtMs: 1,
+          progress: { phase: 'installing', progress: 0.9 }, lastError: null,
+        },
+        interrupted: {
+          modelId: 'interrupted', state: 'installing', version: '1', manifestHash: 'b'.repeat(64),
+          kind: 'stt_sherpa', model: 'zipformer', updatedAtMs: 1,
+          progress: { phase: 'verifying', progress: 0.8 }, lastError: null,
+        },
+      },
+    };
+    let saved = '';
+    const verifyInterruptedInstall = vi.fn(async (model: { modelId: string }) => (
+      model.modelId === 'verified' ? 'installed' as const : 'interrupted' as const
+    ));
+    const bookkeeping = createInferenceInstallBookkeeping({
+      stateFilePath: '/virtual/installs.json',
+      readStateFile: async () => JSON.stringify(persisted),
+      ensureParentDir: async () => {},
+      writeStateFile: async (_path, contents) => { saved = contents; },
+      verifyInterruptedInstall,
+      now: () => 42,
+    });
+
+    await expect(bookkeeping.list()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        modelId: 'verified', state: 'installed',
+        progress: expect.objectContaining({ phase: 'complete', progress: 1 }),
+      }),
+      expect.objectContaining({
+        modelId: 'interrupted', state: 'error', lastError: 'inference_install_interrupted',
+        progress: expect.objectContaining({ phase: 'error', message: 'inference_install_interrupted' }),
+      }),
+    ]));
+    expect(verifyInterruptedInstall).toHaveBeenCalledTimes(2);
+    expect(saved).toContain('inference_install_interrupted');
+    expect(Object.values(JSON.parse(saved).modelsById).map((model: any) => model.state))
+      .not.toContain('installing');
+  });
+
+  it('shares one initialization read so concurrent status and install cannot observe or overwrite empty state', async () => {
+    let releaseRead!: (contents: string) => void;
+    const deferredRead = new Promise<string>((resolve) => { releaseRead = resolve; });
+    const readStateFile = vi.fn(async () => await deferredRead);
+    const writes: string[] = [];
+    const performInstall = vi.fn(async () => {});
+    const bookkeeping = createInferenceInstallBookkeeping({
+      stateFilePath: '/virtual/installs.json',
+      readStateFile,
+      ensureParentDir: async () => {},
+      writeStateFile: async (_path, contents) => { writes.push(contents); },
+    });
+
+    const status = bookkeeping.status('existing');
+    const install = bookkeeping.install({
+      modelId: 'new',
+      version: '1',
+      manifestHash: 'b'.repeat(64),
+      performInstall,
+    });
+    await Promise.resolve();
+    expect(readStateFile).toHaveBeenCalledTimes(1);
+    expect(performInstall).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+
+    releaseRead(JSON.stringify({
+      modelsById: {
+        existing: {
+          modelId: 'existing', state: 'installed', version: '1', manifestHash: 'a'.repeat(64),
+          kind: 'tts_sherpa', model: 'kokoro', updatedAtMs: 1,
+          progress: { phase: 'complete', progress: 1 }, lastError: null,
+        },
+      },
+    }));
+
+    await expect(status).resolves.toMatchObject({ modelId: 'existing', state: 'installed' });
+    await install;
+    await expect(bookkeeping.list()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ modelId: 'existing', state: 'installed' }),
+      expect.objectContaining({ modelId: 'new', state: 'installed' }),
+    ]));
+    expect(readStateFile).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(writes.at(-1)!).modelsById).toHaveProperty('existing');
+  });
+
   it('serializes fire-and-forget progress before terminal completion and ignores post-terminal progress', async () => {
     let persistedContents = '';
     let releaseDownloadingWrite!: () => void;
@@ -68,6 +157,50 @@ describe('inferenceInstallBookkeeping', () => {
       state: 'installed',
       progress: { phase: 'complete' },
     });
+  });
+
+  it('coalesces same-phase progress latest-wins while persisting phase transitions and terminal state', async () => {
+    vi.useFakeTimers();
+    try {
+      const persisted: Array<{ phase: string; progress: number }> = [];
+      const bookkeeping = createInferenceInstallBookkeeping({
+        stateFilePath: '/virtual/installs.json',
+        readStateFile: async () => { throw new Error('not_found'); },
+        ensureParentDir: async () => {},
+        writeStateFile: async (_path, contents) => {
+          const current = JSON.parse(contents).modelsById.pack.progress;
+          persisted.push({ phase: current.phase, progress: current.progress });
+        },
+        progressPersistenceIntervalMs: 100,
+      });
+
+      await bookkeeping.install({
+        modelId: 'pack',
+        version: '1',
+        manifestHash: 'a'.repeat(64),
+        performInstall: async (reportProgress) => {
+          void reportProgress({ phase: 'downloading', progress: 0.1 });
+          void reportProgress({ phase: 'downloading', progress: 0.2 });
+          void reportProgress({ phase: 'downloading', progress: 0.3 });
+          await vi.advanceTimersByTimeAsync(100);
+          void reportProgress({ phase: 'downloading', progress: 0.4 });
+          await reportProgress({ phase: 'verifying', progress: 0.9 });
+        },
+      });
+
+      expect(persisted).toEqual([
+        { phase: 'queued', progress: 0 },
+        // Entering downloading is itself a phase transition and must become
+        // observable immediately. Subsequent same-phase writes coalesce to
+        // the latest value at the bounded cadence.
+        { phase: 'downloading', progress: 0.1 },
+        { phase: 'downloading', progress: 0.3 },
+        { phase: 'verifying', progress: 0.9 },
+        { phase: 'complete', progress: 1 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('surfaces a fire-and-forget progress persistence failure and persists terminal error state', async () => {

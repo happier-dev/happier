@@ -16,7 +16,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
   return {
     ...actual,
     getResolvedContributionRegistry: getResolvedContributionRegistryMock,
-    primeResolvedContributionRegistry: async () => getResolvedContributionRegistryMock(),
+    resolveMergedContributionRegistry: async () => getResolvedContributionRegistryMock(),
   };
 });
 

@@ -14,6 +14,7 @@ describe('settleExecutionRunController', () => {
     });
     const dispose = vi.fn(async () => {
       expect(markerSettled).toBe(true);
+      await new Promise<never>(() => undefined);
     });
     const resolveTerminal = vi.fn();
     const controller = {
@@ -39,5 +40,12 @@ describe('settleExecutionRunController', () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(resolveTerminal).toHaveBeenCalledOnce();
     expect(controllers.has('run-1')).toBe(false);
+
+    await settleExecutionRunController({
+      runId: 'run-1',
+      controller,
+      controllers,
+    });
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });
