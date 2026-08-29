@@ -15,6 +15,7 @@ import { resolveCodeEditorFontMetrics } from '@/components/ui/code/editor/codeEd
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+import { useScreenReaderEnabled } from '@/hooks/ui/useScreenReaderEnabled';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
@@ -57,6 +58,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     const styles = embeddedTerminalPaneStyles;
     const uiFontScale = useLocalSetting('uiFontScale');
     const terminalRendererPreference = useLocalSetting('terminalRendererPreference');
+    const screenReaderActive = useScreenReaderEnabled();
     const [nativeRendererQuarantine, setNativeRendererQuarantine] = useLocalSettingMutable('terminalNativeRendererQuarantine');
     const osFontScale = typeof PixelRatio.getFontScale === 'function' ? PixelRatio.getFontScale() : 1;
     const fontMetrics = React.useMemo(() => resolveCodeEditorFontMetrics({ uiFontScale, osFontScale }), [osFontScale, uiFontScale]);
@@ -69,6 +71,14 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     const nativePlatform: TerminalNativeRuntimePlatform = Platform.OS === 'android'
         ? 'android'
         : 'ios';
+    // Auto is the product default: it selects the native renderer when every hard
+    // native gate passes and no screen reader is active, and falls back to the
+    // accessible xterm WebView while a screen reader is active unless the native
+    // module reports native accessibility. Explicit `native` is the informed
+    // override that accepts the fallback-required accessibility gap; it never
+    // bypasses package, legal, module, ABI, feature, crash, or quarantine gates.
+    const nativeAccessibilityAcceptedByPolicy = terminalRendererPreference === 'native'
+        || (terminalRendererPreference === 'auto' && !screenReaderActive);
     const resolvedNativeRendererOptions = React.useMemo(
         () => props.nativeRenderer ?? createDefaultNativeRendererOptions({
             platform: nativePlatform,
@@ -77,11 +87,13 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             iosGhosttyFeatureEnabled,
             androidTermuxFeatureEnabled,
             terminalRendererPreference,
+            accessibilityAcceptedByPolicy: nativeAccessibilityAcceptedByPolicy,
         }),
         [
             androidTermuxFeatureEnabled,
             byteStreamFeatureEnabled,
             iosGhosttyFeatureEnabled,
+            nativeAccessibilityAcceptedByPolicy,
             nativeFeatureEnabled,
             nativePlatform,
             props.nativeRenderer,
@@ -124,7 +136,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
         props.controller.retryConnect();
         requestWebViewRecovery();
     }, [props.controller]);
-    const nativeAccessibilityAccepted = terminalRendererPreference === 'native'
+    const nativeAccessibilityAccepted = nativeAccessibilityAcceptedByPolicy
         || hasAcceptedNativeAccessibility(resolvedNativeRendererOptions);
     const nativeSurfaceKey = props.nativeSurfaceKey?.trim() || props.testIdPrefix || 'embedded-terminal';
     const activeNativeSurfaceId = effectiveRenderer === 'ios-ghosttykit' || effectiveRenderer === 'android-termux'
@@ -328,12 +340,13 @@ function createDefaultNativeRendererOptions(input: Readonly<{
     iosGhosttyFeatureEnabled: boolean;
     androidTermuxFeatureEnabled: boolean;
     terminalRendererPreference: TerminalRendererPreference;
+    accessibilityAcceptedByPolicy: boolean;
 }>): GhosttyRendererSelectionOptions | TermuxRendererSelectionOptions | undefined {
     if (input.terminalRendererPreference === 'xterm-webview') {
         return undefined;
     }
 
-    const accessibilityAccepted = input.terminalRendererPreference === 'native';
+    const accessibilityAccepted = input.accessibilityAcceptedByPolicy;
 
     if (input.platform === 'ios') {
         const featureEnabled = input.byteStreamFeatureEnabled && input.nativeFeatureEnabled && input.iosGhosttyFeatureEnabled;

@@ -120,7 +120,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-detail-native",
     tier: "reactNative",
     platform: "web",
-    digest: "sha256:35d20b2399a4381b88b0af54cde9923bd1feddf82ec310fdfc195eb6c899a9a3",
+    digest: "sha256:c5a96458db8aa41a186a2f0832f46a66c798b79c04fe35613844171b3986b736",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({

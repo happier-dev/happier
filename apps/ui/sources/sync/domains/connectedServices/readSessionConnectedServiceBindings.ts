@@ -24,9 +24,10 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
  *    — released bundled Sessions persisted scalar service ids survive only
  *    through that provenance-named compatibility adapter, and are surfaced
  *    under their canonical qualified keys for display;
- * 3. the bounded provider runtime-descriptor fallback for older sessions,
- *    with every legacy scalar key normalized through the same generated
- *    built-in mapping; unknown ids fail closed and are dropped.
+ * 3. the Agents compatibility owner for older released flat provider metadata
+ *    and the retired persisted `agentRuntimeDescriptorV1` envelope, with every
+ *    legacy scalar key normalized through the same generated built-in mapping;
+ *    unknown ids fail closed and are dropped.
  *
  * Readers therefore always observe qualified keys, while new writes are
  * produced qualified by the canonical writers.

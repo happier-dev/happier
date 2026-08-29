@@ -57,7 +57,3 @@ export function backendTargetKeysMatch(a: BackendTargetRefV2Input, b: BackendTar
         return false;
     }
 }
-
-export function backendTargetsMatch(a: BackendTargetRefV2Input, b: BackendTargetRefV2Input): boolean {
-    return resolveBackendTargetKeyV2(a) === resolveBackendTargetKeyV2(b);
-}

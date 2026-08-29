@@ -11,8 +11,12 @@ const modalSpies = vi.hoisted(() => ({
     confirm: vi.fn(async () => false),
 }));
 
+// Mock factories import the leaf testkit mock modules, never the full
+// `@/dev/testkit` barrel: awaiting the barrel inside a factory can deadlock
+// module evaluation (the barrel itself imports product modules), leaving the
+// runner hung with no tests collected.
 vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit');
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
         spies: {
             confirm: modalSpies.confirm,
@@ -21,7 +25,7 @@ vi.mock('@/modal', async () => {
 });
 
 vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit');
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
         translate: (key: string) => {
             if (key === 'machine.backgroundServiceModes.defaultFollowing') return 'default background service';

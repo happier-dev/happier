@@ -340,7 +340,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-detail-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:625137763ce301b2c18d1dcd8f716702ee7f0e653a4d10ab7795491d10f45f8a",
+    digest: "sha256:f4268a9991e723b2a02a9f2acdacbbc26142380824b9b2a90b847d613caabbe2",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({
@@ -374,7 +374,7 @@ export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([
     contributionId: "bitbucket-triage-sources-native",
     tier: "reactNative",
     platform: "ios",
-    digest: "sha256:1c70acbb71c273846cb813bcd27677c07c4a0ea8fd98474f4a05717d4da43ea1",
+    digest: "sha256:972c8cbf3097f295213c28247588074eadabeee5c37246f6469e35dfdbe8dc08",
     releaseVersion: "0.0.0",
     files: Object.freeze([
       Object.freeze({

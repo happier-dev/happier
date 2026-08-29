@@ -206,7 +206,10 @@ describe('connectedAccountSettingsRoute', () => {
             machineId: 'machine-selected',
         }],
         [{ serviceId: 'github', profileId: 'work', groupId: 'primary' }],
-        [{ serviceId: 'github', profileId: ['work', 'other'] }],
+        [{ serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', accountId: 'other' }],
+        [{ serviceId: 'happier.agent.codex/openai-codex', profileId: ['work', 'other'] }],
+        [{ serviceId: 'happier.agent.codex/openai-codex', serverId: 'server-active' }],
+        [{ serviceId: ['happier.agent.codex/openai-codex', 'happier.agent.codex/openai-codex'] }],
     ])('rejects malformed, foreign, or mixed qualified route params %#', (params) => {
         expect(resolveConnectedAccountSettingsRoute(params, entries)).toBeNull();
     });

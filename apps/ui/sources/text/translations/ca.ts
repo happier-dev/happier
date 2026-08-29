@@ -10500,11 +10500,11 @@ settingsSession: {
             locationTitle: 'Ubicació del terminal incrustat',
             rendererTitle: 'Renderitzador del terminal',
             rendererAuto: 'Automàtic',
-            rendererAutoDescription: 'Fes servir el renderitzador xterm.js accessible tret que el renderitzador natiu sigui completament apte.',
+            rendererAutoDescription: 'Prefereix el renderitzador natiu quan es superin totes les comprovacions de seguretat natives i no hi hagi cap lector de pantalla actiu; canvia al WebView accessible de xterm.js mentre hi hagi un lector de pantalla actiu.',
             rendererXtermWebView: 'xterm.js WebView',
             rendererXtermWebViewDescription: 'Renderitzador de compatibilitat amb el millor suport d’accessibilitat.',
             rendererNative: 'Natiu',
-            rendererNativeDescription: 'Prefereix Ghostty a iOS o Termux a Android quan se superin totes les comprovacions de seguretat natives.',
+            rendererNativeDescription: 'Fa servir el renderitzador natiu encara que els lectors de pantalla hagin de fer servir el WebView de xterm.js; la resta de comprovacions de seguretat natives segueixen aplicant-se.',
         },
         quickKeys: {
             esc: 'ESC',

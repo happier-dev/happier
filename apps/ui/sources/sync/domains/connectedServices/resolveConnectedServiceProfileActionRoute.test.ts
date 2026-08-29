@@ -10,6 +10,7 @@ describe('resolveConnectedServiceProfileActionRoute', () => {
             pluginId: 'happier.agent.codex',
             localId: 'openai-codex',
         },
+        legacyServiceId: 'openai-codex',
         connectCommand: 'happier connect openai-codex',
         supportsOauth: true,
         executable: true,
@@ -25,6 +26,30 @@ describe('resolveConnectedServiceProfileActionRoute', () => {
                 pluginId: 'happier.agent.codex',
                 localId: 'openai-codex',
                 accountId: 'work',
+            },
+        });
+    });
+
+    it('routes canonical qualified service keys through the same public account owner', () => {
+        expect(resolveConnectedServiceProfileActionRoute(
+            { serviceId: 'happier.agent.codex/openai-codex', profileId: 'work' },
+            entries,
+        )).toEqual({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
+                accountId: 'work',
+            },
+        });
+        expect(resolveConnectedServiceProfileActionRoute(
+            { serviceId: 'happier.agent.codex/openai-codex' },
+            entries,
+        )).toEqual({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'happier.agent.codex',
+                localId: 'openai-codex',
             },
         });
     });

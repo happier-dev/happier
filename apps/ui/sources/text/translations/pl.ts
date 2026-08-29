@@ -11582,11 +11582,11 @@ settingsSession: {
       locationTitle: "Lokalizacja wbudowanego terminala",
       rendererTitle: "Renderer terminala",
       rendererAuto: "Automatycznie",
-      rendererAutoDescription: "Używaj dostępnego renderera xterm.js, chyba że renderer natywny spełnia wszystkie wymagania.",
+      rendererAutoDescription: "Preferuje renderer natywny, gdy wszystkie natywne kontrole bezpieczeństwa zostały zaliczone i żaden czytnik ekranu nie jest aktywny; podczas aktywności czytnika ekranu przełącza się na dostępną warstwę internetową xterm.js.",
       rendererXtermWebView: "xterm.js Widok internetowy",
       rendererXtermWebViewDescription: "Renderer zgodności z najlepszym wsparciem dostępności.",
       rendererNative: "Natywny",
-      rendererNativeDescription: "Preferuj Ghostty na iOS lub Termux na Androidzie po przejściu wszystkich natywnych kontroli bezpieczeństwa.",
+      rendererNativeDescription: "Używa renderera natywnego, nawet gdy czytniki ekranu nadal muszą korzystać z dostępnej warstwy internetowej xterm.js; wszystkie pozostałe natywne kontrole bezpieczeństwa nadal obowiązują.",
     },
     quickKeys: {
       esc: "ESC",

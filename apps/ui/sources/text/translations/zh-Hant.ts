@@ -9267,11 +9267,11 @@ settingsSession: {
             locationTitle: '嵌入式終端位置',
             rendererTitle: '終端機渲染器',
             rendererAuto: '自動',
-            rendererAutoDescription: '除非原生渲染器完全符合條件，否則使用可及性較佳的 xterm.js 渲染器。',
+            rendererAutoDescription: '當所有原生安全檢查通過且螢幕閱讀器未開啟時優先使用原生渲染器；螢幕閱讀器開啟期間切換到可及性較佳的 xterm.js 網頁視圖。',
             rendererXtermWebView: 'xterm.js 網頁視圖',
             rendererXtermWebViewDescription: '可及性支援最佳的相容渲染器。',
             rendererNative: '原生',
-            rendererNativeDescription: '當所有原生安全檢查通過時，在 iOS 優先使用 Ghostty，在 Android 優先使用 Termux。',
+            rendererNativeDescription: '即使螢幕閱讀器仍需要可及性較佳的 xterm.js 網頁視圖，也使用原生渲染器；其餘所有原生安全檢查仍然生效。',
         },
         quickKeys: {
             esc: 'ESC',

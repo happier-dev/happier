@@ -21,7 +21,7 @@ import {
     doesVoiceAgentRunMetadataMatchBackendTarget,
     readVoiceAgentRunMetadataFromSession,
 } from '@/voice/persistence/voiceAgentRunMetadata';
-import { backendTargetsMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
 import {
     DEFAULT_AGENT_ID,
@@ -421,7 +421,7 @@ export async function initializeVoiceAgentHandle({
         if (!resolvedBackendTarget) return false;
         const runTarget = run?.backendTarget;
         if (runTarget?.kind === 'builtInAgent' && typeof runTarget.agentId === 'string' && runTarget.agentId.trim()) {
-            return backendTargetsMatch(runTarget, resolvedBackendTarget);
+            return backendTargetKeysMatch(runTarget, resolvedBackendTarget);
         }
         return typeof run?.backendId === 'string' && run.backendId.trim() === resolvedAgentId;
     };

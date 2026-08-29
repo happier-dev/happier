@@ -43,6 +43,11 @@ const localSettingState = vi.hoisted(() => ({
     terminalNativeRendererQuarantine: null as unknown,
 }));
 
+const screenReaderState = vi.hoisted(() => ({
+    enabled: false,
+    notify: null as ((enabled: boolean) => void) | null,
+}));
+
 const localSettingMutations = vi.hoisted(() => ({
     setTerminalNativeRendererQuarantine: vi.fn((value: unknown) => {
         localSettingState.terminalNativeRendererQuarantine = value;
@@ -91,6 +96,19 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
+}));
+
+vi.mock('@/hooks/ui/useScreenReaderEnabled', () => ({
+    useScreenReaderEnabled: () => {
+        const [enabled, setEnabled] = React.useState(screenReaderState.enabled);
+        React.useEffect(() => {
+            screenReaderState.notify = setEnabled;
+            return () => {
+                if (screenReaderState.notify === setEnabled) screenReaderState.notify = null;
+            };
+        }, []);
+        return enabled;
+    },
 }));
 
 vi.mock('@/utils/ui/clipboard', () => ({
@@ -190,6 +208,8 @@ function resetSurfaceState() {
     surfaceState.ghosttyCopySelection.mockReset();
     surfaceState.termuxCopySelection.mockReset();
     featureState.enabled = {};
+    screenReaderState.enabled = false;
+    screenReaderState.notify = null;
     localSettingState.terminalRendererPreference = 'auto';
     localSettingState.terminalNativeRendererQuarantine = null;
     localSettingMutations.setTerminalNativeRendererQuarantine.mockClear();
@@ -355,35 +375,6 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
 
         expect(surfaceState.ghosttyProps).not.toBeNull();
         expect(surfaceState.xtermProps).toBeNull();
-        expect(surfaceState.termuxProps).toBeNull();
-    });
-
-    it('keeps xterm WebView selected in auto mode when native accessibility needs an explicit native preference', async () => {
-        platformState.os = 'ios';
-        resetSurfaceState();
-        featureState.enabled = {
-            'terminal.transport.byteStream': true,
-            'terminal.renderer.native': true,
-            'terminal.renderer.iosGhostty': true,
-        };
-        nativeAvailabilityState.availability = {
-            available: true,
-            platform: 'ios',
-            renderer: 'ios-ghosttykit',
-            moduleVersion: '0.0.0',
-            accessibility: 'fallback-required',
-        };
-
-        await renderScreen(
-            <EmbeddedTerminalPane
-                title="Terminal"
-                controller={makeController()}
-                terminalRef={{ current: null }}
-            />,
-        );
-
-        expect(surfaceState.xtermProps).not.toBeNull();
-        expect(surfaceState.ghosttyProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
     });
 
@@ -1030,5 +1021,233 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.xtermProps).not.toBeNull();
         expect(surfaceState.ghosttyProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
+    });
+
+    it('selects the native renderer by default in auto mode without an active screen reader on both platforms', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.ghosttyProps).not.toBeNull();
+        expect(surfaceState.xtermProps).toBeNull();
+        expect(surfaceState.termuxProps).toBeNull();
+
+        platformState.os = 'android';
+        resetSurfaceState();
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.androidTermux': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'android',
+            renderer: 'android-termux',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.termuxProps).not.toBeNull();
+        expect(surfaceState.xtermProps).toBeNull();
+        expect(surfaceState.ghosttyProps).toBeNull();
+    });
+
+    it('switches the auto default between native and xterm WebView as the screen reader toggles without changing the pane controller', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const controller = makeController();
+        const screen = await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={controller}
+                terminalRef={{ current: null }}
+            />,
+        );
+        expect(surfaceState.ghosttyProps).not.toBeNull();
+
+        screenReaderState.enabled = true;
+        await act(async () => {
+            screenReaderState.notify?.(true);
+        });
+        expect(surfaceState.xtermProps).not.toBeNull();
+        expect(surfaceState.ghosttyProps).toBeNull();
+        expect(surfaceState.xtermProps).toMatchObject({ onInput: controller.onInput });
+
+        screenReaderState.enabled = false;
+        await act(async () => {
+            screenReaderState.notify?.(false);
+        });
+        expect(surfaceState.ghosttyProps).not.toBeNull();
+        expect(surfaceState.xtermProps).toBeNull();
+    });
+
+    it('keeps the native renderer with a screen reader active when the module reports native accessibility', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        screenReaderState.enabled = true;
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'native',
+        };
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.ghosttyProps).not.toBeNull();
+        expect(surfaceState.ghosttyProps).toMatchObject({ accessibilityAccepted: true });
+        expect(surfaceState.xtermProps).toBeNull();
+    });
+
+    it('keeps the explicit native preference selected with a screen reader active while native accessibility stays fallback-required', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        screenReaderState.enabled = true;
+        localSettingState.terminalRendererPreference = 'native';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.ghosttyProps).not.toBeNull();
+        expect(surfaceState.xtermProps).toBeNull();
+    });
+
+    it('keeps xterm WebView selected from the auto default when a hard native gate fails without a screen reader', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.xtermProps).not.toBeNull();
+        expect(surfaceState.ghosttyProps).toBeNull();
+        expect(surfaceState.termuxProps).toBeNull();
+    });
+
+    it('routes the auto-default native renderer through the same fatal quarantine fallback', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+        try {
+            await renderScreen(
+                <EmbeddedTerminalPane
+                    title="Terminal"
+                    controller={makeController()}
+                    terminalRef={{ current: null }}
+                />,
+            );
+            expect(surfaceState.ghosttyProps).not.toBeNull();
+
+            await act(async () => {
+                (surfaceState.ghosttyProps as {
+                    onRendererCrash?: (event: Readonly<{ surfaceId: string; reason: string; fatal?: boolean }>) => void;
+                }).onRendererCrash?.({
+                    surfaceId: 'embedded-terminal:ios-ghosttykit:embedded-terminal',
+                    reason: 'renderer-terminated',
+                    fatal: true,
+                });
+            });
+
+            expect(surfaceState.xtermProps).not.toBeNull();
+            expect(localSettingMutations.setTerminalNativeRendererQuarantine).toHaveBeenCalledWith({
+                renderer: 'ios-ghosttykit',
+                expiresAtMs: 1_700_086_400_000,
+            });
+        } finally {
+            now.mockRestore();
+        }
     });
 });

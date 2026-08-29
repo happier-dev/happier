@@ -13,10 +13,12 @@ export type ConnectedServiceProfileActionRoute =
     }>;
 
 /**
- * Compatibility owner for recovery surfaces that still receive a released
- * built-in scalar service id. Every successful decision is translated through
- * the generated built-in mapping and returns the exact qualified account route;
- * profile kind and profile id never select a mutation implementation.
+ * Owner for recovery surfaces that receive a service id in either persisted
+ * shape: a canonical qualified Connected Account service key resolves through
+ * the exact qualified account owner, and a released built-in scalar service id
+ * is translated through the generated built-in mapping. Every successful
+ * decision returns the exact qualified account route; profile kind and profile
+ * id never select a mutation implementation.
  */
 export function resolveConnectedServiceProfileActionRoute(
     params: Readonly<{ serviceId?: unknown; profileId?: unknown }>,

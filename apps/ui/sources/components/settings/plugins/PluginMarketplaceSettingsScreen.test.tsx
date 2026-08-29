@@ -101,7 +101,6 @@ type MachineCapabilitiesState =
     }>;
 type LoadedMachineCapabilitiesState = Extract<MachineCapabilitiesState, Readonly<{ status: 'loaded' }>>;
 
-const usePrimaryMachineFromActiveSelectionMock = vi.hoisted(() => vi.fn());
 const getActiveServerIdMock = vi.hoisted(() => vi.fn());
 const useMachineCapabilitiesCacheMock = vi.hoisted(() => vi.fn());
 const getMachineCapabilitiesCacheStateMock = vi.hoisted(() => vi.fn());
@@ -627,10 +626,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     },
 }));
 
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => usePrimaryMachineFromActiveSelectionMock(),
-}));
-
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => getActiveServerIdMock(),
     getServerProfileById: (serverId: string) => (
@@ -926,7 +921,6 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
 
 afterEach(() => {
     clearDaemonMergedProjectionCacheForTests();
-    usePrimaryMachineFromActiveSelectionMock.mockReset();
     getActiveServerIdMock.mockReset();
     useMachineCapabilitiesCacheMock.mockReset();
     getMachineCapabilitiesCacheStateMock.mockReset();
@@ -959,7 +953,6 @@ afterEach(() => {
 beforeEach(() => {
     clearDaemonMergedProjectionCacheForTests();
     setMachineAdministrationTargetFixture();
-    usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-1');
     useMachineCliDetectionTargetMock.mockReturnValue({ daemonStateVersion: 1, isOnline: true });
     getMachineCapabilitiesCacheStateMock.mockImplementation(() => {
         const latestResult = useMachineCapabilitiesCacheMock.mock.results.at(-1)?.value as
@@ -2747,7 +2740,6 @@ describe('PluginSettingsHomeScreen', () => {
             serverId: 'server-b',
             machineId: 'machine-2',
         });
-        usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-2');
         getActiveServerIdMock.mockReturnValue('server-b');
         await act(async () => {
             screen.tree.update(React.createElement(RerenderablePluginDetailScreen, {
@@ -3184,7 +3176,6 @@ describe('PluginSettingsHomeScreen', () => {
             ],
         };
 
-        usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-1');
         getActiveServerIdMock.mockReturnValue('server-a');
         useMachineCapabilitiesCacheMock.mockImplementation(({ machineId }: { machineId: string | null }) => ({
             state: createMachineCapabilitiesState(machineId === 'machine-1' ? [installedPlugin] : [installedPlugin]),
@@ -3262,7 +3253,6 @@ describe('PluginSettingsHomeScreen', () => {
             serverId: 'server-b',
             machineId: 'machine-2',
         });
-        usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-2');
         getActiveServerIdMock.mockReturnValue('server-b');
 
         await act(async () => {
@@ -3339,7 +3329,6 @@ describe('PluginSettingsHomeScreen', () => {
             serverId: 'server-b',
             machineId: 'machine-2',
         });
-        usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-2');
         getActiveServerIdMock.mockReturnValue('server-b');
         await act(async () => {
             screen.tree.update(React.createElement(RerenderablePluginDetailScreen, {
@@ -3486,7 +3475,6 @@ describe('PluginSettingsHomeScreen', () => {
         expect(screen.findRow('settings.plugins.detail.installed-plugin.generation')).toBeFalsy();
 
         clearMachineAdministrationTargetFixture();
-        usePrimaryMachineFromActiveSelectionMock.mockReturnValue(null);
         await act(async () => {
             screen.tree.update(React.createElement(RerenderablePluginSettingsHomeScreen, {
                 scopeToken: 'machine-none',

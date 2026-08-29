@@ -10,7 +10,7 @@ import { isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type A
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { resolveCatalogAgentIdForBackendTarget, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useApplySettings } from '@/sync/store/settingsWriters';
-import { backendTargetsMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildLastUsedBackendTargetSettings } from '@/agents/backendCatalog/buildLastUsedBackendTargetSettings';
 
 function findEntryByTarget(
@@ -111,7 +111,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     React.useEffect(() => {
         if (matched) return;
         const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
-            && backendTargetsMatch(explicitRoutePluginTarget, backendTarget);
+            && backendTargetKeysMatch(explicitRoutePluginTarget, backendTarget);
         if ((shouldPreserveUnresolvedPluginTarget(params.projectionPhase) || shouldKeepExplicitRoutePluginTarget) && isPluginLikeBackendTarget(backendTarget)) {
             return;
         }
@@ -139,7 +139,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
     }, [backendTarget, matched?.agentId]);
     const selectedRuntimeCarrierAgentId = React.useMemo(() => {
         const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
-            && backendTargetsMatch(explicitRoutePluginTarget, backendTarget);
+            && backendTargetKeysMatch(explicitRoutePluginTarget, backendTarget);
         if (
             !matched
             && isPluginLikeBackendTarget(backendTarget)

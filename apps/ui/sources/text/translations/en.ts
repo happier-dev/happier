@@ -12024,11 +12024,11 @@ settingsSession: {
             locationTitle: 'Embedded terminal location',
             rendererTitle: 'Terminal renderer',
             rendererAuto: 'Automatic',
-            rendererAutoDescription: 'Use the accessible xterm.js renderer unless the native renderer is fully eligible.',
+            rendererAutoDescription: 'Prefers the native renderer when all native safety checks pass and no screen reader is active; switches to the accessible xterm.js WebView while a screen reader is in use.',
             rendererXtermWebView: 'xterm.js WebView',
             rendererXtermWebViewDescription: 'Compatibility renderer with the best accessibility support.',
             rendererNative: 'Native',
-            rendererNativeDescription: 'Prefer Ghostty on iOS or Termux on Android when all native safety checks pass.',
+            rendererNativeDescription: 'Uses the native renderer even when screen readers still need the accessible xterm.js WebView; every other native safety check still applies.',
         },
         quickKeys: {
             esc: 'Esc',

@@ -8,7 +8,6 @@ import type {
   PluginContributedActionOpenOutcome,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import {
-  TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
   TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT,
 } from '@/components/ui/forms/largeTextInputPolicy';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
@@ -1467,14 +1466,13 @@ describe('AgentInput (history navigation)', () => {
     expect(JSON.stringify(mocks.recordLargeTextInputDiagnostic.mock.calls)).not.toContain(largePrompt);
   });
 
-  it('buffers continuous oversized edits from parent state while keeping the full local input value', async () => {
-    vi.useFakeTimers();
+  it('publishes oversized edits synchronously so the controlled value cannot replay an older draft', async () => {
     const { AgentInput } = await import('./AgentInput');
     const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
     const editedPrompt = `${largePrompt}y`;
-    const renderElement = (abortVisible: boolean) => (
+    const renderElement = (value: string, abortVisible: boolean) => (
       <AgentInput
-        value={largePrompt}
+        value={value}
         onChangeText={mocks.onChangeText}
         placeholder="p"
         onSend={mocks.onSend}
@@ -1485,7 +1483,7 @@ describe('AgentInput (history navigation)', () => {
         showAbortButton={abortVisible}
       />
     );
-    const screen = await renderScreen(renderElement(false));
+    const screen = await renderScreen(renderElement(largePrompt, false));
     let input = findMultiTextInput(screen);
 
     await act(async () => {
@@ -1496,61 +1494,15 @@ describe('AgentInput (history navigation)', () => {
       input.props.onChangeText?.(editedPrompt);
     });
 
-    expect(mocks.onChangeText).not.toHaveBeenCalled();
+    expect(mocks.onChangeText).toHaveBeenCalledTimes(1);
+    expect(mocks.onChangeText).toHaveBeenCalledWith(editedPrompt);
 
     await act(async () => {
-      screen.tree.update(renderElement(true));
+      screen.tree.update(renderElement(editedPrompt, true));
     });
 
     input = findMultiTextInput(screen);
     expect(input.props.value).toBe(editedPrompt);
-
-    await act(async () => {
-      vi.advanceTimersByTime(TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS);
-    });
-
-    expect(mocks.onChangeText).toHaveBeenCalledTimes(1);
-    expect(mocks.onChangeText).toHaveBeenCalledWith(editedPrompt);
-  });
-
-  it('flushes the latest oversized local edit before sending', async () => {
-    vi.useFakeTimers();
-    const { AgentInput } = await import('./AgentInput');
-    const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
-    const editedPrompt = `${largePrompt}y`;
-    const screen = await renderScreen(
-      <AgentInput
-        value={largePrompt}
-        onChangeText={mocks.onChangeText}
-        placeholder="p"
-        onSend={mocks.onSend}
-        autocompleteKinds={[]}
-        autocompleteSuggestions={async () => []}
-        isSendDisabled={false}
-        disabled={false}
-        showAbortButton={false}
-      />
-    );
-    const input = findMultiTextInput(screen);
-
-    await act(async () => {
-      input.props.onStateChange?.({
-        text: editedPrompt,
-        selection: { start: editedPrompt.length, end: editedPrompt.length },
-      });
-      input.props.onChangeText?.(editedPrompt);
-    });
-
-    expect(mocks.onChangeText).not.toHaveBeenCalled();
-
-    await act(async () => {
-      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
-    });
-
-    expect(mocks.onChangeText).toHaveBeenCalledTimes(1);
-    expect(mocks.onChangeText).toHaveBeenCalledWith(editedPrompt);
-    expect(mocks.onSend).toHaveBeenCalledTimes(1);
-    expect(mocks.onSend).toHaveBeenCalledWith({ inputTextOverride: editedPrompt });
   });
 
   it('shows an expansion toggle when persisted expansion is available and input content overflows', async () => {

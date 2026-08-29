@@ -11925,11 +11925,11 @@ settingsSession: {
       locationTitle: "Posizione del terminale incorporato",
       rendererTitle: "Renderer del terminale",
       rendererAuto: "Automatico",
-      rendererAutoDescription: "Usa il renderer accessibile xterm.js a meno che il renderer nativo non sia completamente idoneo.",
+      rendererAutoDescription: "Preferisce il renderer nativo quando tutti i controlli di sicurezza nativi sono superati e nessuno screen reader è attivo; passa alla visualizzazione Web accessibile di xterm.js mentre uno screen reader è attivo.",
       rendererXtermWebView: "xterm.js Visualizzazione Web",
       rendererXtermWebViewDescription: "Renderer di compatibilità con il miglior supporto per l’accessibilità.",
       rendererNative: "Nativo",
-      rendererNativeDescription: "Preferisci Ghostty su iOS o Termux su Android quando tutti i controlli di sicurezza nativi sono superati.",
+      rendererNativeDescription: "Usa il renderer nativo anche se gli screen reader devono ancora usare la visualizzazione Web accessibile di xterm.js; tutti gli altri controlli di sicurezza nativi restano validi.",
     },
     quickKeys: {
       esc: "ESC",

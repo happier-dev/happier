@@ -11577,11 +11577,11 @@ settingsSession: {
       locationTitle: "Emplacement du terminal intégré",
       rendererTitle: "Moteur de rendu du terminal",
       rendererAuto: "Automatique",
-      rendererAutoDescription: "Utilise le moteur de rendu accessible xterm.js sauf si le moteur natif est pleinement éligible.",
+      rendererAutoDescription: "Préfère le moteur de rendu natif lorsque tous les contrôles de sécurité natifs sont validés et qu'aucun lecteur d'écran n'est actif ; bascule vers la Vue Web xterm.js accessible lorsqu'un lecteur d'écran est actif.",
       rendererXtermWebView: "xterm.js Vue Web",
       rendererXtermWebViewDescription: "Moteur de rendu de compatibilité avec le meilleur support d’accessibilité.",
       rendererNative: "Natif",
-      rendererNativeDescription: "Préfère Ghostty sur iOS ou Termux sur Android lorsque tous les contrôles de sécurité natifs sont validés.",
+      rendererNativeDescription: "Utilise le moteur de rendu natif même si les lecteurs d'écran doivent encore passer par la Vue Web xterm.js accessible ; tous les autres contrôles de sécurité natifs restent applicables.",
     },
     quickKeys: {
       esc: "Échap",

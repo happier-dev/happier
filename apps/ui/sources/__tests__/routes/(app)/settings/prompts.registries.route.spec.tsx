@@ -6,17 +6,12 @@ import { renderSettingsView } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
-const usePrimaryMachineFromActiveSelectionMock = vi.hoisted(() => vi.fn());
 const machinePromptRegistriesListAdaptersMock = vi.hoisted(() => vi.fn());
 const machinePromptRegistriesListSourcesMock = vi.hoisted(() => vi.fn());
 const machinePromptRegistriesScanSourceMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => useFeatureEnabledMock(featureId),
-}));
-
-vi.mock('@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection', () => ({
-    usePrimaryMachineFromActiveSelection: () => usePrimaryMachineFromActiveSelectionMock(),
 }));
 
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
@@ -29,13 +24,11 @@ describe('Prompt registries route', () => {
     beforeEach(() => {
         vi.resetModules();
         useFeatureEnabledMock.mockReset();
-        usePrimaryMachineFromActiveSelectionMock.mockReset();
         machinePromptRegistriesListAdaptersMock.mockReset();
         machinePromptRegistriesListSourcesMock.mockReset();
         machinePromptRegistriesScanSourceMock.mockReset();
 
         useFeatureEnabledMock.mockReturnValue(true);
-        usePrimaryMachineFromActiveSelectionMock.mockReturnValue('machine-1');
         machinePromptRegistriesListAdaptersMock.mockResolvedValue({ ok: true, adapters: [] });
         machinePromptRegistriesListSourcesMock.mockResolvedValue({ ok: true, sources: [] });
         machinePromptRegistriesScanSourceMock.mockResolvedValue({ ok: true, items: [] });

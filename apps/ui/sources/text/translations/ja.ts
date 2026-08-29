@@ -11822,11 +11822,11 @@ settingsSession: {
       locationTitle: "埋め込みターミナルの場所",
       rendererTitle: "ターミナルレンダラー",
       rendererAuto: "自動",
-      rendererAutoDescription: "ネイティブレンダラーが完全に利用可能な場合を除き、アクセシビリティ対応の xterm.js レンダラーを使います。",
+      rendererAutoDescription: "すべてのネイティブ安全性チェックを満たし、スクリーンリーダーが有効でない場合はネイティブレンダラーを優先します。スクリーンリーダー使用中はアクセシビリティ対応の xterm.js Webビューに切り替わります。",
       rendererXtermWebView: "xterm.js Webビュー",
       rendererXtermWebViewDescription: "アクセシビリティ対応が最も安定した互換レンダラーです。",
       rendererNative: "ネイティブ",
-      rendererNativeDescription: "すべてのネイティブ安全性チェックを満たした場合に、iOS では Ghostty、Android では Termux を優先します。",
+      rendererNativeDescription: "スクリーンリーダーが引き続き xterm.js Webビューを必要とする場合でもネイティブレンダラーを使用します。その他のネイティブ安全性チェックはすべて適用されます。",
     },
     quickKeys: {
       esc: "ESC",

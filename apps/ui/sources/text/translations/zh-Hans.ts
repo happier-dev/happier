@@ -11207,11 +11207,11 @@ settingsSession: {
       locationTitle: "嵌入式终端位置",
       rendererTitle: "终端渲染器",
       rendererAuto: "自动",
-      rendererAutoDescription: "除非原生渲染器完全符合条件，否则使用可访问性更好的 xterm.js 渲染器。",
+      rendererAutoDescription: "当所有原生安全检查通过且屏幕阅读器未开启时优先使用原生渲染器；屏幕阅读器开启期间切换到可访问性更好的 xterm.js 网页视图。",
       rendererXtermWebView: "xterm.js 网页视图",
       rendererXtermWebViewDescription: "可访问性支持最好的兼容渲染器。",
       rendererNative: "原生",
-      rendererNativeDescription: "当所有原生安全检查通过时，在 iOS 上优先使用 Ghostty，在 Android 上优先使用 Termux。",
+      rendererNativeDescription: "即使屏幕阅读器仍需要可访问性更好的 xterm.js 网页视图，也使用原生渲染器；其余所有原生安全检查仍然生效。",
     },
     quickKeys: {
       esc: "ESC",

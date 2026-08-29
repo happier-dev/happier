@@ -3,6 +3,7 @@ import {
     buildQualifiedPluginContributionKey,
     ConnectedServiceAuthGroupIdSchema,
     ConnectedServiceIdSchema,
+    parseQualifiedPluginContributionKey,
     PluginContributionIdentityV1Schema,
     QualifiedConnectedAccountIdSchema,
     type ConnectedServiceId,
@@ -205,6 +206,26 @@ export function resolveConnectedAccountSettingsRoute(
 
     if (params.pluginId !== undefined || params.localId !== undefined) {
         return resolveQualifiedConnectedAccountSettingsRoute(params, entries);
+    }
+
+    // Canonical current shape first: a qualified Connected Account service key
+    // delegates to the exact qualified owner. `profileId` is the legacy-ingress
+    // spelling of the qualified `accountId` focus, so recovery callers keep one
+    // contract across both service-key shapes; mixing the two focus spellings
+    // still fails closed.
+    const qualifiedService = rawLegacyServiceId === null
+        ? null
+        : parseQualifiedPluginContributionKey(rawLegacyServiceId);
+    if (qualifiedService) {
+        if (params.accountId !== undefined && params.profileId !== undefined) return null;
+        return resolveQualifiedConnectedAccountSettingsRoute({
+            pluginId: qualifiedService.pluginId,
+            localId: qualifiedService.localId,
+            accountId: params.accountId ?? params.profileId,
+            groupId: params.groupId,
+            serverId: params.serverId,
+            machineId: params.machineId,
+        }, entries);
     }
 
     const legacyServiceId = ConnectedServiceIdSchema.safeParse(rawLegacyServiceId);

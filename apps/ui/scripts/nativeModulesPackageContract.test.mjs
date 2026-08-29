@@ -755,8 +755,8 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     assert.equal(rendererPolicy.androidTermux.interactionModel.remainingGaps.includes('selection-handles'), false);
     assert.ok(rendererPolicy.androidTermux.interactionModel.completedDeviceQa.includes('localized-accessibility-summary-and-actions'));
     assert.ok(rendererPolicy.androidTermux.interactionModel.completedDeviceQa.includes('renderer-crash-event'));
-    assert.deepEqual(rendererPolicy.androidTermux.interactionModel.remainingGaps, ['complete-term-7b-loaded-workload-matrix']);
-    assert.deepEqual(rendererPolicy.androidTermux.interactionModel.requiresDeviceQa, ['complete-term-7b-loaded-workload-matrix']);
+    assert.deepEqual(rendererPolicy.androidTermux.interactionModel.remainingGaps, []);
+    assert.deepEqual(rendererPolicy.androidTermux.interactionModel.requiresDeviceQa, []);
     assert.ok(rendererPolicy.androidTermux.gates.includes('legal-product-approval'));
     assert.ok(rendererPolicy.androidTermux.gates.includes('custom-accessibility-model-or-webview-accessible-fallback'));
 });

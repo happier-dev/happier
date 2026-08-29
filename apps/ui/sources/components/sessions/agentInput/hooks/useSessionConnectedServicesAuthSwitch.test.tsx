@@ -257,8 +257,13 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+// Mock factories must import the leaf testkit mock modules, never the full
+// `@/dev/testkit` barrel: the barrel's own evaluation transitively imports
+// product modules (e.g. `@/text` via the Agent catalog fixtures), so awaiting
+// the barrel inside a factory that is itself invoked during that evaluation
+// deadlocks module evaluation and the runner collects no tests.
 vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit');
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         router: { push: routerPushMock },
     }).module;
@@ -276,8 +281,9 @@ vi.mock('@/sync/ops/connectedServices/sessionAuthSwitch', () => ({
     setSessionConnectedServiceAuthBinding: (...args: unknown[]) => setSessionConnectedServiceAuthBindingMock(...args),
 }));
 
+// Leaf import, not the barrel — see the factory-deadlock note above.
 vi.mock('@/modal', async () => {
-    const { createModalModuleMock } = await import('@/dev/testkit');
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
         spies: {
             alert: (...args) => modalAlertMock(...args),
@@ -286,8 +292,9 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
+// Leaf import, not the barrel — see the factory-deadlock note above.
 vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit');
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
         translate: (key: string, params?: Record<string, unknown>) => {
             if (key === 'connectedServices.authChip.connectedCountLabel') {
@@ -501,10 +508,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             switchingDisabledReason: null,
         }));
 
-        // Public presentation: the applied machine descriptor title, not a
-        // borrowed Codex/Claude brand name, and not a raw service id.
+        // A native session binding keeps the compact neutral native label; the
+        // public descriptor presentation is asserted on the connected binding
+        // after the switch below.
         expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
-            .toBe('Acme Reviewer Auth: Reviewer');
+            .toBe('Native');
 
         const props = renderChipPopover(hook);
         expect(props.resolveOptionAvailability({
@@ -520,6 +528,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             });
             await Promise.resolve();
         });
+
+        // Public presentation: the applied machine descriptor title, not a
+        // borrowed Codex/Claude brand name, and not a raw service id.
+        expect(hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label)
+            .toBe('Acme Reviewer Auth: Reviewer');
 
         // The canonical switch RPC receives the exact qualified key.
         const rpcParams = setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0];
@@ -655,7 +668,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         const writtenKeys = Object.keys(
             setSessionConnectedServiceAuthBindingMock.mock.calls[0]?.[0].bindings.bindingsByServiceId,
         );
-        expect(writtenKeys).toEqual([CLAUDE_SERVICE_KEY]);
+        // The canonical writer emits the full declared service set under
+        // canonical qualified keys only (same contract as the sibling
+        // materialization and Codex switch tests).
+        expect(writtenKeys).toEqual([CLAUDE_SERVICE_KEY, CLAUDE_SUBSCRIPTION_SERVICE_KEY]);
         expect(writtenKeys).not.toContain('anthropic');
     });
 
