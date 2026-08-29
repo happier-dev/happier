@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+  ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1,
   AccountApiTokenIntrospectionRequestV1Schema,
   AccountApiTokenIntrospectionSubjectFailureV1Schema,
   AccountApiTokenIntrospectionSuccessV1Schema,
@@ -15,6 +16,7 @@ describe('auth/accountApiTokens PAT introspection', () => {
     expect(ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1).toBe(
       '/v1/auth/api-tokens/introspect',
     );
+    expect(ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1).toBe(1_024);
     expect(
       AccountApiTokenIntrospectionRequestV1Schema.parse({ token: PAT }),
     ).toEqual({ token: PAT });

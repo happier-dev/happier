@@ -59,6 +59,7 @@ describe('review comment operation contracts', () => {
       'reviews.comments.setDisposition',
       'reviews.comments.attachEvidence',
       'reviews.comments.bulkTransition',
+      'reviews.comments.claimPublicationDispatch',
     ]);
 
     for (const actionId of REVIEW_COMMENT_ACTION_IDS_V1) {

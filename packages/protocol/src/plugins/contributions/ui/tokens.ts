@@ -21,6 +21,8 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   'forward',
   'more',
   'search',
+  'change-open',
+  'change-complete',
 ] as const;
 
 export const PluginUiIconTokenV1Schema = z.enum(PLUGIN_UI_ICON_TOKENS_V1);

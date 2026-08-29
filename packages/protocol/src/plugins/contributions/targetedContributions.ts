@@ -76,7 +76,7 @@ export const PluginTargetedContributionOperationInputV1Schema = z.union([
 export type PluginTargetedContributionOperationInputV1 = z.infer<typeof PluginTargetedContributionOperationInputV1Schema>;
 
 export const PluginTargetedContributionOperationRequirementsV1Schema = z.object({
-  surface: PluginActionSurfaceV2Schema,
+  surfaces: z.array(PluginActionSurfaceV2Schema).min(1),
   dangerLevel: PluginActionDangerLevelV2Schema,
 }).strict();
 export type PluginTargetedContributionOperationRequirementsV1 = z.infer<typeof PluginTargetedContributionOperationRequirementsV1Schema>;
@@ -110,10 +110,14 @@ export const PluginContributionPointProtocolV1Schema = z.object({
   operations: boundedOperationMap(PluginTargetedContributionOperationV1Schema),
   surfaces: boundedSurfaceMap(PluginTargetedContributionSurfaceV1Schema).optional(),
 }).strict().superRefine((protocol, ctx) => {
-  if (Object.keys(protocol.operations).length === 0 && Object.keys(protocol.surfaces ?? {}).length === 0) {
+  if (
+    protocol.descriptor === undefined
+    && Object.keys(protocol.operations).length === 0
+    && Object.keys(protocol.surfaces ?? {}).length === 0
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'A contribution protocol must declare at least one operation or Surface role.',
+      message: 'A contribution protocol must declare a descriptor, operation, or Surface role.',
     });
   }
 });
@@ -231,10 +235,14 @@ export const PluginTargetedContributionV1Schema = z.object({
   operations: boundedOperationMap(asProtocolZod(PluginContributionLocalIdSchema)),
   surfaces: boundedSurfaceMap(PluginUiRendererChainBindingV1Schema).optional(),
 }).strict().superRefine((contribution, ctx) => {
-  if (Object.keys(contribution.operations).length === 0 && Object.keys(contribution.surfaces ?? {}).length === 0) {
+  if (
+    contribution.descriptor === undefined
+    && Object.keys(contribution.operations).length === 0
+    && Object.keys(contribution.surfaces ?? {}).length === 0
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'A targeted contribution must bind at least one operation or Surface role.',
+      message: 'A targeted contribution must bind a descriptor, operation, or Surface role.',
     });
   }
 });

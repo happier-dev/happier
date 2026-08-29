@@ -26,6 +26,7 @@ import {
   type PluginContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
 import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
+import type { ConnectedServiceCredentialKind } from '../../connect/connectedServiceSchemas.js';
 import {
   ConnectedAccountPurposeDeclarationsV1Schema,
   type ConnectedAccountPurposeDeclarationV1,
@@ -158,6 +159,7 @@ export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
     title?: PluginLocalizedStringV2;
     required?: boolean;
     materializationKinds?: PluginConnectedAccountMaterializationKind[];
+    credentialKinds?: ConnectedServiceCredentialKind[];
   }>;
 
 export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
@@ -234,6 +236,10 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
           )
         : undefined;
       if (materializationKinds) Object.freeze(materializationKinds);
+      const credentialKinds = declaration.credentialKinds
+        ? [...declaration.credentialKinds].sort(compareProviderCanonicalStringsV1)
+        : undefined;
+      if (credentialKinds) Object.freeze(credentialKinds);
       return Object.freeze({
         purpose: declaration.purpose,
         service: Object.freeze(service),
@@ -246,6 +252,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
         ...(materializationKinds === undefined
           ? {}
           : { materializationKinds }),
+        ...(credentialKinds === undefined ? {} : { credentialKinds }),
       });
     }).sort((left, right) =>
       compareProviderCanonicalStringsV1(left.purpose, right.purpose));

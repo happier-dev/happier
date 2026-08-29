@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   PluginUiAcquireComposerInputLockRequestV1Schema,
@@ -27,6 +27,11 @@ import {
   PluginUiSelectActionInputRequestV1Schema,
   PluginUiSelectActionInputResultV1Schema,
   normalizePluginUiMountedContributedActionReferenceV1,
+} from './hostApiRequests.js';
+import type {
+  PluginUiNewSessionSeedAttachmentV1,
+  PluginUiNewSessionSeedV1,
+  PluginUiSessionPlacementCandidateV1,
 } from './hostApiRequests.js';
 
 const surface = {
@@ -490,6 +495,30 @@ describe('plugin UI open and Action components', () => {
                     presentation: { label: 'Issue #42' },
                 },
             }],
+        }).success).toBe(true);
+
+        // A seed is caller-authored: the canonical producers hand the host
+        // their own readonly delivery plans (frozen attachment drafts) and
+        // placement answers without giving up array ownership. The contract
+        // must admit those readonly arrays directly — forcing a defensive
+        // copy at every plugin would be a workaround for a contract that
+        // never needed mutability, and the host consumes the seed read-only.
+        expectTypeOf<readonly PluginUiNewSessionSeedAttachmentV1[]>()
+            .toMatchTypeOf<PluginUiNewSessionSeedV1['attachments']>();
+        expectTypeOf<readonly PluginUiSessionPlacementCandidateV1[]>()
+            .toMatchTypeOf<PluginUiNewSessionSeedV1['candidates']>();
+        // The same holds at the wire boundary: a frozen caller array parses.
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            attachments: Object.freeze([
+                {
+                    attachmentLocalId: 'entry',
+                    value: {
+                        key: 'triage:42',
+                        value: { v: 1, entryId: '42' },
+                        presentation: { label: 'Issue #42' },
+                    },
+                },
+            ]),
         }).success).toBe(true);
 
         // The one incumbent host arm accepts exactly one authoring mode, and an

@@ -17,6 +17,8 @@ import {
 } from '../backends/targets/backendTargetRefV2.js';
 import { hasLegacyCustomAcpConcreteBackendId } from '../backends/targets/compat/customAcp.js';
 import {
+  BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+  ConnectedAccountServiceKeyIngressSchema,
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceBindingsV1Schema,
   ConnectedServiceIdSchema,
@@ -95,13 +97,13 @@ export type ExecutionRunConnectedServicesCleanupReceiptV1 = z.infer<
 const PersistedConnectedServiceChildSelectionV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
-    serviceId: ConnectedServiceIdSchema,
+    serviceId: ConnectedAccountServiceKeyIngressSchema,
     profileId: ConnectedServiceProfileIdSchema,
     credentialRevision: ConnectedServiceCredentialRevisionV1Schema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('group'),
-    serviceId: ConnectedServiceIdSchema,
+    serviceId: ConnectedAccountServiceKeyIngressSchema,
     groupId: ConnectedServiceAuthGroupIdSchema,
     activeProfileId: ConnectedServiceProfileIdSchema,
     fallbackProfileId: ConnectedServiceProfileIdSchema,
@@ -176,6 +178,17 @@ const PersistedCurrentExecutionRunConnectedServicesLaunchV1Schema =
     connectedServiceSelectionsEnv: PersistedConnectedServiceSelectionsEnvSchema,
   }).strict();
 
+/**
+ * Released/predecessor markers used bundled scalar Connected Account service
+ * ids. Keep that spelling at this persistence ingress only and immediately
+ * normalize it through the canonical Connected Account compatibility owner.
+ */
+const PersistedLegacyExecutionRunConnectedServicesLaunchV1Schema =
+  ExecutionRunConnectedServicesLaunchV1Schema.extend({
+    connectedServicesBindings: BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+    connectedServiceSelectionsEnv: PersistedConnectedServiceSelectionsEnvSchema,
+  }).strict();
+
 const RemoteDevRuntimeAccountIdentitySelectionFactV1Schema = z.object({
   serviceId: ConnectedServiceIdSchema,
   profileId: z.string().trim().min(1),
@@ -198,7 +211,7 @@ export const RemoteDevExecutionRunConnectedServicesLaunchV1Schema = z.object({
     /^execution_run:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   ),
   agentId: z.string().trim().min(1),
-  connectedServicesBindings: PersistedConnectedServiceBindingsV1Schema,
+  connectedServicesBindings: BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
   brokerSelectionIdentity: z.string().trim().min(1).nullable().optional(),
   runtimeAccountIdentitySelections: z.array(
     RemoteDevRuntimeAccountIdentitySelectionFactV1Schema,
@@ -214,6 +227,7 @@ export type RemoteDevExecutionRunConnectedServicesLaunchV1 = z.infer<
 export const PersistedExecutionRunConnectedServicesLaunchV1Schema = z.union([
   PersistedCurrentExecutionRunConnectedServicesLaunchV1Schema,
   RemoteDevExecutionRunConnectedServicesLaunchV1Schema,
+  PersistedLegacyExecutionRunConnectedServicesLaunchV1Schema,
 ]);
 export type PersistedExecutionRunConnectedServicesLaunchV1 = z.infer<
   typeof PersistedExecutionRunConnectedServicesLaunchV1Schema
@@ -229,6 +243,10 @@ export function normalizePersistedExecutionRunConnectedServicesLaunchV1(
 ): NormalizedPersistedExecutionRunConnectedServicesLaunchV1 | null {
   const current = PersistedCurrentExecutionRunConnectedServicesLaunchV1Schema.safeParse(value);
   if (current.success) return { source: 'current', registration: current.data };
+  const legacyCurrent = PersistedLegacyExecutionRunConnectedServicesLaunchV1Schema.safeParse(value);
+  if (legacyCurrent.success) {
+    return { source: 'current', registration: legacyCurrent.data };
+  }
   const predecessor = RemoteDevExecutionRunConnectedServicesLaunchV1Schema.safeParse(value);
   if (!predecessor.success) return null;
   return {

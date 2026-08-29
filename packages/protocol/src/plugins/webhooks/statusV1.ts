@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { AutomationEventAdmitItemResultV1 } from '../../automations/automationEventV1.js';
+import { AutomationEventAdmitUnresolvedStatusV1Schema } from '../../automations/automationActionSpecsV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
@@ -65,42 +65,9 @@ export const PluginWebhookEndpointStatusV1Schema = z.object({
   }).strict().optional(),
 }).strict();
 
-const PluginWebhookAutomationAdmissionUnresolvedStatusV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('refreshDefinition'),
-    reason: z.enum(['definitionStale', 'observationTargetChanged']),
-  }).strict(),
-  z.object({
-    kind: z.literal('blocked'),
-    reason: z.enum(['capacity', 'temporarilyUnavailable', 'occurrenceConflict']),
-  }).strict(),
-]);
-
-type CanonicalUnresolvedAutomationAdmissionStatus = AutomationEventAdmitItemResultV1 extends infer Result
-  ? Result extends { kind?: 'refreshDefinition' | 'blocked' }
-    ? Omit<Result, 'checkpointSafe'>
-    : never
-  : never;
-type WebhookUnresolvedAutomationAdmissionStatus = z.infer<
-  typeof PluginWebhookAutomationAdmissionUnresolvedStatusV1Schema
->;
-type Assert<T extends true> = T;
-
-// Kept type-only to avoid a runtime cycle through automationEventV1 → deliveryV1.
-type _WebhookAdmissionDiagnosticStatusAcceptsAutomationStatus = Assert<
-  [CanonicalUnresolvedAutomationAdmissionStatus] extends [WebhookUnresolvedAutomationAdmissionStatus]
-    ? true
-    : false
->;
-type _WebhookAdmissionDiagnosticStatusHasNoExtraValues = Assert<
-  [WebhookUnresolvedAutomationAdmissionStatus] extends [CanonicalUnresolvedAutomationAdmissionStatus]
-    ? true
-    : false
->;
-
 const PluginWebhookAutomationAdmissionUnresolvedEntryV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),
-  status: PluginWebhookAutomationAdmissionUnresolvedStatusV1Schema,
+  status: AutomationEventAdmitUnresolvedStatusV1Schema,
 }).strict();
 
 /**

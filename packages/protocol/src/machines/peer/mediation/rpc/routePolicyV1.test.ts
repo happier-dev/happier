@@ -57,6 +57,47 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
+  it('keeps pending-message Composer admission on the exact Session server route', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+
+    for (const method of [
+      SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1,
+      SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1,
+    ]) {
+      expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
+        routeClass: 'server_required',
+        serverRequiredReason: 'durable_session_write',
+        commandReceiptRequired: false,
+        scope: expect.objectContaining({
+          accountRequired: true,
+          machineRequired: true,
+          sessionRequired: true,
+          serverRequired: true,
+        }),
+      });
+    }
+  });
+
+  it('keeps daemon Voice settings Actions on the authenticated local-mutation route', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(protocol.resolveMachineRpcRoutePolicy(
+      RPC_METHODS.DAEMON_VOICE_SPEECH_SETTINGS_ACTION_EXECUTE,
+    )).toMatchObject({
+      routeClass: 'server_required',
+      serverRequiredReason: 'destructive_or_recovery_mutation',
+      commandReceiptRequired: false,
+      scope: expect.objectContaining({
+        accountRequired: true,
+        machineRequired: true,
+        sessionRequired: false,
+        serverRequired: true,
+      }),
+    });
+  });
+
   it('classifies private Session spawn lifecycle transports as internal-only', async () => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;

@@ -526,17 +526,26 @@ export const PluginUiNewSessionSeedV1Schema = z.object({
    * Exact candidate placements stay candidates. In particular, a caller with
    * two matching checkouts must not convert the first array item into the
    * singular `placement` field and launch where the reader never chose.
+   *
+   * The seed is a caller-authored request: producers hand the host their own
+   * readonly placement answers, so the array is readonly in this contract and
+   * the host never mutates it.
    */
-  candidates: z.array(PluginUiSessionPlacementCandidateV1Schema).min(1).optional(),
+  candidates: z.array(PluginUiSessionPlacementCandidateV1Schema).min(1).readonly().optional(),
   /**
    * Bounded by the composer's OWN instance ceiling rather than by a number
    * chosen here: a seed that carried more attachments than one composer can
    * hold would be refused by the document owner anyway, and a smaller bound
    * here would refuse a selection the composer could carry.
+   *
+   * Readonly by contract: the canonical producers build these from readonly
+   * delivery plans and hand ownership of no array to the host. The host
+   * consumes the seed read-only and freezes the parsed array.
    */
   attachments: z.array(PluginUiNewSessionSeedAttachmentV1Schema)
     .min(1)
     .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1)
+    .readonly()
     .optional(),
 }).strict();
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;

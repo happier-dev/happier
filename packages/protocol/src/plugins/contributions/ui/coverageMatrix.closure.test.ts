@@ -420,7 +420,7 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     additionalSourceChecks: [
       {
         sourcePath: 'apps/cli/src/plugins/projection/registry/ui/projection.ts',
-        codeIdentifier: 'const binding = normalizePluginUiDestinationBindingV1({',
+        codeIdentifier: 'normalizePluginUiDestinationBindingV1({',
       },
       {
         sourcePath: 'apps/cli/src/plugins/projection/registry/ui/projection.ts',

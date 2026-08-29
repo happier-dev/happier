@@ -625,7 +625,7 @@ describe('daemon contribution registry projection (wire)', () => {
     }).success).toBe(false);
   });
 
-  it('projects a plugin-only Action without inventing human presentation fields', () => {
+  it('projects placement-free Actions without inventing fields and retains empty wire bindings', () => {
     const pluginOnly = {
       id: 'refresh-provider-state',
       pluginId: 'acme.provider',
@@ -638,10 +638,16 @@ describe('daemon contribution registry projection (wire)', () => {
     } as const;
 
     expect(PluginProjectedActionV2Schema.parse(pluginOnly)).toEqual(pluginOnly);
-    expect(PluginProjectedActionV2Schema.safeParse({
+    // The projection is not a second placement decision-maker: it renders the
+    // producer's serialized decision, so the mounted-UI-only declaration is
+    // the retained explicit empty binding list.
+    const mountedOnly = {
       ...pluginOnly,
       surfaces: ['ui'],
-    }).success).toBe(false);
+      placementBindings: [],
+      dangerLevel: 'safe',
+    } as const;
+    expect(PluginProjectedActionV2Schema.parse(mountedOnly)).toEqual(mountedOnly);
     expect(PluginProjectedActionV2Schema.safeParse({
       ...pluginOnly,
       execution: {
@@ -2471,13 +2477,16 @@ describe('daemon contribution registry projection (wire)', () => {
       },
     }).success).toBe(false);
 
-    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_timeout').success).toBe(true);
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('invalid_surface_module').success).toBe(true);
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_error').success).toBe(true);
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('render_error').success).toBe(true);
     // The retired unreleased startup-acknowledgement classification has no
     // producer and no persisted record; the closed enum must reject it.
     expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('startup_ack_timeout').success).toBe(false);
+    // A bounded load deadline is presentation/liveness policy, never durable
+    // crash evidence: the mount keeps its visible retry/unavailable state and
+    // the closed enum must reject it so no producer can re-open that path.
+    expect(DaemonPluginReactNativeCrashFailureV1Schema.safeParse('load_timeout').success).toBe(false);
 
     const automationMount = {
       kind: 'automationEventSetupSurface',

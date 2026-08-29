@@ -1,24 +1,13 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
-
-import type { AutomationEventAdmitItemResultV1 } from '../../automations/automationEventV1.js';
+import { describe, expect, it } from 'vitest';
 
 import {
   PLUGIN_WEBHOOK_ACCOUNT_STATUS_MAX_CANONICAL_JSON_BYTES_V1,
   PLUGIN_WEBHOOK_AUTOMATION_ADMISSION_UNRESOLVED_MAX_CANONICAL_JSON_BYTES_V1,
   PluginWebhookAccountStatusResultV1Schema,
-  type PluginWebhookAutomationAdmissionUnresolvedV1,
   PluginWebhookAutomationAdmissionUnresolvedV1Schema,
   PluginWebhookDeliveryReplayInputV1Schema,
 } from './statusV1.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-
-type CanonicalUnresolvedAutomationAdmissionStatus = AutomationEventAdmitItemResultV1 extends infer Result
-  ? Result extends { kind?: 'refreshDefinition' | 'blocked' }
-    ? Omit<Result, 'checkpointSafe'>
-    : never
-  : never;
-type WebhookUnresolvedAutomationAdmissionStatus =
-  PluginWebhookAutomationAdmissionUnresolvedV1['entries'][number]['status'];
 
 function canonicalJsonByteLength(value: unknown): number {
   return new TextEncoder().encode(createCanonicalJsonSigningInput(value)).byteLength;
@@ -50,12 +39,16 @@ function createExactAutomationAdmissionSummary(byteLength: number) {
 
 describe('plugin webhook Account status contracts', () => {
   it('keeps the retained diagnostic status arms exactly aligned with canonical Automation admission', () => {
-    // This is intentionally type-only: importing the Automation schema into
-    // statusV1 itself would create a runtime cycle through deliveryV1.
-    expectTypeOf<WebhookUnresolvedAutomationAdmissionStatus>()
-      .toMatchTypeOf<CanonicalUnresolvedAutomationAdmissionStatus>();
-    expectTypeOf<CanonicalUnresolvedAutomationAdmissionStatus>()
-      .toMatchTypeOf<WebhookUnresolvedAutomationAdmissionStatus>();
+    expect(PluginWebhookAutomationAdmissionUnresolvedV1Schema.safeParse({
+      v: 1,
+      kind: 'automationAdmissionUnresolved',
+      totalCount: 1,
+      entries: [{
+        automationId: 'automation-no-assignment',
+        status: { kind: 'blocked', reason: 'noEnabledAssignment' },
+      }],
+      omittedCount: 0,
+    }).success).toBe(true);
   });
 
   it('keeps status metadata bounded and rejects raw/provider payload fields', () => {

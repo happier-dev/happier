@@ -157,6 +157,8 @@ describe('declarative node vocabulary v2', () => {
       'forward',
       'more',
       'search',
+      'change-open',
+      'change-complete',
     ]);
 
     // Metadata is bounded, and an empty metadata block is a modeling mistake.

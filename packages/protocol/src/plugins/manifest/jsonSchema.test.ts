@@ -124,7 +124,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
                 required: true,
                 input: { kind: 'contributorDefined' },
                 resultSchema: { type: 'object' },
-                action: { surface: 'plugin', dangerLevel: 'safe' },
+                action: { surfaces: ['plugin'], dangerLevel: 'safe' },
               },
             },
           }],
@@ -163,7 +163,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: { type: 'object' },
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     };
     const valid = {
       ...validManifest,

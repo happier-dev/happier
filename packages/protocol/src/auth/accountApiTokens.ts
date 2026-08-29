@@ -76,6 +76,13 @@ export const ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 = '/v1/auth/api-tokens/list';
 export const ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1 = '/v1/auth/api-tokens/revoke';
 export const ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1 = '/v1/auth/api-tokens/revoke-all';
 export const ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1 = '/v1/auth/api-tokens/introspect';
+/**
+ * The canonical request is under 100 bytes. One KiB still admits a fully
+ * escaped token plus ordinary JSON formatting while preventing this fixed-size
+ * authentication envelope from inheriting the server's unrelated 100 MiB
+ * application-body ceiling.
+ */
+export const ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1 = 1_024;
 
 /** The PAT is a subject credential; the authenticated daemon Account is transport provenance. */
 export const AccountApiTokenIntrospectionRequestV1Schema = z.object({

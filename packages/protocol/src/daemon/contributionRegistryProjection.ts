@@ -35,7 +35,6 @@ import {
   PluginActionSlashV2Schema,
   PluginActionSurfaceV2Schema,
   pluginActionRequiresConfirmationPresentation,
-  pluginActionRequiresPlacement,
 } from '../plugins/actions/v2.js';
 import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
 import { PluginDiagnosticRemediationV1Schema } from './pluginContributionIntrospection.js';
@@ -1353,9 +1352,16 @@ export type DaemonPluginUiResourceWatchCloseResponse = z.infer<
   typeof DaemonPluginUiResourceWatchCloseResponseSchema
 >;
 
+/**
+ * The closed taxonomy of durable React Native crash evidence. Only failures
+ * that attribute bad executable behavior — a rejected loader, an invalid
+ * surface module export, or a render exception — may enter daemon crash
+ * accounting. A bounded load deadline is presentation/liveness policy and is
+ * deliberately absent so no producer can feed a slow-but-healthy module into
+ * durable disablement.
+ */
 export const DaemonPluginReactNativeCrashFailureV1Schema = z.enum([
   'render_error',
-  'load_timeout',
   'invalid_surface_module',
   'load_error',
 ]);
@@ -1631,13 +1637,6 @@ export const PluginProjectedActionV2Schema = PluginProjectedContributionBaseV2Sc
       code: z.ZodIssueCode.custom,
       path: ['materializationRef', 'pluginId'],
       message: 'Projected Action execution origin must match the Action pluginId.',
-    });
-  }
-  if (pluginActionRequiresPlacement(value.surfaces) && !value.placementBindings) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['placementBindings'],
-      message: 'UI projected actions must carry their declared placement bindings.',
     });
   }
   if (value.operation && value.execution.target !== 'daemon') {

@@ -215,6 +215,34 @@ describe('plugin executable contribution target grammar', () => {
     }).surfaces).toEqual(['ui']);
   });
 
+  it('retains an explicit empty placementBindings list as mounted-only UI reachability and rejects raw UI omission', () => {
+    const mountedOnly = PluginActionContributionV2Schema.parse({
+      id: 'read-mounted-detail',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['ui'],
+      execution: daemonExecution,
+      placementBindings: [],
+      dangerLevel: 'safe',
+    });
+    expect(mountedOnly.placementBindings).toEqual([]);
+    const omitted = PluginActionContributionV2Schema.safeParse({
+      id: 'read-mounted-detail',
+      title: localized,
+      scopes: ['session'],
+      surfaces: ['ui'],
+      execution: daemonExecution,
+      dangerLevel: 'safe',
+    });
+    expect(omitted.success).toBe(false);
+    if (!omitted.success) {
+      expect(omitted.error.issues).toContainEqual(expect.objectContaining({
+        path: ['placementBindings'],
+        message: 'UI plugin actions must declare an explicit placement decision.',
+      }));
+    }
+  });
+
   it('keeps additive Action placement bindings distinct from generic ActionSpec placements', () => {
     const action = {
       id: 'refresh-preview',
@@ -321,7 +349,7 @@ describe('plugin executable contribution target grammar', () => {
     });
   });
 
-  it('requires human presentation fields only on their declared human surface', () => {
+  it('rejects raw UI omission while requiring confirmation on human writes', () => {
     expect(PluginActionContributionV2Schema.safeParse({
       id: 'open-without-placement',
       title: localized,

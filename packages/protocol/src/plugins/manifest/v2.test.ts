@@ -585,7 +585,7 @@ describe('plugin manifest v2 root contract', () => {
                 required: true,
                 input: { kind: 'contributorDefined' },
                 resultSchema: { type: 'object' },
-                action: { surface: 'plugin', dangerLevel: 'safe' },
+                action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
               },
             },
           }],
@@ -600,6 +600,8 @@ describe('plugin manifest v2 root contract', () => {
     }));
 
     expect(parsed.contributes.pluginContributionPoints).toHaveLength(1);
+    expect(parsed.contributes.pluginContributionPoints[0]?.protocols[0]?.operations.connectionTest?.action)
+      .toEqual({ surfaces: ['plugin', 'ui'], dangerLevel: 'safe' });
     expect(parsed.contributes.targetedPluginContributions).toEqual([{
       id: 'telegram-provider',
       target: { pluginId: 'happier.channels', pointId: 'providers' },
@@ -624,7 +626,7 @@ describe('plugin manifest v2 root contract', () => {
                   type: 'object',
                   description: 'x'.repeat(70 * 1024),
                 },
-                action: { surface: 'plugin', dangerLevel: 'safe' },
+                action: { surfaces: ['plugin'], dangerLevel: 'safe' },
               },
             },
           }],
@@ -644,7 +646,7 @@ describe('plugin manifest v2 root contract', () => {
           required: true,
           input: { kind: 'contributorDefined' },
           resultSchema: { type: 'object' },
-          action: { surface: 'plugin', dangerLevel: 'safe' },
+          action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
       },
     });
@@ -686,7 +688,7 @@ describe('plugin manifest v2 root contract', () => {
                 required: false,
                 input: { kind: 'contributorDefined' },
                 resultSchema: { type: 'object' },
-                action: { surface: 'plugin', dangerLevel: 'safe' },
+                action: { surfaces: ['plugin'], dangerLevel: 'safe' },
               },
             },
             surfaces: {

@@ -1,14 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   DaemonExecutionRunListResponseSchema,
   DaemonExecutionRunMarkerPersistenceReadSchema,
   DaemonExecutionRunMarkerOwnerWriteSchema,
   DaemonExecutionRunMarkerSchema,
+  ExecutionRunConnectedServicesCleanupReceiptV1Schema,
   normalizePersistedExecutionRunConnectedServicesLaunchV1,
 } from './executionRuns.js';
+import {
+  ExecutionRunConnectedServicesCleanupReceiptV1Schema as PublicExecutionRunConnectedServicesCleanupReceiptV1Schema,
+  DaemonExecutionRunMarkerOwnerWriteSchema as PublicDaemonExecutionRunMarkerOwnerWriteSchema,
+  type ExecutionRunConnectedServicesCleanupReceiptV1 as PublicExecutionRunConnectedServicesCleanupReceiptV1,
+  type DaemonExecutionRunMarkerOwnerWrite as PublicDaemonExecutionRunMarkerOwnerWrite,
+} from '../index.js';
 
 describe('DaemonExecutionRunMarkerSchema', () => {
+  it('publishes the owner-write marker and cleanup-receipt contracts from the Protocol root', () => {
+    expect(PublicExecutionRunConnectedServicesCleanupReceiptV1Schema)
+      .toBe(ExecutionRunConnectedServicesCleanupReceiptV1Schema);
+    expect(PublicDaemonExecutionRunMarkerOwnerWriteSchema)
+      .toBe(DaemonExecutionRunMarkerOwnerWriteSchema);
+    expectTypeOf<PublicExecutionRunConnectedServicesCleanupReceiptV1>()
+      .toEqualTypeOf<import('./executionRuns.js').ExecutionRunConnectedServicesCleanupReceiptV1>();
+    expectTypeOf<PublicDaemonExecutionRunMarkerOwnerWrite>()
+      .toEqualTypeOf<import('./executionRuns.js').DaemonExecutionRunMarkerOwnerWrite>();
+  });
   it('retains only an exact privacy-bounded cleanup receipt at the owner write boundary', () => {
     const marker = {
       pid: 123,
@@ -236,11 +253,20 @@ describe('DaemonExecutionRunMarkerSchema', () => {
         connectedServicesBindings: {
           v: 1,
           bindingsByServiceId: {
-            'openai-codex': { source: 'connected', selection: 'profile', profileId: 'team' },
+            'happier.agent.codex/openai-codex': {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'team',
+            },
           },
         },
         connectedServiceSelectionsEnv: {
-          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: connectedServiceSelectionsJson,
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+            kind: 'profile',
+            serviceId: 'happier.agent.codex/openai-codex',
+            profileId: 'team',
+            credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+          }]),
         },
         sessionDirectory: '/workspace',
         materializedRoot: '/managed/materialized/execution_run_one',
@@ -320,7 +346,38 @@ describe('DaemonExecutionRunMarkerSchema', () => {
       executionRunConnectedServicesLaunchV1: launch,
     });
 
-    expect(parsed.executionRunConnectedServicesLaunchV1).toEqual(launch);
+    expect(parsed.executionRunConnectedServicesLaunchV1).toEqual({
+      ...launch,
+      connectedServicesBindings: {
+        v: 1,
+        bindingsByServiceId: {
+          'happier.agent.codex/openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'profile_1',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'profile',
+          serviceId: 'happier.agent.codex/openai-codex',
+          profileId: 'profile_1',
+        }]),
+      },
+    });
+    expect(normalizePersistedExecutionRunConnectedServicesLaunchV1(
+      parsed.executionRunConnectedServicesLaunchV1,
+    )).toMatchObject({
+      source: 'current',
+      registration: {
+        connectedServicesBindings: {
+          bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': expect.any(Object),
+          },
+        },
+      },
+    });
     expect(DaemonExecutionRunMarkerPersistenceReadSchema.safeParse({
       ...parsed,
       executionRunConnectedServicesLaunchV1: {

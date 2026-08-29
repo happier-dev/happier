@@ -124,11 +124,13 @@ export type PluginActionPlacementV2 = z.infer<typeof PluginActionPlacementV2Sche
 /**
  * Ordered semantic destinations for one Action. This is intentionally distinct
  * from the legacy generic `ActionSpec.placements` taxonomy retained by the
- * CLI's normalization shell.
+ * CLI's normalization shell. An explicit empty collection declares
+ * authenticated mounted-UI-only reachability; omitting this optional field is
+ * no placement decision, and a raw UI declaration that omits it is rejected.
  */
 export const PluginActionPlacementBindingsV2Schema = z.array(
   PluginActionPlacementV2Schema,
-).min(1).max(11).superRefine((bindings, context) => {
+).max(11).superRefine((bindings, context) => {
   const seen = new Set<PluginActionPlacementV2>();
   bindings.forEach((binding, index) => {
     if (seen.has(binding)) {
@@ -172,10 +174,10 @@ export const PluginActionSlashV2Schema = z.object({
 export type PluginActionSlashV2 = z.infer<typeof PluginActionSlashV2Schema>;
 
 /**
- * The manifest grammar owns this boundary so projected readers do not each
- * reinterpret whether a declaration needs a human presentation. `plugin` is
- * the only trusted programmatic Action surface; every other existing Action
- * surface retains its incumbent presentation contract.
+ * Identifies surfaces that participate in host placement discovery. The
+ * `plugin` surface is the only trusted programmatic surface; every other
+ * current surface retains its presentation contract, so this helper must not
+ * be used to manufacture a placement.
  */
 export function pluginActionRequiresPlacement(
   surfaces: readonly PluginActionSurfaceV2[],
@@ -498,18 +500,18 @@ export const PluginActionContributionV2Schema = z.object({
       message: 'Tracked operations require daemon Action execution.',
     });
   }
-  if (pluginActionRequiresPlacement(value.surfaces) && !value.placementBindings) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['placementBindings'],
-      message: 'UI plugin actions must declare at least one placement binding.',
-    });
-  }
   if (value.slash && !value.surfaces.includes('ui')) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['slash'],
       message: 'Composer slash metadata requires the UI Action surface.',
+    });
+  }
+  if (pluginActionRequiresPlacement(value.surfaces) && !value.placementBindings) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['placementBindings'],
+      message: 'UI plugin actions must declare an explicit placement decision.',
     });
   }
   if (value.dangerLevel === 'safe' && value.confirmation) {
