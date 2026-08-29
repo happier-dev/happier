@@ -1,3 +1,8 @@
+import type {
+  PluginSessionAccess,
+  PluginSessionAccessScope,
+} from '@/session/services/pluginSessionsInventory';
+
 import type { CurrentGlobalExternalSessionsAuthorService } from './currentGlobalAuthorService';
 
 /**
@@ -6,10 +11,70 @@ import type { CurrentGlobalExternalSessionsAuthorService } from './currentGlobal
  * private work while its public SDK call must obey the newly published
  * contribution's HostAccess policy.
  */
-export type CurrentGlobalExternalSessionsPublicAccess =
-  | 'available'
-  | 'denied'
-  | 'unavailable';
+export type CurrentGlobalExternalSessionsPublicAccess = Readonly<
+  | {
+      status: 'available';
+      /**
+       * Resolved current-public Session HostAccess scopes that are applicable
+       * on this host, as projected by the HostAccess policy owner. The
+       * ratified operation mapping is enforced against these scopes:
+       * `capabilities`, `list`, `readTranscript`, and `followTranscript`
+       * require a scope granting Session `read`; `attach` and `takeover`
+       * require Session `control`. An empty list means no applicable scope
+       * grants anything.
+       *
+       * Host-context restrictions (machine identity, project identity) are
+       * resolved by the router before the scopes arrive here; see
+       * `resolveHostApplicableExternalSessionsPublicScopes`.
+       */
+      scopes: readonly PluginSessionAccessScope[];
+    }
+  | { status: 'denied' }
+  | { status: 'unavailable' }
+>;
+
+/**
+ * Fallback for author bindings whose owner-local context does not model the
+ * daemon-lifetime router (owner-local tests). It is the same unrestricted
+ * Session grant the router would resolve for an unrestricted `sessions`
+ * HostAccess request.
+ */
+export const unrestrictedCurrentGlobalExternalSessionsPublicAccess: CurrentGlobalExternalSessionsPublicAccess =
+  Object.freeze({
+    status: 'available',
+    scopes: Object.freeze([
+      Object.freeze({
+        access: Object.freeze(['read', 'write', 'control'] satisfies readonly PluginSessionAccess[]),
+      }),
+    ]),
+  });
+
+/**
+ * Applies the host-context restrictions a bare scope list cannot carry:
+ *
+ * - `machineIds` must include the host's current machine id; a scope that
+ *   names other machines grants nothing here, and it also grants nothing when
+ *   the host machine identity is unavailable.
+ * - `projectIds` restrictions fail closed. The public External Sessions
+ *   surface has no host-owned canonical project identity, and plugin-private
+ *   source link data is never consulted to reconstruct one. If a host-owned
+ *   canonical project identity for external sources ever exists, this ceiling
+ *   — not a link-data read — is what must change.
+ */
+export function resolveHostApplicableExternalSessionsPublicScopes(input: Readonly<{
+  scopes: readonly PluginSessionAccessScope[];
+  resolveCurrentMachineId(): string | null;
+}>): readonly PluginSessionAccessScope[] {
+  const currentMachineId = input.resolveCurrentMachineId()?.trim() ?? '';
+  return Object.freeze(input.scopes.filter((scope) => {
+    if (scope.machineIds !== undefined
+      && (!currentMachineId || !scope.machineIds.includes(currentMachineId))
+    ) {
+      return false;
+    }
+    return scope.projectIds === undefined;
+  }));
+}
 
 export type CurrentGlobalExternalSessionsPublicCaller = Readonly<{
   pluginId: string;
@@ -61,7 +126,7 @@ export function createCurrentGlobalExternalSessionsRouter(
       await resolvePublished()?.activateConfiguredSources(agentId);
     },
     readPublicCallerAccess: (caller) => (
-      resolvePublished()?.readPublicCallerAccess?.(caller) ?? 'unavailable'
+      resolvePublished()?.readPublicCallerAccess?.(caller) ?? { status: 'unavailable' }
     ),
   });
 }

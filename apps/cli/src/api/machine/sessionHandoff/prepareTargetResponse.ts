@@ -42,12 +42,8 @@ export async function resolvePrepareTargetDirectPeerMetadataPreflight(input: Rea
 
   const localSourceExport = await input.sourceExportStore.load(input.request.handoffId);
   const hasLocalAgentBundle = Boolean(localSourceExport?.agentBundle);
-  const needsWorkspaceReplicationMetadata = input.request.workspaceTransfer?.enabled === true;
-  const hasLocalWorkspaceReplicationMetadata = Boolean(
-    localSourceExport?.workspaceManifest && localSourceExport.workspaceSourceRootPath,
-  );
 
-  if (!hasLocalAgentBundle || (needsWorkspaceReplicationMetadata && !hasLocalWorkspaceReplicationMetadata)) {
+  if (!hasLocalAgentBundle) {
     return missingHandoffMetadataV2();
   }
 

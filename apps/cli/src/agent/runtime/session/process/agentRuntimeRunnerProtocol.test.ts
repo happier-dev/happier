@@ -80,6 +80,21 @@ describe('Runner Agent protocol', () => {
     ).toBe(false);
   });
 
+  it('accepts the maximum qualified external Agent identity in both routing fields', () => {
+    const pluginId = 'p'.repeat(256);
+    const localId = 'a'.repeat(256);
+    const agentId = `${pluginId}/${localId}`;
+    const descriptor = {
+      v: 1 as const,
+      pluginId,
+      pluginVersion: '1.0.0',
+      agentId,
+      backendId: agentId,
+      generation: 'generation-1',
+    };
+    expect(AgentRuntimeDaemonSessionDescriptorV1Schema.safeParse(descriptor).success).toBe(true);
+  });
+
   it.each([
     {
       kind: 'create',

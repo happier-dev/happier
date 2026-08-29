@@ -7,7 +7,7 @@ import {
     createDirectRouteGrantSigningInputV2,
     createPeerRouteNonceSigningInputV1,
     verifyPeerRouteEphemeralProofV2,
-    type DirectPeerRouteKindV1,
+    type AuthorizedPeerEndpointRouteKindV1,
     type PeerFlowKindV1,
     type SignedDirectRouteGrantV1,
     type SignedDirectRouteGrantV2,
@@ -61,7 +61,7 @@ export type DirectRouteGrantExpectedBinding = Readonly<{
     accountId: string;
     machineId: string;
     flowKind: PeerFlowKindV1;
-    routeKind: DirectPeerRouteKindV1;
+    routeKind: AuthorizedPeerEndpointRouteKindV1;
     endpointFingerprint?: string;
 }>;
 
@@ -164,7 +164,7 @@ export function verifyDirectRouteGrantV1(input: Readonly<{
 
 export function createPeerRouteNonceProofV1(input: Readonly<{
     grantId: string;
-    routeKind: DirectPeerRouteKindV1;
+    routeKind: AuthorizedPeerEndpointRouteKindV1;
     flowKind: PeerFlowKindV1;
     endpointFingerprint?: string;
     nonceBase64Url: string;
@@ -188,7 +188,7 @@ export function verifyPeerRouteNonceV1(input: Readonly<{
     accountPublicKey: string;
     expected: Readonly<{
         grantId: string;
-        routeKind: DirectPeerRouteKindV1;
+        routeKind: AuthorizedPeerEndpointRouteKindV1;
         flowKind: PeerFlowKindV1;
         endpointFingerprint?: string;
     }>;

@@ -86,7 +86,6 @@ type FollowState = {
   readonly key: string;
   readonly followId: string;
   readonly binding: BindingState;
-  opened: boolean;
   closed: boolean;
   terminalAcknowledged: boolean;
   subscription: Readonly<{ dispose(): void | Promise<void> }> | null;
@@ -556,7 +555,7 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
       state.openResult = null;
       return result;
     }
-    if (state.pending && state.opened) return state.pending.result;
+    if (state.pending) return state.pending.result;
     if (state.closed || state.terminalAcknowledged) {
       await closeFollow(state);
       return {
@@ -643,7 +642,6 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
       key,
       followId: operation.followId,
       binding,
-      opened: false,
       closed: false,
       terminalAcknowledged: false,
       subscription: null,
@@ -799,10 +797,11 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
         event,
       };
       state.pending = { result, acknowledge };
-      // A Provider is allowed to emit while registering its subscription.
-      // Holding that first callback would deadlock follow.open, so the one
-      // bounded pending slot becomes the custody fence until open settles.
-      if (!state.opened) return;
+      // One-event custody: every event — including pages emitted while the
+      // open exchange is still settling — is handed to the polling exchange
+      // here and blocks this callback until its acknowledgement arrives, so
+      // multi-page initial replay drains oldest-first without ever needing a
+      // second buffer slot.
       detachWaiter(state)?.resolve(result);
       await acknowledged;
     };
@@ -854,7 +853,6 @@ export function createRunnerAgentDaemonFacetService(input: Readonly<{
         }
         if (result.status === 'following') {
           state.subscription = result.subscription;
-          state.opened = true;
         }
         const openResult = RunnerAgentDaemonFacetResultV1Schema.parse({
           kind: 'external_session.follow.open',

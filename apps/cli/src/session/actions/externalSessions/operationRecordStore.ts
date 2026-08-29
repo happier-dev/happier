@@ -152,6 +152,27 @@ export function resolveExternalSessionOperationAccountScope(
     : null;
 }
 
+/**
+ * Capture the authenticated Account scope at operation admission. Start owners
+ * call this once per admission and carry the returned pin into every record,
+ * staging, and exclusion effect of the operation; those effects verify the
+ * ambient Account still matches the pin, so an A→B rotation fails closed
+ * instead of silently resolving into B's partition. Null means no
+ * authenticated Account is currently available; admission then resolves
+ * ambient and fails closed in production exactly as before.
+ */
+export async function resolveExternalSessionOperationAdmissionAccountScope(
+  activeServerDir: string,
+): Promise<ExternalSessionOperationAccountScope | null> {
+  const credentials = await readStoredCredentials();
+  return credentials
+    ? resolveExternalSessionOperationAccountScope(
+      activeServerDir,
+      credentials.token,
+    )
+    : null;
+}
+
 function isScopedRecordsDirectory(value: string): boolean {
   const normalized = value.replaceAll('\\', '/');
   return normalized.includes('/external-session-operations/by-account/')
@@ -202,6 +223,23 @@ async function resolveCurrentExternalSessionOperationAccountScope(
         operationId,
       );
     }
+    // Fail closed before any effect when the ambient authenticated Account no
+    // longer matches the scope pinned at operation admission: an A→B
+    // credential rotation must never let Account A's in-flight operation
+    // resolve into Account B's partition.
+    const credentials = await readStoredCredentials();
+    const ambientScope = credentials
+      ? resolveExternalSessionOperationAccountScope(
+        activeServerDir,
+        credentials.token,
+      )
+      : null;
+    if (!ambientScope || ambientScope.accountSubject !== accountScope.accountSubject) {
+      throw new ExternalSessionOperationRecordReadError(
+        'account_scope_unavailable',
+        operationId,
+      );
+    }
     return accountScope;
   }
   const credentials = await readStoredCredentials();
@@ -237,7 +275,6 @@ async function resolveExternalSessionOperationRecordsDirectory(
     ),
   );
 }
-
 /**
  * Operation-private staging shares the operation record's Account partition.
  * Staging written before Account partitioning stays where it is: it is never
@@ -261,6 +298,22 @@ export async function resolveExternalSessionOperationStagingDirectory(
     ),
     'staging',
   );
+}
+
+/**
+ * Retirement-path staging resolution: derives the pinned scope's private
+ * staging directory directly, deliberately without the ambient-credential
+ * verification the live read/write paths enforce. Only the durable
+ * Session-deletion retirement path may use it — the deletion fact itself
+ * proves ownership, so requiring the ambient Account to match would defer
+ * cleanup until the owning Account re-authenticates while the unlinked record
+ * orphans the private payload forever. Live paths must keep using
+ * resolveExternalSessionOperationStagingDirectory.
+ */
+export function resolveExternalSessionOperationRetirementStagingDirectory(
+  scope: ExternalSessionOperationAccountScope,
+): string {
+  return join(accountPartitionDirectory(scope), 'staging');
 }
 
 type ExternalSessionOperationAdmissionIdentity = Readonly<{
@@ -413,11 +466,13 @@ export async function withExternalSessionOperationSessionAdmissionLock<T>(
   activeServerDir: string,
   sessionId: string,
   operation: () => Promise<T>,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<T> {
   const recordsDirectoryPath =
     await resolveExternalSessionOperationRecordsDirectory(
       activeServerDir,
       `session-admission:${sessionId}`,
+      accountScope,
     );
   await mkdir(recordsDirectory(recordsDirectoryPath), {
     recursive: true,
@@ -947,15 +1002,38 @@ export async function listExternalSessionOperationRecords(
  * fact. Account-relative fetch absence is intentionally not an input to this
  * owner: share revocation and temporary access loss must retain recovery data.
  *
+ * Once the authoritative parent-deletion fact exists, terminal status is no
+ * longer preservation authority: the operation card, projection acknowledgement,
+ * and every Session-scoped recovery control are unreachable, so retaining a
+ * full record would keep private recovery data and inventory capacity forever.
+ * Every matching full record — terminal or not — is therefore cleaned and
+ * unlinked. Already-compacted terminal receipts carry no private recovery
+ * state and stay on their bounded 24-hour expiry; they are never candidates
+ * here because the inventory admits only full records.
+ *
  * Claim barrier -> Session admission -> exact record -> staging capacity ->
  * inventory is the incumbent lock order used by passive repair. Cleanup is
  * deliberately before unlink so a crash can only leave an idempotently
  * retryable full record, never an unowned private payload.
+ *
+ * The caller must pin the Account scope whose authoritative changes feed
+ * delivered the deletion fact. Ambient credential resolution is deliberately
+ * unavailable here: an A→B rotation between the fact's delivery and its
+ * consumption would otherwise silently consume the deletion against B's
+ * partition and orphan A's private operation state forever. Unlike live
+ * read/write paths, this retirement path therefore does not require the
+ * ambient Account to match the pin — the fact itself proves ownership.
  */
 export async function abandonExternalSessionOperationsForDeletedSession(
   input: Readonly<{
     activeServerDir: string;
     sessionId: string;
+    /**
+     * Pinned scope of the authenticated Account whose authoritative changes
+     * feed delivered the Session-deletion fact. Required: without it exact
+     * ownership cannot be established and the caller must fail closed.
+     */
+    accountScope: ExternalSessionOperationAccountScope;
     withSessionOperationBarrier<TResult>(
       input: Readonly<{ sessionId: string }>,
       effect: () => Promise<TResult>,
@@ -972,11 +1050,21 @@ export async function abandonExternalSessionOperationsForDeletedSession(
   if (!sessionId) {
     throw new Error('external_session_operation_deleted_session_id_required');
   }
-  const scopedRecordsDirectory =
-    await resolveExternalSessionOperationRecordsDirectory(
-      input.activeServerDir,
+  if (
+    !input.accountScope
+    || input.accountScope.activeServerDir !== input.activeServerDir
+  ) {
+    throw new ExternalSessionOperationRecordReadError(
+      'account_scope_unavailable',
       'session-deletion',
     );
+  }
+  // Deliberately not resolveExternalSessionOperationRecordsDirectory: that
+  // owner enforces the ambient-credential match for live read/write paths,
+  // which would defer this cleanup until the owning Account re-authenticates.
+  // The deletion fact's provenance already establishes the owning partition.
+  const scopedRecordsDirectory =
+    recordsDirectoryForAccountScope(input.accountScope);
   const barrier = await input.withSessionOperationBarrier(
     { sessionId },
     async () => await withExternalSessionOperationSessionAdmissionLock(
@@ -996,10 +1084,6 @@ export async function abandonExternalSessionOperationsForDeletedSession(
         let deleted = 0;
         let retained = 0;
         for (const candidate of candidates) {
-          if (isExternalSessionOperationTerminalStatusV1(candidate.status)) {
-            retained += 1;
-            continue;
-          }
           const disposition = await withJsonOwnerFileLock({
             lockPath: recordMutationLockPath(
               scopedRecordsDirectory,
@@ -1018,7 +1102,6 @@ export async function abandonExternalSessionOperationsForDeletedSession(
               !current
               || current.kind !== 'full_record'
               || current.record.request.sessionId !== sessionId
-              || isExternalSessionOperationTerminalStatusV1(current.record.status)
             ) {
               return 'retained' as const;
             }
@@ -1039,7 +1122,6 @@ export async function abandonExternalSessionOperationsForDeletedSession(
                 !exact
                 || exact.kind !== 'full_record'
                 || exact.record.request.sessionId !== sessionId
-                || isExternalSessionOperationTerminalStatusV1(exact.record.status)
               ) {
                 return 'retained' as const;
               }
@@ -1070,10 +1152,12 @@ export async function abandonExternalSessionOperationsForDeletedSession(
 export async function readExternalSessionOperationRecord(
   activeServerDir: string,
   operationId: string,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<ExternalSessionOperationRecordV1 | null> {
   const stored = await readExternalSessionOperationStoredEntry(
     activeServerDir,
     operationId,
+    accountScope,
   );
   return stored?.kind === 'full_record' ? stored.record : null;
 }
@@ -1081,11 +1165,13 @@ export async function readExternalSessionOperationRecord(
 export async function readExternalSessionOperationStoredEntry(
   activeServerDir: string,
   operationId: string,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<ExternalSessionOperationStoredEntry | null> {
   const scopedRecordsDirectory =
     await resolveExternalSessionOperationRecordsDirectory(
       activeServerDir,
       operationId,
+      accountScope,
     );
   let serialized: string;
   try {
@@ -1484,12 +1570,15 @@ export async function resolveExternalSessionOperationStartAdmission(
     nowMs: number;
     readSelectedPresentation?:
       ExternalSessionOperationSelectedPresentationReader;
+    /** Pinned authenticated Account scope from operation admission. */
+    accountScope?: ExternalSessionOperationAccountScope;
   }>,
 ): Promise<ExternalSessionOperationStartAdmission> {
   const scopedRecordsDirectory =
     await resolveExternalSessionOperationRecordsDirectory(
       input.activeServerDir,
       `external-${input.intent.plan}:admission`,
+      input.accountScope,
     );
   const intentDigest = idempotencyIntentDigestForRequest(input.intent);
   const admissionErrorOperationId =
@@ -1666,12 +1755,15 @@ export async function compactExternalSessionOperationRecordToTerminalReceipt(
       | 'missing'
       | 'not_ready'
       | 'not_terminal';
+    /** Pinned authenticated Account scope from operation admission. */
+    accountScope?: ExternalSessionOperationAccountScope;
   }>,
 ): Promise<ExternalSessionOperationTerminalReceiptCompactionResult> {
   const scopedRecordsDirectory =
     await resolveExternalSessionOperationRecordsDirectory(
       input.activeServerDir,
       input.operationId,
+      input.accountScope,
     );
   await mkdir(recordsDirectory(scopedRecordsDirectory), {
     recursive: true,
@@ -1988,6 +2080,8 @@ export async function writeExternalSessionOperationRecord(
       incoming: ExternalSessionOperationRecordV1,
     ) => void | Promise<void>;
     nowMs?: () => number;
+    /** Pinned authenticated Account scope from operation admission. */
+    accountScope?: ExternalSessionOperationAccountScope;
   }> = {},
 ): Promise<ExternalSessionOperationRecordV1> {
   const parsed = ExternalSessionOperationRecordV1Schema.parse(record);
@@ -1995,6 +2089,7 @@ export async function writeExternalSessionOperationRecord(
     await resolveExternalSessionOperationRecordsDirectory(
       activeServerDir,
       parsed.operationId,
+      options.accountScope,
     );
   if (
     !isScopedRecordsDirectory(activeServerDir)
@@ -2162,6 +2257,7 @@ export async function writeExternalSessionOperationRecord(
     scopedRecordsDirectory,
     parsed.request.sessionId,
     writeUnderRecordLock,
+    options.accountScope,
   );
 }
 
@@ -2172,6 +2268,7 @@ export async function mutateExternalSessionOperationRecordAtRevision(
   mutate: (
     current: ExternalSessionOperationRecordV1,
   ) => ExternalSessionOperationRecordV1,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<
   | Readonly<{ ok: true; record: ExternalSessionOperationRecordV1 }>
   | Readonly<{ ok: false; code: 'operation_not_found' | 'stale_revision' }>
@@ -2180,6 +2277,7 @@ export async function mutateExternalSessionOperationRecordAtRevision(
     await resolveExternalSessionOperationRecordsDirectory(
       activeServerDir,
       operationId,
+      accountScope,
     );
   await mkdir(recordsDirectory(scopedRecordsDirectory), {
     recursive: true,
@@ -2261,6 +2359,8 @@ export async function acknowledgeExternalSessionOperationProgressProjection(
     activeServerDir: string;
     operationId: string;
     projectedRevision: number;
+    /** Pinned authenticated Account scope from operation admission. */
+    accountScope?: ExternalSessionOperationAccountScope;
   }>,
 ): Promise<ExternalSessionOperationRecordV1> {
   if (
@@ -2276,6 +2376,7 @@ export async function acknowledgeExternalSessionOperationProgressProjection(
     await resolveExternalSessionOperationRecordsDirectory(
       input.activeServerDir,
       input.operationId,
+      input.accountScope,
     );
   await mkdir(recordsDirectory(scopedRecordsDirectory), {
     recursive: true,

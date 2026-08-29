@@ -38,6 +38,7 @@ describe('external session runtime catalog hooks', () => {
       isExplicitCliSubcommand: true,
       parsed: { agentArgs: [] },
       settings: {},
+      pluginSettings: {},
       environment: {},
       startOrigin: 'daemon',
     })).resolves.toEqual({ source: 'acme' });

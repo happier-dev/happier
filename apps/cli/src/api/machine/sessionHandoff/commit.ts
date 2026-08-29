@@ -12,21 +12,16 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import { buildSessionHandoffAgentBundleTransferId } from '../../../session/handoff/agentBundle/transferPublication';
-import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
-import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
-import { readWorkspaceReplicationManifestFromFile } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
+import { hasUnsupportedWorkspaceAction, workspaceSyncUpdateRequired } from './workspaceSyncGuard';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
-type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
 
 export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
-  activeServerDir: string;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
-  workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
   readPersistedPrepareJob: (params: Readonly<{
@@ -46,7 +41,6 @@ export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
     completedAtMs?: number;
     failedAtMs?: number;
     lastErrorMessage?: string;
-    workspaceReplicationJobId?: string;
   }>) => SessionHandoffPrepareTargetJobRecordInput;
   buildStartPendingStatus: (input: Readonly<{
     handoffId: string;
@@ -54,31 +48,18 @@ export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
   }>) => SessionHandoffStatus;
   buildSourceExportOnlyPrepareJobId: (handoffId: string) => string;
   invalidateDirectPeerRouteCacheForHandoffMachines: (machineIds: readonly (string | undefined)[]) => void;
-  disposeEphemeralServerRoutedPayloadSourcesForHandoff: (handoffId: string) => Promise<void>;
   invalidRequest: () => Readonly<{
     ok: false;
     errorCode: 'invalid_request';
   }>;
 }>;
 
-function normalizeReverseRootPath(raw: unknown): string | null {
-  const candidate = typeof raw === 'string' ? raw.trim() : '';
-  if (!candidate.startsWith('/')) return null;
-  if (candidate.includes('\0')) return null;
-  const segments = candidate.split('/').filter(Boolean);
-  if (segments.length === 0) return null;
-  if (segments.some((segment) => segment === '..')) return null;
-  return `/${segments.join('/')}`;
-}
-
 export function createSessionHandoffCommitActionHandler(
   params: RegisterSessionHandoffCommitRpcHandlerInput,
 ): (raw: unknown) => Promise<unknown> {
   const {
-    activeServerDir,
     prepareJobStore,
     sourceExportStore,
-    workspaceReplicationAdapter,
     directPeerTransfer,
     stopSessionForHandoff,
     readPersistedPrepareJob,
@@ -86,11 +67,11 @@ export function createSessionHandoffCommitActionHandler(
     buildStartPendingStatus,
     buildSourceExportOnlyPrepareJobId,
     invalidateDirectPeerRouteCacheForHandoffMachines,
-    disposeEphemeralServerRoutedPayloadSourcesForHandoff,
     invalidRequest,
   } = params;
 
   return async (raw: unknown) => {
+    if (hasUnsupportedWorkspaceAction(raw)) return workspaceSyncUpdateRequired();
     const parsed = SessionHandoffCommitRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -142,40 +123,6 @@ export function createSessionHandoffCommitActionHandler(
         }
       }
 
-      // `sync_changes` in one-way-safe mode requires a baseline for the (source->target) direction.
-      // After a successful cutover, persist the reverse-direction baseline locally so a subsequent
-      // “handoff back” can use `sync_changes` immediately without forcing a full snapshot transfer.
-      if (
-        persistedSourceExport?.workspaceManifest
-        && persistedSourceExport.sourceMachineId
-        && persistedSourceExport.targetMachineId
-      ) {
-        const reverseSourceRootPath = normalizeReverseRootPath(parsed.data.workspaceReplicationReverseSourceRootPath);
-        const reverseTargetRootPath = normalizeReverseRootPath(parsed.data.workspaceReplicationReverseTargetRootPath);
-        if (reverseSourceRootPath && reverseTargetRootPath) {
-          const reverseScope = {
-            sourceMachineId: persistedSourceExport.targetMachineId,
-            sourceWorkspaceRoot: reverseSourceRootPath,
-            targetMachineId: persistedSourceExport.sourceMachineId,
-            targetWorkspaceRoot: reverseTargetRootPath,
-            mode: 'one_way_safe' as const,
-          };
-
-          // Canonicalize ordering + fingerprint so the saved baseline matches what the engine will
-          // compute when building offers from manifests later.
-          const manifest = await readWorkspaceReplicationManifestFromFile({
-            transferId: persistedSourceExport.workspaceManifest.transferId,
-            filePath: persistedSourceExport.workspaceManifest.filePath,
-            sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
-          });
-          await workspaceReplicationAdapter.persistBaselineFromManifest({
-            activeServerDir,
-            scope: reverseScope,
-            manifest,
-            savedAtMs: Date.now(),
-          });
-        }
-      }
     }
 
     if (!persistedJob && !persistedSourceExport) {
@@ -194,7 +141,6 @@ export function createSessionHandoffCommitActionHandler(
         createdAtMs: persistedJob.createdAtMs,
         updatedAtMs: Date.now(),
         completedAtMs: Date.now(),
-        workspaceReplicationJobId: persistedJob.workspaceReplicationJobId,
         status,
         ...(persistedJob.prepareTargetResult ? {
           prepareTargetResult: {
@@ -223,9 +169,7 @@ export function createSessionHandoffCommitActionHandler(
       persistedSourceExport?.sourceMachineId,
       persistedSourceExport?.targetMachineId,
     ]);
-    await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
-    directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
   };
 }

@@ -29,6 +29,7 @@ import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metada
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 import { activatePendingInactiveSession } from '@/daemon/sessions/activatePendingInactiveSession';
+import { activateInactiveUsageLimitResume } from '@/daemon/sessions/activateInactiveUsageLimitResume';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
 import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
@@ -99,7 +100,6 @@ import {
   createDaemonSessionMutationCustody,
   type DaemonSessionMutationCustody,
 } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
-import { buildInactiveUsageLimitResumeSpawnOptions } from '../sessions/runtimeSnapshot/buildInactiveUsageLimitResumeSpawnOptions';
 import { createRecoveryIntentFileStore } from '../connectedServices/recoveryScheduler/recoveryIntentFileStore';
 import type { DurableBackoffRecoveryStore } from '../connectedServices/recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { abandonSpawnedSessionUntilCompleted } from '@/session/services/awaitSpawnedSessionId';
@@ -1044,17 +1044,14 @@ export async function bootstrapMachineSyncRuntime(
               },
             }
           : {}),
-        resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata }) => {
-          const options = buildInactiveUsageLimitResumeSpawnOptions({
-            sessionId,
+        resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata }) =>
+          await activateInactiveUsageLimitResume({
             fallbackMachineId: params.machineId,
+            sessionId,
             rawSession,
             metadata,
-          });
-          if (!options) return false;
-          const result = await params.spawnSession(options);
-          return result.type === 'success';
-        },
+            spawnSession: params.spawnSession,
+          }),
         scheduleInactiveSessionUsageLimitRecoveryCheck: async ({ sessionId, recovery, runCheckNow }) => {
           await inactiveUsageLimitRecoveryCheckOwner.schedule({
             sessionId,

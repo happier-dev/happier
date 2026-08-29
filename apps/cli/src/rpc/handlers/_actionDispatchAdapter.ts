@@ -64,9 +64,7 @@ export function buildActionExecutorContextForRpc(
             ? { operationOwnerUpdate: localActionContext.operationOwnerUpdate }
             : {}),
         surface,
-        authority: surface === 'api' || surface === 'plugin' || surface === 'agent' || surface === 'mcp'
-            ? 'account_automation'
-            : 'present_user',
+        authority: localActionContext?.authority ?? 'account_automation',
         ...(hasLocalCallerPermissionMode
             ? { callerPermissionMode: localActionContext?.callerPermissionMode ?? null }
             : {}),

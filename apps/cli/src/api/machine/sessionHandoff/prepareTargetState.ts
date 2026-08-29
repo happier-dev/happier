@@ -1,4 +1,3 @@
-import { compareWorkspaceManifests } from '../../../scm/workspace/workspaceExportPackaging/compareWorkspaceManifests';
 import { normalizeSessionHandoffTargetPathForLocalMachine } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -7,13 +6,9 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
 import {
-  normalizeSessionHandoffWorkspaceRootPath,
-  type SessionHandoffMetadataV2,
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffPrepareTargetResultGetSuccessResponse,
-  type SessionHandoffStartRequest,
   type SessionHandoffStatus,
-  type WorkspaceManifest,
 } from '@happier-dev/protocol';
 
 export type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
@@ -41,57 +36,12 @@ export function buildStartPendingStatus(input: Readonly<{
   };
 }
 
-export const normalizeHandoffWorkspaceRootPath = normalizeSessionHandoffWorkspaceRootPath;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-export function resolveWorkspaceReplicationHandoffBackTargetRootPath(input: Readonly<{
-  metadata: Record<string, unknown>;
-  workspaceTransfer: SessionHandoffStartRequest['workspaceTransfer'] | undefined;
-  requestedTargetMachineId: string;
-}>): string | null {
-  if (input.workspaceTransfer?.enabled !== true) return null;
-  if (input.workspaceTransfer.strategy !== 'sync_changes') return null;
-
-  const metadataSourceRootPath =
-    typeof input.metadata.workspaceReplicationSourceRootPath === 'string'
-      ? normalizeHandoffWorkspaceRootPath(input.metadata.workspaceReplicationSourceRootPath)
-      : null;
-  const handoff = asRecord(input.metadata.handoffV1);
-  if (!handoff) {
-    return metadataSourceRootPath;
-  }
-
-  const priorSourceMachineId = typeof handoff.sourceMachineId === 'string' ? handoff.sourceMachineId.trim() : '';
-  if (!priorSourceMachineId || priorSourceMachineId !== input.requestedTargetMachineId) {
-    return metadataSourceRootPath;
-  }
-
-  const handoffBackTargetRootPath = normalizeHandoffWorkspaceRootPath(handoff.sourceWorkspaceRootPath);
-  if (handoffBackTargetRootPath) {
-    return handoffBackTargetRootPath;
-  }
-
-  return metadataSourceRootPath;
-}
-
 export function resolvePrepareTargetWorkspaceRootPath(input: Readonly<{
   requestedTargetPath: string;
-  workspaceTransfer: SessionHandoffPrepareTargetRequest['workspaceTransfer'] | undefined;
-  handoffMetadataV2: SessionHandoffMetadataV2 | undefined;
   homeDir: string;
 }>): string {
-  const handoffBackTargetRootPath =
-    input.workspaceTransfer?.enabled === true
-    && input.workspaceTransfer.strategy === 'sync_changes'
-      ? normalizeHandoffWorkspaceRootPath(input.handoffMetadataV2?.workspaceReplicationHandoffBackTargetRootPath)
-      : null;
-
   return normalizeSessionHandoffTargetPathForLocalMachine({
-    requestedTargetPath: handoffBackTargetRootPath ?? input.requestedTargetPath,
+    requestedTargetPath: input.requestedTargetPath,
     homeDir: input.homeDir,
   });
 }
@@ -156,62 +106,6 @@ export function buildPreparePendingStatus(input: Readonly<{
   };
 }
 
-export function buildWorkspaceReplicationStatusProgress(params: Readonly<{
-  previousManifest: WorkspaceManifest;
-  nextManifest: WorkspaceManifest;
-  blobCount: number;
-  checkpoint: NonNullable<SessionHandoffStatus['progress']>['checkpoint'];
-  phaseDetail: string;
-}>): Pick<SessionHandoffStatus, 'progress' | 'workspacePreflightSummary'> {
-  const comparison = compareWorkspaceManifests({
-    previousManifest: params.previousManifest,
-    nextManifest: params.nextManifest,
-  });
-  const transferredFileEntries = [
-    ...comparison.added,
-    ...comparison.changed.map((entry) => entry.next),
-  ].filter((entry): entry is Extract<WorkspaceManifest['entries'][number], { kind: 'file' }> => entry.kind === 'file');
-  const totalBytes = transferredFileEntries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
-  const totalFiles = transferredFileEntries.length;
-
-  return {
-    workspacePreflightSummary: {
-      addedPathsCount: comparison.added.length,
-      changedPathsCount: comparison.changed.length,
-      removedPathsCount: comparison.removed.length,
-      totalBytes,
-    },
-    progress: {
-      updatedAtMs: Date.now(),
-      checkpoint: params.checkpoint,
-      planned: {
-        totalFiles,
-        totalBytes,
-        added: comparison.added.length,
-        changed: comparison.changed.length,
-        removed: comparison.removed.length,
-      },
-      transferred: {
-        files: totalFiles,
-        bytes: totalBytes,
-        blobs: params.blobCount,
-      },
-      applied: {
-        files: 0,
-        bytes: 0,
-      },
-      remaining: {
-        files: 0,
-        bytes: 0,
-      },
-      current: {
-        phaseDetail: params.phaseDetail,
-      },
-      resumable: false,
-    },
-  };
-}
-
 export function buildPrepareJobRecord(input: Readonly<{
   jobId: string;
   handoffId: string;
@@ -226,7 +120,6 @@ export function buildPrepareJobRecord(input: Readonly<{
   failedAtMs?: number;
   lastErrorMessage?: string;
   lastErrorCode?: string;
-  workspaceReplicationJobId?: string;
 }>): SessionHandoffPrepareTargetJobRecordInput {
   return {
     jobId: input.jobId,
@@ -239,7 +132,6 @@ export function buildPrepareJobRecord(input: Readonly<{
     ...(input.failedAtMs ? { failedAtMs: input.failedAtMs } : {}),
     ...(input.lastErrorMessage ? { lastErrorMessage: input.lastErrorMessage } : {}),
     ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
-    ...(input.workspaceReplicationJobId ? { workspaceReplicationJobId: input.workspaceReplicationJobId } : {}),
     status: input.status,
     ...(input.prepareTargetRequest ? { prepareTargetRequest: input.prepareTargetRequest } : {}),
     ...(input.prepareTargetResult ? { prepareTargetResult: input.prepareTargetResult } : {}),

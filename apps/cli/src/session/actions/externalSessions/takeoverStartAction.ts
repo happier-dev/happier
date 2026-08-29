@@ -27,8 +27,10 @@ import {
   ExternalSessionOperationRecordReadError,
   ExternalSessionOperationRecordAdmissionError,
   projectExternalSessionTakeoverIdempotencyIntent,
+  resolveExternalSessionOperationAdmissionAccountScope,
   resolveExternalSessionOperationStartAdmission,
   readExternalSessionOperationRecord,
+  type ExternalSessionOperationAccountScope,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
   type ExternalSessionOperationSelectedPresentationReader,
   writeExternalSessionOperationRecord,
@@ -125,6 +127,14 @@ export type ExternalSessionTakeoverStartActionExecutor = Readonly<{
       signal?: AbortSignal;
       /** Host-stamped private contextual-author admission evidence. */
       authorIntent?: ExternalSessionOperationAuthorIntentV1;
+      /**
+       * Pinned authenticated Account scope captured at admission. When the
+       * caller supplies it, every admission re-read, exclusion acquisition,
+       * and record write of this call resolves inside the pinned Account's
+       * partition and verifies the ambient Account still matches; otherwise
+       * the executor captures the scope itself at its admission boundary.
+       */
+      accountScope?: ExternalSessionOperationAccountScope;
     }>,
   ): Promise<ExternalSessionOperationActionResponseV1>;
 }>;
@@ -139,6 +149,7 @@ export type ExternalSessionPluginTakeoverStartActionExecutor =
         { kind: 'takeover' }
       >;
       signal?: AbortSignal;
+      accountScope?: ExternalSessionOperationAccountScope;
     }>,
   ): Promise<
     | Readonly<{
@@ -330,6 +341,7 @@ async function readConvergedTakeoverOperation(
   >['waitForRelease'],
   waitInput?: Readonly<{ signal?: AbortSignal }>,
   authorIntent?: ExternalSessionOperationAuthorIntentV1,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<
   | Readonly<{ status: 'record'; record: ExternalSessionOperationRecordV1 }>
   | Readonly<{ status: 'terminal_receipt' }>
@@ -343,6 +355,7 @@ async function readConvergedTakeoverOperation(
       durableIdempotencyKey: intent.idempotencyKey,
       intent,
       ...(authorIntent ? { authorIntent } : {}),
+      ...(accountScope ? { accountScope } : {}),
       nowMs: nowMs(),
       readSelectedPresentation:
         dependencies.readSelectedPresentation
@@ -389,6 +402,14 @@ export function createExternalSessionTakeoverStartActionExecutor(
         return failure('invalid_state', 'Invalid takeover operation request.');
       }
       const intent = parsed.data.request;
+      // One pinned scope per public Start call, captured at the admission
+      // boundary (or carried in by the plugin wrapper's capture). Admission
+      // re-reads, exclusion acquisition, and the durable record write all
+      // resolve inside the pinned partition and fail closed on rotation.
+      const admissionAccountScope = context?.accountScope
+        ?? await resolveExternalSessionOperationAdmissionAccountScope(
+          dependencies.activeServerDir,
+        );
       let admission: Awaited<ReturnType<
         typeof resolveExternalSessionOperationStartAdmission
       >>;
@@ -399,6 +420,9 @@ export function createExternalSessionTakeoverStartActionExecutor(
           intent,
           ...(context?.authorIntent
             ? { authorIntent: context.authorIntent }
+            : {}),
+          ...(admissionAccountScope
+            ? { accountScope: admissionAccountScope }
             : {}),
           nowMs: nowMs(),
           readSelectedPresentation:
@@ -484,8 +508,16 @@ export function createExternalSessionTakeoverStartActionExecutor(
         sourceGeneration: request.source.sourceGeneration,
         plan: request.targetStorageMode,
       } as const;
-      const exclusionAcquireInput = context?.signal
-        ? { signal: context.signal }
+      const exclusionAcquireInput: Readonly<{
+        signal?: AbortSignal;
+        accountSubject?: string;
+      }> | undefined = context?.signal || admissionAccountScope
+        ? {
+          ...(context?.signal ? { signal: context.signal } : {}),
+          ...(admissionAccountScope
+            ? { accountSubject: admissionAccountScope.accountSubject }
+            : {}),
+        }
         : undefined;
       let acquired: Awaited<ReturnType<ExternalSessionOperationExclusion['acquire']>>;
       try {
@@ -508,6 +540,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
             acquired.waitForRelease,
             context?.signal ? { signal: context.signal } : undefined,
             context?.authorIntent,
+            admissionAccountScope ?? undefined,
           );
         } catch (error) {
           if (error instanceof ExternalSessionOperationRecordReadError) {
@@ -650,6 +683,9 @@ export function createExternalSessionTakeoverStartActionExecutor(
               retryTargetPhase: 'validating',
             },
             {
+              ...(admissionAccountScope
+                ? { accountScope: admissionAccountScope }
+                : {}),
               ...(dependencies.settlePriorTerminalProgressProjection
                 ? {
                   settlePriorTerminalProgressProjection:
@@ -713,7 +749,21 @@ export function createExternalSessionTakeoverStartActionExecutor(
       if (!parsed.success || parsed.data.request.plan !== 'takeover') {
         return failure('invalid_state', 'Invalid takeover operation request.');
       }
-      const result = await executor.start(raw, context);
+      // Capture the exact authenticated Account scope once for this public
+      // call: the wrapped Start consumes the pin, and the post-failure
+      // follow-up re-read below reuses the same pin so both observe the same
+      // Account partition.
+      const admissionAccountScope = context?.accountScope
+        ?? await resolveExternalSessionOperationAdmissionAccountScope(
+          dependencies.activeServerDir,
+        );
+      const result = await executor.start(raw, {
+        ...(context?.signal ? { signal: context.signal } : {}),
+        authorIntent: context.authorIntent,
+        ...(admissionAccountScope
+          ? { accountScope: admissionAccountScope }
+          : {}),
+      });
       if (result.ok) {
         return {
           ok: true,
@@ -735,6 +785,9 @@ export function createExternalSessionTakeoverStartActionExecutor(
           durableIdempotencyKey: parsed.data.request.idempotencyKey,
           intent: parsed.data.request,
           authorIntent: context.authorIntent,
+          ...(admissionAccountScope
+            ? { accountScope: admissionAccountScope }
+            : {}),
           nowMs: nowMs(),
           readSelectedPresentation:
             dependencies.readSelectedPresentation

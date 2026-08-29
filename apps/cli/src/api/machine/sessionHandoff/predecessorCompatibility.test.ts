@@ -305,6 +305,28 @@ describe('session handoff predecessor wire compatibility', () => {
         ...prepareRequest,
         sessionId: undefined,
       });
+
+      // A pre-0.3 peer can still send the retired workspaceTransfer field. The
+      // compatibility boundary must stop it before the canonical prepare
+      // handler (and, transitively, the retired replication engine) runs.
+      const prepareWithRetiredWorkspaceTransfer = {
+        ...prepareRequest,
+        workspaceTransfer: {
+          enabled: true,
+          strategy: 'sync_changes',
+          conflictPolicy: 'replace_existing',
+        },
+      };
+      await expect(
+        registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2)!(
+          prepareWithRetiredWorkspaceTransfer,
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        errorCode: 'workspace_sync_update_required',
+      });
+      expect(prepareTarget).toHaveBeenCalledTimes(1);
+
       await expect(registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V2)!({
         handoffId: 'handoff-v2',
         sessionId: 'session-v2',

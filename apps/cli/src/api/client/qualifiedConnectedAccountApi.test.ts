@@ -665,4 +665,60 @@ describe("qualified Connected Account V4 API", () => {
             "/v4/connect/qualified/provider-account-usage",
         );
     });
+
+    it("normalizes storage-mode conflicts across V4 quota reads and mutations", async () => {
+        const ref = { service, accountId: "provider/account" };
+        const conflict = {
+            error: "provider_account_usage_storage_mode_mismatch",
+        };
+
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            status: 409,
+            data: conflict,
+        });
+        await expect(readQualifiedConnectedAccountQuotaV4({
+            token: "token",
+            ref,
+        })).rejects.toBeInstanceOf(
+            QualifiedProviderAccountUsageReadConflictError,
+        );
+
+        vi.mocked(axios.delete).mockResolvedValueOnce({
+            status: 409,
+            data: conflict,
+        });
+        await expect(unlinkQualifiedConnectedAccountQuotaV4({
+            token: "token",
+            ref,
+        })).rejects.toBeInstanceOf(
+            QualifiedProviderAccountUsageReadConflictError,
+        );
+
+        vi.mocked(axios.post).mockResolvedValueOnce({
+            status: 409,
+            data: conflict,
+        });
+        await expect(requestQualifiedConnectedAccountQuotaRefreshV4({
+            token: "token",
+            ref,
+        })).rejects.toBeInstanceOf(
+            QualifiedProviderAccountUsageReadConflictError,
+        );
+
+        vi.mocked(axios.post).mockResolvedValueOnce({
+            status: 409,
+            data: conflict,
+        });
+        await expect(requestQualifiedProviderAccountUsageRefreshV4({
+            token: "token",
+            recordId: buildProviderAccountUsageRecordId({
+                providerId: "codex",
+                accountSubjectId: "acct-v4",
+                subjectKind: "account",
+                quotaScope: "account",
+            }),
+        })).rejects.toBeInstanceOf(
+            QualifiedProviderAccountUsageReadConflictError,
+        );
+    });
 });

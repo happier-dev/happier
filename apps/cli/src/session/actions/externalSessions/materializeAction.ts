@@ -49,6 +49,7 @@ import {
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationStartAdmission,
+  type ExternalSessionOperationAccountScope,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
   type ExternalSessionOperationSelectedPresentationReader,
   writeExternalSessionOperationRecord,
@@ -126,6 +127,14 @@ export type ExternalSessionMaterializeActionExecutor = Readonly<{
       /** Host-stamped private contextual-author admission evidence. */
       authorIntent?: ExternalSessionOperationAuthorIntentV1;
       /**
+       * Pinned authenticated Account scope carried from the Start owner's
+       * admission resolution. When present, every record and staging effect of
+       * this call verifies the ambient Account still matches before any
+       * effect, so an A→B rotation fails closed instead of resolving into the
+       * rotated Account's partition.
+       */
+      accountScope?: ExternalSessionOperationAccountScope;
+      /**
        * Reports the durable operation record the moment it is committed and its
        * progress is published, so the Start action owner can return the public
        * operation reference while this call keeps driving the operation.
@@ -143,9 +152,21 @@ export type ExternalSessionMaterializeActionExecutor = Readonly<{
   ): Promise<ExternalSessionOperationActionResponseV1>;
   cleanupTerminalStaging?(
     operationId: string,
+    /** Live pinned scope carried from operation admission; see start. */
+    accountScope?: ExternalSessionOperationAccountScope,
   ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'>;
+  /**
+   * Discharge an operation's private staging and workspace media after an
+   * authoritative parent Session deletion. The caller passes the exact record
+   * it read from the pinned Account partition under the retirement locks, plus
+   * that pin: cleanup addresses the pin's partition directly and never
+   * consults ambient credentials, so an A→B rotation cannot redirect the
+   * cleanup or orphan the owning Account's private payload.
+   */
   cleanupAbandonedOperation?(
-    operationId: string,
+    record: ExternalSessionOperationRecordV1,
+    /** Pinned scope of the Account whose deletion fact delivered the cleanup. */
+    accountScope?: ExternalSessionOperationAccountScope,
   ): Promise<'cleaned' | 'missing' | 'not_applicable'>;
 }>;
 
@@ -180,6 +201,12 @@ export type ExternalSessionPersistedTakeoverPreparation = (
 
 type MaterializeDependencies = Readonly<{
   activeServerDir: string;
+  /**
+   * Pinned authenticated Account scope derived once at operation admission.
+   * When present, every record/staging effect verifies the ambient Account
+   * still matches before any effect (A→B rotation fails closed).
+   */
+  accountScope?: ExternalSessionOperationAccountScope;
   operationExclusion: ExternalSessionOperationExclusion;
   staging: ExternalSessionOperationPrivateStagingStore;
   describeSource(
@@ -308,14 +335,20 @@ class ExternalSessionOperationProgressPublishError extends Error {
 async function readRecord(
   activeServerDir: string,
   operationId: string,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<ExternalSessionOperationRecordV1 | null> {
-  return await readExternalSessionOperationRecord(activeServerDir, operationId);
+  return await readExternalSessionOperationRecord(
+    activeServerDir,
+    operationId,
+    accountScope,
+  );
 }
 
 async function readExactActionRecord(
   activeServerDir: string,
   sessionId: string,
   operationId: string,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<
   | Readonly<{ kind: 'record'; record: ExternalSessionOperationRecordV1 }>
   | Readonly<{ kind: 'terminal_receipt' }>
@@ -327,6 +360,7 @@ async function readExactActionRecord(
     stored = await readExternalSessionOperationStoredEntry(
       activeServerDir,
       operationId,
+      accountScope,
     );
   } catch (error) {
     if (isExternalSessionOperationIdentityUnavailable(error)) {
@@ -353,6 +387,7 @@ async function writeRecord(
   validateProgressSelection?:
     MaterializeDependencies['validateProgressSelection'],
   nowMs?: () => number,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<Readonly<{
   record: ExternalSessionOperationRecordV1;
   expectedDifferentTerminalPresentation?:
@@ -364,6 +399,7 @@ async function writeRecord(
     activeServerDir,
     record,
     {
+      ...(accountScope ? { accountScope } : {}),
       validateCurrent: (current, parsed) => {
         if (
           current
@@ -416,6 +452,7 @@ async function mutateRecordAtRevision(
   mutate: (
     current: ExternalSessionOperationRecordV1,
   ) => ExternalSessionOperationRecordV1,
+  accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<
   | Readonly<{ ok: true; record: ExternalSessionOperationRecordV1 }>
   | Readonly<{ ok: false; code: 'operation_not_found' | 'stale_revision' }>
@@ -425,6 +462,7 @@ async function mutateRecordAtRevision(
     operationId,
     expectedRevision,
     mutate,
+    accountScope,
   );
 }
 
@@ -505,9 +543,18 @@ export function createExternalSessionMaterializeActionExecutor(
     ?? readExternalSessionOperationSharedPresentation;
   const garbageCollectWorkspaceMedia = dependencies.garbageCollectWorkspaceMedia
     ?? garbageCollectUncommittedSessionMedia;
-  const cleanupOwnedWorkspaceMedia = async (operationId: string): Promise<void> => {
+  const cleanupOwnedWorkspaceMedia = async (
+    operationId: string,
+    retirementAccountScope?: ExternalSessionOperationAccountScope,
+  ): Promise<void> => {
+    const retirementScopeInput = retirementAccountScope
+      ? { accountScope: retirementAccountScope }
+      : {};
     const ownedWorkspaceMedia = await dependencies.staging
-      .readCreatedWorkspaceMediaForCleanup({ operationId });
+      .readCreatedWorkspaceMediaForCleanup({
+        operationId,
+        ...retirementScopeInput,
+      });
     const pathsByWorkingDirectory = new Map<string, string[]>();
     for (const owned of ownedWorkspaceMedia) {
       const paths = pathsByWorkingDirectory.get(owned.workingDirectory) ?? [];
@@ -527,12 +574,19 @@ export function createExternalSessionMaterializeActionExecutor(
     await dependencies.staging.acknowledgeCreatedWorkspaceMediaCleanup({
       operationId,
       media: ownedWorkspaceMedia,
+      ...retirementScopeInput,
     });
   };
   const cleanupTerminalStaging = async (
     operationId: string,
+    liveAccountScope: ExternalSessionOperationAccountScope | undefined =
+      dependencies.accountScope,
   ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'> => {
-    const current = await readRecord(dependencies.activeServerDir, operationId);
+    const current = await readRecord(
+      dependencies.activeServerDir,
+      operationId,
+      liveAccountScope,
+    );
     if (!current) return 'missing';
     // Staging and workspace media are released for every settled operation.
     // Once that cleanup is durable, the record store may retain its existing
@@ -548,6 +602,7 @@ export function createExternalSessionMaterializeActionExecutor(
     }
     const cleaned = await dependencies.staging.cleanupTerminalOperation({
       operationId,
+      ...(liveAccountScope ? { accountScope: liveAccountScope } : {}),
     });
     const stagingDisposition = cleaned.status === 'completed'
       ? 'cleaned' as const
@@ -561,19 +616,26 @@ export function createExternalSessionMaterializeActionExecutor(
         operationId,
         expectedRevision: current.revision,
         stagingDisposition,
+        ...(liveAccountScope
+          ? { accountScope: liveAccountScope }
+          : {}),
       });
     }
     return stagingDisposition;
   };
   const cleanupAbandonedOperation = async (
-    operationId: string,
+    record: ExternalSessionOperationRecordV1,
+    retirementAccountScope?: ExternalSessionOperationAccountScope,
   ): Promise<'cleaned' | 'missing' | 'not_applicable'> => {
-    const current = await readRecord(dependencies.activeServerDir, operationId);
-    if (!current) return 'missing';
-    if (!isImportBearingRequest(current.request)) return 'not_applicable';
-    await cleanupOwnedWorkspaceMedia(operationId);
+    if (!isImportBearingRequest(record.request)) return 'not_applicable';
+    const operationId = record.operationId;
+    const retirementScopeInput = retirementAccountScope
+      ? { accountScope: retirementAccountScope }
+      : {};
+    await cleanupOwnedWorkspaceMedia(operationId, retirementAccountScope);
     const cleaned = await dependencies.staging.cleanupAbandonedOperation({
       operationId,
+      ...retirementScopeInput,
     });
     if (cleaned.status === 'not_ready') {
       throw new Error('historical_import_abandoned_staging_cleanup_not_ready');
@@ -601,6 +663,8 @@ export function createExternalSessionMaterializeActionExecutor(
 
   const commitRecord = async (
     record: ExternalSessionOperationRecordV1,
+    accountScope: ExternalSessionOperationAccountScope | undefined =
+      dependencies.accountScope,
   ): Promise<ExternalSessionOperationRecordV1> => {
     const admission = await writeRecord(
       dependencies.activeServerDir,
@@ -608,6 +672,7 @@ export function createExternalSessionMaterializeActionExecutor(
       dependencies.settlePriorTerminalProgressProjection,
       dependencies.validateProgressSelection,
       nowMs,
+      accountScope,
     );
     const committed = admission.record;
     try {
@@ -632,12 +697,15 @@ export function createExternalSessionMaterializeActionExecutor(
     mutate: (
       current: ExternalSessionOperationRecordV1,
     ) => ExternalSessionOperationRecordV1,
+    accountScope: ExternalSessionOperationAccountScope | undefined =
+      dependencies.accountScope,
   ): ReturnType<typeof mutateRecordAtRevision> => {
     const result = await mutateRecordAtRevision(
       dependencies.activeServerDir,
       operationId,
       expectedRevision,
       mutate,
+      accountScope,
     );
     if (!result.ok) return result;
     try {
@@ -707,6 +775,8 @@ export function createExternalSessionMaterializeActionExecutor(
     record: ExternalSessionOperationRecordV1,
     error: unknown,
     retryTargetPhase: ExternalSessionOperationRecordV1['phase'],
+    accountScope: ExternalSessionOperationAccountScope | undefined =
+      dependencies.accountScope,
   ): Promise<ExternalSessionOperationRecordV1> => {
     const recoverableInterruption =
       error instanceof ExternalSessionMaterializeRecoverableInterruptionError
@@ -796,7 +866,7 @@ export function createExternalSessionMaterializeActionExecutor(
               : { kind: 'none' as const },
         }
         : {}),
-    });
+    }, accountScope);
   };
 
   const reconcileCheckpointAgainstDurableReceipt = async (
@@ -876,8 +946,14 @@ export function createExternalSessionMaterializeActionExecutor(
 
   const finalizeCancellation = async (
     operationId: string,
+    accountScope: ExternalSessionOperationAccountScope | undefined =
+      dependencies.accountScope,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
-    let current = await readRecord(dependencies.activeServerDir, operationId);
+    let current = await readRecord(
+      dependencies.activeServerDir,
+      operationId,
+      accountScope,
+    );
     if (!current) return failure('operation_not_found', 'Materialization operation was not found.');
     if (current.status === 'cancelled') return success(current);
     if (current.status !== 'cancel_requested' || !current.cancellation) {
@@ -955,6 +1031,7 @@ export function createExternalSessionMaterializeActionExecutor(
         updatedAtMs: nowMs(),
         terminalResult: { kind: 'cancelled' },
       }),
+      accountScope,
     );
     if (!terminal.ok) {
       return failure(
@@ -973,6 +1050,7 @@ export function createExternalSessionMaterializeActionExecutor(
     claimMaintenance: ExternalSessionOperationClaimMaintenance,
     onRecord: (record: ExternalSessionOperationRecordV1) => void,
     workingDirectory?: string,
+    accountScope?: ExternalSessionOperationAccountScope,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     let record = initialRecord;
     const operationId = record.operationId;
@@ -1019,13 +1097,13 @@ export function createExternalSessionMaterializeActionExecutor(
         ...(isPersistedTakeover
           ? { retryTargetPhase: 'admitting' as const }
           : { terminalResult: { kind: 'completed' as const } }),
-      }));
+      }, accountScope));
       if (isPersistedTakeover) {
         return success(record);
       }
       try {
         await claimMaintenance.race(
-          () => cleanupTerminalStaging(operationId),
+          () => cleanupTerminalStaging(operationId, accountScope),
         );
       } catch {
         // The durable terminal result is authoritative; bounded staging remains
@@ -1056,10 +1134,10 @@ export function createExternalSessionMaterializeActionExecutor(
         },
         fence: { kind: 'none' },
         terminalResult: { kind: 'discarded' },
-      }));
+      }, accountScope));
       try {
         await claimMaintenance.race(
-          () => cleanupTerminalStaging(operationId),
+          () => cleanupTerminalStaging(operationId, accountScope),
         );
       } catch {
         // The durable discard is authoritative; bounded staging remains under
@@ -1123,6 +1201,7 @@ export function createExternalSessionMaterializeActionExecutor(
                 sourceSnapshotEvidenceRef: capturedThroughSourceRevision,
               },
             }),
+            accountScope,
           ),
         );
         if (!reconciled.ok) {
@@ -1215,7 +1294,7 @@ export function createExternalSessionMaterializeActionExecutor(
         ...record.bindings,
         historicalImportJobId: ready.historicalImportJobId,
       },
-    }));
+    }, accountScope));
     onRecord(record);
 
     const serverCommandRevision = ready.revision;
@@ -1307,6 +1386,7 @@ export function createExternalSessionMaterializeActionExecutor(
                     publication: current.priorStableStorage.publication,
                   },
               }),
+              accountScope,
             ),
           );
           if (!acknowledged.ok) {
@@ -1391,7 +1471,7 @@ export function createExternalSessionMaterializeActionExecutor(
               },
             }
             : {}),
-      }));
+      }, accountScope));
       onRecord(record);
       return success(record);
     }
@@ -1447,6 +1527,7 @@ export function createExternalSessionMaterializeActionExecutor(
                   publication: current.priorStableStorage.publication,
                 },
             }),
+            accountScope,
           ),
         );
         if (!persisted.ok) {
@@ -1477,7 +1558,7 @@ export function createExternalSessionMaterializeActionExecutor(
         revision: record.revision + 1,
         phase: 'final_catch_up',
         updatedAtMs: nowMs(),
-      }));
+      }, accountScope));
       onRecord(record);
     }
 
@@ -1585,7 +1666,7 @@ export function createExternalSessionMaterializeActionExecutor(
             retryable: true,
             occurredAtMs: interruptedAtMs,
           },
-        }));
+        }, accountScope));
         onRecord(record);
         return success(record);
       }
@@ -1643,6 +1724,7 @@ export function createExternalSessionMaterializeActionExecutor(
     claimMaintenance: ExternalSessionOperationClaimMaintenance,
     onRecord: (record: ExternalSessionOperationRecordV1) => void,
     workingDirectory?: string,
+    accountScope?: ExternalSessionOperationAccountScope,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     let record = initialRecord;
     const operationId = record.operationId;
@@ -1656,6 +1738,7 @@ export function createExternalSessionMaterializeActionExecutor(
       operationId,
       representation: 'content',
       capturedSource: source.capturedSource,
+      ...(accountScope ? { accountScope } : {}),
     }));
     throwIfCancellationRequested(operationId);
     if (stagingReference.status === 'conflict') {
@@ -1681,7 +1764,7 @@ export function createExternalSessionMaterializeActionExecutor(
         ...validatingRecord.bindings,
         privateStagingId: stagingReference.stagingReference,
       },
-    }));
+    }, accountScope));
     onRecord(record);
 
     let sourcePagesRead = 0;
@@ -1784,7 +1867,7 @@ export function createExternalSessionMaterializeActionExecutor(
         ...stagingRecord.canonicalOwnerEvidence,
         sourceSnapshotEvidenceRef: capturedThroughSourceRevision,
       },
-    }));
+    }, accountScope));
     onRecord(record);
     if (hasRequiredItemFailures) return success(record);
     return await continueHistoricalImport(
@@ -1793,6 +1876,7 @@ export function createExternalSessionMaterializeActionExecutor(
       claimMaintenance,
       onRecord,
       workingDirectory,
+      accountScope,
     );
   };
 
@@ -1810,6 +1894,7 @@ export function createExternalSessionMaterializeActionExecutor(
       dependencies.activeServerDir,
       parsed.data.sessionId,
       parsed.data.operationId,
+      dependencies.accountScope,
     );
     if (stored.kind === 'unavailable') {
       return failure(
@@ -1944,6 +2029,7 @@ export function createExternalSessionMaterializeActionExecutor(
     const fencedCurrent = await readRecord(
       dependencies.activeServerDir,
       current.operationId,
+      dependencies.accountScope,
     );
     if (!fencedCurrent || fencedCurrent.revision !== parsed.data.revision) {
       await acquired.claim.release();
@@ -2292,6 +2378,7 @@ export function createExternalSessionMaterializeActionExecutor(
         dependencies.activeServerDir,
         parsed.data.sessionId,
         parsed.data.operationId,
+        dependencies.accountScope,
       );
       if (stored.kind === 'unavailable') {
         return failure(
@@ -2322,6 +2409,7 @@ export function createExternalSessionMaterializeActionExecutor(
         dependencies.activeServerDir,
         parsed.data.sessionId,
         parsed.data.operationId,
+        dependencies.accountScope,
       );
       if (stored.kind === 'unavailable') {
         return failure(
@@ -2451,6 +2539,7 @@ export function createExternalSessionMaterializeActionExecutor(
         dependencies.activeServerDir,
         parsed.data.sessionId,
         parsed.data.operationId,
+        dependencies.accountScope,
       );
       if (stored.kind === 'unavailable') {
         return failure(
@@ -2639,6 +2728,11 @@ export function createExternalSessionMaterializeActionExecutor(
         return failure('invalid_state', 'Invalid materialization request.');
       }
       const request = parsed.data.request;
+      // One pinned scope per public Start call: the caller's admission pin wins
+      // so admission and every later record/staging effect address the same
+      // Account partition; otherwise fall back to the executor-level pin, and
+      // only then to the record store's ambient resolution.
+      const accountScope = context?.accountScope ?? dependencies.accountScope;
       let admission: Awaited<ReturnType<
         typeof resolveExternalSessionOperationStartAdmission
       >>;
@@ -2649,6 +2743,9 @@ export function createExternalSessionMaterializeActionExecutor(
           intent: request,
           ...(context?.authorIntent
             ? { authorIntent: context.authorIntent }
+            : {}),
+          ...(accountScope
+            ? { accountScope }
             : {}),
           nowMs: nowMs(),
           readSelectedPresentation,
@@ -2703,7 +2800,7 @@ export function createExternalSessionMaterializeActionExecutor(
         }
         if (existing.status === 'completed') {
           try {
-            await cleanupTerminalStaging(existing.operationId);
+            await cleanupTerminalStaging(existing.operationId, accountScope);
           } catch {
             // An idempotent Start may retry retention cleanup without changing
             // the already-authoritative terminal result.
@@ -2723,8 +2820,15 @@ export function createExternalSessionMaterializeActionExecutor(
       const acquireExclusion = async () => context?.signal
         ? await dependencies.operationExclusion.acquire(exclusionRequest, {
           signal: context.signal,
+          ...(accountScope
+            ? { accountSubject: accountScope.accountSubject }
+            : {}),
         })
-        : await dependencies.operationExclusion.acquire(exclusionRequest);
+        : await dependencies.operationExclusion.acquire(exclusionRequest, {
+          ...(accountScope
+            ? { accountSubject: accountScope.accountSubject }
+            : {}),
+        });
       let acquired: Awaited<ReturnType<ExternalSessionOperationExclusion['acquire']>>;
       try {
         acquired = await acquireExclusion();
@@ -2743,6 +2847,9 @@ export function createExternalSessionMaterializeActionExecutor(
               intent: request,
               ...(context?.authorIntent
                 ? { authorIntent: context.authorIntent }
+                : {}),
+              ...(accountScope
+                ? { accountScope }
                 : {}),
               nowMs: nowMs(),
               readSelectedPresentation,
@@ -2770,6 +2877,9 @@ export function createExternalSessionMaterializeActionExecutor(
                 intent: request,
                 ...(context?.authorIntent
                   ? { authorIntent: context.authorIntent }
+                  : {}),
+                ...(accountScope
+                  ? { accountScope }
                   : {}),
                 nowMs: nowMs(),
                 readSelectedPresentation,
@@ -2882,7 +2992,7 @@ export function createExternalSessionMaterializeActionExecutor(
             sourceSnapshotEvidenceRef: source.capturedSource.revision,
           },
           fence: { kind: 'none' },
-        }));
+        }, accountScope));
         if (record.operationId !== operationId) {
           record = dependencies.convergeProgress
             ? await dependencies.convergeProgress(record)
@@ -2897,6 +3007,8 @@ export function createExternalSessionMaterializeActionExecutor(
           (next) => {
             record = next;
           },
+          undefined,
+          accountScope,
         );
       } catch (error) {
         if (error instanceof ExternalSessionOperationProgressPublishError) {
@@ -2918,11 +3030,11 @@ export function createExternalSessionMaterializeActionExecutor(
           }
         }
         if (error instanceof MaterializeCancellationRequestedError) {
-          return await finalizeCancellation(operationId);
+          return await finalizeCancellation(operationId, accountScope);
         }
         if (error instanceof ExternalSessionOperationClaimLostError) {
           if (record) {
-            await writeInterruptedRecord(record, error, record.phase).catch(() => undefined);
+            await writeInterruptedRecord(record, error, record.phase, accountScope).catch(() => undefined);
           }
           return failure('operation_conflict', error.code);
         }
@@ -2942,7 +3054,7 @@ export function createExternalSessionMaterializeActionExecutor(
             'Materialization failed.',
           );
         }
-        const failed = await writeInterruptedRecord(record, error, record.phase);
+        const failed = await writeInterruptedRecord(record, error, record.phase, accountScope);
         return success(failed);
       } finally {
         dependencies.releaseSourceCapture?.(request);

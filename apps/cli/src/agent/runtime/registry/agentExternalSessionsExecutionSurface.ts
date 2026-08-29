@@ -146,9 +146,13 @@ function projectAgentOwnedLinkDataFacts(
 export function createAgentExternalSessionsExecutionSurface(
     contribution: BoundedAgentExternalSessionsContribution,
     externalLinkedTakeoverWriterSafety: PluginAgentExternalLinkedTakeoverWriterSafetyV1 = 'unsupported',
+    externalSessionTakeoverAdmitted: boolean = false,
 ): ExternalSessionExecutionSurface {
     const surface: ExternalSessionExecutionSurface = {
         externalLinkedTakeoverWriterSafety,
+        ...(externalSessionTakeoverAdmitted
+            ? { externalSessionTakeoverAdmitted: true as const }
+            : {}),
         async validateSource(request) {
             const result = unwrap('resolveSource', await contribution.resolveSource({
                 source: toAgentSource(request.source, 'resolveSource'),

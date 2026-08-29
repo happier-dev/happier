@@ -141,9 +141,6 @@ class Configuration {
   public readonly sessionMediaMaxBytesPerSession: number
   public readonly sessionMediaMaxBytesPerWorkspace: number
   public readonly filesZipExcludedTopLevelDirs: readonly string[]
-  public readonly workspaceReplicationBlobPackTargetBytes: number
-  public readonly workspaceReplicationBlobPackMaxBlobs: number
-  public readonly workspaceReplicationBlobPackMaxSingleBlobBytes: number
   public readonly currentCliVersion: string
 
   public readonly isExperimentalEnabled: boolean
@@ -452,24 +449,6 @@ class Configuration {
       zipExcludedOut.push(value);
     }
     this.filesZipExcludedTopLevelDirs = zipExcludedOut;
-
-    // Workspace replication blob-pack sizing (Appendix A).
-    this.workspaceReplicationBlobPackTargetBytes = resolveIntEnvWithBounds(
-      'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_TARGET_BYTES',
-      // Defensive max prevents accidentally configuring multi-GB packs that can thrash disk/network.
-      { min: 1, max: 1024 * 1024 * 1024, default: 128 * 1024 * 1024 },
-    );
-    this.workspaceReplicationBlobPackMaxBlobs = resolveIntEnvWithBounds(
-      'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_BLOBS',
-      // Defensive max prevents digest lists (carried in bounded transport metadata envelopes) from
-      // exceeding hard caps and turning into huge work multipliers.
-      { min: 1, max: 768, default: 256 },
-    );
-    this.workspaceReplicationBlobPackMaxSingleBlobBytes = resolveIntEnvWithBounds(
-      'HAPPIER_WORKSPACE_REPLICATION_BLOB_PACK_MAX_SINGLE_BLOB_BYTES',
-      // Large files exist, but avoid unbounded values that can destabilize the daemon.
-      { min: 1, max: 4 * 1024 * 1024 * 1024, default: 1024 * 1024 * 1024 },
-    );
 
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');

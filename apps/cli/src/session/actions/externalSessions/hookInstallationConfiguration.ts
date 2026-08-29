@@ -138,7 +138,7 @@ type ConfigurationPersistence = Readonly<{
 }>;
 
 export type ApplyExternalSessionHookInstallationActionInput = Readonly<{
-    action: 'install' | 'disable' | 'enable' | 'uninstall';
+    action: 'install' | 'disable' | 'enable' | 'revoke' | 'uninstall';
     activeServerDir: string;
     machineId: string;
     qualifiedAgent: QualifiedAgent;
@@ -1615,15 +1615,33 @@ export async function applyExternalSessionHookInstallationAction(
         ) {
             return { ok: false, code: 'generation_mismatch' };
         }
-        if (input.action === 'disable' || input.action === 'enable') {
+        if (
+            input.action === 'disable'
+            || input.action === 'enable'
+            || input.action === 'revoke'
+        ) {
             if (!record) return { ok: false, code: 'installation_not_found' };
             if (record.state === 'preparing' || record.state === 'revoked') {
-                return { ok: false, code: 'reconciliation_required' };
+                // `revoke` is the reconciliation writer for exactly this
+                // non-enablable custody and is already satisfied there; the
+                // user-facing toggles refuse transitional custody.
+                return input.action === 'revoke'
+                    ? {
+                        ok: true as const,
+                        state: 'installed_disabled' as const,
+                        changedConfiguration: false,
+                        revision: record.revision,
+                    }
+                    : { ok: false, code: 'reconciliation_required' };
             }
             if (!await isInstallationActionCurrent(input)) {
                 return { ok: false, code: 'generation_mismatch' };
             }
-            const state = input.action === 'disable' ? 'disabled' : 'active';
+            const state = input.action === 'enable'
+                ? 'active'
+                : input.action === 'disable'
+                    ? 'disabled'
+                    : 'revoked';
             const updated = {
                 ...record,
                 state,

@@ -31,6 +31,13 @@ export type HostExternalTranscriptItem = Readonly<{
   localId?: string;
   /** Explicit provider classification; the terminal projector enforces phase-specific handling. */
   userProjection?: ExternalSessionUserProjection;
+  /**
+   * Top-level Protocol sidechain/subagent identity
+   * (`ExternalSessionTranscriptSourceItemV1Schema.sidechainId`). The terminal
+   * projector carries it into the projected runtime event; a sidechain id
+   * nested inside the provider's semantic body remains the fallback.
+   */
+  sidechainId?: string;
   timestampMs?: number;
   kind: 'user' | 'agent' | 'system' | 'event';
   data: JsonValue;

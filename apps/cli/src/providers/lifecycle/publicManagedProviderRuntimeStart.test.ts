@@ -211,13 +211,13 @@ describe('public managed Provider runtime start coordinator', () => {
     expect(acquireRuntime).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    'plugin_packaged_runtime_binary_unavailable',
-    'plugin_managed_server_custody_failed',
-  ])('preserves permanent runtime installation failure %s as runtime unavailable', async (code) => {
+  it('preserves a missing custody helper as runtime unavailable', async () => {
     const runtime = resolvedRuntime(Object.freeze({
       start: async () => {
-        throw new PluginError({ code, message: 'runtime installation is unavailable' });
+        throw new PluginError({
+          code: 'plugin_managed_server_custody_failed',
+          message: 'Managed server process-tree custody helper is unavailable on Windows',
+        });
       },
     }));
 
@@ -243,6 +243,57 @@ describe('public managed Provider runtime start coordinator', () => {
       ok: false,
       code: 'managed_provider_runtime_unavailable',
     });
+  });
+
+  it('preserves packaged runtime binary absence as runtime unavailable', async () => {
+    const runtime = resolvedRuntime(Object.freeze({
+      start: async () => {
+        throw new PluginError({
+          code: 'plugin_packaged_runtime_binary_unavailable',
+          message: 'runtime installation is unavailable',
+        });
+      },
+    }));
+
+    const result = await startPublicManagedProviderRuntime({
+      identity: Object.freeze({ pluginId: 'cliproxyapi', localId: 'cliproxyapi' }),
+      request: Object.freeze({ reason: 'explicitStartLocal' as const, endpointTemplateIds: Object.freeze(['responses']) }),
+      acquireRuntime: async () => runtime,
+      connectedAccounts: connectedAccounts(),
+      custody: Object.freeze({ managedServices: managedServices(), projectEndpointAccess: vi.fn() }),
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization: async () => true,
+      signal: new AbortController().signal,
+      launchResourceScope: createProviderLaunchResourceScope(),
+    });
+
+    expect(result).toEqual({ ok: false, code: 'managed_provider_runtime_unavailable' });
+  });
+
+  it.each([
+    'Managed server job custody could not be established',
+    'Managed server process identity could not be captured safely',
+    'Managed server custody could not be established',
+  ])('keeps transient managed custody failure retryable (%s)', async (message) => {
+    const runtime = resolvedRuntime(Object.freeze({
+      start: async () => {
+        throw new PluginError({ code: 'plugin_managed_server_custody_failed', message });
+      },
+    }));
+
+    const result = await startPublicManagedProviderRuntime({
+      identity: Object.freeze({ pluginId: 'cliproxyapi', localId: 'cliproxyapi' }),
+      request: Object.freeze({ reason: 'explicitStartLocal' as const, endpointTemplateIds: Object.freeze(['responses']) }),
+      acquireRuntime: async () => runtime,
+      connectedAccounts: connectedAccounts(),
+      custody: Object.freeze({ managedServices: managedServices(), projectEndpointAccess: vi.fn() }),
+      isAuthorizationCurrent: () => true,
+      revalidateAuthorization: async () => true,
+      signal: new AbortController().signal,
+      launchResourceScope: createProviderLaunchResourceScope(),
+    });
+
+    expect(result).toEqual({ ok: false, code: 'managed_provider_start_failed' });
   });
 
   it('reports cancellation after Provider admission without misclassifying it as authorization drift', async () => {

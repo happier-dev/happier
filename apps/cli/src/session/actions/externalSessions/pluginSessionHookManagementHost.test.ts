@@ -1486,6 +1486,264 @@ describe('createPluginSessionHookManagementHost', () => {
         expect(activeEventRefs).toEqual(new Set());
     });
 
+    /**
+     * Drives the canonical two-event reload rotation failure: event one
+     * rotates to a new durable secret, event two fails mid-rotation, and the
+     * durable cleanup of the resulting mixed old/new set fails at the boundary
+     * the caller names. The returned `state` holds the simulated durable
+     * record, the surviving durable secrets, and every applied custody action.
+     */
+    function createTwoEventRotationWithFailedDurableCleanup(input: Readonly<{
+        disablePersist: 'fails' | 'succeeds';
+        secondRevoke: 'fails' | 'succeeds';
+    }>) {
+        const twoEventVariant = {
+            ...variant,
+            events: [
+                ...variant.events,
+                {
+                    eventId: 'session-stop',
+                    targetId: 'settings',
+                    nativeEventName: 'Stop',
+                    command: {
+                        kind: 'happier_observation_v1' as const,
+                        shellDialect: 'posix' as const,
+                    },
+                },
+            ],
+        } satisfies AgentExternalSessionHookInstallationVariant;
+        const state: {
+            record: ExternalSessionHookInstallationRecord;
+            secrets: Map<string, 'old' | 'new'>;
+            actions: string[];
+        } = {
+            record: {
+                ...installationRecord(),
+                ownedEntries: [
+                    ...installationRecord().ownedEntries,
+                    {
+                        ...installationRecord().ownedEntries[0]!,
+                        eventId: 'session-stop',
+                        nativeEventName: 'Stop',
+                        entryIndex: 1,
+                    },
+                ],
+            },
+            secrets: new Map<string, 'old' | 'new'>([
+                ['session-start', 'old'],
+                ['session-stop', 'old'],
+            ]),
+            actions: [],
+        };
+        const applyInstallationAction = vi.fn<
+            PluginSessionHookManagementHostDependencies[
+                'applyInstallationAction'
+            ]
+        >(async (request) => {
+            state.actions.push(request.action);
+            if (request.action === 'disable') {
+                if (input.disablePersist === 'fails') {
+                    return {
+                        ok: false as const,
+                        code: 'write_failed' as const,
+                    };
+                }
+                state.record = {
+                    ...state.record,
+                    state: 'disabled',
+                    revision: state.record.revision + 1,
+                };
+                return {
+                    ok: true as const,
+                    state: 'installed_disabled' as const,
+                    changedConfiguration: false,
+                    revision: state.record.revision,
+                };
+            }
+            if (request.action === 'revoke') {
+                state.record = {
+                    ...state.record,
+                    state: 'revoked',
+                    revision: state.record.revision + 1,
+                };
+                return {
+                    ok: true as const,
+                    state: 'installed_disabled' as const,
+                    changedConfiguration: false,
+                    revision: state.record.revision,
+                };
+            }
+            throw new Error(
+                `Unexpected action ${String(request.action)}`,
+            );
+        });
+        const fixture = createFixture({
+            installationVariant: twoEventVariant,
+            dependencyOverrides: {
+                readInventoryPage: vi.fn(async () => ({
+                    ok: true as const,
+                    records: [inventoryRecord(
+                        fixtureHostInstallationId,
+                        state.record.state,
+                    )],
+                    diagnostics: [],
+                })),
+                readInstallationRecord: vi.fn(async () => state.record),
+                applyInstallationAction,
+            },
+        });
+        const credentialFor = (eventId: string) => ({
+            installationPrincipalRef: 'installation-principal',
+            eventPrincipalRef: `event-principal:${eventId}`,
+            eventId,
+            secretFile: `/private/tmp/${eventId}.secret`,
+        });
+        fixture.listener.restoreCredential.mockImplementation(
+            async (restoreInput) => {
+                const secret = state.secrets.get(restoreInput.eventId);
+                return secret
+                    ? {
+                        state: 'restored' as const,
+                        credential: credentialFor(restoreInput.eventId),
+                    }
+                    : {
+                        state: 'unavailable' as const,
+                        reason: 'missing' as const,
+                    };
+            },
+        );
+        fixture.listener.rotateCredential.mockImplementation(
+            async (rotateInput) => {
+                if (rotateInput.eventId === 'session-start') {
+                    state.secrets.set(rotateInput.eventId, 'new');
+                    return credentialFor(rotateInput.eventId);
+                }
+                throw new Error('second event rotation failed');
+            },
+        );
+        fixture.listener.revokeDurableCredential.mockImplementation(
+            async (revokeInput) => {
+                if (
+                    revokeInput.eventId === 'session-stop'
+                    && input.secondRevoke === 'fails'
+                ) {
+                    throw new Error('durable revoke failed');
+                }
+                state.secrets.delete(revokeInput.eventId);
+            },
+        );
+        return { fixture, state, applyInstallationAction };
+    }
+
+    it('persists non-enablable revoked custody when rotation cleanup fails durably, and bootstrap cannot revive the mixed set', async () => {
+        const { fixture, state } = createTwoEventRotationWithFailedDurableCleanup({
+            disablePersist: 'fails',
+            secondRevoke: 'fails',
+        });
+
+        await fixture.host.hydrate({ reason: 'plugin_reload' });
+
+        expect(fixture.listener.rotateCredential).toHaveBeenCalledTimes(2);
+        // The nearest truthful custody is attempted first, then the durable
+        // record is forced to the existing non-enablable `revoked` state even
+        // though a durable secret may remain.
+        expect(state.actions).toEqual(['disable', 'revoke']);
+        expect(state.record.state).toBe('revoked');
+        expect(state.secrets.has('session-start')).toBe(false);
+        expect(state.secrets.has('session-stop')).toBe(true);
+
+        // A restart must observe the non-enablable custody and neither
+        // restore nor enable any member of the mixed old/new set.
+        fixture.listener.restoreCredential.mockClear();
+        fixture.listener.enable.mockClear();
+        await fixture.host.hydrate({ reason: 'bootstrap' });
+
+        expect(fixture.listener.restoreCredential).not.toHaveBeenCalled();
+        expect(fixture.listener.enable).not.toHaveBeenCalled();
+    });
+
+    it.each(['preparing', 'revoked'] as const)(
+        'rejects Enable before any credential materialization for %s custody',
+        async (nonEnablableState) => {
+            const fixture = createFixture({
+                dependencyOverrides: {
+                    readInstallationRecord: vi.fn(async () =>
+                        installationRecord(nonEnablableState)),
+                },
+            });
+
+            await expect(fixture.host.enable({
+                machineId: 'machine-1',
+                agent,
+                installationId: fixtureHostInstallationId,
+            })).resolves.toEqual({
+                ok: true,
+                status: {
+                    state: 'needs_attention',
+                    installationId: fixtureHostInstallationId,
+                    diagnostic: {
+                        code: 'hook_installation_reconciliation_required',
+                        severity: 'error',
+                    },
+                },
+            });
+
+            expect(fixture.resolveInstallation).not.toHaveBeenCalled();
+            expect(fixture.listener.createOrReuseCredential)
+                .not.toHaveBeenCalled();
+            expect(fixture.listener.buildOwnedEntry).not.toHaveBeenCalled();
+            expect(fixture.applyInstallationAction).not.toHaveBeenCalled();
+            expect(fixture.listener.enable).not.toHaveBeenCalled();
+        },
+    );
+
+    it('keeps Uninstall as the recovery path for rotation-reconciled non-enablable custody', async () => {
+        const { fixture, state, applyInstallationAction } =
+            createTwoEventRotationWithFailedDurableCleanup({
+                disablePersist: 'fails',
+                secondRevoke: 'fails',
+            });
+        await fixture.host.hydrate({ reason: 'plugin_reload' });
+        expect(state.record.state).toBe('revoked');
+
+        fixture.listener.revokeDurableCredential.mockImplementation(
+            async (revokeInput) => {
+                state.secrets.delete(revokeInput.eventId);
+            },
+        );
+        state.actions.length = 0;
+        applyInstallationAction.mockImplementation(async (request) => {
+            state.actions.push(request.action);
+            if (request.action !== 'uninstall') {
+                throw new Error(`Unexpected action ${String(request.action)}`);
+            }
+            state.record = {
+                ...state.record,
+                revision: state.record.revision + 1,
+            };
+            return {
+                ok: true as const,
+                state: 'not_installed' as const,
+                changedConfiguration: true,
+                revision: state.record.revision,
+            };
+        });
+
+        await expect(fixture.host.uninstall({
+            machineId: 'machine-1',
+            agent,
+            installationId: fixtureHostInstallationId,
+        })).resolves.toEqual({
+            ok: true,
+            status: { state: 'not_installed' },
+        });
+
+        // Non-enablable custody is cleaned directly: the refused Disable is
+        // not attempted, and the surviving mixed-set secret is revoked.
+        expect(state.actions).toEqual(['uninstall']);
+        expect(state.secrets.size).toBe(0);
+    });
+
     it('holds the installation lock through reload hydration so Uninstall cannot be followed by credential recreation', async () => {
         const actions: string[] = [];
         const effects: string[] = [];

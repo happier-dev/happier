@@ -22,6 +22,7 @@ import {
   createCurrentGlobalExternalSessionsTakeoverAdapter,
   type CurrentGlobalExternalSessionsAuthorService,
 } from './currentGlobalAuthorService';
+import type { CurrentGlobalExternalSessionsPublicAccess } from './currentGlobalRouting';
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from './agentExternalSessionsInvocation';
 import {
   deriveExternalSessionPluginOperationDurableKey,
@@ -334,7 +335,10 @@ describe('current-global External Sessions author binding', () => {
     const iList = vi.fn(async () => iPage);
     let current: CurrentGlobalExternalSessionsAuthorService | null =
       createCurrentOwner(createAuthorService(hList));
-    let publicAccess: 'available' | 'denied' | 'unavailable' = 'available';
+    let publicAccess: CurrentGlobalExternalSessionsPublicAccess = {
+      status: 'available',
+      scopes: [{ access: ['read', 'write', 'control'] }],
+    };
     const binding = createCurrentGlobalExternalSessionsAuthorBinding({
       pluginId: 'acme.sessions',
       signal: new AbortController().signal,
@@ -349,7 +353,7 @@ describe('current-global External Sessions author binding', () => {
     current = createCurrentOwner(createAuthorService(iList));
     await expect(binding.list({ agentId: 'codex' })).resolves.toBe(iPage);
 
-    publicAccess = 'denied';
+    publicAccess = { status: 'denied' };
     expect(await binding.capabilities()).toEqual({
       list: { status: 'unavailable', code: 'plugin_service_unavailable' },
       attach: { status: 'unavailable', code: 'plugin_service_unavailable' },
@@ -381,6 +385,86 @@ describe('current-global External Sessions author binding', () => {
     });
     expect(hList).toHaveBeenCalledOnce();
     expect(iList).toHaveBeenCalledOnce();
+  });
+
+  it('maps read operations to Session read and attach/takeover to Session control on the public surface', async () => {
+    const page = Object.freeze({ items: Object.freeze([]), nextCursor: null });
+    const list = vi.fn(async () => page);
+    const service = createAuthorService(list);
+    const owner = createCurrentOwner(service);
+    let publicAccess: CurrentGlobalExternalSessionsPublicAccess = {
+      status: 'available',
+      scopes: [{ access: ['read'] }],
+    };
+    const binding = createCurrentGlobalExternalSessionsAuthorBinding({
+      pluginId: 'acme.sessions',
+      signal: new AbortController().signal,
+      isGenerationCurrent: () => true,
+      resolveCurrent: () => owner,
+      activateConfiguredSources: async () => {},
+      readCurrentPublicAccess: () => publicAccess,
+    });
+
+    // Read operations only need a resolved scope granting Session read.
+    await expect(binding.list({ agentId: 'codex' })).resolves.toBe(page);
+    await expect(binding.readTranscript(externalSessionRef, {
+      mode: 'page',
+      direction: 'older',
+    })).resolves.toMatchObject({ mode: 'page' });
+
+    // Control operations fail closed on read-only scopes, including the
+    // pre-check surfaces that must stay typed instead of throwing.
+    expect(await binding.capabilities()).toEqual({
+      list: { status: 'unavailable', code: 'plugin_session_scope_unavailable' },
+      attach: { status: 'unavailable', code: 'plugin_session_scope_unavailable' },
+      takeover: { status: 'unavailable', code: 'plugin_session_scope_unavailable' },
+      transcript: { status: 'unavailable', code: 'plugin_session_scope_unavailable' },
+      follow: { status: 'unavailable', code: 'plugin_session_scope_unavailable' },
+    });
+    await expect(binding.followTranscript(externalSessionRef, {}, vi.fn())).resolves.toEqual({
+      status: 'unavailable',
+      code: 'plugin_session_scope_unavailable',
+    });
+    await expect(binding.attach(externalSessionRef)).rejects.toMatchObject({
+      code: 'plugin_session_scope_unavailable',
+    });
+    await expect(binding.takeover(externalSessionRef, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'read-only-scopes',
+    })).rejects.toMatchObject({ code: 'plugin_session_scope_unavailable' });
+
+    // Control scopes flip the mapping: attach/takeover are admitted and the
+    // read side is denied.
+    publicAccess = { status: 'available', scopes: [{ access: ['control'] }] };
+    await expect(binding.attach(externalSessionRef)).resolves.toEqual({
+      sessionId: 'test-session',
+    });
+    await expect(binding.takeover(externalSessionRef, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'control-only-scopes',
+    })).resolves.toMatchObject({ operationId: 'operation-1' });
+    await expect(binding.list({ agentId: 'codex' })).rejects.toMatchObject({
+      code: 'plugin_session_scope_unavailable',
+    });
+
+    // Session write grants nothing on the public External Sessions surface.
+    publicAccess = { status: 'available', scopes: [{ access: ['write'] }] };
+    await expect(binding.list({ agentId: 'codex' })).rejects.toMatchObject({
+      code: 'plugin_session_scope_unavailable',
+    });
+    await expect(binding.attach(externalSessionRef)).rejects.toMatchObject({
+      code: 'plugin_session_scope_unavailable',
+    });
+
+    // An available resolution with no applicable scope grants nothing.
+    publicAccess = { status: 'available', scopes: [] };
+    await expect(binding.attach(externalSessionRef)).rejects.toMatchObject({
+      code: 'plugin_session_scope_unavailable',
+    });
+
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(service.attach).toHaveBeenCalledTimes(1);
+    expect(service.takeover).toHaveBeenCalledTimes(1);
   });
 
   it('fences every new author operation by the caller generation before source activation or effects', async () => {
@@ -747,6 +831,9 @@ describe('current-global External Sessions takeover source resolution', () => {
       }));
       const surface: ExternalSessionExecutionSurface = Object.freeze({
         externalLinkedTakeoverWriterSafety: 'native_prevention',
+        // This synthetic runtime admitted a takeover contribution, so its
+        // current-global author service may advertise takeover.
+        externalSessionTakeoverAdmitted: true as const,
         validateSource: async ({ source }) => ({ ok: true as const, source }),
         listCandidates: async () => ({
           candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],

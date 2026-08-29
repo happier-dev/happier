@@ -1,9 +1,11 @@
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   PluginInstallReviewPrincipalDigestSchema,
   accountSettingsParse,
+  resolveVoiceSpeechSettingsCorrespondence,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import type { VoiceCredentialAccess } from '@happier-dev/plugin-sdk/voice';
@@ -1201,6 +1203,73 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
+  it('executes the canonical public-authoring TTS declaration through the daemon correspondence boundary', async () => {
+    // The public-authoring example is a plugin-authoring fixture, not CLI
+    // source: a literal module specifier resolves the example .ts files into
+    // this program and violates the CLI rootDir invariant (see the tsconfig
+    // exclude note), so load the fixture through its file URL like the other
+    // public-authoring consumers do. The asserted shapes are the only fields
+    // this fixture reads.
+    const [{ manifest }, { textToSpeechRuntime }] = await Promise.all([
+      import(new URL(
+        '../../../../../packages/plugin-sdk/examples/public-authoring/index.ts',
+        import.meta.url,
+      ).href) as Promise<Readonly<{
+        manifest: Readonly<{
+          contributes: Readonly<{
+            voiceProviders?: readonly VoiceProviderContribution[];
+          }>;
+        }>;
+      }>>,
+      import(new URL(
+        '../../../../../packages/plugin-sdk/examples/public-authoring/voiceSpeechProvider.ts',
+        import.meta.url,
+      ).href) as Promise<Readonly<{
+        textToSpeechRuntime: SpeechProviderRuntime;
+      }>>,
+    ]);
+    const authored = manifest.contributes.voiceProviders?.find((entry) => entry.id === 'speech-tts');
+    if (!authored || authored.kind !== 'speech') {
+      throw new Error('public_authoring_tts_declaration_required');
+    }
+    const authoredSettings = Object.freeze(Object.fromEntries(
+      authored.settings.fields.map((field) => [field.id, field.default]),
+    ));
+    expect(resolveVoiceSpeechSettingsCorrespondence({
+      contribution: authored,
+      settings: authoredSettings,
+    }).synthesize).toMatchObject({ voiceName: 'synthetic-voice', format: 'wav' });
+    const { handlers, registrar } = manager();
+    const registration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager: registrar as never,
+      resolveSpeechRuntime: resolveRuntime(textToSpeechRuntime, authored),
+    });
+    const recipient = createTransferRecipientKeyPair();
+    const response = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
+      target: { pluginId: 'examples.public-sdk-review-assistant', localId: 'speech-tts' },
+      requestId: 'public-authoring-tts',
+      input: 'Hello from the public SDK',
+      recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+    }) as Readonly<{ ok: boolean; downloadId?: string; mimeType?: string; errorCode?: string }>;
+    if (!response.ok || !response.downloadId) {
+      throw new Error(`public_authoring_tts_failed:${response.errorCode ?? 'unknown'}`);
+    }
+    const chunk = await handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_DOWNLOAD_CHUNK)?.({
+      downloadId: response.downloadId,
+      index: 0,
+    }) as Readonly<{ payloadBase64: string; encryptedDataKeyEnvelopeBase64: string }>;
+
+    expect(response).toEqual(expect.objectContaining({ ok: true, mimeType: 'audio/wav' }));
+    expect([...decryptEncryptedTransferChunkEnvelope({
+      transferId: response.downloadId,
+      sequence: 0,
+      payloadBase64: chunk.payloadBase64,
+      encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64,
+      recipientSecretKeySeed: recipient.recipientSecretKeySeed,
+    })]).toEqual([82, 73, 70, 70]);
+    await registration.dispose();
+  });
+
   it('derives every ordinary synthesis setting from the admitted immutable daemon snapshot', async () => {
     const { handlers, registrar } = manager();
     const snapshotSettings = Object.freeze({
@@ -1442,7 +1511,10 @@ describe('unified Voice speech machine RPC', () => {
     let current = true;
     let retireAfterExecution = false;
     const execute: NonNullable<VoiceSpeechRuntimeLease['runtime']['settingsActions']>['execute'] = vi.fn(async (input, context) => {
-      expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'lagging-daemon-voice' } });
+      expect(input).toEqual({
+        actionId: 'refresh-voice',
+        settings: { voiceName: 'lagging-daemon-voice', format: 'wav' },
+      });
       expect(context.credentials).toBe(settingsActionCredentials);
       expect(context.credentials.phase).toBe('settings');
       expect(context.signal.aborted).toBe(false);
@@ -1460,6 +1532,12 @@ describe('unified Voice speech machine RPC', () => {
           schema: { type: 'string', minLength: 1, maxLength: 256 },
           default: 'en-US-A',
           presentation: { control: 'text' },
+        }, {
+          id: 'format',
+          title: 'Format',
+          schema: { type: 'string', enum: ['wav'] },
+          default: 'wav',
+          presentation: { control: 'select', options: [{ value: 'wav', title: 'WAV' }] },
         }],
         actions: [{
           id: 'refresh-voice',
@@ -1485,7 +1563,7 @@ describe('unified Voice speech machine RPC', () => {
         runtime,
         contribution: definition,
         readSettings: () => Object.freeze({
-          settings: Object.freeze({ voiceName: 'lagging-daemon-voice' }),
+          settings: Object.freeze({ voiceName: 'lagging-daemon-voice', format: 'wav' }),
           settingsVersion: daemonSettingsVersion,
           resolveCredentials,
           isCurrent: () => current,

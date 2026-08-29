@@ -92,6 +92,7 @@ import type { PersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedT
 import {
   abandonExternalSessionOperationsForDeletedSession,
   readExternalSessionOperationRecord,
+  type ExternalSessionOperationAccountScope,
 } from '@/session/actions/externalSessions/operationRecordStore';
 import type { ExternalSessionMaterializeActionExecutor } from '@/session/actions/externalSessions/materializeAction';
 import {
@@ -143,6 +144,13 @@ export type ExternalSessionArchivedStateChange = Readonly<{
 export type ExternalSessionDeletedChange = Readonly<{
   sessionId: string;
   cursor: number;
+  /**
+   * Pinned scope of the authenticated Account whose authoritative changes
+   * feed delivered the deletion fact. Cleanup must target exactly this
+   * Account's operation partition even if the ambient credentials rotate
+   * before the listener runs.
+   */
+  accountScope: ExternalSessionOperationAccountScope;
 }>;
 
 function unsupportedExternalSessionAction(actionId: ActionId): ActionExecuteResult {
@@ -849,12 +857,18 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     const result = await abandonExternalSessionOperationsForDeletedSession({
       activeServerDir: configuration.activeServerDir,
       sessionId: change.sessionId,
+      accountScope: change.accountScope,
       withSessionOperationBarrier:
         operationExclusion.withPassiveRepairSessionBarrier,
       cleanupPrivateOperation: async (record) => {
         if (materializeActionExecutor?.cleanupAbandonedOperation) {
+          // The deletion fact's pinned Account scope owns this cleanup: the
+          // executor must address that partition directly, never the ambient
+          // credentials, so an A→B rotation cannot orphan A's private state
+          // or consume B's partition.
           await materializeActionExecutor.cleanupAbandonedOperation(
-            record.operationId,
+            record,
+            change.accountScope,
           );
           return;
         }

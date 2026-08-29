@@ -69,6 +69,14 @@ export type ExternalSessionProviderOps = Readonly<{
    * external-linked takeover. Absence always degrades to unsupported.
    */
   externalLinkedTakeoverWriterSafety?: PluginAgentExternalLinkedTakeoverWriterSafetyV1;
+  /**
+   * Whether the Agent's current runtime generation admitted an External
+   * Session takeover contribution (`externalSessionTakeover`). Both takeover
+   * storage modes resolve their post-admission launch through that exact
+   * generation's contribution, so a generation without one must never
+   * advertise takeover. Absence always degrades to not admitted.
+   */
+  externalSessionTakeoverAdmitted?: true;
   validateSource: (params: Readonly<{
     source: ExternalSessionsSource;
     env?: NodeJS.ProcessEnv;

@@ -299,14 +299,19 @@ export function readPersistedLinkedExternalSessionFromRaw(params: Readonly<{
   };
 }
 
-export async function loadPersistedLinkedExternalSession(params: Readonly<{
+async function fetchSessionRecordWithEncryptionMode(params: Readonly<{
   credentials: StoredCredentials;
   sessionId: string;
-  machineId?: string;
-  expectedIdentity?: ExpectedCurrentExternalSessionLinkIdentity;
   signal?: AbortSignal;
   deadlineAtMs?: number;
-}>): Promise<PersistedLinkedExternalSessionReadResult> {
+}>): Promise<
+  | Readonly<{
+      ok: true;
+      rawSession: RawSessionRecord;
+      accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
+    }>
+  | Readonly<{ ok: false; errorCode: 'invalid_request' | 'agent_unavailable'; error: string }>
+> {
   let rawSession: RawSessionRecord | null;
   let accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
   try {
@@ -338,10 +343,64 @@ export async function loadPersistedLinkedExternalSession(params: Readonly<{
       error: 'session_not_found',
     };
   }
-  const loaded = readPersistedLinkedExternalSessionFromRaw({
-    credentials: params.credentials,
+  return {
+    ok: true,
     rawSession,
     accountEncryptionMode: accountEncryptionCurrentness.mode,
+  };
+}
+
+/**
+ * Narrow operation-admission authentication: prove only that the caller can
+ * read the Session and its owner metadata — the same authorization gate the
+ * full link load applies — without parsing or requiring the mutable current
+ * external link. Durable operation replay/conflict may run against this gate
+ * before link resolution without becoming an idempotency oracle.
+ */
+export async function authenticateOwnedExternalSessionRecord(params: Readonly<{
+  credentials: StoredCredentials;
+  sessionId: string;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
+}>): Promise<
+  | Readonly<{
+      ok: true;
+      rawSession: RawSessionRecord;
+      accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
+    }>
+  | Readonly<{ ok: false; errorCode: 'invalid_request' | 'agent_unavailable'; error: string }>
+> {
+  const fetched = await fetchSessionRecordWithEncryptionMode(params);
+  if (!fetched.ok) return fetched;
+  const metadata = tryDecryptSessionOwnerMetadataView({
+    credentials: params.credentials,
+    rawSession: fetched.rawSession,
+    accountEncryptionMode: fetched.accountEncryptionMode,
+  });
+  if (!metadata) {
+    return {
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'session_metadata_unavailable',
+    };
+  }
+  return fetched;
+}
+
+export async function loadPersistedLinkedExternalSession(params: Readonly<{
+  credentials: StoredCredentials;
+  sessionId: string;
+  machineId?: string;
+  expectedIdentity?: ExpectedCurrentExternalSessionLinkIdentity;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
+}>): Promise<PersistedLinkedExternalSessionReadResult> {
+  const fetched = await fetchSessionRecordWithEncryptionMode(params);
+  if (!fetched.ok) return fetched;
+  const loaded = readPersistedLinkedExternalSessionFromRaw({
+    credentials: params.credentials,
+    rawSession: fetched.rawSession,
+    accountEncryptionMode: fetched.accountEncryptionMode,
     ...(params.machineId ? { machineId: params.machineId } : {}),
   });
   if (
@@ -372,38 +431,13 @@ export async function loadLinkedExternalSession(params: Readonly<{
   | Readonly<{ ok: true; session: LoadedLinkedExternalSession }>
   | Readonly<{ ok: false; errorCode: 'invalid_request' | 'agent_unavailable'; error: string }>
 > {
-  let rawSession: RawSessionRecord | null;
-  let accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
-  try {
-    [rawSession, accountEncryptionCurrentness] = await Promise.all([
-      fetchSessionById({
-        token: params.credentials.token,
-        sessionId: params.sessionId,
-        ...(params.signal ? { signal: params.signal } : {}),
-        ...(params.deadlineAtMs === undefined
-          ? {}
-          : { deadlineAtMs: params.deadlineAtMs }),
-      }),
-      fetchAccountEncryptionCurrentness({
-        token: params.credentials.token,
-        ...(params.signal ? { signal: params.signal } : {}),
-      }),
-    ]);
-  } catch {
-    return {
-      ok: false,
-      errorCode: 'agent_unavailable',
-      error: 'session_load_unavailable',
-    };
-  }
-  if (!rawSession) {
-    return { ok: false, errorCode: 'invalid_request', error: 'session_not_found' };
-  }
+  const fetched = await fetchSessionRecordWithEncryptionMode(params);
+  if (!fetched.ok) return fetched;
 
   return await loadLinkedExternalSessionFromRaw({
     credentials: params.credentials,
-    rawSession,
-    accountEncryptionMode: accountEncryptionCurrentness.mode,
+    rawSession: fetched.rawSession,
+    accountEncryptionMode: fetched.accountEncryptionMode,
     ...(params.machineId ? { machineId: params.machineId } : {}),
     ...(params.expectedIdentity
       ? { expectedIdentity: params.expectedIdentity }

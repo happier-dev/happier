@@ -8,6 +8,7 @@ import {
 import {
   readPendingLocalId,
   requiresAuthenticatedMachineAdmissionForSessionInputV1,
+  resolveLinkedExternalSessionAuthorityV1,
   SESSION_MESSAGE_PROVENANCE_META_KEY,
   SessionInputRequestV1Schema,
   SessionMessageProvenanceV1Schema,
@@ -38,9 +39,9 @@ import {
 import type { StoredCredentials } from '@/persistence';
 import {
   detectSessionTurnActivity,
+  isSessionAgentThreadTextUserMessage,
   isMemoryArtifactDecryptedRow,
   isSessionAgentMessage,
-  isSessionUserMessage,
   readSessionProjectedTurnStatus,
   type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
@@ -85,7 +86,7 @@ export type SendSessionMessageResult =
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'unsupported' | 'resume_failed' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled';
       candidates?: string[];
       message?: string;
       providerError?: ProviderErrorV1;
@@ -356,7 +357,7 @@ async function resolveCurrentTurnAfterSeqExclusive(params: Readonly<{
         continue;
       }
       if (row.content.t === 'plain') {
-        if (isSessionUserMessage(row.content.v)) {
+        if (isSessionAgentThreadTextUserMessage(row.content.v)) {
           return Math.max(0, row.seq - 1);
         }
         continue;
@@ -365,7 +366,7 @@ async function resolveCurrentTurnAfterSeqExclusive(params: Readonly<{
         if (!params.ctx) {
           continue;
         }
-        if (isSessionUserMessage(decryptSessionPayload({
+        if (isSessionAgentThreadTextUserMessage(decryptSessionPayload({
           ctx: params.ctx,
           ciphertextBase64: row.content.c,
         }))) {
@@ -408,7 +409,7 @@ function decryptTranscriptRowContent(params: Readonly<{
 }
 
 function isAssistantTurnCompletionProof(value: unknown): boolean {
-  if (!value || isMemoryArtifactDecryptedRow(value) || isSessionUserMessage(value)) {
+  if (!value || isMemoryArtifactDecryptedRow(value) || isSessionAgentThreadTextUserMessage(value)) {
     return false;
   }
   return isSessionTurnCompletionProof(value);
@@ -456,7 +457,7 @@ function formatStructuredTurnFailureMessage(
 }
 
 function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
-  if (!value || isMemoryArtifactDecryptedRow(value) || isSessionUserMessage(value)) {
+  if (!value || isMemoryArtifactDecryptedRow(value) || isSessionAgentThreadTextUserMessage(value)) {
     return null;
   }
   const lifecycleEvent = detectSessionTurnLifecycleEvent(value);
@@ -634,7 +635,7 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
       // The exact input's terminal proof closes this scan. A later user row
       // starts another turn and must not become a fallback result for this
       // input when a legacy transcript lacks an explicit turn anchor.
-      if (isSessionUserMessage(decrypted)) {
+      if (isSessionAgentThreadTextUserMessage(decrypted)) {
         return { failure: null, sawCompletion, finalAssistantText };
       }
       const failure = readAssistantTurnFailure(decrypted);
@@ -883,6 +884,29 @@ export async function sendSessionMessage(
     rawSession: sessionTarget.rawSession,
     accountEncryptionMode: sessionTarget.accountEncryptionCurrentness.mode,
   });
+  // Externally linked Sessions receive Agent-visible input only after External
+  // Sessions takeover. This is the canonical pre-admission refusal for every
+  // caller — plugin `sessions.current.send`, `session.message.send`, CLI/MCP
+  // send, and contributed Actions — so admission happens at this owner rather
+  // than as a per-Action UI gate. Unlinked inactive sessions keep the
+  // canonical enqueue-then-resume behavior below.
+  if (sessionTarget.rawSession.active !== true) {
+    const linkAuthority = resolveLinkedExternalSessionAuthorityV1(
+      decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
+        ? decryptedMetadata
+        : {},
+    );
+    if (!linkAuthority.ok || linkAuthority.transcriptStorage === 'direct') {
+      return {
+        ok: false,
+        code: 'takeover_required',
+        message: 'This session is linked to an external agent; complete External Sessions takeover before sending input',
+        ...(params.inputAdmission
+          ? { admissionResult: rejectedProtectedInputBeforeAdmission('takeover_required') }
+          : {}),
+      };
+    }
+  }
   const protectedAdmission = params.inputAdmission
     ? {
         provenance: SessionMessageProvenanceV1Schema.parse(params.inputAdmission.provenance),

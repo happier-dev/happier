@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { readWorkspaceReplicationManifestFromFile } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 import type { SessionHandoffAgentBundle } from '../types';
 import { readSessionHandoffAgentBundleFile } from '../agentBundle/file';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
@@ -17,7 +16,6 @@ describe('sessionHandoffSourceExportStore', () => {
       await store.save({
         handoffId: 'handoff-123',
         exportedAtMs: 1234,
-        workspaceSourceRootPath: '/repo',
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         agentBundle: {
@@ -26,14 +24,6 @@ describe('sessionHandoffSourceExportStore', () => {
           sizeBytes: 2,
           manifestHash: `sha256:${'a'.repeat(64)}`,
         },
-        workspaceManifest: {
-          transferId: 'session-handoff:handoff-123:workspace-manifest',
-          filePath: join(activeServerDir, 'dummy-manifest.txt'),
-          sizeBytes: 3,
-          manifestHash: `sha256:${'b'.repeat(64)}`,
-          entriesCount: 1,
-          fileDigestsCount: 1,
-        },
       });
 
       const loaded = await store.load('handoff-123');
@@ -41,7 +31,6 @@ describe('sessionHandoffSourceExportStore', () => {
         expect.objectContaining({
           handoffId: 'handoff-123',
           exportedAtMs: 1234,
-          workspaceSourceRootPath: '/repo',
           sourceMachineId: 'machine_source',
           targetMachineId: 'machine_target',
         }),
@@ -51,7 +40,7 @@ describe('sessionHandoffSourceExportStore', () => {
     }
   });
 
-  it('writes provider bundle and workspace manifest files under the handoff directory', async () => {
+  it('writes provider bundle files under the handoff directory', async () => {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-files-'));
     try {
       const store = createSessionHandoffSourceExportStore({ activeServerDir });
@@ -75,27 +64,6 @@ describe('sessionHandoffSourceExportStore', () => {
         agentId: 'codex',
       });
 
-      const manifest = await store.writeWorkspaceReplicationManifestFile({
-        handoffId,
-        manifest: {
-          entries: [
-            {
-              kind: 'file',
-              relativePath: 'README.md',
-              digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
-              sizeBytes: 1,
-              executable: false,
-            },
-          ],
-        },
-      });
-      expect(manifest.filePath).toContain(join('session-handoff', handoffId));
-      const parsed = await readWorkspaceReplicationManifestFromFile({
-        transferId: manifest.transferId,
-        filePath: manifest.filePath,
-        sizeBytes: manifest.sizeBytes,
-      });
-      expect(parsed.entries).toHaveLength(1);
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -239,14 +207,6 @@ describe('sessionHandoffSourceExportStore', () => {
           filePath: '../../outside-provider.json',
           sizeBytes: 1,
           manifestHash: `sha256:${'a'.repeat(64)}`,
-        },
-        workspaceManifest: {
-          transferId: 'session-handoff:handoff-escape-1:workspace-manifest',
-          filePath: '/etc/passwd',
-          sizeBytes: 1,
-          manifestHash: `sha256:${'b'.repeat(64)}`,
-          entriesCount: 0,
-          fileDigestsCount: 0,
         },
       }, null, 2) + '\n', 'utf8');
 

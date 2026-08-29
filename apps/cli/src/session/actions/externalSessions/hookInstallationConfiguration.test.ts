@@ -1203,6 +1203,58 @@ describe('External Sessions hook installation configuration', () => {
         });
     });
 
+    it('persists non-enablable revoked custody through the revoke action without touching configuration bytes', async () => {
+        const f = await fixture();
+        const targetPath = join(f.configDir, 'settings.json');
+        await writeFile(targetPath, '{"hooks":{}}');
+        const input = baseInput({
+            activeServerDir: f.activeServerDir,
+            selectedVariant: variant(),
+            targets: [{ targetId: 'settings', absolutePath: targetPath }],
+        });
+        await applyExternalSessionHookInstallationAction({ ...input, action: 'install' });
+        const installedConfiguration = await readFile(targetPath);
+        const writeConfigurationAtomic = vi.fn(async () => {
+            throw new Error('configuration write must not run');
+        });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'revoke',
+            persistence: { writeConfigurationAtomic },
+        })).resolves.toMatchObject({
+            ok: true,
+            state: 'installed_disabled',
+            changedConfiguration: false,
+            revision: 2,
+        });
+        expect(writeConfigurationAtomic).not.toHaveBeenCalled();
+        expect(await readFile(targetPath)).toEqual(installedConfiguration);
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toMatchObject({ state: 'revoked', revision: 2 });
+
+        // The non-enablable custody the rotation reconciliation persists
+        // refuses both toggles and stays cleanable through Uninstall.
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'enable',
+        })).resolves.toEqual({ ok: false, code: 'reconciliation_required' });
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'disable',
+        })).resolves.toEqual({ ok: false, code: 'reconciliation_required' });
+
+        await expect(applyExternalSessionHookInstallationAction({
+            ...input,
+            action: 'uninstall',
+        })).resolves.toMatchObject({ ok: true, state: 'not_installed' });
+        expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
+            .toBeNull();
+        expect(JSON.parse(await readFile(targetPath, 'utf8'))).toEqual({
+            hooks: {},
+        });
+    });
+
     it('fails closed when the durable record is unreadable instead of reporting not installed', async () => {
         const f = await fixture();
         const targetPath = join(f.configDir, 'settings.json');

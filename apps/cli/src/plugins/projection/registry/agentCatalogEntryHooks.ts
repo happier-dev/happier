@@ -632,7 +632,7 @@ function resolveDeclaredPreflightCommand(
     const candidates = [
         contribution.models?.command,
         contribution.models?.fallback?.command,
-        contribution.jsonRpcCommand,
+        ...(contribution.jsonRpcCommands ?? []),
     ];
     return candidates.find((candidate): candidate is AgentPreflightSessionControlsCommandV1 => (
         candidate !== undefined && isExactPreflightCommand(candidate, requested)
@@ -661,7 +661,7 @@ function createPreflightProbeSignal(
 /**
  * Projects a public Agent preflight declaration through the incumbent catalog
  * probe seam. The Agent receives only strict settings JSON, environment
- * presence, bounded command output, and a request-only JSON-RPC client. This
+ * presence, bounded command output, and a request/notification-only JSON-RPC client. This
  * host remains the sole executor, cancellation/currentness owner, and result
  * projection owner.
  */
@@ -681,7 +681,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
 > {
     const contribution = params.preflightSessionControls;
     const requiresAccountSettings = contribution.resolveProbeVariant !== undefined
-        || contribution.jsonRpcCommand !== undefined;
+        || (contribution.jsonRpcCommands?.length ?? 0) > 0;
     const resolveVariant = (input: Readonly<{
         accountSettings?: Readonly<Record<string, unknown>> | null;
     }>): string | null => {
@@ -751,8 +751,8 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             };
         const withDeclaredJsonRpcClient: AgentPreflightSessionControlsProbeContextV1['withDeclaredJsonRpcClient'] =
             async (request, inspect) => {
-                const command = contribution.jsonRpcCommand;
-                if (!command || !isExactPreflightCommand(command, request)) {
+                const command = resolveDeclaredPreflightCommand(contribution, request);
+                if (!command) {
                     throw new Error('Agent preflight JSON-RPC command is not declared');
                 }
                 assertCurrent();
@@ -780,6 +780,13 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         request: async (method: string, requestParams?: JsonValue): Promise<JsonValue> => (
                             await handle.client.request(method, requestParams, { signal })
                         ),
+                        notify: async (method: string, notificationParams?: JsonValue): Promise<void> => {
+                            if (notificationParams === undefined) {
+                                await handle.client.notify(method);
+                                return;
+                            }
+                            await handle.client.notify(method, notificationParams);
+                        },
                     });
                     const result = await inspect(client, signal);
                     assertCurrent();
@@ -816,7 +823,9 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         getPreflightSessionControlsProbeAdapter: async () => Object.freeze({
             // JSON-RPC preflight is the existing retryable probe form; static
             // command parsing uses the incumbent one-shot/cooldown behavior.
-            ...(contribution.jsonRpcCommand ? { failureCacheStrategy: 'retry' as const } : {}),
+            ...((contribution.jsonRpcCommands?.length ?? 0) > 0
+                ? { failureCacheStrategy: 'retry' as const }
+                : {}),
             ...(contribution.models
                 ? {
                     probeModelsRaw: async (probeParams: PreflightSessionControlsProbeParams) => {

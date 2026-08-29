@@ -253,6 +253,96 @@ describe('external session transcript actions', () => {
     });
   });
 
+  it('exposes rich read-after continuation facts on the released direct-session shape', async () => {
+    validateExternalMachineSourceMock.mockResolvedValue({
+      ok: true,
+      source: { kind: 'codexHome', home: 'user', slot: 'one' },
+      providerOps: {
+        readAfterTranscript: async () => ({
+          outcome: 'advanced',
+          items: [],
+          nextCursor: 'cursor-2',
+          boundary: 'boundary-2',
+          hasMore: true,
+          diagnostics: [{
+            code: 'external_session_source_diagnostic',
+            severity: 'required',
+            count: 1,
+            positions: [0],
+          }],
+        }),
+      },
+      transcriptMediaReadRoots: [],
+    });
+
+    await expect(
+      transcriptActionsModule.executeExternalSessionTranscriptReadAfterAction({
+        machineId: 'machine-1',
+        agentId: 'codex',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'codexHome', home: 'user', slot: 'one' },
+        cursor: 'cursor-1',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      items: [],
+      nextCursor: 'cursor-2',
+      truncated: false,
+      hasMore: true,
+      diagnostics: [{
+        code: 'external_session_source_diagnostic',
+        severity: 'required',
+        count: 1,
+        positions: [0],
+      }],
+      transientMediaReadFiles: [],
+    });
+  });
+
+  it('classifies a stalled advanced direct-session read as a gap with zero items', async () => {
+    validateExternalMachineSourceMock.mockResolvedValue({
+      ok: true,
+      source: { kind: 'codexHome', home: 'user', slot: 'one' },
+      providerOps: {
+        readAfterTranscript: async () => ({
+          outcome: 'advanced',
+          items: [{
+            id: 'stalled-item',
+            createdAtMs: 2,
+            raw: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: { type: 'message', message: 'stalled' },
+              },
+            },
+          }],
+          nextCursor: 'cursor-1',
+          boundary: 'stalled-item',
+          hasMore: false,
+        }),
+      },
+      transcriptMediaReadRoots: [],
+    });
+
+    await expect(
+      transcriptActionsModule.executeExternalSessionTranscriptReadAfterAction({
+        machineId: 'machine-1',
+        agentId: 'codex',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'codexHome', home: 'user', slot: 'one' },
+        cursor: 'cursor-1',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      items: [],
+      nextCursor: null,
+      truncated: true,
+      transientMediaReadFiles: [],
+    });
+  });
+
   it('classifies an advanced secure-refresh result without cursor progress as a gap with zero items', async () => {
     const binding = {
       v: 1 as const,

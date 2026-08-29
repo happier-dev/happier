@@ -52,10 +52,9 @@ function resolvedIdentity(
 }
 
 describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
-    it('keeps the host-selected local target when a plugin returns a remote provider directory', () => {
+    it('keeps the host-selected local target when a plugin returns remote provider context', () => {
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan: {
-                directory: '/remote/provider/workspace',
                 backendModeHint: 'native-mode',
             },
             targetDirectory: '/local/selected/workspace',
@@ -64,13 +63,55 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
             targetAgent: targetAgent(),
         })).toMatchObject({
             directory: '/local/selected/workspace',
-            backendMode: 'native-mode',
+        });
+    });
+
+    it('routes a backend-mode hint through the Agent-owned runtime descriptor, never a spawn field', () => {
+        const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
+            plan: {
+                backendModeHint: 'appServer',
+            },
+            targetDirectory: '/local/selected/workspace',
+            resolvedIdentity: resolvedIdentity(),
+            linkedSessionId: 'session-linked',
+            targetAgent: targetAgent({ id: 'codex' }),
+        });
+        expect(options).not.toHaveProperty('backendMode');
+        expect(options?.runtimeDescriptorV1).toEqual({
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'appServer' },
+        });
+    });
+
+    it('keeps the Agent descriptor authoritative when it already carries a backend mode', () => {
+        const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
+            plan: {
+                backendModeHint: 'appServer',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    agent: { backendMode: 'acp' },
+                },
+            },
+            targetDirectory: '/local/selected/workspace',
+            resolvedIdentity: resolvedIdentity(),
+            linkedSessionId: 'session-linked',
+            targetAgent: targetAgent({ id: 'codex' }),
+        });
+        expect(options).not.toHaveProperty('backendMode');
+        expect(options?.runtimeDescriptorV1).toEqual({
+            v: 1,
+            agentId: 'codex',
+            agent: { backendMode: 'acp' },
         });
     });
 
     it('preserves every byte of an already-admitted POSIX target directory', () => {
+        // The launch plan carries no directory member: even provider context
+        // must never displace the host-selected spawn cwd, byte for byte.
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
-            plan: { directory: '/remote/provider/workspace' },
+            plan: { backendModeHint: 'remote-provider-mode' },
             targetDirectory: '/work/repo ',
             resolvedIdentity: resolvedIdentity(),
             linkedSessionId: 'session-linked',
@@ -82,7 +123,6 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
 
     it('maps only accepted launch hints while the host supplies target and fresh resume identity', () => {
         const plan: AgentExternalSessionTakeoverLaunchPlan = {
-            directory: '/workspace/fresh',
             backendModeHint: 'native-mode',
             runtimeDescriptorV1: {
                 v: 1,
@@ -117,11 +157,11 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
             existingSessionId: 'session-linked',
             resume: 'remote-fresh',
             approvedNewDirectoryCreation: true,
-            backendMode: 'native-mode',
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'fixture-agent',
                 agent: {
+                    backendMode: 'native-mode',
                     providerSessionId: 'remote-fresh',
                     sessionFile: '/agent/sessions/remote-fresh.jsonl',
                 },
@@ -148,7 +188,6 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
 
         const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan: {
-                directory: '/workspace/pi',
                 runtimeDescriptorV1,
             },
             targetDirectory: '/workspace/pi',
@@ -174,7 +213,7 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
 
     it('keeps an arbitrary external Agent as a qualified Agent target', () => {
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
-            plan: { directory: '/workspace/custom' },
+            plan: {},
             targetDirectory: '/workspace/custom',
             resolvedIdentity: resolvedIdentity({
                 remoteSessionId: 'remote-custom',
@@ -203,7 +242,6 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
     it('rejects the entire plan when any environment key is undeclared by the target Agent process owner', () => {
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan: {
-                directory: '/workspace',
                 environmentVariables: {
                     DECLARED_KEY: 'allowed',
                     UNDECLARED_KEY: 'must-reject-the-plan',
@@ -221,7 +259,6 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
     it('rejects the entire plan when a declared key is reserved for host session custody', () => {
         expect(mapExternalTakeoverLaunchPlanToSpawnOptions({
             plan: {
-                directory: '/workspace',
                 environmentVariables: {
                     happier_session_attach_file: '/tmp/attacker-controlled',
                 },

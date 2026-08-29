@@ -1920,7 +1920,7 @@ describe('target Agent runtime registry', () => {
             Object.freeze({
                 resolveLaunch: async () => ({
                     ok: true as const,
-                    value: { directory: '/tmp/declarative-agent' },
+                    value: {},
                 }),
             });
         const terminalPromptSubmitVerification = Object.freeze({
@@ -3186,11 +3186,11 @@ describe('target Agent runtime registry', () => {
         await expect(pending).rejects.toThrow(/retired generation/i);
     });
 
-    it('rejects invalid factory results and resolves duplicate owners deterministically', async () => {
+    it('rejects invalid factory results and skips an external registration without exact identity', async () => {
         const invalidFactory: AgentRuntimeFactory = async () => Object.freeze({}) as never;
         const onDuplicate = vi.fn();
         const registry = createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.alpha' }],
+            agents: [{ id: 'assistant', pluginId: 'happier.agent.alpha', identity: { pluginId: 'happier.agent.alpha', localId: 'assistant' } }],
             activationTargets: [target('happier.agent.zeta'), target('happier.agent.alpha')],
             targetRegistrations: [
                 registration({ pluginId: 'happier.agent.zeta', factory: invalidFactory }),
@@ -3202,11 +3202,7 @@ describe('target Agent runtime registry', () => {
         });
 
         expect(registry.get('assistant')?.pluginId).toBe('happier.agent.alpha');
-        expect(onDuplicate).toHaveBeenCalledWith({
-            agentId: 'assistant',
-            firstPluginId: 'happier.agent.alpha',
-            secondPluginId: 'happier.agent.zeta',
-        });
+        expect(onDuplicate).not.toHaveBeenCalled();
         const lease = registry.get('assistant');
         if (!lease?.hasPrimaryRuntime) throw new Error('Expected a primary Agent runtime lease');
         await expect(lease.createRuntime({
@@ -3369,7 +3365,7 @@ describe('target Agent runtime registry', () => {
         const selectedPluginId = 'happier.agent.zeta';
         const collidingPluginId = 'acme.agent.alpha';
         const input = {
-            agents: [{ id: 'assistant', pluginId: selectedPluginId }],
+            agents: [{ id: 'assistant', pluginId: selectedPluginId, identity: { pluginId: selectedPluginId, localId: 'assistant' } }],
             activationTargets: [target(selectedPluginId), target(collidingPluginId)],
             targetRegistrations: [
                 registration({
@@ -3394,11 +3390,7 @@ describe('target Agent runtime registry', () => {
             pluginId: selectedPluginId,
             providerBinding: selectedProviderBinding,
         });
-        expect(input.onDuplicate).toHaveBeenCalledWith({
-            agentId: 'assistant',
-            firstPluginId: selectedPluginId,
-            secondPluginId: collidingPluginId,
-        });
+        expect(input.onDuplicate).not.toHaveBeenCalled();
 
         const selectedRuntimeUnavailable = createTargetAgentRuntimeRegistry({
             ...input,

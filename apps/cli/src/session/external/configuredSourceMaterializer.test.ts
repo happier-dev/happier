@@ -1415,6 +1415,7 @@ describe('configured external-session source materializer', () => {
     }));
     const ops: ExternalSessionProviderOps = {
       externalLinkedTakeoverWriterSafety: 'native_prevention',
+      externalSessionTakeoverAdmitted: true,
       validateSource: async ({ source }) => ({ ok: true, source }),
       listCandidates: async () => ({
         candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
@@ -1468,6 +1469,51 @@ describe('configured external-session source materializer', () => {
     expect(Reflect.get(composition.compositionPort, 'takeover')).toBeUndefined();
     composition.dispose();
     expect(takeoverOptions?.retirementSignal?.aborted).toBe(true);
+  });
+
+  it('withholds every takeover storage mode from an Agent whose generation admitted no takeover contribution', async () => {
+    const takeover = vi.fn<ContextualExternalSessionTakeoverAdapter['takeover']>(async () => ({
+      sessionId: 'linked-1',
+      operationId: 'external-takeover:operation-1',
+      revision: 1,
+    }));
+    // External Sessions sources list normally and even declare native
+    // external-linked writer safety, but this Agent leaf never registered an
+    // `externalSessionTakeover` contribution (the Antigravity shape): its
+    // takeover launch would always fail after durable admission.
+    const ops: ExternalSessionProviderOps = {
+      externalLinkedTakeoverWriterSafety: 'native_prevention',
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({
+        candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
+        nextCursor: null,
+      }),
+      pageTranscript: async () => ({
+        items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+      }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const composition = await createConfiguredPluginExternalSessionsAdapter({
+      agents: [agent()],
+      account: { connectedServicesV2: [] },
+      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+      contextualTakeover: { takeover },
+    });
+
+    expect((await composition.authorService.capabilities()).takeover).toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_agent_unavailable',
+    });
+    const listed = await composition.authorService.list();
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]!.takeover).toEqual({
+      status: 'unavailable',
+      code: 'plugin_external_agent_unavailable',
+    });
+    expect(takeover).not.toHaveBeenCalled();
   });
 
   it('binds distinct caller principals to one current-global source controller', async () => {

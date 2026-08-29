@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectBundledPluginUiTranslations,
   shouldHoldGeneratorWorkspaceLockDuringGeneration,
   readExternalSessionSourceDeclaration,
   renderRetainedCliBundledPluginImplementationEntriesTs,
@@ -69,6 +70,67 @@ describe('generator workspace lock policy', () => {
     );
     expect(mainSource).toContain(
       'await synchronizeGeneratorAuthoringRuntimeClosure(options.mode, inheritedLockValue);',
+    );
+  });
+});
+
+describe('bundled plugin UI translation aggregation', () => {
+  const sharedTriageTranslation = Object.freeze({
+    contributes: {
+      ui: {
+        translations: [{
+          locale: 'en',
+          messages: {
+            'plugins.triage.sourceSettings.connectAccount': 'Connect account',
+          },
+        }],
+      },
+    },
+  });
+
+  it('coalesces byte-identical shared translations independently of package order', () => {
+    const posthog = {
+      pluginPackageId: 'posthog',
+      manifest: sharedTriageTranslation,
+    };
+    const azureDevOps = {
+      pluginPackageId: 'scm-azure-devops',
+      manifest: sharedTriageTranslation,
+    };
+
+    expect(collectBundledPluginUiTranslations([posthog, azureDevOps])).toEqual({
+      en: {
+        'plugins.triage.sourceSettings.connectAccount': 'Connect account',
+      },
+    });
+    expect(collectBundledPluginUiTranslations([azureDevOps, posthog])).toEqual(
+      collectBundledPluginUiTranslations([posthog, azureDevOps]),
+    );
+  });
+
+  it('rejects conflicting translations with the locale, key, and both package owners', () => {
+    expect(() => collectBundledPluginUiTranslations([
+      {
+        pluginPackageId: 'posthog',
+        manifest: sharedTriageTranslation,
+      },
+      {
+        pluginPackageId: 'scm-azure-devops',
+        manifest: {
+          contributes: {
+            ui: {
+              translations: [{
+                locale: 'en',
+                messages: {
+                  'plugins.triage.sourceSettings.connectAccount': 'Link account',
+                },
+              }],
+            },
+          },
+        },
+      },
+    ])).toThrow(
+      "Conflicting bundled UI translation 'en:plugins.triage.sourceSettings.connectAccount' from posthog and scm-azure-devops",
     );
   });
 });

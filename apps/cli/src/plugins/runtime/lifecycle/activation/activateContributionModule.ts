@@ -29,6 +29,19 @@ type ContributionModuleActivationResult = Readonly<{
     dispose(): Promise<void>;
 }>;
 
+/**
+ * The publication atom of one activation transaction. It becomes observable
+ * only after the whole transaction settles inside the absolute deadline; a
+ * transaction that loses the deadline can never publish through the returned
+ * result.
+ */
+type ContributionActivationPublication = Readonly<{
+    registrations: readonly ContributionRuntimeRegistration[];
+    validatedAgentSessionRunnerFactories: readonly import(
+        '../../activationSources'
+    ).ValidatedAgentSessionRunnerFactoryFactV1[];
+}>;
+
 const EMPTY_REGISTRATIONS: readonly ContributionRuntimeRegistration[] = Object.freeze([]);
 const EMPTY_VALIDATED_AGENT_FACTORIES = Object.freeze([]);
 const NOOP_DISPOSE = async (): Promise<void> => undefined;
@@ -42,6 +55,16 @@ class ActivationDeadlineExceededError extends Error {
             + 'synchronous plugin work cannot be preempted by this asynchronous deadline',
         );
         this.name = 'ActivationDeadlineExceededError';
+    }
+}
+
+class ActivationTransactionSupersededError extends Error {
+    constructor(pluginId: string, reason: string) {
+        super(
+            `Plugin '${pluginId}' activation transaction was superseded: ${reason}; `
+            + 'late retained-fact persistence and validation recording were refused',
+        );
+        this.name = 'ActivationTransactionSupersededError';
     }
 }
 
@@ -233,18 +256,19 @@ export async function activateContributionModule(params: Readonly<{
     }
 
     const registeredExternalSessionsByAgent = new Map<string, unknown>();
+    const cleanupTimeoutMs = normalizePositiveTimeoutMs(
+        params.cleanupTimeoutMs ?? DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS,
+    ) ?? DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS;
     const host = createContributionRegistrationHost({
         pluginId: params.pluginId,
         generation: params.generation,
         rights,
         isGenerationCurrent: params.isGenerationCurrent,
+        cleanupTimeoutMs,
         onAgentExternalSessionsRegistration(localAgentId, contribution) {
             registeredExternalSessionsByAgent.set(localAgentId, contribution);
         },
     });
-    const cleanupTimeoutMs = normalizePositiveTimeoutMs(
-        params.cleanupTimeoutMs ?? DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS,
-    ) ?? DEFAULT_FAILED_ACTIVATION_CLEANUP_TIMEOUT_MS;
     let pluginCleanup: PluginCleanup | null = null;
     let pluginCleanupDisposalPromise: Promise<void> | null = null;
     let disposalPromise: Promise<void> | null = null;
@@ -259,15 +283,32 @@ export async function activateContributionModule(params: Readonly<{
         if (disposalPromise) return disposalPromise;
         disposalPromise = (async () => {
             const errors: unknown[] = [];
-            try {
-                await host.dispose();
-            } catch (error) {
-                errors.push(error);
-            }
-            try {
-                await disposePluginCleanup();
-            } catch (error) {
-                errors.push(error);
+            // Dependency order is intentional: host-captured resources unwind
+            // before the author's own cleanup. Each independent step receives
+            // its own bounded attempt, so one hung disposer can neither starve
+            // the remaining steps nor skip the activation cleanup; every
+            // timeout or rejection is collected for the aggregate outcome.
+            for (const step of [
+                {
+                    label: 'registration host',
+                    run: (): Promise<void> => host.dispose(),
+                },
+                {
+                    label: 'activation cleanup',
+                    run: disposePluginCleanup,
+                },
+            ] as const) {
+                try {
+                    await runWithOptionalTimeout(
+                        cleanupTimeoutMs,
+                        step.run,
+                        () => new Error(
+                            `Plugin '${params.pluginId}' ${step.label} cleanup timed out after ${cleanupTimeoutMs}ms`,
+                        ),
+                    );
+                } catch (error) {
+                    errors.push(error);
+                }
             }
             if (errors.length === 1) throw errors[0];
             if (errors.length > 1) {
@@ -282,100 +323,153 @@ export async function activateContributionModule(params: Readonly<{
     } catch (error) {
         activationPromise = Promise.reject(error);
     }
+    // One absolute activation-transaction deadline: it spans author
+    // settlement, commit/capture, asynchronous locator resolution and
+    // External Sessions companion validation, and retained-fact persistence.
+    // Synchronous work cannot be preempted by an asynchronous deadline; this
+    // bounds every asynchronous await of the transaction.
+    const activationDeadlineAt = Date.now() + ACTIVATION_DEADLINE_MS;
+    const remainingActivationBudgetMs = (): number =>
+        Math.max(0, activationDeadlineAt - Date.now());
+    // Currentness guard for the transaction's retained-fact choke point.
+    // Checked atomically with each side-effecting call (no await in between):
+    // a transaction that lost the absolute deadline — or whose generation the
+    // activation owner retired — aborts before it can commission persistence
+    // or record validated facts against the already-closed candidate. The
+    // late transaction's settlement stays observed by the catch-path
+    // observer; this error only decides what that settlement may still do.
+    const assertActivationTransactionCurrent = (): void => {
+        if (remainingActivationBudgetMs() <= 0) {
+            throw new ActivationTransactionSupersededError(
+                params.pluginId,
+                'its absolute activation deadline elapsed',
+            );
+        }
+        if (!params.isGenerationCurrent()) {
+            throw new ActivationTransactionSupersededError(
+                params.pluginId,
+                'its generation is no longer current',
+            );
+        }
+    };
+    let authorSettled = false;
+    let transaction: Promise<ContributionActivationPublication> | null = null;
     try {
         const result: unknown = await runWithOptionalTimeout(
-            ACTIVATION_DEADLINE_MS,
+            remainingActivationBudgetMs(),
             () => activationPromise,
             () => new ActivationDeadlineExceededError(params.pluginId),
         );
+        authorSettled = true;
         if (result !== undefined && typeof result !== 'function') {
             throw new Error(`Plugin '${params.pluginId}' activate export must return void or one cleanup function`);
         }
         pluginCleanup = typeof result === 'function' ? result as PluginCleanup : null;
-        const registrations = host.commit();
-        const sourceValidatedAgentSessionRunnerFactories =
-            await validateSessionRunnerFactoryRegistrations({
-                pluginId: params.pluginId,
-                manifestAuthority: params.manifestAuthority ?? 'external',
-                registrationRights: rights,
-                registrations,
-                registeredExternalSessionsByAgent,
-                ...(params.resolveRelativeModule
-                    ? { resolveRelativeModule: params.resolveRelativeModule }
-                    : {}),
-            });
-        const validatedAgentSessionRunnerFactories = Object.freeze(
-            await params.persistValidatedAgentSessionRunnerFactories?.(
-                sourceValidatedAgentSessionRunnerFactories,
-            ) ?? sourceValidatedAgentSessionRunnerFactories,
-        );
-        const factsByLocalAgentId = new Map(
-            validatedAgentSessionRunnerFactories.map((fact) => [
-                fact.localAgentId,
-                fact,
-            ]),
-        );
-        if (
-            factsByLocalAgentId.size !== sourceValidatedAgentSessionRunnerFactories.length
-            || validatedAgentSessionRunnerFactories.length
-                !== sourceValidatedAgentSessionRunnerFactories.length
-        ) {
-            throw new Error(
-                `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
+        transaction = (async (): Promise<ContributionActivationPublication> => {
+            const registrations = host.commit();
+            const sourceValidatedAgentSessionRunnerFactories =
+                await validateSessionRunnerFactoryRegistrations({
+                    pluginId: params.pluginId,
+                    manifestAuthority: params.manifestAuthority ?? 'external',
+                    registrationRights: rights,
+                    registrations,
+                    registeredExternalSessionsByAgent,
+                    ...(params.resolveRelativeModule
+                        ? { resolveRelativeModule: params.resolveRelativeModule }
+                        : {}),
+                });
+            assertActivationTransactionCurrent();
+            const validatedAgentSessionRunnerFactories = Object.freeze(
+                await params.persistValidatedAgentSessionRunnerFactories?.(
+                    sourceValidatedAgentSessionRunnerFactories,
+                ) ?? sourceValidatedAgentSessionRunnerFactories,
             );
-        }
-        for (const registration of registrations) {
-            if (registration.family !== 'agents') continue;
-            const sourceFact = sourceValidatedAgentSessionRunnerFactories.find(
-                (fact) => fact.localAgentId === registration.localId,
+            const factsByLocalAgentId = new Map(
+                validatedAgentSessionRunnerFactories.map((fact) => [
+                    fact.localAgentId,
+                    fact,
+                ]),
             );
-            if (!sourceFact) continue;
-            const retainedFact = factsByLocalAgentId.get(registration.localId);
-            if (!retainedFact || retainedFact.locator !== sourceFact.locator) {
+            if (
+                factsByLocalAgentId.size !== sourceValidatedAgentSessionRunnerFactories.length
+                || validatedAgentSessionRunnerFactories.length
+                    !== sourceValidatedAgentSessionRunnerFactories.length
+            ) {
                 throw new Error(
                     `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
                 );
             }
-            recordValidatedAgentSessionRunnerFactory(
-                registration.value,
-                Object.freeze({
-                    locator: retainedFact.locator,
-                    normalizedModulePath: retainedFact.normalizedModulePath,
-                    loadMode: retainedFact.loadMode,
-                }),
-            );
-        }
+            assertActivationTransactionCurrent();
+            for (const registration of registrations) {
+                if (registration.family !== 'agents') continue;
+                const sourceFact = sourceValidatedAgentSessionRunnerFactories.find(
+                    (fact) => fact.localAgentId === registration.localId,
+                );
+                if (!sourceFact) continue;
+                const retainedFact = factsByLocalAgentId.get(registration.localId);
+                if (!retainedFact || retainedFact.locator !== sourceFact.locator) {
+                    throw new Error(
+                        `Plugin '${params.pluginId}' returned inconsistent retained Agent factory validation`,
+                    );
+                }
+                recordValidatedAgentSessionRunnerFactory(
+                    registration.value,
+                    Object.freeze({
+                        locator: retainedFact.locator,
+                        normalizedModulePath: retainedFact.normalizedModulePath,
+                        loadMode: retainedFact.loadMode,
+                    }),
+                );
+            }
+            return Object.freeze({
+                registrations,
+                validatedAgentSessionRunnerFactories,
+            });
+        })();
+        const published = await runWithOptionalTimeout(
+            remainingActivationBudgetMs(),
+            () => transaction!,
+            () => new ActivationDeadlineExceededError(params.pluginId),
+        );
         return Object.freeze({
             status: 'active',
-            registrations,
-            validatedAgentSessionRunnerFactories,
+            registrations: published.registrations,
+            validatedAgentSessionRunnerFactories: published.validatedAgentSessionRunnerFactories,
             diagnostics: host.diagnostics(),
             dispose: disposeActivation,
         });
     } catch (error) {
         if (error instanceof ActivationDeadlineExceededError) {
-            // The activation promise cannot be preempted, so retain one observer
-            // solely to dispose a cleanup function returned after its scope retired.
-            // Its rejection is deliberately observed: the timeout result is final.
-            void activationPromise.then(
-                (lateResult) => {
-                    if (typeof lateResult !== 'function') return;
-                    pluginCleanup = lateResult as PluginCleanup;
-                    void runWithOptionalTimeout(
-                        cleanupTimeoutMs,
-                        disposePluginCleanup,
-                        () => new Error(
-                            `Plugin '${params.pluginId}' late activation cleanup timed out after ${cleanupTimeoutMs}ms`,
-                        ),
-                    ).catch((cleanupError: unknown) => {
-                        logger.warn('[PLUGIN RUNTIME] Late activation cleanup failed', {
-                            pluginId: params.pluginId,
-                            error: projectPluginFailureText(cleanupError),
+            if (!authorSettled) {
+                // The activation promise cannot be preempted, so retain one observer
+                // solely to dispose a cleanup function returned after its scope retired.
+                // Its rejection is deliberately observed: the timeout result is final.
+                void activationPromise.then(
+                    (lateResult) => {
+                        if (typeof lateResult !== 'function') return;
+                        pluginCleanup = lateResult as PluginCleanup;
+                        void runWithOptionalTimeout(
+                            cleanupTimeoutMs,
+                            disposePluginCleanup,
+                            () => new Error(
+                                `Plugin '${params.pluginId}' late activation cleanup timed out after ${cleanupTimeoutMs}ms`,
+                            ),
+                        ).catch((cleanupError: unknown) => {
+                            logger.warn('[PLUGIN RUNTIME] Late activation cleanup failed', {
+                                pluginId: params.pluginId,
+                                error: projectPluginFailureText(cleanupError),
+                            });
                         });
-                    });
-                },
-                () => undefined,
-            );
+                    },
+                    () => undefined,
+                );
+            } else if (transaction) {
+                // The post-author transaction lost the same absolute deadline.
+                // Observe its late settlement so a rejection cannot surface as
+                // unhandled and a late result cannot publish registrations or
+                // validated facts through the closed candidate below.
+                void transaction.then(() => undefined, () => undefined);
+            }
         }
         const realm = params.localDevelopmentSourceRoot
             ? { localDevelopmentSourceRoot: params.localDevelopmentSourceRoot }
@@ -388,11 +482,11 @@ export async function activateContributionModule(params: Readonly<{
                 ...projectPluginFailureDiagnostic(error, realm),
             }];
         try {
-            await runWithOptionalTimeout(
-                cleanupTimeoutMs,
-                disposeActivation,
-                () => new Error(`Plugin '${params.pluginId}' cleanup after activation failure timed out after ${cleanupTimeoutMs}ms`),
-            );
+            // Every cleanup step is individually bounded inside
+            // `disposeActivation`, so the bounded sequence terminates on its
+            // own and each timeout or rejection stays attributable; the outer
+            // registry deadline in the lifecycle manager still caps shutdown.
+            await disposeActivation();
         } catch (cleanupError) {
             diagnostics.push({
                 code: 'plugin_activation_failed',

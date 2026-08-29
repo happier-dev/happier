@@ -81,7 +81,7 @@ const durableWebhookInvocationReference = {
 
 function storedDefinition(options: Readonly<{
   automationId?: string;
-  triggerId?: typeof triggerId;
+  triggerId?: AutomationEventStoredDefinitionProjectionV1['triggerId'];
   triggerRevision?: number;
   sourceSelectorId?: typeof sourceSelectorId;
 }> = {}): AutomationEventStoredDefinitionProjectionV1 {
@@ -126,13 +126,16 @@ function storedDefinition(options: Readonly<{
 
 function durablePushStoredDefinition(options: Readonly<{
   automationId?: string;
+  triggerId?: AutomationEventStoredDefinitionProjectionV1['triggerId'];
   sourceSelectorId?: typeof sourceSelectorId;
 }> = {}): AutomationEventStoredDefinitionProjectionV1 {
   const automationId = options.automationId ?? 'automation-1';
+  const selectedTriggerId = options.triggerId ?? triggerId;
   const selectedSourceSelectorId = options.sourceSelectorId ?? sourceSelectorId;
   return {
     ...storedDefinition(),
     automationId,
+    triggerId: selectedTriggerId,
     sourceSelectorId: selectedSourceSelectorId,
     observationTransport: {
       kind: 'durablePush',
@@ -145,7 +148,7 @@ function durablePushStoredDefinition(options: Readonly<{
       binding: {
         v: 1,
         automationId,
-        triggerId,
+        triggerId: selectedTriggerId,
         triggerRevision,
         triggerKind: 'pluginEvent',
         eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
@@ -207,7 +210,7 @@ describe('Automation Event adopted-definition host factory', () => {
 
     await expect(transport.read({
       caller: stampedCaller,
-      input: { transport: { kind: 'checkpointedPull' } },
+      input: { transport: { kind: 'checkpointedPull' }, pageSize: 500 },
       signal: new AbortController().signal,
     })).resolves.toEqual(page);
     expect(transportMocks.createPublisherHeader).toHaveBeenCalledWith({
@@ -232,7 +235,7 @@ describe('Automation Event adopted-definition host factory', () => {
     });
     await expect(transport.read({
       caller: stampedCaller,
-      input: { transport: { kind: 'checkpointedPull' }, knownRevision: '7' },
+      input: { transport: { kind: 'checkpointedPull' }, pageSize: 500, knownRevision: '7' },
     })).rejects.toThrow();
   });
 
@@ -417,6 +420,7 @@ describe('Automation Event adopted-definition host factory', () => {
       { length: MAX_AUTOMATION_EVENT_ADMIT_DEFINITIONS_PER_CALL + 1 },
       (_, index) => storedDefinition({
         automationId: `automation-plain-${index}`,
+        triggerId: AutomationTriggerIdSchema.parse(`trigger-plain-${index}`),
         sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(
           `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
         ),
@@ -613,6 +617,7 @@ describe('Automation Event adopted-definition host factory', () => {
             durablePushStoredDefinition(),
             durablePushStoredDefinition({
               automationId: 'automation-2',
+              triggerId: AutomationTriggerIdSchema.parse('trigger-durable-2'),
               sourceSelectorId: secondSourceSelectorId,
             }),
           ]
@@ -673,6 +678,7 @@ describe('Automation Event adopted-definition host factory', () => {
       return {
         ...storedDefinition(),
         automationId,
+        triggerId: AutomationTriggerIdSchema.parse(`trigger-large-${index}`),
         storedDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
           mode: 'e2ee',
           material: snapshot.material,
@@ -680,7 +686,7 @@ describe('Automation Event adopted-definition host factory', () => {
           binding: {
             v: 1,
             automationId,
-            triggerId,
+            triggerId: AutomationTriggerIdSchema.parse(`trigger-large-${index}`),
             triggerRevision,
             triggerKind: 'pluginEvent',
             eventRef: { pluginId: caller.pluginId, localId: 'repository-event' },
@@ -905,7 +911,10 @@ describe('adopted definition set Account-currentness cost', () => {
     const measure = async (definitionCount: number) => {
       let currentnessReads = 0;
       const definitions = Array.from({ length: definitionCount }, (_unused, index) => (
-        storedDefinition({ automationId: `automation-${index + 1}` })
+        storedDefinition({
+          automationId: `automation-${index + 1}`,
+          triggerId: AutomationTriggerIdSchema.parse(`trigger-cost-${index + 1}`),
+        })
       ));
       const owner = createAutomationEventAdoptedDefinitionSetHostV1({
         credentials,

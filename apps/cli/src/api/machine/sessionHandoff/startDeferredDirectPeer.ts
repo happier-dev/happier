@@ -7,7 +7,6 @@ import type {
   ExternalSessionOperationClaimMaintenance,
 } from '@/session/external/operationExclusion';
 
-import type { DirectPeerOnDemandTransferScope } from '../../../machines/transfer/directPeerTransport';
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '../../../machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import {
   createBufferTransferPayloadSource,
@@ -24,13 +23,6 @@ import {
 import { createSessionHandoffAgentBundlePayloadSource } from '../../../session/handoff/agentBundle/file';
 import type { SessionHandoffSourceExportRecord } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
-import { assertSafeHandoffWorkspaceReplicationPackId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/assertSafePackId';
-import {
-  createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope,
-  parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId,
-} from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/directPeer';
-import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
-import { readWorkspaceReplicationManifestFromFile } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
@@ -68,7 +60,6 @@ export type DeferredDirectPeerStartResult = Readonly<{
 }>;
 
 export async function prepareDeferredDirectPeerStart(input: Readonly<{
-  activeServerDir: string;
   handoffId: string;
   request: SessionHandoffStartRequest;
   metadata: Record<string, unknown>;
@@ -104,9 +95,6 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
     const agentBundleTransferId = buildSessionHandoffAgentBundleTransferId(input.handoffId);
     const agentBundleCarrierTransferId = `${agentBundleTransferId}:deferred-carrier`;
     const agentBundleCarrierPayloadSource = createBufferTransferPayloadSource(Buffer.from('{}', 'utf8'));
-    const manifestTransferId = buildSessionHandoffWorkspaceManifestTransferId({ handoffId: input.handoffId });
-
-    let cachedWorkspaceScope: DirectPeerOnDemandTransferScope | null = null;
     input.claimMaintenance.throwIfLost();
     const carrierCandidates = [
       ...await input.claimMaintenance.race(() => input.directPeerTransfer.publishTransfer({
@@ -114,71 +102,21 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
         payload: {},
         payloadSource: agentBundleCarrierPayloadSource,
         onDemandScope: {
-          allowTransferId: (transferId) => {
-            if (transferId === agentBundleTransferId || transferId === manifestTransferId) {
-              return true;
-            }
-            const parsed = parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId(transferId);
-            if (!parsed || parsed.handoffId !== input.handoffId) {
-              return false;
-            }
-            try {
-              assertSafeHandoffWorkspaceReplicationPackId(parsed.packId);
-            } catch {
-              return false;
-            }
-            return true;
-          },
-          resolvePayloadSourceOnOpen: async ({ transferId, requestBody }) => {
+          allowTransferId: (transferId) => transferId === agentBundleTransferId,
+          resolvePayloadSourceOnOpen: async () => {
             input.claimMaintenance.throwIfLost();
-            if (transferId === agentBundleTransferId) {
-              const persisted = await input.claimMaintenance.race(() => input.waitForPersistedSourceExport(
-                input.handoffId,
-                (record) => Boolean(record.agentBundle),
-              ));
-              if (!persisted?.agentBundle) {
-                throw new Error('Direct peer transfer not ready');
-              }
-
-              return createFileTransferPayloadSource({
-                filePath: persisted.agentBundle.filePath,
-                sizeBytes: persisted.agentBundle.sizeBytes,
-                manifestHash: persisted.agentBundle.manifestHash,
-              });
+            const persisted = await input.claimMaintenance.race(() => input.waitForPersistedSourceExport(
+              input.handoffId,
+              (record) => Boolean(record.agentBundle),
+            ));
+            if (!persisted?.agentBundle) {
+              throw new Error('Direct peer transfer not ready');
             }
-
-            if (!cachedWorkspaceScope) {
-              const persisted = await input.claimMaintenance.race(() => input.waitForPersistedSourceExport(
-                input.handoffId,
-                (record) => Boolean(record.workspaceManifest),
-              ));
-              if (!persisted?.workspaceManifest) {
-                throw new Error('Direct peer transfer not ready');
-              }
-              const workspaceManifest = persisted.workspaceManifest;
-
-              const manifest = await input.claimMaintenance.race(() => readWorkspaceReplicationManifestFromFile({
-                transferId: workspaceManifest.transferId,
-                filePath: workspaceManifest.filePath,
-                sizeBytes: workspaceManifest.sizeBytes,
-              }));
-
-              const workspaceSourceRootPath = persisted.workspaceSourceRootPath;
-              if (!workspaceSourceRootPath) {
-                throw new Error('Direct peer transfer not ready');
-              }
-
-              cachedWorkspaceScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
-                handoffId: input.handoffId,
-                activeServerDir: input.activeServerDir,
-                sourceRootPath: workspaceSourceRootPath,
-                manifest,
-              });
-            }
-            return await input.claimMaintenance.race(() => cachedWorkspaceScope!.resolvePayloadSourceOnOpen({
-              transferId,
-              requestBody,
-            }));
+            return createFileTransferPayloadSource({
+              filePath: persisted.agentBundle.filePath,
+              sizeBytes: persisted.agentBundle.sizeBytes,
+              manifestHash: persisted.agentBundle.manifestHash,
+            });
           },
         },
       })),
@@ -188,13 +126,6 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
       transferId: agentBundleTransferId,
     });
 
-    const manifestEndpointCandidates =
-      input.request.workspaceTransfer?.enabled === true
-        ? rewriteDirectPeerEndpointCandidatesForTransferId({
-          endpointCandidates: agentBundleEndpointCandidates,
-          transferId: manifestTransferId,
-        })
-        : undefined;
     deferredStartEndpointCandidates = agentBundleEndpointCandidates;
 
     let exported: Awaited<ReturnType<typeof input.exportSessionBundle>>;
@@ -220,12 +151,6 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
 
     if (input.deferredHandoffMetadataV2) {
       input.deferredHandoffMetadataV2.agentBundleTransferPublication = agentBundleTransferPublication;
-      if (manifestEndpointCandidates?.length) {
-        input.deferredHandoffMetadataV2.workspaceReplicationManifestTransferPublication = {
-          ...(input.deferredHandoffMetadataV2.workspaceReplicationManifestTransferPublication ?? { transferId: manifestTransferId }),
-          endpointCandidates: manifestEndpointCandidates,
-        };
-      }
     }
 
     deferredStartWorkPromise = (async () => {
@@ -269,7 +194,6 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
     const agentBundleTransferId = persistedAgentBundle.transferId;
     const agentBundleSizeBytes = persistedAgentBundle.sizeBytes;
     const agentBundleManifestHash = persistedAgentBundle.manifestHash;
-    const manifestTransferId = buildSessionHandoffWorkspaceManifestTransferId({ handoffId: input.handoffId });
 
     await input.claimMaintenance.race(() => input.sourceExportStore.save({
       handoffId: input.handoffId,
@@ -277,79 +201,17 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
       sourceMachineId: input.request.sourceMachineId,
       targetMachineId: input.request.targetMachineId,
       exportedAtMs: Date.now(),
-      workspaceSourceRootPath: exported.targetPath,
       agentBundle: persistedAgentBundle,
     }));
 
-    let cachedWorkspaceScope: DirectPeerOnDemandTransferScope | null = null;
     input.claimMaintenance.throwIfLost();
     const carrierCandidates = [
       ...await input.claimMaintenance.race(() => input.directPeerTransfer.publishTransfer({
         transferId: agentBundleTransferId,
         payload: {},
         payloadSource: agentBundlePayloadSource,
-        onDemandScope: {
-          allowTransferId: (transferId) => {
-            if (transferId === manifestTransferId) {
-              return true;
-            }
-            const parsed = parseSessionHandoffWorkspaceDirectPeerBlobPackTransferId(transferId);
-            if (!parsed || parsed.handoffId !== input.handoffId) {
-              return false;
-            }
-            try {
-              assertSafeHandoffWorkspaceReplicationPackId(parsed.packId);
-            } catch {
-              return false;
-            }
-            return true;
-          },
-          resolvePayloadSourceOnOpen: async ({ transferId, requestBody }) => {
-            input.claimMaintenance.throwIfLost();
-            if (!cachedWorkspaceScope) {
-              const persisted = await input.claimMaintenance.race(() => input.waitForPersistedSourceExport(
-                input.handoffId,
-                (record) => Boolean(record.workspaceManifest),
-              ));
-              if (!persisted?.workspaceManifest) {
-                throw new Error('Direct peer transfer not ready');
-              }
-              const workspaceManifest = persisted.workspaceManifest;
-
-              const manifest = await input.claimMaintenance.race(() => readWorkspaceReplicationManifestFromFile({
-                transferId: workspaceManifest.transferId,
-                filePath: workspaceManifest.filePath,
-                sizeBytes: workspaceManifest.sizeBytes,
-              }));
-
-              const workspaceSourceRootPath = persisted.workspaceSourceRootPath;
-              if (!workspaceSourceRootPath) {
-                throw new Error('Direct peer transfer not ready');
-              }
-
-              cachedWorkspaceScope = createSessionHandoffWorkspaceReplicationDirectPeerOnDemandScope({
-                handoffId: input.handoffId,
-                activeServerDir: input.activeServerDir,
-                sourceRootPath: workspaceSourceRootPath,
-                manifest,
-              });
-            }
-            return await input.claimMaintenance.race(() => cachedWorkspaceScope!.resolvePayloadSourceOnOpen({
-              transferId,
-              requestBody,
-            }));
-          },
-        },
       })),
     ];
-
-    const manifestEndpointCandidates =
-      input.request.workspaceTransfer?.enabled === true
-        ? rewriteDirectPeerEndpointCandidatesForTransferId({
-          endpointCandidates: carrierCandidates,
-          transferId: manifestTransferId,
-        })
-        : undefined;
 
     preExportedAgentBundle = {
       agentBundle: exported.agentBundle,
@@ -365,12 +227,6 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
 
     if (input.deferredHandoffMetadataV2) {
       input.deferredHandoffMetadataV2.agentBundleTransferPublication = preExportedAgentBundle.agentBundleTransferPublication;
-      if (manifestEndpointCandidates?.length) {
-        input.deferredHandoffMetadataV2.workspaceReplicationManifestTransferPublication = {
-          ...(input.deferredHandoffMetadataV2.workspaceReplicationManifestTransferPublication ?? { transferId: manifestTransferId }),
-          endpointCandidates: manifestEndpointCandidates,
-        };
-      }
     }
 
     await input.claimMaintenance.race(() => input.sourceExportStore.save({
@@ -379,7 +235,6 @@ export async function prepareDeferredDirectPeerStart(input: Readonly<{
       sourceMachineId: input.request.sourceMachineId,
       targetMachineId: input.request.targetMachineId,
       exportedAtMs: Date.now(),
-      workspaceSourceRootPath: exported.targetPath,
       agentBundle: {
         ...persistedAgentBundle,
         ...(carrierCandidates.length ? { endpointCandidates: [...carrierCandidates] } : {}),

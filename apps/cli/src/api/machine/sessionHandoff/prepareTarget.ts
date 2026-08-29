@@ -10,9 +10,6 @@ import {
   createSessionHandoffPrepareTargetJobStore,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
-import {
-  createSessionHandoffWorkspaceReplicationAdapter,
-} from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 
 import {
   type SessionHandoffDirectPeerTransferHandle,
@@ -22,11 +19,10 @@ import {
   createSessionHandoffPrepareTargetWorkflow,
   type SessionHandoffPrepareTargetWorkflow,
 } from './prepareTargetWorkflow';
+import { hasUnsupportedWorkspaceAction, workspaceSyncUpdateRequired } from './workspaceSyncGuard';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
-type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
-type SessionHandoffWorkspaceReplicationTransfers = ReturnType<SessionHandoffWorkspaceReplicationAdapter['createReplicationTransfers']>;
 type SessionHandoffTransportRouteCache = ReturnType<typeof createMachineTransferRouteCache>;
 
 export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
@@ -38,8 +34,6 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
   runtimeConfig: SessionHandoffRuntimeConfig;
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
-  workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
-  workspaceReplicationTransfers: SessionHandoffWorkspaceReplicationTransfers;
   importSessionBundle: (
     bundle: SessionHandoffAgentBundle,
     targetPath: string,
@@ -50,10 +44,6 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     resume: SessionHandoffResumePlan;
   }>>;
-  savePreparedTargetLocalMetadata?: (input: Readonly<{
-    remoteSessionId: string;
-    exportMetadataOverlay: Record<string, unknown>;
-  }>) => Promise<void> | void;
   getTransferRouteCache: (
     machineTransferChannel: MachineTransferChannel | undefined,
   ) => SessionHandoffTransportRouteCache;
@@ -79,10 +69,7 @@ export function createSessionHandoffPrepareTargetActionHandler(
     runtimeConfig,
     machineTransferChannel,
     directPeerTransfer,
-    workspaceReplicationAdapter,
-    workspaceReplicationTransfers,
     importSessionBundle,
-    savePreparedTargetLocalMetadata,
     getTransferRouteCache,
     invalidateDirectPeerRouteCacheForHandoffMachines,
   } = params;
@@ -96,16 +83,16 @@ export function createSessionHandoffPrepareTargetActionHandler(
     runtimeConfig,
     machineTransferChannel,
     directPeerTransfer,
-    workspaceReplicationAdapter,
-    workspaceReplicationTransfers,
     importSessionBundle,
-    savePreparedTargetLocalMetadata,
     getTransferRouteCache,
     invalidateDirectPeerRouteCacheForHandoffMachines,
   });
 
   return {
-    handle: workflow.handlePrepareTargetRaw,
+    handle: async (raw: unknown) => {
+      if (hasUnsupportedWorkspaceAction(raw)) return workspaceSyncUpdateRequired();
+      return await workflow.handlePrepareTargetRaw(raw);
+    },
     resumePersistedPrepareTarget: workflow.resumePersistedPrepareTarget,
   };
 }

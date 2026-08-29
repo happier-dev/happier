@@ -11,6 +11,7 @@ describe('session runtime catalog hooks', () => {
       isExplicitCliSubcommand: true,
       parsed: { agentArgs: [] },
       settings: {},
+      pluginSettings: {},
       environment: {},
       startOrigin: 'terminal',
     })).resolves.toEqual({});

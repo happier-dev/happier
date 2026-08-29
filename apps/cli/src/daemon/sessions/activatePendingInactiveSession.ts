@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
 import { listPendingQueueV2LocalIdsFromServer } from '@/api/session/pendingQueueV2Transport';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
@@ -14,7 +15,12 @@ type PendingInactiveSessionActivationResult =
     }>
   | Readonly<{
       status: 'rejected';
-      reason: 'session-unavailable' | 'snapshot-stale' | 'identity-unavailable' | 'spawn-rejected';
+      reason:
+        | 'session-unavailable'
+        | 'snapshot-stale'
+        | 'identity-unavailable'
+        | 'takeover-required'
+        | 'spawn-rejected';
     }>;
 
 export async function activatePendingInactiveSession(params: Readonly<{
@@ -64,6 +70,13 @@ export async function activatePendingInactiveSession(params: Readonly<{
   });
   if (!metadata) {
     return { status: 'rejected', reason: 'identity-unavailable' };
+  }
+  // Pending delivery must not spawn a hosted runtime for a Session whose
+  // transcript lives with an external Agent — External Sessions takeover owns
+  // that activation. An unresolved link fails closed the same way.
+  const linkAuthority = resolveLinkedExternalSessionAuthorityV1(metadata);
+  if (!linkAuthority.ok || linkAuthority.transcriptStorage === 'direct') {
+    return { status: 'rejected', reason: 'takeover-required' };
   }
   const options = buildInactiveSessionResumeSpawnOptions({
     sessionId: params.sessionId,

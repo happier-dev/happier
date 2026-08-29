@@ -3933,4 +3933,46 @@ describe('executeSpawnSessionRequest', () => {
       errorMessage: "Resume is not supported for agent 'codex' (experimental and not enabled).",
     });
   });
+
+  it('admits configured ACP resume only from the caller-provided Account snapshot', async () => {
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: 'parent-session',
+      effectiveResume: 'provider-session-1',
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        sourceKind: 'configured',
+        backendId: 'review-bot',
+        configuredBackendId: 'review-bot',
+      },
+      sessionAttachPayload: null,
+      catalogAgentId: null,
+      ownerMetadata: null,
+      existingSessionWorkspacePath: null,
+    });
+
+    const { prepareExecuteSpawnSessionRequest } = await import('./prepareExecuteSpawnSessionRequest');
+    const prepared = await prepareExecuteSpawnSessionRequest({
+      request: {
+        options: { ...createParams().options, resume: 'provider-session-1' },
+        credentials: createParams().credentials,
+        accountSettings: {
+          acpCatalogSettingsV1: {
+            v: 2,
+            backends: [{
+              id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
+              args: [], env: {}, transportProfile: 'generic',
+              capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1,
+            }],
+          },
+        },
+        loadLocalHandoffMetadataByVendorResumeId: createParams().loadLocalHandoffMetadataByVendorResumeId,
+      },
+      validateEnvVarRecordStrict: () => ({ ok: true, env: {} }),
+    });
+
+    expect(prepared).toMatchObject({ effectiveResume: 'provider-session-1' });
+    expect(prepared).not.toEqual(expect.objectContaining({ errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED }));
+    expect(hoisted.getVendorResumeSupport).not.toHaveBeenCalled();
+  });
 });

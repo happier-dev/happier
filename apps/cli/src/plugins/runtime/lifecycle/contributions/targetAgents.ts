@@ -1638,10 +1638,26 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
         if (!target) {
             continue;
         }
-        const agentId = readAgentRoutingIdForContributionIdentity(selectedAgentIdByIdentity, {
+        const resolvedAgentId = readAgentRoutingIdForContributionIdentity(selectedAgentIdByIdentity, {
             pluginId: candidate.pluginId,
             localId: candidate.registration.localId,
-        }) ?? candidate.registration.localId;
+        });
+        // External identity must be resolved from the admitted declaration;
+        // falling back to a bare registration local id can collide with a
+        // different Agent or dispatch to the wrong runtime. Bundled
+        // first-party compatibility ids are already present in the identity
+        // index, so no fallback is needed there either.
+        const selectedLegacyAgent = selectedAgentById.get(candidate.registration.localId);
+        const agentId = resolvedAgentId
+            // A few bundled callers still provide the released unqualified
+            // id without a structured identity. Keep that narrow compatibility
+            // fallback only when the selected projection itself is identity-
+            // free; external projected Agents must resolve through the exact
+            // `{pluginId, localId}` index above.
+            ?? (target.provenance === 'first_party' && selectedLegacyAgent && !selectedLegacyAgent.identity
+                ? candidate.registration.localId
+                : null);
+        if (!agentId) continue;
         const selectedPluginId = selectedOwnerByAgentId.get(agentId);
         if (selectedPluginId && selectedPluginId !== candidate.pluginId) {
             params.onDuplicate(Object.freeze({

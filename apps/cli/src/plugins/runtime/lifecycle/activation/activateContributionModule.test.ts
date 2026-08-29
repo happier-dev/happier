@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
+import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
 import { logger } from '@/ui/logger';
@@ -665,5 +667,313 @@ describe('contribution module activation', () => {
         expect(result.status).toBe('unavailable');
         expect(result.diagnostics[0]?.source).toBeUndefined();
         expect(result.diagnostics[0]?.stack).toBeUndefined();
+    });
+});
+
+describe('contribution module activation transaction deadline', () => {
+    const AGENT_ID = 'assistant';
+
+    const agentRuntimeFactory: AgentRuntimeFactory = async () => ({
+        sessions: {
+            open: async () => ({
+                send: async () => ({ status: 'admitted' }),
+                watch: () => ({ dispose() {} }),
+                dispose() {},
+            }),
+        },
+    });
+
+    const externalSessionsContribution: AgentExternalSessionsContribution = {
+        resolveSource: async ({ source }) => ({ ok: true, value: { source } }),
+        listCandidates: async () => ({
+            ok: true,
+            value: { candidates: [], nextCursor: null },
+        }),
+        resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+            ok: true,
+            value: { source, remoteSessionId, linkData: {} },
+        }),
+        resolveLinkedIdentity: async ({ source, remoteSessionId, linkData }) => ({
+            ok: true,
+            value: { source, remoteSessionId, linkData },
+        }),
+        pageTranscript: async () => ({
+            ok: true,
+            value: { items: [], nextCursor: null },
+        }),
+        readAfterTranscript: async () => ({
+            ok: true,
+            value: { outcome: 'already_current' },
+        }),
+    };
+
+    function agentsManifest() {
+        return manifest({
+            agents: [{
+                id: AGENT_ID,
+                title: 'Assistant',
+                runtime: { kind: 'custom' },
+                primary: 'sessions',
+                capabilities: {
+                    surfaces: ['externalSessions'],
+                    sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+                },
+                surfaces: {
+                    externalSession: {
+                        externalLinkedTakeover: { writerSafety: 'unsupported' },
+                        sources: [{
+                            sourceKind: 'fixture',
+                            schema: {
+                                fields: [{ name: 'kind', kind: 'literal', value: 'fixture' }],
+                            },
+                            key: { segments: [{ kind: 'literal', value: 'fixture' }] },
+                            instances: [{ kind: 'default', constants: {} }],
+                        }],
+                    },
+                },
+            }],
+        });
+    }
+
+    function registerSessionCapableAgent(api: PluginApi): void {
+        api.agents.register(AGENT_ID, agentRuntimeFactory, {
+            sessionRunnerFactory: {
+                module: './agent-runtime.js',
+                export: 'agentRuntimeFactory',
+                runtimeApiVersion: 1,
+                externalSessionsExport: 'externalSessions',
+            },
+        });
+        api.agents.registerExternalSessions(AGENT_ID, externalSessionsContribution);
+    }
+
+    it('bounds locator resolution and companion validation behind the absolute activation deadline and closes the candidate', async () => {
+        vi.useFakeTimers();
+        let capturedApi: PluginApi | undefined;
+        const cleanup = vi.fn(async () => undefined);
+        try {
+            const activation = activateContributionModule({
+                pluginId: 'acme.activation', generation: '7', isGenerationCurrent: () => true,
+                manifest: agentsManifest(),
+                moduleNamespace: {
+                    activate(api: PluginApi) {
+                        capturedApi = api;
+                        registerSessionCapableAgent(api);
+                        return cleanup;
+                    },
+                },
+                resolveRelativeModule: () => new Promise<never>(() => undefined),
+            });
+
+            await vi.advanceTimersByTimeAsync(30_000);
+            await expect(activation).resolves.toEqual(expect.objectContaining({
+                status: 'unavailable',
+                registrations: [],
+                validatedAgentSessionRunnerFactories: [],
+                diagnostics: [expect.objectContaining({
+                    code: 'plugin_activation_failed',
+                    message: expect.stringMatching(/activation timed out after 30000ms/u),
+                })],
+            }));
+            // The candidate stays closed: the retired registration host refuses
+            // further registrations, so a predecessor generation keeps serving.
+            expect(() => capturedApi?.agents.registerExternalSessions(
+                AGENT_ID,
+                externalSessionsContribution,
+            )).toThrow(/disposed|retired|current/i);
+            // The same bounded exactly-once cleanup ran.
+            expect(cleanup).toHaveBeenCalledTimes(1);
+        } finally {
+            await vi.runAllTimersAsync();
+            vi.useRealTimers();
+        }
+    });
+
+    it('bounds retained-fact persistence behind the deadline and publishes no late facts', async () => {
+        vi.useFakeTimers();
+        let capturedApi: PluginApi | undefined;
+        const cleanup = vi.fn(async () => undefined);
+        type PersistedAgentFacts = readonly import(
+            '../../activationSources'
+        ).ValidatedAgentSessionRunnerFactoryFactV1[];
+        let resolvePersistence: ((facts: PersistedAgentFacts) => void) | undefined;
+        const persistValidatedAgentSessionRunnerFactories = vi.fn(
+            (): Promise<PersistedAgentFacts | void> =>
+                new Promise((resolve) => {
+                    resolvePersistence = resolve;
+                }),
+        );
+        try {
+            const activation = activateContributionModule({
+                pluginId: 'acme.activation', generation: '7', isGenerationCurrent: () => true,
+                manifest: agentsManifest(),
+                moduleNamespace: {
+                    activate(api: PluginApi) {
+                        capturedApi = api;
+                        registerSessionCapableAgent(api);
+                        return cleanup;
+                    },
+                },
+                resolveRelativeModule: async () => ({
+                    module: {
+                        agentRuntimeFactory,
+                        externalSessions: externalSessionsContribution,
+                    },
+                    normalizedModulePath: 'agent-runtime.js',
+                    loadMode: 'immutable-js' as const,
+                }),
+                persistValidatedAgentSessionRunnerFactories,
+            });
+
+            await vi.advanceTimersByTimeAsync(30_000);
+            const result = await activation;
+            expect(result).toEqual(expect.objectContaining({
+                status: 'unavailable',
+                registrations: [],
+                validatedAgentSessionRunnerFactories: [],
+            }));
+            expect(persistValidatedAgentSessionRunnerFactories).toHaveBeenCalledTimes(1);
+            expect(() => capturedApi?.agents.registerExternalSessions(
+                AGENT_ID,
+                externalSessionsContribution,
+            )).toThrow(/disposed|retired|current/i);
+            expect(cleanup).toHaveBeenCalledTimes(1);
+
+            // A late settlement is observed (no unhandled rejection) and the
+            // closed candidate publishes nothing through it.
+            resolvePersistence?.([]);
+            await vi.runAllTimersAsync();
+            expect(result.validatedAgentSessionRunnerFactories).toEqual([]);
+        } finally {
+            resolvePersistence?.([]);
+            await vi.runAllTimersAsync();
+            vi.useRealTimers();
+        }
+    });
+
+    it('refuses late retained-fact persistence when locator resolution settles after the deadline', async () => {
+        vi.useFakeTimers();
+        let capturedApi: PluginApi | undefined;
+        const cleanup = vi.fn(async () => undefined);
+        let releaseLocator: (() => void) | undefined;
+        const persistValidatedAgentSessionRunnerFactories = vi.fn(
+            async (
+                facts: readonly import(
+                    '../../activationSources'
+                ).ValidatedAgentSessionRunnerFactoryFactV1[],
+            ) => facts,
+        );
+        try {
+            const activation = activateContributionModule({
+                pluginId: 'acme.activation', generation: '7', isGenerationCurrent: () => true,
+                manifest: agentsManifest(),
+                moduleNamespace: {
+                    activate(api: PluginApi) {
+                        capturedApi = api;
+                        registerSessionCapableAgent(api);
+                        return cleanup;
+                    },
+                },
+                // The transaction parks inside locator validation when the
+                // absolute deadline fires, so the persisted-fact choke point
+                // is only ever reachable as a late post-deadline settlement.
+                resolveRelativeModule: () => new Promise((resolve) => {
+                    releaseLocator = () => resolve({
+                        module: {
+                            agentRuntimeFactory,
+                            externalSessions: externalSessionsContribution,
+                        },
+                        normalizedModulePath: 'agent-runtime.js',
+                        loadMode: 'immutable-js' as const,
+                    });
+                }),
+                persistValidatedAgentSessionRunnerFactories,
+            });
+
+            await vi.advanceTimersByTimeAsync(30_000);
+            const result = await activation;
+            expect(result).toEqual(expect.objectContaining({
+                status: 'unavailable',
+                registrations: [],
+                validatedAgentSessionRunnerFactories: [],
+            }));
+            // The candidate closed before the transaction reached the
+            // retained-fact choke point.
+            expect(persistValidatedAgentSessionRunnerFactories).not.toHaveBeenCalled();
+            expect(() => capturedApi?.agents.registerExternalSessions(
+                AGENT_ID,
+                externalSessionsContribution,
+            )).toThrow(/disposed|retired|current/i);
+            expect(cleanup).toHaveBeenCalledTimes(1);
+
+            // A locator settling after the rejection must not resurrect the
+            // closed candidate: no persistence is commissioned and no
+            // validated fact is recorded for the rejected registration.
+            releaseLocator?.();
+            await vi.runAllTimersAsync();
+            expect(persistValidatedAgentSessionRunnerFactories).not.toHaveBeenCalled();
+        } finally {
+            releaseLocator?.();
+            await vi.runAllTimersAsync();
+            vi.useRealTimers();
+        }
+    });
+
+    it('attempts every ordered cleanup step behind a hung MCP disposer and diagnoses the hung step', async () => {
+        vi.useFakeTimers();
+        const attempts: string[] = [];
+        const disposeFirst = vi.fn(async () => {
+            attempts.push('first');
+        });
+        const disposeSecond = vi.fn(async () => {
+            attempts.push('second');
+            await new Promise<void>(() => undefined);
+        });
+        const activationCleanup = vi.fn(async () => {
+            attempts.push('activation');
+        });
+        try {
+            const activation = activateContributionModule({
+                pluginId: 'acme.activation', generation: '7', isGenerationCurrent: () => true,
+                manifest: manifest({
+                    actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
+                    mcp: {
+                        servers: [
+                            { id: 'first', title: 'First', kind: 'dynamic' },
+                            { id: 'second', title: 'Second', kind: 'dynamic' },
+                        ],
+                        discoverySources: [],
+                    },
+                }),
+                moduleNamespace: {
+                    activate(api: PluginApi) {
+                        api.actions.register('run', async () => ({ ok: true }));
+                        api.mcp.registerServer('first', mcpRuntime(disposeFirst));
+                        api.mcp.registerServer('second', mcpRuntime(disposeSecond));
+                        return activationCleanup;
+                    },
+                },
+                cleanupTimeoutMs: 25,
+            });
+
+            const result = await activation;
+            expect(result.status).toBe('active');
+            const disposal = result.dispose();
+            const disposalExpectation = expect(disposal).rejects.toThrow(
+                /cleanup for 'mcp\.servers\/second' timed out after 25ms/u,
+            );
+            await vi.advanceTimersByTimeAsync(25);
+            await disposalExpectation;
+            // Reverse order is preserved as a preference, the hung newest
+            // disposer cannot starve the older one, and the activation cleanup
+            // still receives its own bounded attempt — each exactly once.
+            expect(attempts).toEqual(['second', 'first', 'activation']);
+            expect(disposeFirst).toHaveBeenCalledTimes(1);
+            expect(disposeSecond).toHaveBeenCalledTimes(1);
+            expect(activationCleanup).toHaveBeenCalledTimes(1);
+        } finally {
+            await vi.runAllTimersAsync();
+            vi.useRealTimers();
+        }
     });
 });

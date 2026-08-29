@@ -6,6 +6,8 @@ import { reloadConfiguration, configuration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
+const SYNTHETIC_API_TOKEN = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
+
 const envKeys = [
   'HAPPIER_HOME_DIR',
   'HAPPIER_TOKEN',
@@ -37,7 +39,7 @@ describe('readStoredCredentials API Token selection', () => {
     await withTempDir('happier-cli-api-token-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
-        HAPPIER_TOKEN: 'hap_v1_envtoken_envsecret',
+        HAPPIER_TOKEN: SYNTHETIC_API_TOKEN,
         HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_LOCAL_SERVER_URL: undefined,
@@ -50,7 +52,7 @@ describe('readStoredCredentials API Token selection', () => {
       const { readStoredCredentials } = await import('./persistence');
 
       await expect(readStoredCredentials()).resolves.toEqual({
-        token: 'hap_v1_envtoken_envsecret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       });

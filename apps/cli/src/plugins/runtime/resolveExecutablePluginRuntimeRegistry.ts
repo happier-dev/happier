@@ -137,8 +137,9 @@ import type {
 import type {
     ConfiguredExternalSessionSourceRefusal,
 } from '@/session/external/configuredSourceRegistry';
-import type {
-    CurrentGlobalExternalSessionsRouter,
+import {
+    resolveHostApplicableExternalSessionsPublicScopes,
+    type CurrentGlobalExternalSessionsRouter,
 } from '@/session/external/currentGlobalRouting';
 import type { ExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import {
@@ -3097,6 +3098,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         surface: createAgentExternalSessionsExecutionSurface(
                             lease.externalSessions,
                             writerSafety,
+                            // Both takeover storage modes resolve their
+                            // post-admission launch through this exact
+                            // generation's takeover contribution, so the
+                            // capability projection may only advertise what
+                            // this lease admitted.
+                            Boolean(lease.externalSessionTakeover),
                         ),
                     });
                 },
@@ -3188,7 +3195,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     })
                     : null;
                 if (!target || !hostAccessRequests) {
-                    return 'unavailable';
+                    return { status: 'unavailable' };
                 }
                 const policy = invocationServiceOwners
                     .resolveInvocationHostPolicy({
@@ -3200,7 +3207,25 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         surface: caller.surface,
                         ...(caller.sessionId ? { sessionId: caller.sessionId } : {}),
                     });
-                return policy.serviceBinding.availability.sessions;
+                if (policy.serviceBinding.availability.sessions === 'denied') {
+                    return { status: 'denied' };
+                }
+                if (policy.serviceBinding.availability.sessions !== 'available') {
+                    return { status: 'unavailable' };
+                }
+                // Preserve the resolved Session scopes instead of collapsing
+                // them to availability: the author binding enforces the
+                // ratified read/control mapping against them, with
+                // machine/project restrictions applied against host context.
+                return {
+                    status: 'available',
+                    scopes: resolveHostApplicableExternalSessionsPublicScopes({
+                        scopes: policy.serviceBinding.sessionScopes
+                            ?? Object.freeze([]),
+                        resolveCurrentMachineId: () =>
+                            params?.resolveExternalSessionCurrentMachineId?.() ?? null,
+                    }),
+                };
             },
         });
     const publicCurrentGlobalExternalSessions =
@@ -3247,7 +3272,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     contribution: input.contribution,
                     surface: input.surface,
                     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-                }) ?? 'unavailable',
+                }) ?? { status: 'unavailable' },
     });
     const refreshCurrentGlobalExternalSessionsAuthor = async (): Promise<void> => {
         const previousPublication = currentGlobalExternalSessionsPublicationTail;

@@ -19,6 +19,7 @@ import type { ActivationTarget } from '@/plugins/runtime/lifecycle/activation/ta
 import {
     indexAgentRoutingIdsByContributionIdentity,
     readAgentRoutingIdForContributionIdentity,
+    resolveContributedAgentRoutingId,
     resolveAgentContributionQualifiedId,
 } from './agentRoutingIdentity';
 import { resolveMergedContributionRegistry } from './createResolvedContributionRegistry';
@@ -213,5 +214,17 @@ describe('two plugins declaring the same local Agent id', () => {
             .sessions!.open({} as never, {} as never);
         expect(await alphaSession.send({} as never)).toMatchObject({ owner: 'acme.alpha' });
         expect(await betaSession.send({} as never)).toMatchObject({ owner: 'acme.beta' });
+    });
+});
+
+describe('Agent identity formatting', () => {
+    it('keeps slash-containing local ids distinct between routing and authority keys', () => {
+        const identity = { pluginId: 'acme.alpha', localId: 'assistant/voice' };
+        expect(resolveContributedAgentRoutingId({
+            ...identity,
+            provenance: 'external',
+        })).toBe('acme.alpha/assistant/voice');
+        expect(resolveAgentContributionQualifiedId(identity))
+            .toBe('acme.alpha/agents/assistant%2Fvoice');
     });
 });

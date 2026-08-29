@@ -12,7 +12,9 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+  authenticateOwnedExternalSessionRecord,
   loadPersistedLinkedExternalSession,
+  readPersistedLinkedExternalSessionFromRaw,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { StoredCredentials } from '@/persistence';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
@@ -54,10 +56,13 @@ function readSessionId(input: unknown): string | null {
   return typeof sessionId === 'string' ? sessionId : null;
 }
 
+// Viewer-facing viewer-lease RPCs reachable from the plugin-provenance
+// registration. The low-level ephemeral lease Actions
+// (`sessions.external.follow`/`unfollow`) are excluded from the plugin
+// projection and never arrive here; `SessionsService.external` owns the
+// author-facing dynamic follow surface.
 function isViewerAction(actionId: PluginExternalSessionActionArgs['actionId']): boolean {
   return actionId === 'sessions.external.status.get'
-    || actionId === 'sessions.external.follow'
-    || actionId === 'sessions.external.unfollow'
     || actionId === 'sessions.external.backgroundFollow.set';
 }
 
@@ -103,16 +108,23 @@ export async function executePluginExternalSessionAction(args: Readonly<
         : 'plugin_external_operation_idempotency_key_invalid';
       return { ok: false, errorCode: code, error: code };
     }
-    const linked = await loadPersistedLinkedExternalSession({
+    // Operation admission order is fixed: (1) authenticate the exact
+    // Session/account ownership — the durable owner must never become an
+    // idempotency oracle for a caller that cannot read the Session's owner
+    // metadata; (2) consult the durable author-intent owner so an already
+    // committed record or unexpired receipt replays, and changed intent
+    // conflicts, without reading the mutable current link; (3) only a true
+    // miss parses/resolves the current external link before Start.
+    const ownership = await authenticateOwnedExternalSessionRecord({
       credentials: args.credentials,
       sessionId: parsed.data.request.sessionId,
       ...(args.signal ? { signal: args.signal } : {}),
     });
-    if (!linked.ok) {
+    if (!ownership.ok) {
       return {
         ok: false,
-        errorCode: linked.errorCode,
-        error: linked.error,
+        errorCode: ownership.errorCode,
+        error: ownership.error,
       };
     }
     const activeServerDir = options.activeServerDir
@@ -191,6 +203,18 @@ export async function executePluginExternalSessionAction(args: Readonly<
         ok: false,
         errorCode: 'unsupported_action',
         error: 'unsupported_action:sessions.external.materialize.start',
+      };
+    }
+    const linked = readPersistedLinkedExternalSessionFromRaw({
+      credentials: args.credentials,
+      rawSession: ownership.rawSession,
+      accountEncryptionMode: ownership.accountEncryptionMode,
+    });
+    if (!linked.ok) {
+      return {
+        ok: false,
+        errorCode: linked.errorCode,
+        error: linked.error,
       };
     }
     const result = await options.materializeStart({
@@ -308,13 +332,9 @@ export async function executePluginExternalSessionAction(args: Readonly<
     ? {
         ...semantic,
         machineId: linked.session.machineId,
-        ...(args.actionId === 'sessions.external.unfollow'
-          ? {}
-          : {
-              agentId: linked.session.agentId,
-              remoteSessionId: linked.session.remoteSessionId,
-              source: linked.session.source,
-            }),
+        agentId: linked.session.agentId,
+        remoteSessionId: linked.session.remoteSessionId,
+        source: linked.session.source,
       }
     : semantic;
   const rpcMethod = getActionSpec(args.actionId).bindings?.rpcMethod;

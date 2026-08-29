@@ -1,5 +1,6 @@
 import {
   normalizeSpawnSessionNonceResolution,
+  resolveLinkedExternalSessionAuthorityV1,
   SPAWN_SESSION_ERROR_CODES,
   SpawnSessionExecutionAuthorizationSchema,
 } from '@happier-dev/protocol';
@@ -26,7 +27,7 @@ export type InactiveSessionResumeResult =
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
-      code: 'session_archived' | 'unsupported' | 'resume_failed' | 'timeout';
+      code: 'session_archived' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'timeout';
       message: string;
     }>;
 
@@ -134,6 +135,20 @@ export async function requestInactiveSessionResume(params: Readonly<{
   const machineId = rawMachineId ?? metadataMachineId;
   if (!machineId) {
     return { ok: false, code: 'unsupported', message: 'Inactive session has no recorded machine target; pending custody was retained' };
+  }
+
+  // A linked External Session's hosted runtime is owned by the takeover
+  // operation, not by automatic resume. The single link authority decides:
+  // `direct` means still linked, and an unresolved link must refuse before an
+  // effect rather than fall through to "hosted here". Unlinked sessions keep
+  // the canonical auto-resume behavior.
+  const linkAuthority = resolveLinkedExternalSessionAuthorityV1(params.metadata);
+  if (!linkAuthority.ok || linkAuthority.transcriptStorage === 'direct') {
+    return {
+      ok: false,
+      code: 'takeover_required',
+      message: 'This session is linked to an external agent; complete External Sessions takeover before resuming it',
+    };
   }
 
   const executionAuthorization = SpawnSessionExecutionAuthorizationSchema.parse({

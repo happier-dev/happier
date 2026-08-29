@@ -48,6 +48,9 @@ export {
   type CurrentGlobalExternalSessionsPublicAccess,
   type CurrentGlobalExternalSessionsRouter,
 } from './currentGlobalRouting';
+import {
+  unrestrictedCurrentGlobalExternalSessionsPublicAccess,
+} from './currentGlobalRouting';
 import type { CurrentGlobalExternalSessionsPublicAccess } from './currentGlobalRouting';
 
 type CurrentAgentRuntime = Readonly<{
@@ -159,7 +162,9 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
   activateConfiguredSources(agentId?: string): Promise<void>;
   /**
    * The daemon-lifetime router re-evaluates current-public HostAccess on every
-   * call. Omitted only by owner-local tests that do not model that router.
+   * call, preserving the resolved Session scopes that the ratified operation
+   * mapping consumes. Omitted only by owner-local tests that do not model that
+   * router.
    */
   readCurrentPublicAccess?(): CurrentGlobalExternalSessionsPublicAccess;
 }>): HostExternalSessionsAuthorService {
@@ -220,30 +225,41 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
     const code = readInvocationFailureCode(operationSignal, deadlineSignal);
     if (code) throw failure(code);
   };
-  const assertCurrentPublicAccess = (): void => {
-    const access = params.readCurrentPublicAccess?.() ?? 'available';
-    if (access === 'available') return;
-    throw failure(
-      access === 'denied'
-        ? 'plugin_service_unavailable'
-        : 'plugin_services_current_global_unavailable',
-    );
+  /**
+   * Ratified public mapping: `capabilities`, `list`, `readTranscript`, and
+   * `followTranscript` require Session `read`; `attach` and `takeover` require
+   * Session `control`.
+   */
+  const assertCurrentPublicAccess = (requiredAccess: 'read' | 'control'): void => {
+    const access = params.readCurrentPublicAccess?.()
+      ?? unrestrictedCurrentGlobalExternalSessionsPublicAccess;
+    if (access.status === 'denied') {
+      throw failure('plugin_service_unavailable');
+    }
+    if (access.status === 'unavailable') {
+      throw failure('plugin_services_current_global_unavailable');
+    }
+    if (!access.scopes.some((scope) => scope.access.includes(requiredAccess))) {
+      throw failure('plugin_session_scope_unavailable');
+    }
   };
   const assertCurrentPublicInvocation = (
     operationSignal: AbortSignal | undefined,
     deadlineSignal: AbortSignal,
+    requiredAccess: 'read' | 'control',
   ): void => {
     assertInvocationCurrent(operationSignal, deadlineSignal);
-    assertCurrentPublicAccess();
+    assertCurrentPublicAccess(requiredAccess);
   };
   const resolveCurrentForInvocation = async (
     agentId: string | undefined,
     operationSignal: AbortSignal | undefined,
     deadlineSignal: AbortSignal,
+    requiredAccess: 'read' | 'control',
   ): Promise<HostExternalSessionsAuthorService | null> => {
-    assertCurrentPublicInvocation(operationSignal, deadlineSignal);
+    assertCurrentPublicInvocation(operationSignal, deadlineSignal, requiredAccess);
     await params.activateConfiguredSources(agentId);
-    assertCurrentPublicInvocation(operationSignal, deadlineSignal);
+    assertCurrentPublicInvocation(operationSignal, deadlineSignal, requiredAccess);
     return readCurrent();
   };
   const unavailable = (code: string) => Object.freeze({
@@ -253,6 +269,8 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
   const invoke = async <T>(input: Readonly<{
     agentId?: string;
     operationSignal?: AbortSignal;
+    /** Ratified Session scope level this public operation requires. */
+    requiredAccess: 'read' | 'control';
     /**
      * Takeover alone survives an absent configured-source owner, because its
      * durable replay/conflict admission precedes every source read. Every other
@@ -275,7 +293,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       ...(input.operationSignal ? [input.operationSignal] : []),
     ]);
     try {
-      assertCurrentPublicInvocation(input.operationSignal, deadline.signal);
+      assertCurrentPublicInvocation(input.operationSignal, deadline.signal, input.requiredAccess);
       return await new Promise<T>((resolve, reject) => {
         const onAbort = () => {
           const code = readInvocationFailureCode(
@@ -294,6 +312,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
             input.agentId,
             input.operationSignal,
             deadline.signal,
+            input.requiredAccess,
           );
           if (!service && !input.withoutCurrentSourceOwner) {
             throw failure('plugin_external_sources_unavailable');
@@ -301,7 +320,11 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
           const result = service
             ? await input.operation(service, invocationSignal)
             : await input.withoutCurrentSourceOwner!(invocationSignal);
-          assertCurrentPublicInvocation(input.operationSignal, deadline.signal);
+          assertCurrentPublicInvocation(
+            input.operationSignal,
+            deadline.signal,
+            input.requiredAccess,
+          );
           return result;
         })().then(resolve, reject).finally(() => {
           invocationSignal.removeEventListener('abort', onAbort);
@@ -319,6 +342,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       try {
         const parsedOptions = readAuthorCancellationOptions(options);
         return await invoke({
+          requiredAccess: 'read',
           ...(parsedOptions?.signal ? { operationSignal: parsedOptions.signal } : {}),
           operation: async (service, signal) => await service.capabilities({ signal }),
         });
@@ -329,6 +353,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
             error.code === 'plugin_external_sources_unavailable'
             || error.code === 'plugin_service_unavailable'
             || error.code === 'plugin_services_current_global_unavailable'
+            || error.code === 'plugin_session_scope_unavailable'
             || error.code === 'plugin_generation_retired'
             || error.code === 'plugin_operation_aborted'
             || error.code === 'plugin_operation_deadline_exceeded'
@@ -343,6 +368,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       const parsedOptions = readAuthorCancellationOptions(options);
       return await invoke({
         ...(query?.agentId ? { agentId: query.agentId } : {}),
+        requiredAccess: 'read',
         ...(parsedOptions?.signal ? { operationSignal: parsedOptions.signal } : {}),
         operation: async (service, signal) => await service.list(query, { signal }),
       });
@@ -351,6 +377,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       const parsedOptions = readAuthorCancellationOptions(options);
       return await invoke({
         agentId: ref.agentId,
+        requiredAccess: 'control',
         ...(parsedOptions?.signal ? { operationSignal: parsedOptions.signal } : {}),
         operation: async (service, signal) => await service.attach(ref, { signal }),
       });
@@ -359,6 +386,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       const parsedOptions = readAuthorCancellationOptions(options);
       return await invoke({
         agentId: ref.agentId,
+        requiredAccess: 'read',
         ...(parsedOptions?.signal ? { operationSignal: parsedOptions.signal } : {}),
         operation: async (service, signal) => await service.readTranscript(
           ref,
@@ -371,6 +399,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       try {
         return await invoke({
           agentId: ref.agentId,
+          requiredAccess: 'read',
           ...(options.signal ? { operationSignal: options.signal } : {}),
           operation: async (service, signal) => await service.followTranscript(
             ref,
@@ -385,6 +414,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
             error.code === 'plugin_external_sources_unavailable'
             || error.code === 'plugin_service_unavailable'
             || error.code === 'plugin_services_current_global_unavailable'
+            || error.code === 'plugin_session_scope_unavailable'
             || error.code === 'plugin_generation_retired'
             || error.code === 'plugin_operation_aborted'
             || error.code === 'plugin_operation_deadline_exceeded'
@@ -399,6 +429,7 @@ export function createCurrentGlobalExternalSessionsAuthorBinding(params: Readonl
       const parsedOptions = readAuthorCancellationOptions(options);
       return await invoke({
         agentId: ref.agentId,
+        requiredAccess: 'control',
         ...(parsedOptions?.signal ? { operationSignal: parsedOptions.signal } : {}),
         // Same adapter instance the bound owner uses, so there is exactly one
         // durable admission owner whether or not a source owner is current.
@@ -473,6 +504,12 @@ function readProviderOps(runtime: CurrentAgentRuntime | null) {
       ? {
           externalLinkedTakeoverWriterSafety:
             surface.externalLinkedTakeoverWriterSafety,
+        }
+      : {}),
+    ...(surface.externalSessionTakeoverAdmitted
+      ? {
+          externalSessionTakeoverAdmitted:
+            surface.externalSessionTakeoverAdmitted,
         }
       : {}),
   });

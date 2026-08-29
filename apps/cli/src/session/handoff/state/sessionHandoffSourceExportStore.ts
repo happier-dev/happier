@@ -8,11 +8,6 @@ import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
 import type { SessionHandoffAgentBundle } from '../types';
 import { writeSessionHandoffAgentBundleArtifact } from '../agentBundle/file';
 import { buildSessionHandoffAgentBundleTransferId } from '../agentBundle/transferPublication';
-import {
-  buildSessionHandoffWorkspaceManifestTransferId,
-} from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
-import { writeWorkspaceReplicationManifestToFile } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
-import { resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 const SOURCE_EXPORT_SCHEMA_VERSION = 1 as const;
@@ -25,16 +20,6 @@ const AgentBundleFileSchema = z.object({
   endpointCandidates: z.array(TransferEndpointCandidateSchema).readonly().optional(),
 }).strict();
 
-const WorkspaceManifestFileSchema = z.object({
-  transferId: z.string().min(1),
-  filePath: z.string().min(1),
-  sizeBytes: z.number().int().nonnegative(),
-  manifestHash: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
-  entriesCount: z.number().int().nonnegative(),
-  fileDigestsCount: z.number().int().nonnegative(),
-  endpointCandidates: z.array(TransferEndpointCandidateSchema).readonly().optional(),
-}).strict();
-
 const SourceExportRecordSchemaV1 = z.object({
   t: z.literal('session_handoff_source_export_v1'),
   schemaVersion: z.literal(SOURCE_EXPORT_SCHEMA_VERSION),
@@ -43,9 +28,7 @@ const SourceExportRecordSchemaV1 = z.object({
   sourceMachineId: z.string().min(1).optional(),
   targetMachineId: z.string().min(1).optional(),
   exportedAtMs: z.number().int().nonnegative(),
-  workspaceSourceRootPath: z.string().min(1).optional(),
   agentBundle: AgentBundleFileSchema.optional(),
-  workspaceManifest: WorkspaceManifestFileSchema.optional(),
 }).strict();
 
 export type SessionHandoffSourceExportRecord = z.infer<typeof SourceExportRecordSchemaV1>;
@@ -80,10 +63,6 @@ function resolveAgentBundleFilePath(activeServerDir: string, handoffId: string):
 
 function resolveReceivedAgentBundleFilePath(activeServerDir: string, handoffId: string): string {
   return join(resolveHandoffDirectory(activeServerDir, handoffId), 'received-agent-bundle.bin');
-}
-
-function resolveWorkspaceManifestFilePath(activeServerDir: string, handoffId: string): string {
-  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'workspace-manifest.txt');
 }
 
 function resolvePathRelativeToActiveServerDir(activeServerDir: string, filePath: string): string {
@@ -158,14 +137,6 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
                 },
               }
             : {}),
-          ...(record.workspaceManifest
-            ? {
-                workspaceManifest: {
-                  ...record.workspaceManifest,
-                  filePath: resolvePersistedPathUnderActiveServerDir(activeServerDir, record.workspaceManifest.filePath),
-                },
-              }
-            : {}),
         };
       } catch {
         throw new Error('Invalid session handoff source export record');
@@ -182,20 +153,11 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
         ...(record.sourceMachineId ? { sourceMachineId: record.sourceMachineId } : {}),
         ...(record.targetMachineId ? { targetMachineId: record.targetMachineId } : {}),
         exportedAtMs: record.exportedAtMs,
-        ...(record.workspaceSourceRootPath ? { workspaceSourceRootPath: record.workspaceSourceRootPath } : {}),
         ...(record.agentBundle
           ? {
               agentBundle: {
                 ...record.agentBundle,
                 filePath: resolvePathRelativeToActiveServerDir(activeServerDir, record.agentBundle.filePath),
-              },
-            }
-          : {}),
-        ...(record.workspaceManifest
-          ? {
-              workspaceManifest: {
-                ...record.workspaceManifest,
-                filePath: resolvePathRelativeToActiveServerDir(activeServerDir, record.workspaceManifest.filePath),
               },
             }
           : {}),
@@ -230,31 +192,5 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       };
     },
 
-    async writeWorkspaceReplicationManifestFile(params: Readonly<{
-      handoffId: string;
-      manifest: Parameters<typeof writeWorkspaceReplicationManifestToFile>[0]['manifest'];
-    }>): Promise<z.infer<typeof WorkspaceManifestFileSchema>> {
-      const handoffId = assertSafeHandoffId(params.handoffId);
-      const directory = resolveHandoffDirectory(activeServerDir, handoffId);
-      await mkdir(directory, { recursive: true });
-      const filePath = resolveWorkspaceManifestFilePath(activeServerDir, handoffId);
-      const { sizeBytes } = await writeWorkspaceReplicationManifestToFile({ manifest: params.manifest, filePath });
-      const manifestHash = await resolveTransferPayloadManifestHash({
-        kind: 'file',
-        filePath,
-        sizeBytes,
-      });
-
-      const entriesCount = params.manifest.entries.length;
-      const fileDigestsCount = params.manifest.entries.filter((entry) => entry.kind === 'file').length;
-      return {
-        transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId }),
-        filePath,
-        sizeBytes,
-        manifestHash,
-        entriesCount,
-        fileDigestsCount,
-      };
-    },
   };
 }

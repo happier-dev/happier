@@ -62,6 +62,7 @@ export function registerSessionRollbackRpcHandler(
     const dispatched = await dispatchActionFromRpc({
       actionId: 'session.rollback',
       input: parsed.data,
+      localActionContext: { authority: 'present_user' },
       executor: createSessionLifecycleRpcActionExecutor({
         'session.rollback': async (request: unknown) => {
           const runtimeFacet = resolveRuntimeFacet();
@@ -98,6 +99,7 @@ export function registerSessionRollbackRpcHandler(
     const dispatched = await dispatchActionFromRpc({
       actionId: 'session.checkpoint',
       input: parsed.data,
+      localActionContext: { authority: 'present_user' },
       executor: createSessionLifecycleRpcActionExecutor({
         'session.checkpoint': async (request: unknown) => {
           const runtimeFacet = resolveRuntimeFacet();
@@ -134,6 +136,7 @@ export function registerSessionRollbackRpcHandler(
     const dispatched = await dispatchActionFromRpc({
       actionId: 'session.restore',
       input: parsed.data,
+      localActionContext: { authority: 'present_user' },
       executor: createSessionLifecycleRpcActionExecutor({
         'session.restore': async (request: unknown) => {
           const runtimeFacet = resolveRuntimeFacet();
@@ -172,6 +175,7 @@ export function registerSessionRollbackRpcHandler(
     const dispatched = await dispatchActionFromRpc({
       actionId: 'session.checkpoint_code_rollback',
       input: parsed.data,
+      localActionContext: { authority: 'present_user' },
       executor: createSessionLifecycleRpcActionExecutor({
         'session.checkpoint_code_rollback': async (request: unknown) => {
           const runtimeFacet = resolveRuntimeFacet();

@@ -391,7 +391,11 @@ export const AgentRuntimeDaemonSessionDescriptorV1Schema = z.object({
   pluginVersion: z.string().trim().min(1).max(256),
   /** Canonical host routing id (`resolveContributedAgentRoutingId`). */
   agentId: AgentIdV1Schema,
-  backendId: BoundedIdSchema,
+  // The runner currently carries the same canonical host routing identity in
+  // both fields. Keep the Agent identity's 513-byte envelope here rather than
+  // applying the narrower generic backend-local bound to a qualified external
+  // Agent id.
+  backendId: AgentIdV1Schema,
   generation: BoundedIdSchema,
   immutableGenerationId: z.string().trim().min(1).max(512).optional(),
   /**

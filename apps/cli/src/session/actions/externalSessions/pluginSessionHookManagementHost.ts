@@ -1077,21 +1077,41 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                                 credential.eventPrincipalRef,
                                             );
                                         }
-                                        await dependencies.applyInstallationAction({
-                                            action: 'disable',
-                                            activeServerDir,
-                                            machineId: input.machineId,
-                                            qualifiedAgent: current.agent,
-                                            hostInstallationId:
-                                                record.hostInstallationId,
-                                            installationIdentity:
-                                                record.installationIdentity,
-                                            executableIdentity:
-                                                record.executableIdentity,
-                                            ingressPrincipalRef:
-                                                record.ingressPrincipalRef,
-                                        }).catch(() => undefined);
-                                        await Promise.allSettled(
+                                        // Rotation-failure reconciliation:
+                                        // the durable secret set is mixed
+                                        // old/new, so `disabled` custody is
+                                        // only truthful once every durable
+                                        // secret is revoked. Persist the
+                                        // nearest truthful state for the
+                                        // actual cleanup outcome — `disabled`
+                                        // when full cleanup succeeded, else
+                                        // the existing non-enablable
+                                        // `revoked` custody that Enable
+                                        // refuses and bootstrap skips while
+                                        // credentials may remain. Uninstall
+                                        // stays the recovery path; there is
+                                        // deliberately no credential journal
+                                        // or second registry behind this.
+                                        const disablePersisted = await dependencies
+                                            .applyInstallationAction({
+                                                action: 'disable',
+                                                activeServerDir,
+                                                machineId: input.machineId,
+                                                qualifiedAgent: current.agent,
+                                                hostInstallationId:
+                                                    record.hostInstallationId,
+                                                installationIdentity:
+                                                    record.installationIdentity,
+                                                executableIdentity:
+                                                    record.executableIdentity,
+                                                ingressPrincipalRef:
+                                                    record.ingressPrincipalRef,
+                                            })
+                                            .then(
+                                                (applied) => applied.ok,
+                                                () => false,
+                                            );
+                                        const revocations = await Promise.allSettled(
                                             ownedEventIds(record).map(
                                                 async (eventId) =>
                                                     await listener.revokeDurableCredential({
@@ -1105,6 +1125,32 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
                                                     }),
                                             ),
                                         );
+                                        if (
+                                            !disablePersisted
+                                            || revocations.some(
+                                                (revocation) =>
+                                                    revocation.status
+                                                    === 'rejected',
+                                            )
+                                        ) {
+                                            await dependencies
+                                                .applyInstallationAction({
+                                                    action: 'revoke',
+                                                    activeServerDir,
+                                                    machineId: input.machineId,
+                                                    qualifiedAgent:
+                                                        current.agent,
+                                                    hostInstallationId:
+                                                        record.hostInstallationId,
+                                                    installationIdentity:
+                                                        record.installationIdentity,
+                                                    executableIdentity:
+                                                        record.executableIdentity,
+                                                    ingressPrincipalRef:
+                                                        record.ingressPrincipalRef,
+                                                })
+                                                .catch(() => undefined);
+                                        }
                                         return 'next';
                                     }
                                 }
@@ -2173,6 +2219,24 @@ export function createPluginSessionHookManagementHost(input: Readonly<{
             if (!record) {
                 releaseOperation();
                 return failure('installation_replaced', false);
+            }
+            if (
+                record.state === 'preparing'
+                || record.state === 'revoked'
+            ) {
+                // Transitional custody is non-enablable by contract: a mixed
+                // old/new durable secret set may remain behind it. Refuse
+                // before any Agent resolution or credential materialization
+                // and surface the same reconciliation attention the durable
+                // status projects; Uninstall is the recovery path.
+                releaseOperation();
+                return PluginSessionHookToggleResponseV1Schema.parse({
+                    ok: true,
+                    status: attention(
+                        'hook_installation_reconciliation_required',
+                        record.hostInstallationId,
+                    ),
+                });
             }
             const registryLease = await dependencies
                 .acquireRuntimeRegistryLease()

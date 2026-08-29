@@ -5741,11 +5741,21 @@ function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBehaviorDes
   return lines.join('\n');
 }
 
-function collectBundledPluginUiTranslations(
-  pluginPackages: readonly BundledPluginPackage[],
+export function collectBundledPluginUiTranslations(
+  pluginPackages: readonly Readonly<{
+    pluginPackageId: string;
+    manifest: Readonly<{ contributes?: unknown }>;
+  }>[],
 ): JsonObject {
   const messagesByLocale = new Map<string, Map<string, { owner: string; value: string }>>();
-  for (const pluginPackage of pluginPackages) {
+  // Bundled packages may each embed the same shared UI source. The aggregate
+  // owns one locale/key table, so identical source text is one contribution;
+  // only divergent values are an ambiguous contract failure. Sort only to make
+  // that diagnostic independent of package discovery order, never to select a
+  // winner.
+  for (const pluginPackage of [...pluginPackages].sort((left, right) => (
+    left.pluginPackageId.localeCompare(right.pluginPackageId)
+  ))) {
     const contributes = isRecord(pluginPackage.manifest.contributes)
       ? pluginPackage.manifest.contributes
       : {};
@@ -5763,9 +5773,12 @@ function collectBundledPluginUiTranslations(
         }
         const existing = localeMessages.get(key);
         if (existing) {
-          throw new Error(
-            `Duplicate bundled UI translation '${translation.locale}:${key}' from ${existing.owner} and ${pluginPackage.pluginPackageId}`,
-          );
+          if (existing.value !== value) {
+            throw new Error(
+              `Conflicting bundled UI translation '${translation.locale}:${key}' from ${existing.owner} and ${pluginPackage.pluginPackageId}`,
+            );
+          }
+          continue;
         }
         localeMessages.set(key, { owner: pluginPackage.pluginPackageId, value });
       }

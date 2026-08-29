@@ -190,6 +190,135 @@ describe('createExternalSessionTerminalFollowProjector', () => {
     ]);
   });
 
+  it('carries the top-level Protocol sidechainId across user, tool, and message projections', async () => {
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'claude',
+      projectRuntimeEvent: async (event) => {
+        projected.push(AgentSessionRuntimeEventSchema.parse(event));
+        return { projected: true as const };
+      },
+    });
+
+    await publish({
+      kind: 'data',
+      phase: 'initial_replay',
+      fromCursor: null,
+      nextCursor: 'cursor-1',
+      items: [
+        {
+          id: 'sidechain-user-row',
+          localId: 'sidechain-user-fact',
+          sidechainId: 'sidechain-top',
+          userProjection: 'source_fact',
+          timestampMs: 10,
+          kind: 'user',
+          data: {
+            role: 'user',
+            content: { type: 'text', text: 'sidechain prompt' },
+          },
+        },
+        {
+          id: 'sidechain-tool-row',
+          sidechainId: 'sidechain-top',
+          timestampMs: 11,
+          kind: 'event',
+          data: {
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: {
+                type: 'tool-call',
+                callId: 'tool-call-2',
+                name: 'read_file',
+                input: { path: '/workspace/file.ts' },
+              },
+            },
+          },
+        },
+        {
+          id: 'sidechain-message-row',
+          sidechainId: 'sidechain-top',
+          timestampMs: 12,
+          kind: 'agent',
+          data: {
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: { type: 'message', message: 'sidechain reply' },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(projected).toEqual([
+      expect.objectContaining({
+        kind: 'transcript-message-committed',
+        role: 'user',
+        messageId: 'sidechain-user-fact',
+        sidechainId: 'sidechain-top',
+      }),
+      expect.objectContaining({
+        kind: 'tool-call',
+        toolCallId: 'tool-call-2',
+        sidechainId: 'sidechain-top',
+      }),
+      expect.objectContaining({
+        kind: 'transcript-message-committed',
+        role: 'assistant',
+        text: 'sidechain reply',
+        sidechainId: 'sidechain-top',
+      }),
+    ]);
+  });
+
+  it('prefers the top-level sidechainId over a nested provider body value', async () => {
+    const projected: AgentSessionRuntimeEvent[] = [];
+    const publish = createExternalSessionTerminalFollowProjector({
+      sessionId: 'session-1',
+      agentId: 'codex',
+      projectRuntimeEvent: async (event) => {
+        projected.push(AgentSessionRuntimeEventSchema.parse(event));
+        return { projected: true as const };
+      },
+    });
+
+    await publish({
+      kind: 'data',
+      fromCursor: 'cursor-1',
+      nextCursor: 'cursor-2',
+      items: [{
+        id: 'sidechain-precedence-row',
+        sidechainId: 'sidechain-top',
+        timestampMs: 11,
+        kind: 'event',
+        data: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'tool-call',
+              callId: 'tool-call-3',
+              name: 'read_file',
+              input: {},
+              sidechainId: 'sidechain-nested',
+            },
+          },
+        },
+      }],
+    });
+
+    expect(projected).toEqual([
+      expect.objectContaining({
+        kind: 'tool-call',
+        toolCallId: 'tool-call-3',
+        sidechainId: 'sidechain-top',
+      }),
+    ]);
+  });
+
   it('persists terminal-followed tool calls and results through the canonical writer without a delta bridge', async () => {
     const enqueueAgentMessageCommitted = vi.fn(async () => ({
       persisted: true as const,

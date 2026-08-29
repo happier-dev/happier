@@ -2,7 +2,6 @@ import type {
   SessionHandoffMetadataV2,
   SessionHandoffStartRequest,
   SessionHandoffStatus,
-  SessionHandoffWorkspaceTransfer,
   TransferEndpointCandidate,
 } from '@happier-dev/protocol';
 
@@ -14,11 +13,6 @@ import {
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import type { SessionHandoffAgentBundleTransferPublication } from '../../../session/handoff/agentBundle/transferPublication';
 import type { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
-import {
-  createSessionHandoffWorkspaceReplicationAdapter,
-  type SessionHandoffWorkspaceReplicationMetadata,
-} from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
-import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 import type { DeferredDirectPeerPreExportedAgentBundle } from './startDeferredDirectPeer';
@@ -42,8 +36,6 @@ export type StoredHandoffState = Readonly<{
     payloadSource: TransferPayloadSource;
   }>[];
   handoffMetadataV2?: SessionHandoffMetadataV2;
-  workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
-  workspaceTransfer?: SessionHandoffWorkspaceTransfer;
 }>;
 
 export type PrepareStartedStateResult = Readonly<{
@@ -55,18 +47,11 @@ export type PrepareStartedStateResult = Readonly<{
 
 export async function prepareStartedState(input: Readonly<{
   callInput: PrepareStartedStateCallInput;
-  activeServerDir: string;
   exportSessionBundle: (
     metadata: Record<string, unknown>,
   ) => Promise<Readonly<{ agentBundle: SessionHandoffAgentBundle; targetPath: string }>>;
   sourceExportStore: ReturnType<typeof createSessionHandoffSourceExportStore>;
-  workspaceReplicationAdapter: ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
-  resolveWorkspaceReplicationHandoffBackTargetRootPath: (input: Readonly<{
-    metadata: Record<string, unknown>;
-    workspaceTransfer: SessionHandoffStartRequest['workspaceTransfer'] | undefined;
-    requestedTargetMachineId: string;
-  }>) => string | null;
   buildStartPendingStatus: (input: Readonly<{
     handoffId: string;
     sourceStopState: 'stopped' | 'already_inactive';
@@ -98,7 +83,6 @@ export async function prepareStartedState(input: Readonly<{
       sourceMachineId: callInput.request.sourceMachineId,
       targetMachineId: callInput.request.targetMachineId,
       exportedAtMs: Date.now(),
-      workspaceSourceRootPath: exported.targetPath,
       agentBundle: {
         ...persistedAgentBundle,
         ...(callInput.preExportedAgentBundle?.agentBundleTransferPublication?.endpointCandidates?.length
@@ -136,84 +120,24 @@ export async function prepareStartedState(input: Readonly<{
         : {}),
     };
 
-    const preparedWorkspaceTransfer = await input.workspaceReplicationAdapter.prepareSourceWorkspaceTransfer({
-      handoffId: callInput.handoffId,
-      activeServerDir: input.activeServerDir,
-      negotiatedTransportStrategy: callInput.request.negotiatedTransportStrategy,
-      workspaceTransfer: callInput.request.workspaceTransfer,
-      directPeerTransfer: input.directPeerTransfer,
-      sourceRootPath: exported.targetPath,
-      agentBundleTransferPublication,
-      sessionMetadata: callInput.metadata,
-      agentBundle: exported.agentBundle,
-    });
-
-    const workspaceReplicationMetadata = preparedWorkspaceTransfer.workspaceReplicationMetadata;
-    const workspaceTransferEnabled = callInput.request.workspaceTransfer?.enabled === true;
-    const persistedWorkspaceManifest =
-      workspaceTransferEnabled && workspaceReplicationMetadata
-        ? await input.sourceExportStore.writeWorkspaceReplicationManifestFile({
-            handoffId: callInput.handoffId,
-            manifest: workspaceReplicationMetadata.manifest,
-          })
-        : undefined;
-
     await input.sourceExportStore.save({
       handoffId: callInput.handoffId,
       sessionId: callInput.request.sessionId,
       sourceMachineId: callInput.request.sourceMachineId,
       targetMachineId: callInput.request.targetMachineId,
       exportedAtMs: Date.now(),
-      ...(workspaceReplicationMetadata?.sourceRootPath
-        ? { workspaceSourceRootPath: workspaceReplicationMetadata.sourceRootPath }
-        : { workspaceSourceRootPath: exported.targetPath }),
       agentBundle: {
         ...persistedAgentBundle,
         ...(agentBundleTransferPublication.endpointCandidates?.length
           ? { endpointCandidates: [...agentBundleTransferPublication.endpointCandidates] }
           : {}),
       },
-      ...(persistedWorkspaceManifest
-        ? {
-            workspaceManifest: {
-              ...persistedWorkspaceManifest,
-              ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates?.length
-                ? {
-                    endpointCandidates: [
-                      ...preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationManifestTransferPublication.endpointCandidates,
-                    ],
-                  }
-                : {}),
-            },
-          }
-        : {}),
     });
 
-    const workspaceReplicationHandoffBackTargetRootPathForRequest =
-      input.resolveWorkspaceReplicationHandoffBackTargetRootPath({
-        metadata: callInput.metadata,
-        workspaceTransfer: callInput.request.workspaceTransfer,
-        requestedTargetMachineId: callInput.request.targetMachineId,
-      }) ?? undefined;
-
     const handoffMetadataV2: SessionHandoffMetadataV2 | undefined =
-      agentBundleTransferPublication || preparedWorkspaceTransfer.handoffMetadataV2
+      agentBundleTransferPublication
         ? {
             ...(agentBundleTransferPublication ? { agentBundleTransferPublication } : {}),
-            ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationSourceRootPath
-              ? { workspaceReplicationSourceRootPath: preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationSourceRootPath }
-              : { workspaceReplicationSourceRootPath: exported.targetPath }),
-            ...(workspaceReplicationHandoffBackTargetRootPathForRequest
-              ? { workspaceReplicationHandoffBackTargetRootPath: workspaceReplicationHandoffBackTargetRootPathForRequest }
-              : {}),
-            ...(preparedWorkspaceTransfer.handoffMetadataV2?.workspaceReplicationManifestTransferPublication
-              ? { workspaceReplicationManifestTransferPublication: preparedWorkspaceTransfer.handoffMetadataV2.workspaceReplicationManifestTransferPublication }
-              : (workspaceTransferEnabled
-                  ? { workspaceReplicationManifestTransferPublication: { transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId: callInput.handoffId }) } }
-                  : {})),
-            ...(workspaceReplicationMetadata?.workspaceIntegrationMetadata
-              ? { workspaceReplicationSourceControllerMetadata: workspaceReplicationMetadata.workspaceIntegrationMetadata }
-              : {}),
           }
         : undefined;
 
@@ -231,11 +155,7 @@ export async function prepareStartedState(input: Readonly<{
         sourceMachineId: callInput.request.sourceMachineId,
         targetMachineId: callInput.request.targetMachineId,
         ...(handoffMetadataV2 ? { handoffMetadataV2 } : {}),
-        ...(preparedWorkspaceTransfer.workspaceReplicationMetadata
-          ? { workspaceReplicationMetadata: preparedWorkspaceTransfer.workspaceReplicationMetadata }
-          : {}),
         ...(agentBundlePayloadSource ? { agentBundlePayloadSource } : {}),
-        workspaceTransfer: callInput.request.workspaceTransfer,
       },
     };
   } catch (error) {

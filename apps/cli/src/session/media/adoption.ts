@@ -251,6 +251,7 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
   messageLocalId: string;
   workingDirectory: string;
   sourceReadRoots?: readonly string[];
+  onIntendedWorkspacePath?: (path: string) => void | Promise<void>;
   onCreatedWorkspacePath?: (path: string) => void;
   onPersistedWorkspacePath?: (path: string) => void;
 }>): Promise<unknown> {
@@ -301,6 +302,7 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
           },
           origin: readMediaOrigin(mediaRecord.origin),
         },
+        onIntendedWorkspacePath: params.onIntendedWorkspacePath,
       });
       if (result.success) {
         adoptedMedia.push(result.item);
@@ -363,6 +365,7 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
             },
         origin: readMediaOrigin(mediaRecord.origin),
       },
+      onIntendedWorkspacePath: params.onIntendedWorkspacePath,
     });
 
     if (result.success) {
@@ -629,6 +632,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
   messageLocalId: string;
   workingDirectory: string | null;
   sourceReadRoots?: readonly string[];
+  onIntendedWorkspacePath?: (path: string) => void | Promise<void>;
   onCreatedWorkspacePath?: (path: string) => void;
   onPersistedWorkspacePath?: (path: string) => void;
 }>): Promise<Record<string, unknown>> {
@@ -643,6 +647,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     messageLocalId: params.messageLocalId,
     workingDirectory: params.workingDirectory,
     sourceReadRoots: params.sourceReadRoots,
+    onIntendedWorkspacePath: params.onIntendedWorkspacePath,
     onCreatedWorkspacePath: params.onCreatedWorkspacePath,
     onPersistedWorkspacePath: params.onPersistedWorkspacePath,
   });
@@ -652,6 +657,7 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     messageLocalId: params.messageLocalId,
     workingDirectory: params.workingDirectory,
     sourceReadRoots: params.sourceReadRoots,
+    onIntendedWorkspacePath: params.onIntendedWorkspacePath,
     onCreatedWorkspacePath: params.onCreatedWorkspacePath,
     onPersistedWorkspacePath: params.onPersistedWorkspacePath,
   });

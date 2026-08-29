@@ -122,7 +122,14 @@ describe('External Session operation projection lifecycle repair', () => {
   });
 
   it('binds authoritative Session deletion to the existing operation cleanup owner and defers cursor acknowledgement for an active claim', async () => {
-    let listener: ((change: Readonly<{ sessionId: string; cursor: number }>) => Promise<void>) | null = null;
+    let listener: ((change: Readonly<{
+      sessionId: string;
+      cursor: number;
+      accountScope: Readonly<{
+        activeServerDir: string;
+        accountSubject: string;
+      }>;
+    }>) => Promise<void>) | null = null;
     abandonDeletedSessionOperationsMock
       .mockResolvedValueOnce({ deleted: 1, deferred: 0, retained: 0 })
       .mockResolvedValueOnce({ deleted: 0, deferred: 1, retained: 0 });
@@ -136,17 +143,30 @@ describe('External Session operation projection lifecycle repair', () => {
       },
     });
 
-    await expect(listener!({ sessionId: 'session-deleted', cursor: 12 }))
+    const deletionChange = {
+      sessionId: 'session-deleted',
+      cursor: 12,
+      accountScope: {
+        activeServerDir: 'server-dir',
+        accountSubject: 'account-sub-a',
+      },
+    };
+
+    await expect(listener!(deletionChange))
       .resolves.toBeUndefined();
     expect(abandonDeletedSessionOperationsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-deleted',
         activeServerDir: expect.any(String),
+        accountScope: {
+          activeServerDir: 'server-dir',
+          accountSubject: 'account-sub-a',
+        },
         withSessionOperationBarrier: expect.any(Function),
         cleanupPrivateOperation: expect.any(Function),
       }),
     );
-    await expect(listener!({ sessionId: 'session-deleted', cursor: 12 }))
+    await expect(listener!(deletionChange))
       .rejects.toThrow('external_session_operation_abandonment_claim_active');
 
     await registration.dispose();

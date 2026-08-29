@@ -50,6 +50,11 @@ function toRuntimeTranscriptEvent(params: Readonly<{
   ) {
     throw new Error('external_session_terminal_transcript_item_invalid');
   }
+  // The top-level Protocol sidechain carrier wins; a sidechain id nested in
+  // the provider's semantic body remains the fallback so pre-existing
+  // producers keep projecting their subagent identity. The transport schema
+  // tolerates the retained `null` spelling, which stays absent here.
+  const itemSidechainId = params.item.sidechainId ?? undefined;
   const raw = asRecord(params.item.data);
   const content = asRecord(raw?.content);
   if (params.item.kind === 'user') {
@@ -85,6 +90,9 @@ function toRuntimeTranscriptEvent(params: Readonly<{
       messageId: params.item.localId,
       role: 'user',
       text: content.text,
+      ...(itemSidechainId !== undefined
+        ? { sidechainId: itemSidechainId }
+        : {}),
     });
   }
   if (!raw || raw.role !== 'agent' || !content) {
@@ -108,6 +116,8 @@ function toRuntimeTranscriptEvent(params: Readonly<{
   if (!body) {
     throw new Error('external_session_terminal_transcript_item_invalid');
   }
+  const effectiveSidechainId = itemSidechainId
+    ?? (Object.hasOwn(body, 'sidechainId') ? body.sidechainId : undefined);
   if (body.type === 'tool-call') {
     return parseRuntimeTranscriptEvent({
       kind: 'tool-call',
@@ -118,7 +128,9 @@ function toRuntimeTranscriptEvent(params: Readonly<{
       toolCallId: body.callId,
       toolName: body.name,
       input: body.input,
-      ...(Object.hasOwn(body, 'sidechainId') ? { sidechainId: body.sidechainId } : {}),
+      ...(effectiveSidechainId !== undefined
+        ? { sidechainId: effectiveSidechainId }
+        : {}),
     });
   }
   if (body.type === 'tool-result' || body.type === 'tool-call-result') {
@@ -131,7 +143,9 @@ function toRuntimeTranscriptEvent(params: Readonly<{
       toolCallId: body.callId,
       output: body.output,
       ...(Object.hasOwn(body, 'isError') ? { isError: body.isError } : {}),
-      ...(Object.hasOwn(body, 'sidechainId') ? { sidechainId: body.sidechainId } : {}),
+      ...(effectiveSidechainId !== undefined
+        ? { sidechainId: effectiveSidechainId }
+        : {}),
     });
   }
   const text = (body.type === 'message' || body.type === 'reasoning')
@@ -151,7 +165,9 @@ function toRuntimeTranscriptEvent(params: Readonly<{
     messageId: params.item.localId ?? params.item.id,
     role: body.type === 'message' ? 'assistant' : 'reasoning',
     text,
-    ...(Object.hasOwn(body, 'sidechainId') ? { sidechainId: body.sidechainId } : {}),
+    ...(effectiveSidechainId !== undefined
+      ? { sidechainId: effectiveSidechainId }
+      : {}),
   });
 }
 

@@ -230,6 +230,59 @@ describe('activatePendingInactiveSession', () => {
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
+  it('rejects Pending activation for an externally linked session instead of spawning it', async () => {
+    // A linked Session's hosted runtime is owned by External Sessions takeover:
+    // durable Pending custody must not activate it behind takeover's back.
+    const linked = createSession(false);
+    linked.metadata = JSON.stringify({
+      ...JSON.parse(linked.metadata),
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        machineId: 'machine-1',
+        remoteSessionId: 'vendor-1',
+        source: { kind: 'codexHome', home: 'user' },
+        linkedAtMs: 1,
+      },
+    });
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(linked);
+    vi.mocked(listPendingQueueV2LocalIdsFromServer).mockResolvedValue(['pending-after-ui-death']);
+    const spawnSession = vi.fn();
+
+    await expect(activatePendingInactiveSession({
+      credentials: tokenOnlyCredentials,
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      requestId: 'pending-after-ui-death',
+      pendingVersion: 9,
+      spawnSession,
+    })).resolves.toEqual({ status: 'rejected', reason: 'takeover-required' });
+
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects Pending activation when the external link exists but is unresolved', async () => {
+    const unresolved = createSession(false);
+    unresolved.metadata = JSON.stringify({
+      ...JSON.parse(unresolved.metadata),
+      externalSessionV1: { v: 1 },
+    });
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(unresolved);
+    vi.mocked(listPendingQueueV2LocalIdsFromServer).mockResolvedValue(['pending-after-ui-death']);
+    const spawnSession = vi.fn();
+
+    await expect(activatePendingInactiveSession({
+      credentials: tokenOnlyCredentials,
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      requestId: 'pending-after-ui-death',
+      pendingVersion: 9,
+      spawnSession,
+    })).resolves.toEqual({ status: 'rejected', reason: 'takeover-required' });
+
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
   it('rejects a Pending activation owned by a different exact machine', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
     vi.mocked(listPendingQueueV2LocalIdsFromServer).mockResolvedValue(['pending-after-ui-death']);

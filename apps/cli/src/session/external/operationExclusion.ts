@@ -47,6 +47,8 @@ type ExternalSessionOperationClaimRecord = Readonly<{
     ownerId: string;
     ownerProcess?: ExternalSessionOperationOwnerProcess;
     request: ExternalSessionOperationRequest;
+    /** Authenticated Account subject bound at operation admission, when pinned. */
+    accountSubject?: string;
     acquiredAtMs: number;
     renewedAtMs: number;
     expiresAtMs: number;
@@ -86,6 +88,7 @@ export type ExternalSessionOperationAcquireResult =
             | 'semantic_request_mismatch'
             | 'source_identity_mismatch'
             | 'source_generation_mismatch'
+            | 'account_subject_mismatch'
             | 'claim_unreadable';
         active: ExternalSessionOperationClaimRecord | null;
     }>;
@@ -93,7 +96,11 @@ export type ExternalSessionOperationAcquireResult =
 export type ExternalSessionOperationExclusion = Readonly<{
     acquire(
         request: ExternalSessionOperationRequest,
-        input?: Readonly<{ signal?: AbortSignal }>,
+        input?: Readonly<{
+            signal?: AbortSignal;
+            /** Authenticated Account subject pinned at operation admission. */
+            accountSubject?: string;
+        }>,
     ): Promise<ExternalSessionOperationAcquireResult>;
 }>;
 
@@ -309,6 +316,12 @@ function parseClaimRecord(value: unknown): ExternalSessionOperationClaimRecord |
         ? undefined
         : normalizeOwnerProcess(record.ownerProcess);
     if (record.ownerProcess !== undefined && !ownerProcess) return null;
+    const accountSubject = record.accountSubject === undefined
+        ? undefined
+        : typeof record.accountSubject === 'string' && record.accountSubject.trim()
+          ? record.accountSubject.trim()
+          : null;
+    if (record.accountSubject !== undefined && !accountSubject) return null;
     try {
         const request = normalizeRequest(record.request as ExternalSessionOperationRequest);
         return Object.freeze({
@@ -317,6 +330,7 @@ function parseClaimRecord(value: unknown): ExternalSessionOperationClaimRecord |
             ownerId: record.ownerId,
             ...(ownerProcess ? { ownerProcess } : {}),
             request,
+            ...(accountSubject ? { accountSubject } : {}),
             acquiredAtMs: record.acquiredAtMs,
             renewedAtMs: record.renewedAtMs,
             expiresAtMs: record.expiresAtMs,
@@ -552,7 +566,15 @@ function isAtomicClaimConflict(error: unknown): boolean {
 function conflictReason(
     active: ExternalSessionOperationClaimRecord,
     request: ExternalSessionOperationRequest,
+    accountSubject?: string,
 ): Extract<ExternalSessionOperationAcquireResult, { status: 'conflict' }>['reason'] {
+    if (
+        accountSubject
+        && active.accountSubject
+        && active.accountSubject !== accountSubject
+    ) {
+        return 'account_subject_mismatch';
+    }
     if (active.request.requestId === request.requestId) return 'semantic_request_mismatch';
     if (active.request.kind !== 'handoff' && request.kind !== 'handoff') {
         if (active.request.sourceIdentity !== request.sourceIdentity) return 'source_identity_mismatch';
@@ -791,6 +813,11 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
         },
         async acquire(rawRequest, acquireInput = {}) {
             const request = normalizeRequest(rawRequest);
+            const accountSubject =
+                typeof acquireInput.accountSubject === 'string'
+                  && acquireInput.accountSubject.trim()
+                    ? acquireInput.accountSubject.trim()
+                    : undefined;
             const paths = resolveClaimPaths(activeServerDir, request.sessionId);
             await mkdir(paths.rootDirectory, { recursive: true, mode: 0o700 });
             return await withClaimMutationLock(paths.mutationLockPath, claimMutationLockAcquisitionTimeoutMs, async () => {
@@ -818,7 +845,7 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
                             }
                             return Object.freeze({
                                 status: 'conflict',
-                                reason: conflictReason(active, request),
+                                reason: conflictReason(active, request, accountSubject),
                                 active,
                             });
                         }
@@ -851,6 +878,7 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
                         ownerId,
                         ownerProcess,
                         request,
+                        ...(accountSubject ? { accountSubject } : {}),
                         acquiredAtMs,
                         renewedAtMs: acquiredAtMs,
                         expiresAtMs: acquiredAtMs + ttlMs,
@@ -874,7 +902,7 @@ export function createExternalSessionOperationExclusion(input: Readonly<{
                 return active
                     ? Object.freeze({
                         status: 'conflict',
-                        reason: conflictReason(active, request),
+                        reason: conflictReason(active, request, accountSubject),
                         active,
                     })
                     : Object.freeze({ status: 'conflict', reason: 'claim_unreadable', active: null });

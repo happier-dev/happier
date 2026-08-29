@@ -584,17 +584,13 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         : {}),
     });
     if (!admitted) return Object.freeze([]);
-    const materializations = await Promise.all(bundledArtifacts.map(async (artifact) => {
+    const materializations = (await Promise.all(bundledArtifacts.map(async (artifact) => {
       const generation = admitted.generations.get(artifact.record.pluginId);
       if (
         !generation
         || generation.immutableGenerationId !== artifact.record.immutableGenerationId
       ) {
-        const rejected = admitted.rejectedGenerations.get(artifact.record.pluginId);
-        throw new Error(
-          rejected?.message
-            ?? `Bundled plugin '${artifact.record.pluginId}' was not admitted for Availability`,
-        );
+        return null;
       }
       const packageMetadata = JSON.parse(
         await readFile(join(generation.rootPath, 'package.json'), 'utf8'),
@@ -634,7 +630,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         enabled: true,
         trustState: 'trusted' as const,
       });
-    }));
+    }))).filter((materialization): materialization is NonNullable<typeof materialization> => materialization !== null);
     return Object.freeze(materializations);
   }
 

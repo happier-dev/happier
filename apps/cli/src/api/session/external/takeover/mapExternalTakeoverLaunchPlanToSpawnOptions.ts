@@ -56,18 +56,44 @@ export function mapExternalTakeoverLaunchPlanToSpawnOptions(params: Readonly<{
     });
     if (!agentTarget.success) return null;
 
+    /**
+     * Backend-mode selection travels only through the Agent-owned runtime
+     * descriptor — the same carrier the canonical spawn-new selection owner
+     * uses. A launch hint never fabricates a generic spawn field, and the
+     * Agent's own descriptor payload stays authoritative when it already
+     * selects a backend mode.
+     */
+    const backendModeHint = params.plan.backendModeHint;
+    const descriptorFromPlan = params.plan.runtimeDescriptorV1;
+    let runtimeDescriptorV1 = descriptorFromPlan;
+    if (backendModeHint !== undefined) {
+        if (descriptorFromPlan) {
+            const descriptorAgent = descriptorFromPlan.agent as Record<string, unknown>;
+            if (!descriptorAgent.backendMode) {
+                runtimeDescriptorV1 = {
+                    ...descriptorFromPlan,
+                    agent: {
+                        backendMode: backendModeHint,
+                        ...descriptorAgent,
+                    },
+                };
+            }
+        } else {
+            runtimeDescriptorV1 = {
+                v: 1,
+                agentId: params.targetAgent.id,
+                agent: { backendMode: backendModeHint },
+            };
+        }
+    }
+
     return {
         directory: params.targetDirectory,
         agentTarget: agentTarget.data,
         existingSessionId: params.linkedSessionId,
         resume: params.resolvedIdentity.remoteSessionId,
         approvedNewDirectoryCreation: true,
-        ...(params.plan.backendModeHint
-            ? { backendMode: params.plan.backendModeHint }
-            : {}),
-        ...(params.plan.runtimeDescriptorV1
-            ? { runtimeDescriptorV1: params.plan.runtimeDescriptorV1 }
-            : {}),
+        ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         ...(environmentVariables
             ? { environmentVariables: { ...environmentVariables } }
             : {}),

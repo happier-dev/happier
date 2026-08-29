@@ -531,6 +531,11 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                     services: executionContext.services,
                     signal: executionContext.signal,
                 });
+                if (!params.lease.isCurrent()) {
+                    await sessionContext.dispose();
+                    throw new Error(`Agent runtime '${params.lease.agentId}' belongs to a retired generation`);
+                }
+                executionContext.signal.throwIfAborted();
                 let execution: AgentExecutionRunRuntime;
                 try {
                     execution = await createExecutionRunHostBackendFromSessionRuntime({
@@ -642,6 +647,15 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
             const services = await servicesPromise;
             assertUsable();
             const sessionContext = await params.createSessionContext({ services, signal });
+            // Context acquisition can await plugin/daemon work. Re-check the
+            // generation before invoking the provider so retirement cannot
+            // trigger a native open side effect after this host is unusable.
+            try {
+                assertUsable();
+            } catch (error) {
+                await sessionContext.dispose();
+                throw error;
+            }
             const context = sessionContext.context;
             disposeSessionContext = sessionContext.dispose;
             const common = {

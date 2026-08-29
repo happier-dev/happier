@@ -20,6 +20,9 @@ function write(value) {
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const requestedMethods = [];
+const realtimeConversationEnabled = process.argv.some((arg, index, args) => (
+  arg === '--enable' && args[index + 1] === 'realtime_conversation'
+));
 
 function captureRequestMethods() {
   const captureFile = process.env.HAPPIER_HOME_DIR
@@ -94,7 +97,7 @@ input.on('line', (line) => {
     write({
       id: message.id,
       result: {
-        data: [{ name: 'realtime_conversation', enabled: true }],
+        data: [{ name: 'realtime_conversation', enabled: realtimeConversationEnabled }],
         nextCursor: null,
       },
     });

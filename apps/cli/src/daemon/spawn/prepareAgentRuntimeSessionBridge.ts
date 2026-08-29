@@ -128,7 +128,7 @@ async function resolveRunnerAgentSessionDescriptorForLease(
     // activation/service key travels only on the runner binding.
     agentId: resolveContributedAgentRoutingId({
       pluginId: registration.pluginId,
-      localId: registration.localAgentId,
+      localId: agent.identity.localId,
       provenance: agent.provenance,
     }),
     backendId: backend.id,

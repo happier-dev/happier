@@ -53,6 +53,8 @@ export type RegisterActionSpecRpcHandlersParams = Readonly<{
     actionIds?: readonly string[];
     methods?: readonly string[];
     scopes?: readonly ActionSpecRpcRegistrationScope[];
+    /** Authority stamped by the host-owned RPC ingress; never inferred from surface. */
+    authority?: ActionExecutorContext['authority'];
     observeExecution?: (request: Readonly<{
         actionId: string;
         input: unknown;
@@ -273,10 +275,11 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                 ...buildActionExecutorContextHints(semanticInput),
                 ...(execution.signal ? { signal: execution.signal } : {}),
                 ...(
-                    context?.localActionContext || execution.operationProgress || execution.operationOwnerUpdate
+                    context?.localActionContext || execution.operationProgress || execution.operationOwnerUpdate || params.authority
                       ? {
                           localActionContext: {
                               ...context?.localActionContext,
+                              ...(params.authority ? { authority: params.authority } : {}),
                               ...(execution.operationProgress
                                 ? { operationProgress: execution.operationProgress }
                                 : {}),

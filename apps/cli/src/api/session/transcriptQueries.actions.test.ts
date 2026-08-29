@@ -91,7 +91,7 @@ describe('session transcript action query helpers', () => {
     expect(readAfter).toHaveBeenCalledWith({ cursor: 'tail-1', maxBytes: 4096, maxItems: 25 });
   });
 
-  it('searches by bounded forward cursor reads without paging the full transcript', async () => {
+  it('searches from cursor zero when omitted without paging the full transcript', async () => {
     const readAfter = vi.fn()
       .mockResolvedValueOnce({
         items: [{ id: 'row-1', text: 'skip' }, { id: 'row-2', text: 'needle found' }],
@@ -110,7 +110,7 @@ describe('session transcript action query helpers', () => {
 
     const result = await searchSessionTranscript({
       store,
-      input: { query: 'needle', cursor: 'tail', maxItems: 2, maxReads: 4 },
+      input: { query: 'needle', maxItems: 2, maxReads: 4 },
       stringifyItem: (item) => item.text ?? '',
     });
 
@@ -122,6 +122,11 @@ describe('session transcript action query helpers', () => {
     });
     expect(pageOlder).not.toHaveBeenCalled();
     expect(readAfter).toHaveBeenCalledTimes(2);
+    expect(readAfter.mock.calls[0]?.[0]).toEqual({
+      cursor: '0',
+      maxBytes: 64 * 1024,
+      maxItems: 2,
+    });
   });
 
   it('imports transcript rows through a caller-provided bounded writer', async () => {

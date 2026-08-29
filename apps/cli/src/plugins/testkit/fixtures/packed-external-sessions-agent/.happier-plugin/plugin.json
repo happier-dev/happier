@@ -18,10 +18,19 @@
     ]
   },
   "entrypoints": {
-    "daemon": "./dist/daemon.js"
+    "daemon": "./src/daemon.mjs"
   },
   "hostAccess": {
-    "required": [],
+    "required": [
+      {
+        "id": "packed-external-sessions",
+        "capability": "sessions",
+        "reason": "Issue the six public External Sessions service calls from the background probe.",
+        "scope": {
+          "access": ["read", "control"]
+        }
+      }
+    ],
     "optional": []
   },
   "contributes": {

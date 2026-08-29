@@ -29,6 +29,10 @@ import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers'
 import { registerAutomationReplyHandoffRpcHandler } from '@/rpc/handlers/automationReplyHandoff';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/createCliActionExecutor';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import {
+    resolveExternalSessionOperationAccountScope,
+    type ExternalSessionOperationAccountScope,
+} from '@/session/actions/externalSessions/operationRecordStore';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
     createTrackedSessionHandoffCoordinator,
@@ -248,6 +252,13 @@ export type PendingSessionActivationHintNotification = Readonly<{
 export type SessionDeletedChangeNotification = Readonly<{
     sessionId: string;
     cursor: number;
+    /**
+     * Pinned operation scope of the authenticated Account whose changes feed
+     * delivered this durable deletion fact. Authoritative cleanup targets
+     * exactly this Account's partition even if the ambient credentials rotate
+     * before the listener runs.
+     */
+    accountScope: ExternalSessionOperationAccountScope;
 }>;
 
 export type ConnectedServicesProjectionNotification = Readonly<{
@@ -2468,9 +2479,25 @@ export class ApiMachineClient {
             ) return [];
             return [{ sessionId, requestId, pendingVersion, source: 'changes' }];
         });
-        const deletedSessionChanges = changes.flatMap((change) => {
+        const deletedSessionChangeNotifications = changes.flatMap((change) => {
             const deletion = readAuthoritativeSessionDeletionChangeV1(change);
-            return deletion ? [deletion] : [];
+            if (!deletion) return [];
+            // A durable Session-deletion fact is delivered only by the
+            // authenticated Account whose changes feed produced it. Pin that
+            // Account's operation scope onto the notification so cleanup
+            // targets exactly the partition owning the deleted Session's
+            // operation records, even if the ambient credentials rotate
+            // before the listener runs. Fail closed when the delivering
+            // Account cannot be established: the cursor stays untouched and
+            // the fact replays.
+            const accountScope = resolveExternalSessionOperationAccountScope(
+                configuration.activeServerDir,
+                this.token,
+            );
+            if (!accountScope) {
+                throw new Error('account_changes_account_scope_unavailable');
+            }
+            return [{ ...deletion, accountScope }];
         });
 
         if (changes.length >= CHANGES_PAGE_LIMIT || hasRelevantMachineChange) {
@@ -2515,7 +2542,7 @@ export class ApiMachineClient {
             signal.throwIfAborted();
             await this.notifyPendingSessionActivationHint(activationHint);
         }
-        for (const deletion of deletedSessionChanges) {
+        for (const deletion of deletedSessionChangeNotifications) {
             signal.throwIfAborted();
             // Cleanup is part of consuming this durable deletion fact. A
             // listener failure leaves the Account cursor untouched so the

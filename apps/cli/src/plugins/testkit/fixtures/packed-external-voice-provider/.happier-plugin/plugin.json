@@ -461,6 +461,16 @@
               "schema": { "type": "string", "maxLength": 512 },
               "default": "packed-voice-primary",
               "presentation": { "control": "select" }
+            },
+            {
+              "id": "format",
+              "title": "Output format",
+              "schema": { "type": "string", "enum": ["wav"] },
+              "default": "wav",
+              "presentation": {
+                "control": "select",
+                "options": [{ "value": "wav", "title": "WAV" }]
+              }
             }
           ],
           "readiness": [

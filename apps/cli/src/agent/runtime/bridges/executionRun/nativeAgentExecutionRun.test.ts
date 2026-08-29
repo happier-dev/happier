@@ -264,7 +264,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
                 runId: 'run-voice-open-failure',
                 backendId: 'acme.voice/agents/default',
                 permissionMode: 'read_only',
-                start: Object.freeze({ intent: 'voice_agent' as const }),
+                start: Object.freeze({ profileId: 'acme.session/assistant' }),
             }),
             supportsResume: true,
             createSessionContext,
@@ -278,6 +278,53 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
 
         await host.dispose();
         expect(disposeSessionContext).toHaveBeenCalledOnce();
+    });
+
+    it('does not invoke provider open after Voice context acquisition races with disposal', async () => {
+        let resolveContext!: (value: Readonly<{
+            context: AgentSessionRuntimeContext;
+            dispose(): Promise<void>;
+        }>) => void;
+        const contextPromise = new Promise<Readonly<{
+            context: AgentSessionRuntimeContext;
+            dispose(): Promise<void>;
+        }>>((resolve) => { resolveContext = resolve; });
+        let current = true;
+        const open = vi.fn(async () => {
+            throw new Error('provider open must not be reached');
+        });
+        const disposeContext = vi.fn(async () => undefined);
+        const runtime: AgentRuntime = Object.freeze({
+            sessions: Object.freeze({ open }),
+        });
+        const host = createNativeAgentSessionInteractionHostRuntime({
+            runtime,
+            lease: Object.freeze({
+                pluginId: 'acme.voice', pluginVersion: '1.0.0', agentId: 'acme.voice/default',
+                localAgentId: 'default', generation: 'generation-1', hasPrimaryRuntime: true,
+                isCurrent: () => current, retirementSignal: new AbortController().signal,
+                createAgentRuntimeSurfaceInvocationContext: createUnexpectedAgentRuntimeSurfaceInvocationContext,
+                async createRuntime() { return runtime; },
+            }),
+            options: Object.freeze({
+                cwd: '/repo', runId: 'run-race', backendId: 'acme.voice/default', permissionMode: 'read_only',
+                start: Object.freeze({ intent: 'voice_agent' as const }),
+            }),
+            supportsResume: true,
+            createSessionContext: () => contextPromise,
+        });
+        const provisioning = host.provisionSession();
+        await Promise.resolve();
+        current = false;
+        await host.dispose();
+        resolveContext(createVoiceSessionContextLease({
+            services: {} as AgentSessionRuntimeContext['services'],
+            signal: new AbortController().signal,
+            dispose: disposeContext,
+        }));
+        await expect(provisioning).rejects.toThrow(/retired generation|disposed/);
+        expect(open).not.toHaveBeenCalled();
+        expect(disposeContext).toHaveBeenCalledOnce();
     });
 
     it('preserves the owning plugin and local id of a qualified execution profile', async () => {

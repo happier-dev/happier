@@ -1,3 +1,5 @@
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol';
+
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
 import {
@@ -126,9 +128,9 @@ function tryDecryptTranscriptEnvelope(params: Readonly<{
     }
 }
 
-export function isSessionUserMessage(value: unknown): boolean {
+export function isSessionAgentThreadTextUserMessage(value: unknown): boolean {
     const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-    return obj?.role === 'user';
+    return obj?.role === 'user' && isAgentThreadTextConversationTurnMeta(obj.meta);
 }
 
 export function isSessionAgentMessage(value: unknown): boolean {
@@ -192,7 +194,7 @@ export async function detectSessionTurnActivity(params: Readonly<{
                 : null;
             if (!obj) continue;
 
-            if (isSessionUserMessage(obj)) {
+            if (isSessionAgentThreadTextUserMessage(obj)) {
                 pendingUserTurns += 1;
                 continue;
             }

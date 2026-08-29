@@ -561,7 +561,7 @@ function splitLogicalPut(input: Readonly<{
     encryptionMode: 'plain' | 'e2ee';
     material: AccountScopedCryptoMaterial | null;
     randomBytes: (length: number) => Uint8Array;
-}>): Extract<PluginCollectionMutationOperationV1, { kind: 'put' }> {
+}>): Pick<Extract<PluginCollectionMutationOperationV1, { kind: 'put' }>, 'kind' | 'rowId' | 'content' | 'projection'> {
     const value = asJsonObject(input.value);
     if (!value) {
         throw dataError(COLLECTION_INVALID_VALUE_CODE, 'Collection value does not satisfy its admitted schema');
@@ -581,7 +581,6 @@ function splitLogicalPut(input: Readonly<{
     return {
         kind: 'put',
         rowId: encoded.rowId,
-        expectedRevision: 'absent',
         content: encoded.content,
         projection: encoded.projection,
     };
@@ -1712,44 +1711,51 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     operationSignal?: AbortSignal,
                 ): Promise<boolean> => {
                     const credentials = await currentCredentials(operationSignal);
-                    const snapshot = await request({
-                        path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
-                        body: PluginCollectionGetRequestV1Schema.parse({
-                            pluginId: lifecycle.pluginId,
-                            collectionId: collection.contract.collectionId,
-                            rowId,
-                        }),
-                        kind: 'read',
-                        credentials,
-                        operationSignal,
-                    });
-                    const parsedSnapshot = PluginCollectionGetResultV1Schema.safeParse(snapshot);
-                    if (!parsedSnapshot.success) {
-                        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection currentness response is invalid');
+                    // Another row may be forgotten between the freshness read
+                    // and this request because the epoch is Collection-wide.
+                    // Re-read and retry that typed conflict rather than leaving
+                    // a tombstone permanently invisible to retention scans.
+                    for (;;) {
+                        const snapshot = await request({
+                            path: PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+                            body: PluginCollectionGetRequestV1Schema.parse({
+                                pluginId: lifecycle.pluginId,
+                                collectionId: collection.contract.collectionId,
+                                rowId,
+                            }),
+                            kind: 'read',
+                            credentials,
+                            operationSignal,
+                        });
+                        const parsedSnapshot = PluginCollectionGetResultV1Schema.safeParse(snapshot);
+                        if (!parsedSnapshot.success) {
+                            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection currentness response is invalid');
+                        }
+                        if (parsedSnapshot.data.row?.revision === expectedRevision) return false;
+                        const response = await request({
+                            path: PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
+                            body: PluginCollectionForgetRequestV1Schema.parse({
+                                pluginId: lifecycle.pluginId,
+                                collectionId: collection.contract.collectionId,
+                                writerContext: {
+                                    schemaVersion: collection.contract.schemaVersion,
+                                    contractDigest: collection.contract.contractDigest,
+                                },
+                                rowId,
+                                expectedRevision,
+                                expectedAbsenceEpoch: parsedSnapshot.data.absenceEpoch,
+                            }),
+                            kind: 'mutation',
+                            credentials,
+                            operationSignal,
+                        });
+                        const parsed = PluginCollectionForgetResultV1Schema.safeParse(response);
+                        if (!parsed.success) {
+                            throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection forget response is invalid');
+                        }
+                        await assertCurrentAccount(credentials, operationSignal);
+                        if (parsed.data.status === 'forgotten') return true;
                     }
-                    const response = await request({
-                        path: PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
-                        body: PluginCollectionForgetRequestV1Schema.parse({
-                            pluginId: lifecycle.pluginId,
-                            collectionId: collection.contract.collectionId,
-                            writerContext: {
-                                schemaVersion: collection.contract.schemaVersion,
-                                contractDigest: collection.contract.contractDigest,
-                            },
-                            rowId,
-                            expectedRevision,
-                            expectedAbsenceEpoch: parsedSnapshot.data.absenceEpoch,
-                        }),
-                        kind: 'mutation',
-                        credentials,
-                        operationSignal,
-                    });
-                    const parsed = PluginCollectionForgetResultV1Schema.safeParse(response);
-                    if (!parsed.success) {
-                        throw dataError(COLLECTION_PROTOCOL_INVALID_CODE, 'Collection forget response is invalid');
-                    }
-                    await assertCurrentAccount(credentials, operationSignal);
-                    return parsed.data.status === 'forgotten';
                 };
 
                 const materialize = (

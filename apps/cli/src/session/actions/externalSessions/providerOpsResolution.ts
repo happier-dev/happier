@@ -12,6 +12,7 @@ import {
     resolveExternalSessionSourceFromAgentProjection,
     type ResolvedExternalSessionSourceProjection,
 } from '@/plugins/projection/registry/externalSessionSources';
+import { resolveConfiguredExternalSessionSourceAtAdmission } from '@/session/external/configuredSourceMaterializer';
 import {
     ExternalSessionFollowFailureError,
 } from '@/session/external/externalSessionFollowFailure';
@@ -57,6 +58,7 @@ export async function resolveExternalSessionSurfaceOps(agentId: ExternalSessions
 export async function resolveExternalSessionSourceSurface(
     agentId: ExternalSessionsAgentId,
     source: ExternalSessionsSource,
+    options: Readonly<{ activeServerDir?: string | null }> = {},
 ): Promise<
     | Readonly<{
         ok: true;
@@ -82,13 +84,24 @@ export async function resolveExternalSessionSourceSurface(
             source,
         );
         if (!projected.ok) return projected;
+        // Raw machine calls go through the one host-owned connected-profile
+        // materialization: the request receives the daemon's materialized home
+        // and may not name a different one. Sources outside that family come
+        // back unchanged.
+        const materialized = resolveConfiguredExternalSessionSourceAtAdmission({
+            agents: runtimeRegistryLease.registry.contributes.agents,
+            ...(options.activeServerDir ? { activeServerDir: options.activeServerDir } : {}),
+            agentId,
+            source: projected.source,
+        });
+        if (!materialized.ok) return materialized;
         const currentAgent = readCurrentExternalSessionAgentIdentity(
             runtimeRegistryLease.registry.contributes.agentDefinitionsById.get(agentId),
         );
         const sourceKeyOwner = createExternalSessionSourceKeyOwnerFromAgentProjection(
             runtimeRegistryLease.registry.contributes,
             agentId,
-            projected.source,
+            materialized.source,
         );
         if (!currentAgent || !sourceKeyOwner) {
             return { ok: false, code: 'agent_unavailable' };
@@ -105,8 +118,8 @@ export async function resolveExternalSessionSourceSurface(
         }
         return Object.freeze({
             ok: true,
-            source: projected.source,
-            declaration: projected.declaration,
+            source: materialized.source,
+            declaration: materialized.declaration,
             providerOps,
             currentAgent,
             agentRuntimeGeneration:

@@ -1947,7 +1947,13 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         writeAccountChangesCursor.mockImplementation(async () => {
             order.push('cursor');
         });
-        const client = new ApiMachineClient('token', machine);
+        // The deletion notification must pin the authenticated Account whose
+        // changes feed delivered the fact, so use a token with a decodable
+        // subject.
+        const encodeJwtPart = (value: unknown): string =>
+            Buffer.from(JSON.stringify(value)).toString('base64url');
+        const deletionAccountToken = `${encodeJwtPart({ alg: 'none' })}.${encodeJwtPart({ sub: 'account-deletion-a' })}.`;
+        const client = new ApiMachineClient(deletionAccountToken, machine);
         client.onConnectedServicesProjection(async () => {});
         const deleted = vi.fn(async () => {
             order.push('deleted');
@@ -1959,6 +1965,10 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(deleted).toHaveBeenCalledExactlyOnceWith({
             sessionId: 'session-deleted',
             cursor: 12,
+            accountScope: {
+                activeServerDir: configuration.activeServerDir,
+                accountSubject: 'account-deletion-a',
+            },
         });
         expect(order).toEqual(['deleted', 'cursor']);
     });
@@ -1999,7 +2009,12 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             throw new Error(`unexpected url: ${url}`);
         });
         writeAccountChangesCursor.mockClear();
-        const client = new ApiMachineClient('token', machine);
+        // Same contract as the notification-shape test: the sync derives the
+        // delivering Account's operation scope from its own token.
+        const encodeJwtPart = (value: unknown): string =>
+            Buffer.from(JSON.stringify(value)).toString('base64url');
+        const cleanupAccountToken = `${encodeJwtPart({ alg: 'none' })}.${encodeJwtPart({ sub: 'account-deletion-a' })}.`;
+        const client = new ApiMachineClient(cleanupAccountToken, machine);
         client.onConnectedServicesProjection(async () => {});
         const cleanup = vi.fn()
             .mockRejectedValueOnce(new Error('operation claim active'))

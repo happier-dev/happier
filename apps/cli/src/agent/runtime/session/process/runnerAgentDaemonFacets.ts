@@ -23,9 +23,9 @@ import {
   EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
   settleFollowListenerBounded,
 } from '@/session/external/followListenerSettlement';
-import {
-  EXTERNAL_SESSIONS_INVOCATION_POLICY,
-} from '@/session/external/agentExternalSessionsInvocation';
+import type {
+  HostExternalTranscriptFollowEvent,
+} from '@/session/external/privateContract';
 import {
   dispatchCurrentAgentRuntimeDaemonServiceRequest,
   isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition,
@@ -73,6 +73,37 @@ function followFailureError(error: unknown): Error {
     'plugin_external_follow_failed',
     'External Session transcript follow failed',
   );
+}
+
+type RunnerAgentDaemonExternalSessionFollowEventV1 = Extract<
+  RunnerAgentDaemonFacetResultV1,
+  { kind: 'external_session.follow.event' }
+>['event'];
+
+/**
+ * Folds the daemon wire carrier into the host-private transcript carrier. The
+ * Protocol top-level `sidechainId` stays nullable on the wire — `null` is the
+ * retained-carrier spelling of an absent id, the same convention the in-process
+ * plugin adapter applies to raw provider records — while
+ * `HostExternalTranscriptItem` spells an absent id by omission. This projection
+ * is the only place the two spellings meet, so hosts behind the follow listener
+ * never observe the null spelling.
+ */
+function projectHostExternalTranscriptFollowEvent(
+  event: RunnerAgentDaemonExternalSessionFollowEventV1,
+): HostExternalTranscriptFollowEvent {
+  if (event.kind !== 'data') {
+    return event;
+  }
+  return Object.freeze({
+    ...event,
+    items: Object.freeze(event.items.map(({ sidechainId, ...item }) => Object.freeze({
+      ...item,
+      ...(sidechainId === undefined || sidechainId === null
+        ? {}
+        : { sidechainId }),
+    }))),
+  });
 }
 
 export type RunnerAgentDaemonFacets = Readonly<{
@@ -396,8 +427,12 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
             );
             while (
               response.ok
-              && response.result.kind
-                === 'external_session.follow.provider_request'
+              && (
+                response.result.kind
+                  === 'external_session.follow.provider_request'
+                || response.result.kind
+                  === 'external_session.follow.event'
+              )
             ) {
               if (response.result.followId !== operation.followId) {
                 await provisionalFollow.close().catch(() => undefined);
@@ -405,6 +440,36 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                   status: 'unavailable' as const,
                   code: 'plugin_external_follow_response_invalid',
                 };
+              }
+              if (
+                response.result.kind
+                  === 'external_session.follow.event'
+              ) {
+                // The daemon holds every pre-open event — initial replay
+                // pages included — under one-event custody. Each is delivered
+                // to the listener exactly once here and acknowledged before
+                // the next progress is requested, so a multi-page replay
+                // drains oldest-first before the subscription is returned.
+                const replayedEvent = response.result;
+                await settleFollowListenerBounded(
+                  Promise.resolve().then(async () =>
+                    await listener(projectHostExternalTranscriptFollowEvent(
+                      replayedEvent.event,
+                    ))),
+                  EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+                  openSignal,
+                );
+                const acknowledgedWitness = readWitness();
+                response = await dispatchOperation({
+                  kind: 'external_session.follow.next',
+                  requestId: randomUUID(),
+                  followId: operation.followId,
+                  acknowledgeEventId: replayedEvent.eventId,
+                  ...(acknowledgedWitness
+                    ? { witness: acknowledgedWitness }
+                    : {}),
+                }, openSignal);
+                continue;
               }
               const providerResponse =
                 await executeRetainedExternalSessionProviderRequest(
@@ -423,6 +488,23 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
           } catch (error) {
             await provisionalFollow.close().catch(() => undefined);
             throw error;
+          }
+          if (
+            response.ok
+            && response.result.kind
+              === 'external_session.follow.closed'
+          ) {
+            // The follow terminated while the open exchange was still
+            // draining custody events (abort, retirement, provider failure).
+            await provisionalFollow.close().catch(() => undefined);
+            return {
+              status: 'unavailable' as const,
+              code: callerSignal?.aborted || openSignal.aborted
+                ? 'plugin_operation_aborted'
+                : retired || lifetime.signal.aborted
+                  ? 'plugin_generation_retired'
+                  : 'plugin_external_follow_unavailable',
+            };
           }
           if (!response.ok) {
             await provisionalFollow.close().catch(() => undefined);
@@ -474,10 +556,15 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
             async (): Promise<boolean> => {
               const replacementNeedsInitialReplay =
                 !currentCursor && currentOperation.initialReplay === true;
+              // A replacement follow continues the original admission
+              // sequence, not a fresh one: the original absolute admission
+              // deadline is carried through so daemon-side replay admission
+              // and the nested provider deadline minimum stay clamped to the
+              // caller's original window. An exhausted original deadline
+              // stays exhausted instead of being extended here.
               const replacementAdmissionDeadlineAtMs =
                 replacementNeedsInitialReplay
-                  ? Date.now()
-                    + EXTERNAL_SESSIONS_INVOCATION_POLICY.deadlineMs
+                  ? currentOperation.admissionDeadlineAtMs
                   : undefined;
               while (
                 active
@@ -523,8 +610,12 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                   );
                   while (
                     reopened.ok
-                    && reopened.result.kind
-                      === 'external_session.follow.provider_request'
+                    && (
+                      reopened.result.kind
+                        === 'external_session.follow.provider_request'
+                      || reopened.result.kind
+                        === 'external_session.follow.event'
+                    )
                   ) {
                     if (
                       reopened.result.followId
@@ -532,6 +623,34 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                     ) {
                       await provisionalCandidate.close().catch(() => undefined);
                       return false;
+                    }
+                    if (
+                      reopened.result.kind
+                        === 'external_session.follow.event'
+                    ) {
+                      // Same one-event custody contract as the initial open:
+                      // deliver each replacement-follow replay page once and
+                      // acknowledge it before the next progress.
+                      const replacementEvent = reopened.result;
+                      await settleFollowListenerBounded(
+                        Promise.resolve().then(async () =>
+                          await listener(projectHostExternalTranscriptFollowEvent(
+                            replacementEvent.event,
+                          ))),
+                        EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
+                        reopenSignal,
+                      );
+                      const acknowledgedWitness = readWitness();
+                      reopened = await dispatchOperation({
+                        kind: 'external_session.follow.next',
+                        requestId: randomUUID(),
+                        followId: candidate.followId,
+                        acknowledgeEventId: replacementEvent.eventId,
+                        ...(acknowledgedWitness
+                          ? { witness: acknowledgedWitness }
+                          : {}),
+                      }, reopenSignal);
+                      continue;
                     }
                     const providerResponse =
                       await executeRetainedExternalSessionProviderRequest(
@@ -766,7 +885,9 @@ export async function createRunnerAgentDaemonFacets(input: Readonly<{
                 try {
                   await settleFollowListenerBounded(
                     Promise.resolve().then(async () =>
-                      await listener(followEventResult.event)),
+                      await listener(projectHostExternalTranscriptFollowEvent(
+                        followEventResult.event,
+                      ))),
                     EXTERNAL_SESSION_FOLLOW_LISTENER_TIMEOUT_MS,
                     openSignal,
                   );

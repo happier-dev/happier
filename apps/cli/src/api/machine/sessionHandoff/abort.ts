@@ -7,20 +7,15 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import { buildSessionHandoffAgentBundleTransferId } from '../../../session/handoff/agentBundle/transferPublication';
-import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
-import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
-type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
 
 export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
-  activeServerDir: string;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
-  workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   readPersistedPrepareJob: (params: Readonly<{
     handoffId: string;
@@ -38,7 +33,6 @@ export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
     failedAtMs?: number;
     lastErrorMessage?: string;
     lastErrorCode?: string;
-    workspaceReplicationJobId?: string;
   }>) => SessionHandoffPrepareTargetJobRecordInput;
   buildStartPendingStatus: (input: Readonly<{
     handoffId: string;
@@ -46,7 +40,6 @@ export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
   }>) => SessionHandoffStatus;
   buildSourceExportOnlyPrepareJobId: (handoffId: string) => string;
   invalidateDirectPeerRouteCacheForHandoffMachines: (machineIds: readonly (string | undefined)[]) => void;
-  disposeEphemeralServerRoutedPayloadSourcesForHandoff: (handoffId: string) => Promise<void>;
   invalidRequest: () => Readonly<{
     ok: false;
     errorCode: 'invalid_request';
@@ -57,17 +50,14 @@ export function createSessionHandoffAbortActionHandler(
   params: RegisterSessionHandoffAbortRpcHandlerInput,
 ): (raw: unknown) => Promise<unknown> {
   const {
-    activeServerDir,
     prepareJobStore,
     sourceExportStore,
-    workspaceReplicationAdapter,
     directPeerTransfer,
     readPersistedPrepareJob,
     buildPrepareJobRecord,
     buildStartPendingStatus,
     buildSourceExportOnlyPrepareJobId,
     invalidateDirectPeerRouteCacheForHandoffMachines,
-    disposeEphemeralServerRoutedPayloadSourcesForHandoff,
     invalidRequest,
   } = params;
 
@@ -82,13 +72,6 @@ export function createSessionHandoffAbortActionHandler(
     const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
     if (!persistedJob && !persistedSourceExport) return { ok: false, errorCode: 'not_found' } as const;
 
-    if (persistedJob?.workspaceReplicationJobId) {
-      await workspaceReplicationAdapter.abortWorkspaceReplicationJob({
-        activeServerDir,
-        jobId: persistedJob.workspaceReplicationJobId,
-      }).catch(() => undefined);
-    }
-
     if (persistedJob) {
       const abortedAtMs = Date.now();
       const status: SessionHandoffStatus = {
@@ -102,7 +85,6 @@ export function createSessionHandoffAbortActionHandler(
         updatedAtMs: abortedAtMs,
         cancelRequestedAtMs: persistedJob.cancelRequestedAtMs ?? abortedAtMs,
         abortedAtMs,
-        workspaceReplicationJobId: persistedJob.workspaceReplicationJobId,
         ...(persistedJob.failedAtMs ? { failedAtMs: persistedJob.failedAtMs } : {}),
         ...(persistedJob.lastErrorMessage ? { lastErrorMessage: persistedJob.lastErrorMessage } : {}),
         ...(persistedJob.lastErrorCode ? { lastErrorCode: persistedJob.lastErrorCode } : {}),
@@ -144,9 +126,7 @@ export function createSessionHandoffAbortActionHandler(
       persistedSourceExport?.sourceMachineId,
       persistedSourceExport?.targetMachineId,
     ]);
-    await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
-    directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
   };
 }

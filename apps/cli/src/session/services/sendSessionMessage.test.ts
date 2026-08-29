@@ -1413,6 +1413,68 @@ describe('sendSessionMessage', () => {
         expect(requestInactiveSessionResume).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects an externally linked inactive session before admission instead of enqueueing or resuming', async () => {
+        // Message admission and automatic resume are canonical seams: a
+        // contributed Action or CLI caller must not enqueue Agent-visible input
+        // for an externally linked Session before External Sessions takeover.
+        const enqueuePendingQueueV2MessageViaHttp = vi.fn();
+        const requestInactiveSessionResume = vi.fn();
+        vi.doMock('@/api/session/pendingQueueV2Transport', () => ({
+            enqueuePendingQueueV2MessageViaHttp,
+            materializeNextPendingQueueV2MessageViaHttp: vi.fn(),
+        }));
+        vi.doMock('./requestInactiveSessionResume', () => ({ requestInactiveSessionResume }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-1',
+                mode: 'plain',
+                ctx: null,
+                accountEncryptionCurrentness: { mode: 'plain' },
+                rawSession: {
+                    id: 'sess-1',
+                    active: false,
+                    encryptionMode: 'plain',
+                    path: '/repo',
+                    machineId: 'machine-session',
+                    seq: 41,
+                    metadata: JSON.stringify({
+                        machineId: 'machine-session',
+                        path: '/repo',
+                        runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+                        externalSessionV1: {
+                            v: 1,
+                            agentId: 'claude',
+                            machineId: 'machine-session',
+                            remoteSessionId: 'vendor-session-1',
+                            source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+                            linkedAtMs: 5,
+                        },
+                    }),
+                    agentState: null,
+                    latestTurnStatus: 'completed',
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                },
+            })),
+        }));
+
+        const { sendSessionMessage } = await import('./sendSessionMessage');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await expect(sendSessionMessage({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-1',
+            message: 'continue',
+            localId: 'contributed-action:test',
+            wait: false,
+            timeoutMs: 1,
+        })).resolves.toMatchObject({ ok: false, code: 'takeover_required' });
+
+        expect(enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+        expect(requestInactiveSessionResume).not.toHaveBeenCalled();
+    });
+
     it('uses the layout-v1 owner envelope for inactive permission, model, and resume policy', async () => {
         const machineKey = new Uint8Array(32).fill(1);
         const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
@@ -1426,9 +1488,7 @@ describe('sendSessionMessage', () => {
                 runtimeDescriptorV1: {
                     v: 1,
                     agentId: 'claude',
-                    backendMode: 'native',
-                    backendId: 'claude',
-                    provenance: 'first_party',
+                    agent: {},
                 },
             },
             runtime: {

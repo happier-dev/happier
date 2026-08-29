@@ -148,6 +148,7 @@ export async function executeSpawnSessionRequest(
             request: {
                 ...params,
                 options,
+                accountSettings: getActiveAccountSettingsSnapshot()?.settings ?? {},
             },
             validateEnvVarRecordStrict,
         });

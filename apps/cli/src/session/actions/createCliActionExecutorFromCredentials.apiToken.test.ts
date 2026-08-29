@@ -60,6 +60,7 @@ vi.mock('@/daemon/controlClient', () => ({
   requestDaemonSignedRootActionExecution,
 }));
 
+const SYNTHETIC_API_TOKEN = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
 const exactSessionId = 'c123456789012345678901234';
 type MockActionResponse = Readonly<{
   statusCode: number;
@@ -274,7 +275,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -304,7 +305,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -329,7 +330,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     expect(String(url)).toBe(new URL('v1/actions/session.status.get', configuration.apiServerUrl).toString());
     expect(init).toMatchObject({
       method: 'POST',
-      headers: expect.objectContaining({ authorization: 'Bearer hap_v1_token_secret' }),
+      headers: expect.objectContaining({ authorization: `Bearer ${SYNTHETIC_API_TOKEN}` }),
     });
     expect(JSON.parse(String(init?.body))).toEqual({
       v: 1,
@@ -362,7 +363,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -376,7 +377,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     )).resolves.toEqual(expect.objectContaining({ ok: true }));
 
     expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({
-      token: 'hap_v1_token_secret',
+      token: SYNTHETIC_API_TOKEN,
       requestedMachineId: 'machine-remote',
     });
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
@@ -402,7 +403,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -412,7 +413,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       ok: true,
       result: { sessions: [], nextCursor: null, hasNext: false },
     });
-    expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({ token: 'hap_v1_token_secret' });
+    expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({ token: SYNTHETIC_API_TOKEN });
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
       v: 1,
       target: { kind: 'machine', machineId: 'machine-remote' },
@@ -471,7 +472,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
-          token: 'hap_v1_token_secret',
+          token: SYNTHETIC_API_TOKEN,
           encryption: null,
           credentialProvenance: 'api_token',
         },
@@ -522,7 +523,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
-          token: 'hap_v1_token_secret',
+          token: SYNTHETIC_API_TOKEN,
           encryption: null,
           credentialProvenance: 'api_token',
         },
@@ -532,7 +533,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         ok: true,
         result: { sessions: [], nextCursor: null, hasNext: false },
       });
-      expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({ token: 'hap_v1_token_secret' });
+      expect(resolveCurrentAccountMachineTarget).toHaveBeenCalledWith({ token: SYNTHETIC_API_TOKEN });
       expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
         v: 1,
         target: { kind: 'machine', machineId: 'machine-account-server' },
@@ -562,7 +563,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -598,7 +599,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -673,7 +674,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -760,7 +761,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -802,7 +803,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -859,7 +860,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
-          token: 'hap_v1_token_secret',
+          token: SYNTHETIC_API_TOKEN,
           encryption: null,
           credentialProvenance: 'api_token',
         },
@@ -910,7 +911,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -945,7 +946,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -980,7 +981,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -1019,7 +1020,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -1049,7 +1050,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -1085,7 +1086,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -1119,7 +1120,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },
@@ -1170,7 +1171,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
     const executor = createCliActionExecutorFromCredentials({
       credentials: {
-        token: 'hap_v1_token_secret',
+        token: SYNTHETIC_API_TOKEN,
         encryption: null,
         credentialProvenance: 'api_token',
       },

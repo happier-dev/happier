@@ -3,7 +3,9 @@ import { chmod, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { join, resolve as resolvePath } from 'node:path';
 
 import {
+    resolveExternalSessionOperationRetirementStagingDirectory,
     resolveExternalSessionOperationStagingDirectory,
+    type ExternalSessionOperationAccountScope,
 } from '@/session/actions/externalSessions/operationRecordStore';
 import { normalizeWorkspaceRelativeMediaPath } from '@/session/media/paths';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
@@ -180,6 +182,13 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
         operationId: string;
         representation: 'content' | 'reference_only';
         capturedSource: ExternalSessionStagingSourceCapture;
+        /**
+         * Pinned authenticated Account scope carried from operation admission.
+         * Live semantics: the ambient Account must still match the pin, so a
+         * rotation fails closed before any staging effect. The first staging
+         * capture for the operation then seeds its process-local partition.
+         */
+        accountScope?: ExternalSessionOperationAccountScope;
     }>): Promise<
         | Readonly<{ status: 'ready'; stagingReference: string }>
         | Readonly<{ status: 'refused'; reason: 'reference_only_unavailable' }>
@@ -247,10 +256,14 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
      */
     readCreatedWorkspaceMediaForCleanup(input: Readonly<{
         operationId: string;
+        /** Retirement pinned scope; see cleanupAbandonedOperation. */
+        accountScope?: ExternalSessionOperationAccountScope;
         media?: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
     }>): Promise<readonly ExternalSessionOperationOwnedWorkspaceMediaPath[]>;
     acknowledgeCreatedWorkspaceMediaCleanup(input: Readonly<{
         operationId: string;
+        /** Retirement pinned scope; see cleanupAbandonedOperation. */
+        accountScope?: ExternalSessionOperationAccountScope;
         media: readonly ExternalSessionOperationOwnedWorkspaceMediaPath[];
     }>): Promise<void>;
     appendPageGroup(input: Readonly<{
@@ -295,6 +308,8 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
      */
     cleanupTerminalOperation(input: Readonly<{
         operationId: string;
+        /** Live pinned scope carried from operation admission; see beginOperation. */
+        accountScope?: ExternalSessionOperationAccountScope;
     }>): Promise<
         | Readonly<{ status: 'completed' }>
         | Readonly<{ status: 'missing' }>
@@ -303,9 +318,14 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
     /**
      * Delete staging after an authoritative parent Session deletion. The
      * caller must first discharge every operation-owned workspace-media path.
+     * The pinned scope addresses the owning Account's partition directly —
+     * the deletion fact proves ownership, so ambient credentials are never
+     * consulted and an A→B rotation cannot redirect the cleanup.
      */
     cleanupAbandonedOperation(input: Readonly<{
         operationId: string;
+        /** Pinned scope of the Account whose deletion fact delivered the cleanup. */
+        accountScope?: ExternalSessionOperationAccountScope;
     }>): Promise<
         | Readonly<{ status: 'completed' }>
         | Readonly<{ status: 'missing' }>
@@ -561,20 +581,29 @@ function stagingPathsInRoot(rootDirectory: string, operationId: string): Staging
  * budget it consumes — is Account-partitioned unconditionally. The capture is
  * process-local and deliberately outlives an Account switch for an operation
  * already in flight; reaching staging at all requires the caller to have first
- * resolved that operation's Account-scoped record.
+ * resolved that operation's Account-scoped record. A live caller may pin the
+ * capture explicitly by passing the admission scope to beginOperation, which
+ * verifies the ambient Account before the first staging effect; the deletion
+ * retirement path instead addresses the pinned partition directly through
+ * forRetirement and never consults ambient credentials.
  */
-function createStagingPathResolver(activeServerDir: string): Readonly<{
-    forOperation(operationId: string): Promise<StagingPaths>;
+function createStagingPathResolver(
+    activeServerDir: string,
+    accountScope?: ExternalSessionOperationAccountScope,
+): Readonly<{
+    forOperation(operationId: string, pinnedScope?: ExternalSessionOperationAccountScope): Promise<StagingPaths>;
+    forRetirement(operationId: string, pinnedScope: ExternalSessionOperationAccountScope): Promise<StagingPaths>;
     release(operationId: string): void;
 }> {
     const capturedRootByOperationId = new Map<string, Promise<string>>();
     return Object.freeze({
-        async forOperation(operationId: string): Promise<StagingPaths> {
+        async forOperation(operationId: string, pinnedScope?: ExternalSessionOperationAccountScope): Promise<StagingPaths> {
             let capturedRoot = capturedRootByOperationId.get(operationId);
             if (!capturedRoot) {
                 capturedRoot = resolveExternalSessionOperationStagingDirectory(
                     activeServerDir,
                     operationId,
+                    pinnedScope ?? accountScope,
                 ).then((directory) => resolvePath(directory));
                 capturedRootByOperationId.set(operationId, capturedRoot);
             }
@@ -584,6 +613,23 @@ function createStagingPathResolver(activeServerDir: string): Readonly<{
                 capturedRootByOperationId.delete(operationId);
                 throw error;
             }
+        },
+        async forRetirement(
+            operationId: string,
+            pinnedScope: ExternalSessionOperationAccountScope,
+        ): Promise<StagingPaths> {
+            // Retirement addressing deliberately bypasses the ambient-derived
+            // capture: the deletion fact pins the owning partition, so the
+            // cleanup must never reuse — or seed — a root resolved from
+            // whatever Account happens to be authenticated now.
+            return stagingPathsInRoot(
+                resolvePath(
+                    resolveExternalSessionOperationRetirementStagingDirectory(
+                        pinnedScope,
+                    ),
+                ),
+                operationId,
+            );
         },
         release(operationId: string): void {
             capturedRootByOperationId.delete(operationId);
@@ -1347,6 +1393,8 @@ function assertMatchingPreparedReplayGroup(
 export function createExternalSessionOperationPrivateStagingStore(input: Readonly<{
     activeServerDir: string;
     limits: ExternalSessionOperationPrivateStagingLimits;
+    /** Pinned authenticated Account scope from operation admission. */
+    accountScope?: ExternalSessionOperationAccountScope;
     persistence?: Readonly<{
         writeJsonAtomic(path: string, value: unknown): Promise<void>;
     }>;
@@ -1363,16 +1411,18 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
         }),
     });
     const atomicWrite = input.persistence?.writeJsonAtomic ?? writeJsonAtomicDefault;
-    const stagingPaths = createStagingPathResolver(activeServerDir);
+    const stagingPaths = createStagingPathResolver(activeServerDir, input.accountScope);
     const resolveStagingPaths = async (
         operationId: string,
-    ): Promise<StagingPaths> => await stagingPaths.forOperation(operationId);
+        pinnedScope?: ExternalSessionOperationAccountScope,
+    ): Promise<StagingPaths> => await stagingPaths.forOperation(operationId, pinnedScope);
 
     const withCapacityLock = async <T>(
         operationId: string,
         effect: (paths: StagingPaths) => Promise<T>,
+        pathsOverride?: Promise<StagingPaths>,
     ): Promise<T> => {
-        const paths = await resolveStagingPaths(operationId);
+        const paths = await (pathsOverride ?? resolveStagingPaths(operationId));
         await tightenPrivateDirectory(paths.rootDirectory);
         return await withJsonOwnerFileLock({
             lockPath: paths.capacityLockPath,
@@ -1393,7 +1443,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 });
             }
             const capturedSource = normalizeSourceCapture(beginInput.capturedSource);
-            return await withCapacityLock(operationId, async (paths) => {
+            return await withCapacityLock(
+                operationId,
+                async (paths) => {
                 const current = await readHeader(paths.manifestPath);
                 if (current) {
                     if (
@@ -1425,7 +1477,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     status: 'ready' as const,
                     stagingReference: `external-session-operation-staging-v1:${createHash('sha256').update(operationId, 'utf8').digest('hex')}`,
                 });
-            });
+            },
+            resolveStagingPaths(operationId, beginInput.accountScope),
+            );
         },
 
         async readCapturedSource(readInput) {
@@ -2201,7 +2255,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     }));
                 }
                 return Object.freeze(eligible);
-            });
+            }, readInput.accountScope
+                ? stagingPaths.forRetirement(operationId, readInput.accountScope)
+            : undefined);
         },
 
         async acknowledgeCreatedWorkspaceMediaCleanup(acknowledgeInput) {
@@ -2223,7 +2279,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     ...manifest,
                     createdWorkspaceMedia: Object.freeze(nextMedia),
                 }));
-            });
+            }, acknowledgeInput.accountScope
+                ? stagingPaths.forRetirement(operationId, acknowledgeInput.accountScope)
+            : undefined);
         },
 
         async completeCapture(completeInput) {
@@ -2556,7 +2614,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 await rm(paths.operationDirectory, { recursive: true, force: true });
                 stagingPaths.release(operationId);
                 return Object.freeze({ status: 'completed' as const });
-            });
+            }, completeInput.accountScope
+                ? stagingPaths.forOperation(operationId, completeInput.accountScope)
+            : undefined);
         },
 
         async cleanupAbandonedOperation(abandonInput) {
@@ -2572,7 +2632,9 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                 await rm(paths.operationDirectory, { recursive: true, force: true });
                 stagingPaths.release(operationId);
                 return Object.freeze({ status: 'completed' as const });
-            });
+            }, abandonInput.accountScope
+                ? stagingPaths.forRetirement(operationId, abandonInput.accountScope)
+            : undefined);
         },
 
         async pauseOperation(pauseInput) {

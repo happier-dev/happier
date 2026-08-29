@@ -235,6 +235,43 @@ describe('createPluginExternalSessionsAdapter', () => {
     }
   });
 
+  it('carries the top-level Protocol sidechainId and rejects a malformed one', () => {
+    const raw = {
+      role: 'agent' as const,
+      content: {
+        type: 'codex' as const,
+        data: { type: 'message' as const, message: 'sidechain row' },
+      },
+    };
+    expect(mapPluginExternalTranscriptItem({
+      id: 'sidechain-row',
+      sidechainId: 'sidechain-1',
+      createdAtMs: 7,
+      raw,
+    })).toMatchObject({ id: 'sidechain-row', sidechainId: 'sidechain-1' });
+    // `null` is the retained-carrier spelling of an absent sidechain id.
+    expect(
+      mapPluginExternalTranscriptItem({
+        id: 'null-sidechain-row',
+        sidechainId: null,
+        createdAtMs: 7,
+        raw,
+      }).sidechainId,
+    ).toBeUndefined();
+    expect(() => mapPluginExternalTranscriptItem({
+      id: 'malformed-sidechain-row',
+      sidechainId: ' ',
+      createdAtMs: 7,
+      raw,
+    })).toThrow('plugin_external_transcript_invalid');
+    expect(() => mapPluginExternalTranscriptItem({
+      id: 'oversized-sidechain-row',
+      sidechainId: 's'.repeat(192),
+      createdAtMs: 7,
+      raw,
+    })).toThrow('plugin_external_transcript_invalid');
+  });
+
   it('applies the one bounded transcript identity owner to localId as well as id', () => {
     // Two parse sites for one DTO are only safe while they share one identity
     // policy: an over-long `localId` must refuse here exactly as it refuses at

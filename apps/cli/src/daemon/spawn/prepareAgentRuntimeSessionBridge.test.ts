@@ -214,7 +214,7 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
 
         expect(prepared?.authorization.descriptor).toMatchObject({
             pluginId,
-            agentId: 'ohMyPi',
+            agentId: 'ohmypi',
             backendId: 'ohMyPi',
             agentDeclaration: {
                 definition: {
@@ -222,6 +222,42 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
                 },
             },
         });
+    });
+
+    it('derives the descriptor routing id from the validated declaration identity', async () => {
+        const pluginId = 'acme.identity';
+        const declarationLocalId = 'declared-agent';
+        const agent = {
+            id: 'legacy-routing-id',
+            identity: { pluginId, localId: declarationLocalId },
+            provenance: 'external',
+            source: { kind: 'package' },
+            definition: { kindVersion: 1, id: declarationLocalId, ownedBackendIds: [] },
+            richDefinition: {
+                provenance: 'external',
+                definition: {
+                    id: declarationLocalId,
+                    title: { key: 'agent.title', fallback: 'Agent' },
+                    runtime: { kind: 'custom' },
+                    primary: 'sessions',
+                    capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+                },
+            },
+            pluginId,
+        };
+        const registry = {
+            contributes: { agentDefinitionsById: new Map([['legacy-routing-id', agent]]), voiceProviders: [] },
+            agentRuntimesByAgentId: new Map([['legacy-routing-id', {
+                pluginId, pluginVersion: '1.0.0', agentId: 'legacy-routing-id', generation: 'g1', hasPrimaryRuntime: true,
+            }]]),
+            runtimeCapabilitiesByPluginId: new Map([[pluginId, new Set()]]),
+            activateContributionsOnDemand: async () => [],
+        };
+        const prepared = await prepareRunnerAgentSessionBootstrapForLease({
+            target: { kind: 'backend', sourceKind: 'external', backendId: 'legacy-routing-id' },
+            lease: { registry },
+        } as never);
+        expect(prepared?.authorization.descriptor.agentId).toBe(`${pluginId}/${declarationLocalId}`);
     });
 
     it('preserves two installed same-local-id Agents as distinct qualified daemon descriptors', async () => {
@@ -304,8 +340,8 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
         // registry keeps the shorter host routing id only for lookup, while the
         // contributor factory continues to receive the manifest-local id.
         expect(prepared.map((entry) => entry?.authorization.descriptor.agentId)).toEqual([
-            'acme.alpha/agents/assistant',
-            'acme.beta/agents/assistant',
+            'acme.alpha/assistant',
+            'acme.beta/assistant',
         ]);
         expect(prepared.map((entry) => entry?.authorization.descriptor.agentDeclaration?.definition.id))
             .toEqual([localAgentId, localAgentId]);

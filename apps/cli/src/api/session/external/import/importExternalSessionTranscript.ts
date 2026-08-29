@@ -118,6 +118,16 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
   sourceReadRoots: readonly string[];
   createdWorkspaceMediaPaths?: string[];
   persistedWorkspaceMediaPaths?: string[];
+  /**
+   * Awaited per resolved candidate destination before any bytes are written,
+   * so operation-owned cleanup custody exists before media creation (the
+   * crash between write and bookkeeping can no longer orphan workspace
+   * media).
+   */
+  recordIntendedWorkspaceMedia?: (media: Readonly<{
+    workingDirectory: string;
+    candidateWorkspaceRelativePath: string;
+  }>) => Promise<void>;
 }>): Promise<Readonly<{
   localId: string;
   sidechainId: SidechainId | null;
@@ -147,6 +157,16 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
         messageLocalId: localId,
         workingDirectory: params.workingDirectory,
         sourceReadRoots: params.sourceReadRoots,
+        ...(params.recordIntendedWorkspaceMedia
+          ? {
+              onIntendedWorkspacePath: async (candidateWorkspaceRelativePath) => {
+                await params.recordIntendedWorkspaceMedia!({
+                  workingDirectory: params.workingDirectory!,
+                  candidateWorkspaceRelativePath,
+                });
+              },
+            }
+          : {}),
         onCreatedWorkspacePath: (path) => params.createdWorkspaceMediaPaths?.push(path),
         onPersistedWorkspacePath: (path) => params.persistedWorkspaceMediaPaths?.push(path),
       })

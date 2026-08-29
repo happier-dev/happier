@@ -217,6 +217,37 @@ describe('external session operation exclusion', () => {
         });
     });
 
+    it('binds the pinned Account subject into the claim and conflicts on A→B rotation', async () => {
+        const { activeServerDir, owner } = await createOwner('daemon:one', () => 2_000);
+        const first = await owner.acquire(takeoverRequest(), { accountSubject: 'account-a' });
+        expect(first.status).toBe('acquired');
+        if (first.status !== 'acquired') throw new Error('expected acquisition');
+        expect(first.claim.record.accountSubject).toBe('account-a');
+
+        // The same pinned subject converges to the same claim.
+        await expect(owner.acquire(takeoverRequest(), { accountSubject: 'account-a' }))
+            .resolves.toMatchObject({ status: 'converged' });
+
+        // A rotated subject may neither acquire nor converge the claim.
+        const rotated = createExternalSessionOperationExclusion({
+            activeServerDir,
+            ownerId: 'daemon:two',
+            nowMs: () => 2_000,
+            ttlMs: 10_000,
+        });
+        await expect(rotated.acquire(takeoverRequest(), { accountSubject: 'account-b' }))
+            .resolves.toMatchObject({
+                status: 'conflict',
+                reason: 'account_subject_mismatch',
+            });
+        await expect(rotated.acquire(takeoverRequest()))
+            .resolves.toMatchObject({ status: 'converged' });
+
+        await first.claim.release();
+        await expect(rotated.acquire(takeoverRequest(), { accountSubject: 'account-b' }))
+            .resolves.toMatchObject({ status: 'acquired' });
+    });
+
     it.each([
         ['creation', () => {
             throw new Error('watch creation failed');

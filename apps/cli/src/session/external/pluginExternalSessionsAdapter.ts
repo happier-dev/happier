@@ -12,6 +12,7 @@ import {
   ExternalSessionTranscriptSourceTimestampV1Schema,
   MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
   resolveTranscriptBodySemanticEvent,
+  SidechainIdSchema,
   type ExternalSessionAgentId,
   type ExternalSessionSourceId,
   type ExternalSessionsSource,
@@ -58,6 +59,7 @@ export type PluginExternalSessionsProviderOps = Pick<
 > & Partial<Pick<
   ExternalSessionProviderOps,
   | 'externalLinkedTakeoverWriterSafety'
+  | 'externalSessionTakeoverAdmitted'
   | 'readAfterTranscript'
   | 'resolveLinkIdentity'
 >>;
@@ -571,9 +573,20 @@ export function mapPluginExternalTranscriptItem(
       ? parsedUserProjection.data
       : fail('plugin_external_transcript_invalid');
   if (userProjection !== undefined && kind !== 'user') fail('plugin_external_transcript_invalid');
+  // The same bounded identity owner the Protocol source-item contract applies
+  // to `sidechainId`; `null` is the retained-carrier spelling of an absent id.
+  const parsedSidechainId = record.sidechainId === undefined || record.sidechainId === null
+    ? undefined
+    : SidechainIdSchema.safeParse(record.sidechainId);
+  const sidechainId = parsedSidechainId === undefined
+    ? undefined
+    : parsedSidechainId.success
+      ? parsedSidechainId.data
+      : fail('plugin_external_transcript_invalid');
   return Object.freeze({
     id: itemId,
     ...(localId ? { localId } : {}),
+    ...(sidechainId ? { sidechainId } : {}),
     ...(userProjection ? { userProjection } : {}),
     ...(timestampMs !== undefined ? { timestampMs } : {}),
     kind,

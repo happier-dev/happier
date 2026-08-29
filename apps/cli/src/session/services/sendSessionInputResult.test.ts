@@ -149,6 +149,7 @@ describe('waitForSessionInputResult', () => {
       rowsAfterInput: () => [
         rawAssistantText('answer for this input'),
         rawLifecycle('task_complete'),
+        { role: 'user', content: { type: 'text', text: 'unrelated later prompt' } },
         rawAssistantText('unrelated later answer'),
         rawLifecycle('turn_failed'),
       ],
@@ -159,6 +160,38 @@ describe('waitForSessionInputResult', () => {
       sessionId: 'sess-1',
       localId: 'automation:run:run-1',
       result: { kind: 'final_text', text: 'answer for this input' },
+    });
+  });
+
+  it('continues the Agent-thread result scan across a realtime Voice user row', async () => {
+    const { wait } = await arrange({
+      rowsAfterInput: () => [
+        rawAssistantText('intermediate coding progress'),
+        {
+          role: 'user',
+          content: { type: 'text', text: 'spoken sentence' },
+          meta: {
+            happier: {
+              conversationTurnOriginV1: {
+                v: 1,
+                channel: 'realtime_conversation',
+                modality: 'voice',
+              },
+            },
+          },
+        },
+        rawClaudeOutput({
+          content: [{ type: 'text', text: 'exact coding result' }],
+          stopReason: 'end_turn',
+        }),
+      ],
+    });
+
+    await expect(wait()).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-1',
+      localId: 'automation:run:run-1',
+      result: { kind: 'final_text', text: 'exact coding result' },
     });
   });
 

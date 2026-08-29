@@ -21,6 +21,7 @@ import { resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwne
 import { resolveDarwinBackgroundServiceSpawnDirectoryFailure } from '../spawn/resolveDarwinBackgroundServiceSpawnDirectoryFailure';
 import { applyInitialTranscriptAfterSeqToAttachPayload } from '../sessionEncryption/applyInitialTranscriptAfterSeqToAttachPayload';
 import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorResult';
+import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 
 /**
  * A requested Agent that is not installed in the current catalog is an invalid
@@ -66,6 +67,8 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
 
 export type PrepareExecuteSpawnSessionRequestInput = Readonly<{
     options: SpawnSessionOptions;
+    /** Account snapshot admitted by the daemon caller; never read from ambient UI/global state. */
+    accountSettings?: Readonly<Record<string, unknown>>;
     credentials: NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
     loadLocalHandoffMetadataByVendorResumeId: Parameters<typeof resolveSpawnBackendIdentity>[0]['loadLocalHandoffMetadataByVendorResumeId'];
 }>;
@@ -207,33 +210,48 @@ export async function prepareExecuteSpawnSessionRequest(
     if (effectiveResume) {
         if (effectiveBackendTargetV2.sourceKind === 'configured') {
             const configuredBackendId = (effectiveBackendTargetV2.configuredBackendId ?? effectiveBackendTargetV2.backendId).trim();
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-                errorMessage: `Resume is not supported for configured ACP backend '${configuredBackendId}'.`,
-            };
+            const configuredBackend = configuredBackendId
+                ? resolveConfiguredAcpBackendFromAccountSettings(
+                    params.request.accountSettings ?? {},
+                    configuredBackendId,
+                )
+                : null;
+            // Configured ACP has no catalog Agent id; its load-session support is
+            // proven by the resolved Account declaration at this admission seam.
+            // The resume token is the provider Session id, and attach metadata
+            // (when rejoining) has already established generation/materialization
+            // correspondence. Unsupported or unavailable declarations fail closed.
+            if (!configuredBackend?.capabilities.supportsLoadSession) {
+                return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+                    errorMessage: `Resume is not supported for configured ACP backend '${configuredBackendId}'.`,
+                };
+            }
         }
-        if (!catalogAgentId) {
+        if (effectiveBackendTargetV2.sourceKind !== 'configured' && !catalogAgentId) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
                 errorMessage: 'Unknown backend target',
             };
         }
-        const vendorResumeSupport = await getVendorResumeSupport(catalogAgentId);
-        const ok = vendorResumeSupport({
-            ...(runtimeSelection.runtimeDescriptorV1
-                ? { runtimeDescriptorV1: runtimeSelection.runtimeDescriptorV1 }
-                : {}),
-        });
-        if (!ok) {
-            const supportLevel = catalogEntry?.vendorResumeSupport ?? null;
-            const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-                errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
-            };
+        if (effectiveBackendTargetV2.sourceKind !== 'configured') {
+            const vendorResumeSupport = await getVendorResumeSupport(catalogAgentId!);
+            const ok = vendorResumeSupport({
+                ...(runtimeSelection.runtimeDescriptorV1
+                    ? { runtimeDescriptorV1: runtimeSelection.runtimeDescriptorV1 }
+                    : {}),
+            });
+            if (!ok) {
+                const supportLevel = catalogEntry?.vendorResumeSupport ?? null;
+                const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
+                return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+                    errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
+                };
+            }
         }
     }
 

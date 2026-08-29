@@ -81,6 +81,16 @@ export type AcquirePublicManagedProviderRuntime = (
   identity: Readonly<{ pluginId: string; localId: string }>,
 ) => Promise<ResolvedManagedProviderRuntime | null>;
 
+const MANAGED_SERVER_CUSTODY_HELPER_UNAVAILABLE_MESSAGE =
+  'Managed server process-tree custody helper is unavailable on Windows';
+
+function isPermanentManagedRuntimeInstallationFailure(error: unknown): boolean {
+  if (!isPluginError(error)) return false;
+  if (error.code === 'plugin_packaged_runtime_binary_unavailable') return true;
+  return error.code === 'plugin_managed_server_custody_failed'
+    && error.message === MANAGED_SERVER_CUSTODY_HELPER_UNAVAILABLE_MESSAGE;
+}
+
 function readsCurrent(check: () => boolean): boolean {
   try {
     return check() === true;
@@ -422,11 +432,7 @@ export async function startPublicManagedProviderRuntime<TAccess>(input: Readonly
       signal: invocationAbort.signal,
     }));
   } catch (error) {
-    const runtimeInstallationUnavailable = isPluginError(error)
-      && (
-        error.code === 'plugin_packaged_runtime_binary_unavailable'
-        || error.code === 'plugin_managed_server_custody_failed'
-      );
+    const runtimeInstallationUnavailable = isPermanentManagedRuntimeInstallationFailure(error);
     return await fail(
       invocationAbort.signal.aborted
         ? 'managed_provider_start_aborted'

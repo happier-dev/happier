@@ -21,6 +21,7 @@ import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import type { ActionOperationOwnerUpdate } from './actionOperationTypes';
 import { coordinateTrackedSessionHandoff } from './sessionHandoffCoordinator';
 import { buildTrackedSessionHandoffMachineCall } from './trackedSessionHandoffMachineCall';
+import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 
 type SourceContext =
   | Readonly<{ ok: true; sourceMachineId: string; sessionStorageMode: SessionHandoffStorageMode }>
@@ -52,6 +53,7 @@ type CoordinatorDeps = Readonly<{
     signal: AbortSignal;
   }>) => Promise<Readonly<{ type: 'success'; sessionId: string } | { type: 'error'; errorCode: string; errorMessage: string }>>;
   wait?: (signal: AbortSignal) => Promise<void>;
+  workspaceSyncAdapter?: WorkspaceSyncHandoffAdapter;
 }>;
 
 type HostCoordinatorInput = Readonly<{
@@ -184,6 +186,10 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         ...(rawInput.workspaceTransfer && typeof rawInput.workspaceTransfer === 'object'
           ? { workspaceTransfer: rawInput.workspaceTransfer as never }
           : {}),
+        ...(rawInput.workspaceSyncAction && typeof rawInput.workspaceSyncAction === 'object'
+          ? { workspaceSyncAction: rawInput.workspaceSyncAction as never }
+          : {}),
+        ...(targetPath ? { workspaceSyncTargetRootPath: targetPath } : {}),
       },
       signal: hostInput.signal,
       start: hostInput.start,
@@ -265,6 +271,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         return await rpc(machineId, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3, request);
       },
       publishOwnerUpdate: hostInput.publishOwnerUpdate,
+      ...(deps.workspaceSyncAdapter ? { workspaceSyncAdapter: deps.workspaceSyncAdapter } : {}),
       ...(deps.wait ? { wait: deps.wait } : {}),
     });
   };

@@ -29,6 +29,7 @@ import type { ResolvedAgentRichDefinition } from '@/plugins/projection/registry/
 import { logger } from '@/ui/logger';
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
 import { resolveConnectedServiceMaterializedHomeRoot } from '@/daemon/connectedServices/catalogHooks';
+import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
 import {
   resolveExternalSessionSourceConnectedServiceProfile,
   resolveExternalSessionSourceFromAgentProjection,
@@ -209,8 +210,14 @@ export function configuredExternalSessionSourcesUseConnectedProfiles(
  * that explicitly accept that physical-home field participate. Other
  * connected-service source families retain their existing non-filesystem
  * contract.
+ *
+ * This is also the one materialization every raw machine call goes through:
+ * a request that names a `homePath` must name the host-materialized root, and
+ * a request that omits it receives the stamped root. Silently rewriting a
+ * mismatched caller path would let a request address a directory the account's
+ * connected-service namespace never admitted.
  */
-function resolveConfiguredExternalSessionSourceAtAdmission(params: Readonly<{
+export function resolveConfiguredExternalSessionSourceAtAdmission(params: Readonly<{
   agents: readonly ConfiguredExternalSessionSourceAgentContribution[];
   activeServerDir?: string;
   agentId: string;
@@ -248,6 +255,15 @@ function resolveConfiguredExternalSessionSourceAtAdmission(params: Readonly<{
     profileId: connectedProfile.profile.profileId,
   });
   if (!homePath) return { ok: false, code: 'source_invalid' };
+
+  const requestedHomePath = (resolved.source as Record<string, unknown>).homePath;
+  if (
+    typeof requestedHomePath === 'string'
+    && requestedHomePath.trim().length > 0
+    && !canonicalAbsolutePathsEqual(requestedHomePath, homePath)
+  ) {
+    return { ok: false, code: 'source_invalid' };
+  }
 
   const stamped = resolveExternalSessionSourceFromAgentProjection(
     projection,
@@ -809,6 +825,8 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       validatedAtAdmission: true as const,
       externalLinkedTakeoverWriterSafety: ops?.externalLinkedTakeoverWriterSafety
         ?? 'unsupported',
+      externalSessionTakeoverAdmitted:
+        ops?.externalSessionTakeoverAdmitted === true,
       supportsFollow: declaresExplicitTerminalFollow({
         agents: params.agents,
         agentId,
@@ -902,13 +920,27 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
     retirementSignal,
   });
 
+  /**
+   * The one per-candidate takeover capability projection. Every advertised
+   * storage mode requires this generation's admitted takeover authority: the
+   * Agent's own `externalSessionTakeover` contribution (its launch resolution
+   * is what runs after durable admission), plus, for external-linked, the
+   * declared native writer-safety contract on top.
+   */
   const takeoverStorageModes = (
     contextualTakeover: ContextualExternalSessionTakeoverAdapter | undefined,
     agentId?: string,
   ): readonly ('external-linked' | 'persisted')[] => {
     if (!contextualTakeover) return Object.freeze([]);
+    const forAgent = (source: (typeof sources)[number]): boolean => (
+      agentId === undefined || source.agentId === agentId
+    );
+    const takeoverLaunchAdmitted = sources.some((source) => (
+      forAgent(source) && source.externalSessionTakeoverAdmitted === true
+    ));
+    if (!takeoverLaunchAdmitted) return Object.freeze([]);
     const supportsExternalLinked = sources.some((source) => (
-      (agentId === undefined || source.agentId === agentId)
+      forAgent(source)
       && source.externalLinkedTakeoverWriterSafety === 'native_prevention'
     ));
     return Object.freeze([
@@ -930,6 +962,11 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       const capabilities = domain.authorService.capabilities();
       const linkAdmissionAvailable = isPublicLinkAdmissionAvailable();
       const linkUnavailable = unavailable('plugin_external_machine_unavailable');
+      const advertisedTakeoverStorageModes = contextualTakeover
+        && linkAdmissionAvailable
+        && capabilities.list.status === 'available'
+        ? takeoverStorageModes(contextualTakeover)
+        : EMPTY_TAKEOVER_STORAGE_MODES;
       return Object.freeze({
         ...capabilities,
         attach: capabilities.attach.status === 'unavailable'
@@ -937,12 +974,10 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
           : linkAdmissionAvailable
             ? capabilities.attach
             : linkUnavailable,
-        takeover: contextualTakeover
-          && linkAdmissionAvailable
-          && capabilities.list.status === 'available'
+        takeover: advertisedTakeoverStorageModes.length > 0
           ? Object.freeze({
               status: 'available' as const,
-              storageModes: takeoverStorageModes(contextualTakeover),
+              storageModes: advertisedTakeoverStorageModes,
             })
           : unavailable(
               capabilities.list.status === 'unavailable'
@@ -950,7 +985,12 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
                 ? 'plugin_generation_retired'
                 : !linkAdmissionAvailable
                   ? 'plugin_external_machine_unavailable'
-                  : 'plugin_external_takeover_contextual_admission_unavailable',
+                  : !contextualTakeover
+                    ? 'plugin_external_takeover_contextual_admission_unavailable'
+                    // The contextual admission owner exists, but this
+                    // generation admitted no Agent takeover contribution to
+                    // serve either storage mode.
+                    : 'plugin_external_agent_unavailable',
             ),
         follow: capabilities.follow.status === 'unavailable'
           ? capabilities.follow
@@ -966,27 +1006,32 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       return Object.freeze({
         ...page,
         nextCursor: page.nextCursor ?? null,
-        items: Object.freeze(page.items.map((candidate) => Object.freeze({
-          ...candidate,
-          capabilities: linkAdmissionAvailable
-            ? candidate.capabilities
-            : Object.freeze(candidate.capabilities.filter(
-                (capability) => capability !== 'attach' && capability !== 'follow',
-              )),
-          takeover: contextualTakeover && linkAdmissionAvailable
-            ? Object.freeze({
-                status: 'available' as const,
-                storageModes: takeoverStorageModes(
-                  contextualTakeover,
-                  candidate.ref.agentId,
+        items: Object.freeze(page.items.map((candidate) => {
+          const advertisedTakeoverStorageModes = contextualTakeover
+            && linkAdmissionAvailable
+            ? takeoverStorageModes(contextualTakeover, candidate.ref.agentId)
+            : EMPTY_TAKEOVER_STORAGE_MODES;
+          return Object.freeze({
+            ...candidate,
+            capabilities: linkAdmissionAvailable
+              ? candidate.capabilities
+              : Object.freeze(candidate.capabilities.filter(
+                  (capability) => capability !== 'attach' && capability !== 'follow',
+                )),
+            takeover: advertisedTakeoverStorageModes.length > 0
+              ? Object.freeze({
+                  status: 'available' as const,
+                  storageModes: advertisedTakeoverStorageModes,
+                })
+              : unavailable(
+                  linkAdmissionAvailable
+                    ? contextualTakeover
+                      ? 'plugin_external_agent_unavailable'
+                      : 'plugin_external_takeover_contextual_admission_unavailable'
+                    : 'plugin_external_machine_unavailable',
                 ),
-              })
-            : unavailable(
-                linkAdmissionAvailable
-                  ? 'plugin_external_takeover_contextual_admission_unavailable'
-                  : 'plugin_external_machine_unavailable',
-              ),
-        }))),
+          });
+        })),
       });
     },
     attach: async (ref: AuthorAttachRef, options: AuthorAttachOptions) => (
@@ -1418,6 +1463,7 @@ function unavailable(
 }
 
 const EMPTY_SOURCE_REFUSALS: readonly ConfiguredExternalSessionSourceRefusal[] = Object.freeze([]);
+const EMPTY_TAKEOVER_STORAGE_MODES: readonly ('external-linked' | 'persisted')[] = Object.freeze([]);
 const EMPTY_CANDIDATE_INDEX_IDENTITIES: readonly ConfiguredExternalSessionCandidateIndexIdentity[] = Object.freeze([]);
 
 export async function createLiveConfiguredPluginExternalSessionsAdapter(params: Readonly<{

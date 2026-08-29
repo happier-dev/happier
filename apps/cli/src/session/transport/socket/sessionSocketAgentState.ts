@@ -7,8 +7,8 @@ import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   detectSessionTurnActivityFromProjection,
+  isSessionAgentThreadTextUserMessage,
   isSessionAgentMessage,
-  isSessionUserMessage,
   readSessionProjectedPendingRequestCount,
   readSessionProjectedTurnStatus,
   type SessionTurnActivity,
@@ -507,7 +507,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
       });
       if (!decrypted) return;
 
-      if (isSessionUserMessage(decrypted)) {
+      if (isSessionAgentThreadTextUserMessage(decrypted)) {
         pendingInputTurnsAwaitingMaterialization = Math.max(0, pendingInputTurnsAwaitingMaterialization - 1);
         pendingUserTurns += 1;
         requiresTranscriptIdleEvidence = true;

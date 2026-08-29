@@ -120,6 +120,12 @@ export function createContributionRegistrationHost(params: Readonly<{
     generation: string;
     rights: readonly ContributionRegistrationRight[];
     isGenerationCurrent(): boolean;
+    /**
+     * Host-owned bound for one independent registration-cleanup attempt;
+     * forwarded to the SDK registration scope, which bounds each captured
+     * cleanup individually while preserving its reverse-order dependency.
+     */
+    cleanupTimeoutMs?: number;
     onAgentExternalSessionsRegistration?: (
         localAgentId: string,
         contribution: AgentExternalSessionsContribution,
@@ -136,6 +142,9 @@ export function createContributionRegistrationHost(params: Readonly<{
         pluginId: params.pluginId,
         target: { realm: 'daemon' },
         rights: params.rights,
+        ...(params.cleanupTimeoutMs === undefined
+            ? {}
+            : { cleanupTimeoutMs: params.cleanupTimeoutMs }),
         assertAvailable() {
             if (!params.isGenerationCurrent()) {
                 throw new Error(`Plugin '${params.pluginId}' cannot register against retired generation '${params.generation}'`);

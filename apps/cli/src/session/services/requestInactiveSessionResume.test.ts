@@ -85,6 +85,41 @@ describe('requestInactiveSessionResume', () => {
     expect(callMachineRpc.mock.calls[0]?.[0]?.request).not.toHaveProperty('codexBackendMode');
   });
 
+  it('refuses an externally linked inactive session before spawn so takeover owns hosted admission', async () => {
+    // An externally linked Session's hosted runtime is owned by the External
+    // Sessions takeover operation. Automatic resume must not spawn it.
+    const linkedMetadata = {
+      ...metadata,
+      externalSessionV1: {
+        v: 1,
+        agentId: 'claude',
+        machineId: 'machine-1',
+        remoteSessionId: 'vendor-session-1',
+        source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+        linkedAtMs: 1_000,
+      },
+    };
+
+    await expect(requestInactiveSessionResume({
+      credentials, sessionId: 'session-1', localId: 'local-1', rawSession: rawSession(), metadata: linkedMetadata,
+    })).resolves.toMatchObject({ ok: false, code: 'takeover_required' });
+
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('refuses an inactive session whose external link exists but is unresolved instead of spawning it', async () => {
+    // A link that cannot be trusted is not absence of a link: fail closed.
+    await expect(requestInactiveSessionResume({
+      credentials,
+      sessionId: 'session-1',
+      localId: 'local-1',
+      rawSession: rawSession(),
+      metadata: { ...metadata, externalSessionV1: { v: 1 } },
+    })).resolves.toMatchObject({ ok: false, code: 'takeover_required' });
+
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
   it('rejects an archived session before contacting its recorded machine', async () => {
     await expect(requestInactiveSessionResume({
       credentials,

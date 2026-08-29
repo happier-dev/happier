@@ -71,7 +71,10 @@ type SetupOptions = Readonly<{
     NonNullable<
       ServiceInput['resolveRetainedExternalSessionAgentContribution']
     >;
-}>;
+  executeFollow?: NonNullable<
+    ExternalSessionHostOperationSet['followOperation']
+  >['execute'];
+}>
 
 async function setup(options: SetupOptions = {}) {
   const privateOwner = createExternalSessionHostOperationOwner();
@@ -96,14 +99,19 @@ async function setup(options: SetupOptions = {}) {
     NonNullable<
       ExternalSessionHostOperationSet['followOperation']
     >['execute']
-  >(async (request) => {
+  >(options.executeFollow ?? (async (request) => {
     followListener = request.listener;
     return {
       status: 'following' as const,
       startingCursor: request.options.cursor ?? null,
       subscription: { dispose: disposeFollow },
     };
-  });
+  }));
+  const setFollowListener = (
+    listener: ((event: HostExternalTranscriptFollowEvent) => void | Promise<void>) | null,
+  ): void => {
+    followListener = listener;
+  };
   const operations: ExternalSessionHostOperationSet = {
     followOperation: {
       execute: executeFollow,
@@ -164,6 +172,7 @@ async function setup(options: SetupOptions = {}) {
     operations,
     executeFollow,
     disposeFollow,
+    setFollowListener,
     snapshotVoiceAuthority,
     waitVoiceAuthorityRetired,
     authorizeActiveTurn,
@@ -487,7 +496,7 @@ describe('runner Agent daemon-owned facet service', () => {
     expect(fixture.disposeFollow).toHaveBeenCalledOnce();
   });
 
-  it('publishes follow.open before an event emitted during async registration', async () => {
+  it('holds a registration event under one-event custody and publishes follow.open only after acknowledgement', async () => {
     const fixture = await setup();
     fixture.executeFollow.mockImplementationOnce(
       async (request) => {
@@ -512,7 +521,7 @@ describe('runner Agent daemon-owned facet service', () => {
       },
     );
 
-    await expect(fixture.service.dispatch({
+    const opened = await fixture.service.dispatch({
       ...direct,
       operation: {
         kind: 'external_session.follow.open',
@@ -520,22 +529,126 @@ describe('runner Agent daemon-owned facet service', () => {
         followId: 'registration-follow',
         target: { kind: 'externalSession', ref, source },
       },
-    })).resolves.toEqual({
-      kind: 'external_session.follow.open',
+    });
+    expect(opened).toMatchObject({
+      kind: 'external_session.follow.event',
       followId: 'registration-follow',
-      result: { status: 'following', startingCursor: null },
+      event: { kind: 'data', nextCursor: 'registration-cursor' },
     });
     await expect(fixture.service.dispatch({
       ...direct,
       operation: {
         kind: 'external_session.follow.next',
-        requestId: 'registration-next',
+        requestId: 'registration-ack',
         followId: 'registration-follow',
+        ...(opened.kind === 'external_session.follow.event'
+          ? { acknowledgeEventId: opened.eventId }
+          : {}),
       },
-    })).resolves.toMatchObject({
-      kind: 'external_session.follow.event',
+    })).resolves.toEqual({
+      kind: 'external_session.follow.open',
       followId: 'registration-follow',
-      event: { kind: 'data', nextCursor: 'registration-cursor' },
+      result: { status: 'following', startingCursor: null },
+    });
+  });
+
+  it('delivers a multi-page initial replay oldest-first under one-event custody before follow.open settles', async () => {
+    const fixture = await setup({
+      executeFollow: async (request) => {
+        await request.listener({
+          kind: 'data',
+          phase: 'initial_replay',
+          items: [{
+            id: 'replay-item-1',
+            kind: 'agent',
+            data: {
+              role: 'agent',
+              content: { type: 'codex', data: { type: 'message', message: 'oldest page' } },
+            },
+          }],
+          fromCursor: null,
+          nextCursor: 'replay-cursor-2',
+        });
+        // Delivery is serialised behind the listener, so the second, newer
+        // page is emitted only after the older page was acknowledged and
+        // drained through the open exchange.
+        await request.listener({
+          kind: 'data',
+          phase: 'initial_replay',
+          items: [{
+            id: 'replay-item-2',
+            kind: 'agent',
+            data: {
+              role: 'agent',
+              content: { type: 'codex', data: { type: 'message', message: 'newer page' } },
+            },
+          }],
+          fromCursor: 'replay-cursor-2',
+          nextCursor: 'replay-cursor-3',
+        });
+        return {
+          status: 'following' as const,
+          startingCursor: 'replay-cursor-3',
+          subscription: { dispose: async () => undefined },
+        };
+      },
+    });
+
+    const firstPage = await fixture.service.dispatch({
+      ...direct,
+      operation: {
+        kind: 'external_session.follow.open',
+        requestId: 'replay-open',
+        followId: 'replay-follow',
+        target: { kind: 'externalSession', ref, source },
+        initialReplay: true,
+      },
+    });
+    expect(firstPage).toMatchObject({
+      kind: 'external_session.follow.event',
+      followId: 'replay-follow',
+      event: {
+        kind: 'data',
+        phase: 'initial_replay',
+        fromCursor: null,
+        nextCursor: 'replay-cursor-2',
+      },
+    });
+    const secondPage = await fixture.service.dispatch({
+      ...direct,
+      operation: {
+        kind: 'external_session.follow.next',
+        requestId: 'replay-ack-1',
+        followId: 'replay-follow',
+        ...(firstPage.kind === 'external_session.follow.event'
+          ? { acknowledgeEventId: firstPage.eventId }
+          : {}),
+      },
+    });
+    expect(secondPage).toMatchObject({
+      kind: 'external_session.follow.event',
+      followId: 'replay-follow',
+      event: {
+        kind: 'data',
+        phase: 'initial_replay',
+        fromCursor: 'replay-cursor-2',
+        nextCursor: 'replay-cursor-3',
+      },
+    });
+    await expect(fixture.service.dispatch({
+      ...direct,
+      operation: {
+        kind: 'external_session.follow.next',
+        requestId: 'replay-ack-2',
+        followId: 'replay-follow',
+        ...(secondPage.kind === 'external_session.follow.event'
+          ? { acknowledgeEventId: secondPage.eventId }
+          : {}),
+      },
+    })).resolves.toEqual({
+      kind: 'external_session.follow.open',
+      followId: 'replay-follow',
+      result: { status: 'following', startingCursor: 'replay-cursor-3' },
     });
   });
 

@@ -30,7 +30,7 @@ export async function searchSessionTranscript<TItem>(
     const maxBytes = normalizeBoundedInt(input.maxBytes, 64 * 1024, 1024 * 1024);
     const stringifyItem = params.stringifyItem ?? ((item) => JSON.stringify(item));
     const matches: TItem[] = [];
-    let cursor = readOptionalString(input, 'cursor') ?? params.store.getTailCursor() ?? 'tail';
+    let cursor = readOptionalString(input, 'cursor') ?? '0';
     let nextCursor: string | null = cursor;
     let truncated = false;
 

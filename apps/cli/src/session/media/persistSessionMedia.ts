@@ -162,6 +162,15 @@ export async function persistSessionMedia(params: Readonly<{
   workspaceBudgetMaxBytes?: number | null;
   sessionRpcTransferMaxBytes?: number | null;
   providerFileDownloader?: (source: Extract<SessionMediaIngestionSource, { kind: 'provider-file' }>) => Promise<SessionMediaProviderFileDownloadResult>;
+  /**
+   * Awaited before the first filesystem effect on each resolved candidate
+   * destination. Operation-owned cleanup custody is durably admitted from
+   * this callback before creation, so a process death after the destination
+   * write but before post-write bookkeeping still leaves the file enumerable
+   * for Discard/cleanup; a candidate that was never created garbage-collects
+   * as a no-op.
+   */
+  onIntendedWorkspacePath?: (candidateWorkspaceRelativePath: string) => void | Promise<void>;
   input: PersistSessionMediaInput;
 }>): Promise<PersistSessionMediaResult> {
   const messageLocalId = normalizePathSegment(params.input.messageLocalId);
@@ -235,6 +244,8 @@ export async function persistSessionMedia(params: Readonly<{
     if (!uploadTarget.success) {
       return failure('unauthorized_media_path', uploadTarget.error);
     }
+
+    await params.onIntendedWorkspacePath?.(candidateMediaPath);
 
     if (await fileExistsWithHash(uploadTarget.target.destPath, sha256)) {
       storedFileName = candidateFileName;

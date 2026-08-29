@@ -85,7 +85,7 @@ async function writeExternalSessionsPlugin(input: Readonly<{
     version: 'H' | 'I';
     runtime?: 'custom' | 'declarativeAcp';
     activation?: 'startup' | 'onDemand';
-    sessionsHostAccess?: 'required' | 'omitted';
+    sessionsHostAccess?: 'required' | 'omitted' | 'otherMachine' | 'projectRestricted';
     refuseConnectedServiceSources?: boolean;
     backgroundProbeOutputPath?: string;
 }>): Promise<void> {
@@ -114,7 +114,27 @@ async function writeExternalSessionsPlugin(input: Readonly<{
                         reason: 'Use the public External Sessions projection.',
                         scope: { access: ['read', 'control'] },
                     }]
-                    : [],
+                    : sessionsHostAccess === 'otherMachine'
+                        ? [{
+                            id: 'current-global-sessions',
+                            capability: 'sessions',
+                            reason: 'Use the public External Sessions projection.',
+                            scope: {
+                                access: ['read', 'control'],
+                                machineIds: ['machine-other-than-this-host'],
+                            },
+                        }]
+                        : sessionsHostAccess === 'projectRestricted'
+                            ? [{
+                                id: 'current-global-sessions',
+                                capability: 'sessions',
+                                reason: 'Use the public External Sessions projection.',
+                                scope: {
+                                    access: ['read', 'control'],
+                                    projectIds: ['project-current-global'],
+                                },
+                            }]
+                            : [],
                 optional: [],
             },
             contributes: {
@@ -977,6 +997,87 @@ describe('current global External Sessions publication', () => {
             ]);
         }
     }, 120_000);
+
+    it('fails the public router closed for host-restricted Sessions HostAccess scopes', async () => {
+        resetActiveAccountSettingsSnapshotForTests();
+        const runPublicProbe = async (
+            sessionsHostAccess: 'otherMachine' | 'projectRestricted',
+        ): Promise<{ status: string; code?: string | null; remoteSessionId?: string | null }> => {
+            const happyHomeDir = await mkdtemp(join(tmpdir(), `happier-current-global-scope-${sessionsHostAccess}-home-`));
+            const pluginRoot = await mkdtemp(join(tmpdir(), `happier-current-global-scope-${sessionsHostAccess}-plugin-`));
+            const backgroundProbeOutputPath = join(pluginRoot, 'background-probe.json');
+            let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+            let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
+            try {
+                await writeExternalSessionsPlugin({
+                    pluginRoot,
+                    version: 'H',
+                    sessionsHostAccess,
+                    backgroundProbeOutputPath,
+                });
+                await seedCurrentLocalPathPluginFixture({
+                    happyHomeDir,
+                    pluginRoot,
+                    pluginId: PLUGIN_ID,
+                    manifestVersion: '1.0.0',
+                });
+                const inputs = await resolveCurrentnessInputs({ happyHomeDir, pluginRoot });
+                reloadController = createPluginReloadController({
+                    resolveRuntimeRegistry: async () => registry!,
+                });
+                registry = await resolveExecutablePluginRuntimeRegistry({
+                    happyHomeDir,
+                    contributes: inputs.contributes,
+                    generation: 1,
+                    generationAuthority: inputs.generationAuthority,
+                    currentGlobalExternalSessionsRouter:
+                        reloadController.currentGlobalExternalSessions,
+                    resolveExternalSessionCurrentMachineId: () => 'machine-current-global',
+                });
+                await registry.activateContributionsOnDemand([{
+                    pluginId: PLUGIN_ID,
+                    family: 'agents',
+                    localId: AGENT_ID,
+                }]);
+                await reloadController.adoptPreparedRuntimeRegistry({
+                    registry,
+                    changedPluginIds: [PLUGIN_ID],
+                    durableRevision: 1,
+                    runningSessionDisposition: 'retainRunningSessions',
+                });
+
+                let probe: { status: string; code?: string | null; remoteSessionId?: string | null } | null = null;
+                await vi.waitFor(async () => {
+                    probe = JSON.parse(await readFile(backgroundProbeOutputPath, 'utf8'));
+                    expect(probe).toBeTruthy();
+                });
+                return probe!;
+            } finally {
+                resetActiveAccountSettingsSnapshotForTests();
+                await reloadController?.shutdown();
+                if (!reloadController) await registry?.dispose();
+                await Promise.all([
+                    rm(happyHomeDir, { recursive: true, force: true }),
+                    rm(pluginRoot, { recursive: true, force: true }),
+                ]);
+            }
+        };
+
+        // A machineIds restriction that excludes the host's current machine
+        // grants nothing: the read probe fails with the typed scope denial.
+        await expect(runPublicProbe('otherMachine')).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_session_scope_unavailable',
+        });
+
+        // A projectIds restriction fails closed: the public External Sessions
+        // surface has no host-owned canonical project identity, and
+        // plugin-private source link data is never consulted to match it.
+        await expect(runPublicProbe('projectRestricted')).resolves.toEqual({
+            status: 'unavailable',
+            code: 'plugin_session_scope_unavailable',
+        });
+    }, 240_000);
 
     it('refreshes source-refusal diagnostics after admitted Account revisions', async () => {
         resetActiveAccountSettingsSnapshotForTests();

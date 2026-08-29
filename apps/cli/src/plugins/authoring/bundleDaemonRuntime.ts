@@ -70,7 +70,12 @@ function portableModulePathLabel(
   options: Readonly<{ buildWorkingDirectory: string; portableRoot: string | undefined }>,
 ): string {
   // Keys that do not escape the build working directory are already checkout-independent.
-  if (!inputKey.startsWith('../') && !isAbsolute(inputKey)) return inputKey;
+  if (!inputKey.startsWith('../') && !isAbsolute(inputKey)) {
+    return inputKey.replace(
+      /^node_modules\/@happier-dev-canonical-workspace\/([^/]+)\//u,
+      '$1/',
+    );
+  }
   const absolutePath = resolve(options.buildWorkingDirectory, inputKey);
   if (options.portableRoot && isPathInsideRoot(options.portableRoot, absolutePath)) {
     return relative(options.portableRoot, absolutePath).split(sep).join('/');
@@ -234,10 +239,26 @@ function getFirstPartyWorkspacePackageName(specifier: string): string | null {
   return `${scope}/${packageSegment}`;
 }
 
+function resolveAncestorNodeModulesRoots(roots: readonly string[]): string[] {
+  const result = new Set<string>();
+  for (const root of roots) {
+    let current = resolve(root);
+    for (;;) {
+      const candidate = join(current, 'node_modules');
+      if (existsSync(candidate)) result.add(candidate);
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+  return [...result];
+}
+
 type CanonicalWorkspaceImportResolver = Readonly<{
   aliases: Readonly<Record<string, string>>;
   plugin: EsbuildPlugin;
   resolutionRoot: string;
+  nodePaths: string[];
   dispose(): Promise<void>;
 }>;
 
@@ -298,10 +319,15 @@ async function createCanonicalWorkspaceImportResolver(
     aliasPackageName,
     packageName,
   }) => [packageName, aliasPackageName])));
+  const nodePaths = resolveAncestorNodeModulesRoots([
+    stagedRoot,
+    ...canonicalPackages.map(({ physicalRoot }) => physicalRoot),
+  ]);
 
   return {
     aliases,
     resolutionRoot,
+    nodePaths,
     plugin: {
       name: 'happier-canonical-workspace-imports',
       setup(build) {
@@ -807,14 +833,29 @@ export async function stagePluginDaemonRuntime(
     params.canonicalWorkspacePackageRoots,
     stagedRoot,
   );
+  const portableRoot = resolvePortableModulePathRoot(
+    sourceRoot,
+    params.canonicalWorkspacePackageRoots,
+  );
   const buildWorkingDirectory = canonicalWorkspaceImportResolver?.resolutionRoot ?? sourceRoot;
   const daemonRelativePath = relative(stagedRoot, outputPath).split(sep).join('/');
   const daemonExtension = extname(daemonRelativePath);
+  const logicalSourceRoot = canonicalWorkspaceImportResolver
+    ? join(buildWorkingDirectory, '__happier-author-source')
+    : sourceRoot;
+  if (canonicalWorkspaceImportResolver) {
+    await symlink(sourceRoot, logicalSourceRoot, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  const logicalSourcePath = canonicalWorkspaceImportResolver
+    ? join(logicalSourceRoot, relative(sourceRoot, sourceRealPath))
+    : sourceRealPath;
   const entryPoints = Object.fromEntries([
-    [daemonRelativePath.slice(0, -daemonExtension.length), sourceRealPath],
+    [daemonRelativePath.slice(0, -daemonExtension.length), logicalSourcePath],
     ...[...sessionRunnerEntries].map(([packedPath, sourcePath]) => [
       packedPath.slice(0, -extname(packedPath).length),
-      sourcePath,
+      canonicalWorkspaceImportResolver
+        ? join(logicalSourceRoot, relative(sourceRoot, sourcePath))
+        : sourcePath,
     ] as const),
   ]);
   try {
@@ -823,6 +864,7 @@ export async function stagePluginDaemonRuntime(
       outdir: stagedRoot,
       absWorkingDir: buildWorkingDirectory,
       bundle: true,
+      preserveSymlinks: true,
       format: 'esm',
       splitting: sessionRunnerEntries.size > 0,
       platform: 'node',
@@ -839,6 +881,7 @@ export async function stagePluginDaemonRuntime(
         ? {
           alias: canonicalWorkspaceImportResolver.aliases,
           plugins: [canonicalWorkspaceImportResolver.plugin],
+          nodePaths: canonicalWorkspaceImportResolver.nodePaths,
         }
         : {}),
     });
@@ -856,10 +899,6 @@ export async function stagePluginDaemonRuntime(
       return Object.freeze({ outputKey, absoluteOutputPath });
     });
 
-    const portableRoot = resolvePortableModulePathRoot(
-      sourceRoot,
-      params.canonicalWorkspacePackageRoots,
-    );
     const portableLabelsByInputKey = new Map(
       Object.keys(buildResult.metafile.inputs)
         .map((inputKey) => [

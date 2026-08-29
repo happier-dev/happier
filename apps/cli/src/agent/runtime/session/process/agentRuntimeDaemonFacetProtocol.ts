@@ -9,6 +9,7 @@ import {
   ExternalSessionTranscriptRawMessageV1Schema,
   ExternalSessionsSourceSchema,
   PluginContributionIdentityV1Schema,
+  SidechainIdSchema,
   VoiceProviderContributionSchema,
   RuntimeDescriptorV1Schema,
   SessionRunnerRuntimeStateV1Schema,
@@ -58,6 +59,7 @@ export const RunnerAgentDaemonExternalSessionRefV1Schema = z.object({
 const ExternalSessionTranscriptItemSchema = z.object({
   id: ExternalSessionTranscriptItemIdV1Schema,
   localId: ExternalSessionTranscriptItemIdV1Schema.optional(),
+  sidechainId: SidechainIdSchema.nullable().optional(),
   userProjection: ExternalSessionUserProjectionSchema.optional(),
   timestampMs: ExternalSessionTranscriptSourceTimestampV1Schema.optional(),
   kind: z.enum(['user', 'agent', 'system', 'event']),

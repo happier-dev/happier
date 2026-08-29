@@ -166,6 +166,7 @@ function bindHost(params: Readonly<{
     get?: (url: string) => Promise<Readonly<{ status: number; data: unknown }>>;
     post: (url: string, body: string) => Promise<Readonly<{ status: number; data: unknown }>>;
     currentness?: (credentials: StoredCredentials) => AccountEncryptionCurrentnessResponse;
+    isCurrentAccount?: () => boolean;
     subscribeChanges?: (
         subscription: Readonly<{
             accountScopeKey: string;
@@ -188,7 +189,7 @@ function bindHost(params: Readonly<{
     const host = createAccountPluginDataStorageHost({
         contracts: params.contracts ?? [admitted],
         readCredentials: async () => params.credentials ?? plainCredentials,
-        isCurrentAccount: () => true,
+        isCurrentAccount: params.isCurrentAccount ?? (() => true),
         resolveAccountScopeKey: () => ACCOUNT_SCOPE_KEY,
         resolveBaseUrl: () => 'https://data.example.test',
         resolveAccountEncryptionCurrentness: async (credentials) => (
@@ -197,8 +198,14 @@ function bindHost(params: Readonly<{
         http: {
             get: async (url) => params.get
                 ? await params.get(url)
-                : { status: 200, data: { mode: params.credentials?.encryption ? 'e2ee' : 'plain', updatedAt: 1 } },
-            post: async (url, body) => await params.post(url, body),
+                : url.endsWith('/v1/plugins/data/get')
+                    ? { status: 200, data: { row: null, absenceEpoch: 0 } }
+                    : { status: 200, data: { mode: params.credentials?.encryption ? 'e2ee' : 'plain', updatedAt: 1 } },
+            post: async (url, body) => url.endsWith('/v1/plugins/data/get')
+                ? params.get
+                    ? await params.get(url)
+                    : { status: 200, data: { row: null, absenceEpoch: 0 } }
+                : await params.post(url, body),
         },
         ...featureSnapshotDependency,
         ...(params.subscribeChanges ? { subscribeChanges: params.subscribeChanges } : {}),
@@ -613,11 +620,152 @@ describe('Account plugin Data storage host', () => {
                     kind: 'put',
                     rowId: 'task-1',
                     expectedRevision: 'absent',
+                    expectedAbsenceEpoch: 0,
                     content: { t: 'plain', v: { privateNote: 'keep private' } },
                     projection: { status: 'open' },
                 }],
             },
         }]);
+    });
+
+    it('observes Collection absence immediately before an absent create and stamps that exact epoch', async () => {
+        const calls: HttpCall[] = [];
+        const account = bindHost({
+            get: async (url) => url.endsWith('/v1/plugins/data/get')
+                ? { status: 200, data: { row: null, absenceEpoch: 17 } }
+                : { status: 200, data: { mode: 'plain', updatedAt: 1 } },
+            post: async (url, body) => {
+                calls.push({ url, body: JSON.parse(body) });
+                return {
+                    status: 200,
+                    data: {
+                        status: 'updated',
+                        results: [{ rowId: 'task-epoch', revision: 1, deleted: false }],
+                        changeCursor: 1,
+                    },
+                };
+            },
+        });
+
+        await expect(account.collection(collectionDefinition).put({
+            id: 'task-epoch',
+            status: 'open',
+            privateNote: 'new row',
+        }, { expectedRevision: 'absent' })).resolves.toMatchObject({
+            rowId: 'task-epoch',
+            revision: 1,
+        });
+
+        expect(calls).toEqual([{
+            url: 'https://data.example.test/v1/plugins/data/mutate',
+            body: expect.objectContaining({
+                operations: [expect.objectContaining({
+                    rowId: 'task-epoch',
+                    expectedRevision: 'absent',
+                    expectedAbsenceEpoch: 17,
+                })],
+            }),
+        }]);
+    });
+
+    it('retries a response-lost exact tombstone forget without touching a recreated row', async () => {
+        let forgetAttempts = 0;
+        const calls: HttpCall[] = [];
+        const account = bindHost({
+            get: async (url) => url.endsWith('/v1/plugins/data/get')
+                ? { status: 200, data: { row: null, absenceEpoch: forgetAttempts === 0 ? 7 : 8 } }
+                : { status: 200, data: { mode: 'plain', updatedAt: 1 } },
+            post: async (url, body) => {
+                calls.push({ url, body: JSON.parse(body) });
+                if (!url.endsWith('/v1/plugins/data/forget')) {
+                    throw new Error(`Unexpected Collection mutation: ${url}`);
+                }
+                forgetAttempts += 1;
+                // The server committed the exact delete but the response did
+                // not reach this client. A later exact retry must use the
+                // server's idempotent historical-identity result, never write.
+                if (forgetAttempts === 1) throw new Error('response lost after commit');
+                return { status: 200, data: { status: 'forgotten' } };
+            },
+        });
+        const collection = account.collection(collectionDefinition);
+
+        await expect(collection.forget('task-retained', { expectedRevision: 4 })).rejects.toMatchObject({
+            code: 'plugin_account_storage_unavailable',
+            retryable: true,
+        } satisfies Partial<PluginError>);
+        await expect(collection.forget('task-retained', { expectedRevision: 4 })).resolves.toEqual({
+            rowId: 'task-retained',
+            forgotten: true,
+        });
+        expect(calls.map(({ body }) => body)).toEqual([
+            expect.objectContaining({ expectedRevision: 4, expectedAbsenceEpoch: 7 }),
+            expect.objectContaining({ expectedRevision: 4, expectedAbsenceEpoch: 8 }),
+        ]);
+    });
+
+    it('refuses an exact live row before forgetting and revalidates Account currentness after forget transport', async () => {
+        let current = true;
+        const post = vi.fn(async () => {
+            current = false;
+            return { status: 200, data: { status: 'forgotten' } };
+        });
+        const account = bindHost({
+            isCurrentAccount: () => current,
+            get: async (url) => url.endsWith('/v1/plugins/data/get')
+                ? {
+                    status: 200,
+                    data: {
+                        row: {
+                            rowId: 'task-live',
+                            revision: 4,
+                            content: { t: 'plain', v: { privateNote: 'still live' } },
+                            projection: { status: 'open' },
+                        },
+                        absenceEpoch: 7,
+                    },
+                }
+                : { status: 200, data: { mode: 'plain', updatedAt: 1 } },
+            post,
+        });
+
+        await expect(account.collection(collectionDefinition).forget('task-live', {
+            expectedRevision: 4,
+        })).rejects.toMatchObject({
+            code: 'plugin_collection_conflict',
+        } satisfies Partial<PluginError>);
+        expect(post).not.toHaveBeenCalled();
+
+        current = true;
+        const absentAccount = bindHost({
+            isCurrentAccount: () => current,
+            get: async (url) => url.endsWith('/v1/plugins/data/get')
+                ? { status: 200, data: { row: null, absenceEpoch: 7 } }
+                : { status: 200, data: { mode: 'plain', updatedAt: 1 } },
+            post,
+        });
+        await expect(absentAccount.collection(collectionDefinition).forget('task-deleted', {
+            expectedRevision: 4,
+        })).rejects.toMatchObject({
+            code: 'plugin_account_storage_unavailable',
+        } satisfies Partial<PluginError>);
+    });
+
+    it('propagates cancellation before a Collection forget can read or mutate', async () => {
+        const get = vi.fn(async () => ({ status: 200, data: { row: null, absenceEpoch: 0 } }));
+        const post = vi.fn(async () => ({ status: 200, data: { status: 'forgotten' } }));
+        const account = bindHost({ get, post });
+        const controller = new AbortController();
+        controller.abort();
+
+        await expect(account.collection(collectionDefinition).forget('task-cancelled', {
+            expectedRevision: 4,
+            signal: controller.signal,
+        })).rejects.toMatchObject({
+            code: 'plugin_collection_cancelled',
+        } satisfies Partial<PluginError>);
+        expect(get).not.toHaveBeenCalled();
+        expect(post).not.toHaveBeenCalled();
     });
 
     it('serializes a live-row batch assertion without turning it into a write', async () => {
@@ -664,6 +812,7 @@ describe('Account plugin Data storage host', () => {
                         kind: 'put',
                         rowId: 'task-written',
                         expectedRevision: 'absent',
+                        expectedAbsenceEpoch: 0,
                         content: { t: 'plain', v: { privateNote: 'write only this row' } },
                         projection: { status: 'open' },
                     },

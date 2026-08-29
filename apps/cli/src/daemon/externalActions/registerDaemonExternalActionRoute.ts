@@ -174,7 +174,7 @@ export function registerDaemonExternalActionRoute(
         sendExternalActionHttpError(reply, 'invalid_envelope');
         return;
       }
-      throw error;
+      sendExternalActionHttpError(reply, 'internal_error');
     },
     onRequest: async (request, reply) => {
       const lifetime = createRequestLifetime(request, reply);

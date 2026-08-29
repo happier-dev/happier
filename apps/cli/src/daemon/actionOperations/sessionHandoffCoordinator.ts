@@ -13,6 +13,11 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ActionOperationOwnerUpdate } from './actionOperationTypes';
+import type {
+  PrepareWorkspaceSyncHandoffInput,
+  WorkspaceSyncHandoffAdapter,
+  WorkspaceSyncHandoffPrepared,
+} from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 
 type Failure = Readonly<{ ok: false; errorCode: string; error: string }>;
 type RpcResult = unknown;
@@ -23,6 +28,11 @@ type HandoffInput = Readonly<{
   targetPath?: string;
   targetSessionStorageMode?: SessionHandoffStorageMode;
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
+  workspaceSyncAction?: Parameters<WorkspaceSyncHandoffAdapter['prepare']>[0]['action'];
+  workspaceSyncSourceRootPath?: string;
+  workspaceSyncTargetRootPath?: string;
+  workspaceSyncSourceWorkspaceRefId?: string;
+  workspaceSyncTargetWorkspaceRefId?: string;
 }>;
 
 type SourceContext =
@@ -52,12 +62,11 @@ type CoordinatorInput = Readonly<{
     machineId: string;
     handoffId: string;
     mode: 'source_cleanup';
-    workspaceReplicationReverseSourceRootPath?: string;
-    workspaceReplicationReverseTargetRootPath?: string;
   }>, signal: AbortSignal) => Promise<RpcResult>;
   abort: (request: Readonly<{ machineId: string; handoffId: string; reason: string }>) => Promise<unknown>;
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
   wait?: (signal: AbortSignal) => Promise<void>;
+  workspaceSyncAdapter?: WorkspaceSyncHandoffAdapter;
 }>;
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -199,18 +208,48 @@ export async function coordinateTrackedSessionHandoff(
 ): Promise<ActionExecuteResult> {
   let cancellationSourceMachineId: string | null = null;
   let cancellationHandoffId: string | null = null;
+  let preparedWorkspace: WorkspaceSyncHandoffPrepared | undefined;
   try {
   const source = await input.resolveSource(input.input.sessionId, input.signal);
   if (!source.ok) return source;
   cancellationSourceMachineId = source.sourceMachineId;
 
+  // Workspace preparation is intentionally before source stop (start()). The adapter owns
+  // bootstrap/readiness and never falls back to the retired replication engine.
+  if (input.workspaceSyncAdapter && input.input.workspaceSyncAction) {
+    const workspaceInput: PrepareWorkspaceSyncHandoffInput = {
+      operationId: input.input.sessionId,
+      action: input.input.workspaceSyncAction,
+      sourceMachineId: source.sourceMachineId,
+      targetMachineId: input.input.targetMachineId,
+      sourceWorkspaceRefId: input.input.workspaceSyncSourceWorkspaceRefId ?? input.input.sessionId,
+      targetWorkspaceRefId: input.input.workspaceSyncTargetWorkspaceRefId ?? input.input.targetMachineId,
+      sourceRootPath: input.input.workspaceSyncSourceRootPath ?? '',
+      targetRootPath: input.input.workspaceSyncTargetRootPath ?? input.input.targetPath ?? '',
+      ...(input.input.workspaceSyncAction.kind === 'copy_once'
+        ? { contentPolicy: input.input.workspaceSyncAction.contentPolicy }
+        : {}),
+      signal: input.signal,
+    };
+    preparedWorkspace = await input.workspaceSyncAdapter.prepare(workspaceInput);
+  }
+
   publishPhase(input.publishOwnerUpdate, 'packaging_session_state', 'Preparing session state');
   const startedAction = await input.start();
-  if (!startedAction.ok) return startedAction;
+  if (!startedAction.ok) {
+    if (preparedWorkspace && input.workspaceSyncAdapter) {
+      await input.workspaceSyncAdapter.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace });
+    }
+    return startedAction;
+  }
   const startedFailure = readFailure(startedAction.result, 'session_handoff_start_failed');
-  if (startedFailure) return startedFailure;
+  if (startedFailure) {
+    await input.workspaceSyncAdapter?.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace }).catch(() => undefined);
+    return startedFailure;
+  }
   const started = SessionHandoffStartResponseSchema.safeParse(startedAction.result);
   if (!started.success) {
+    await input.workspaceSyncAdapter?.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace }).catch(() => undefined);
     return { ok: false, errorCode: 'session_handoff_start_invalid', error: 'session_handoff_start_invalid' };
   }
 
@@ -223,6 +262,7 @@ export async function coordinateTrackedSessionHandoff(
 
   const negotiatedTransportStrategy = started.data.status.transportStrategy;
   if (negotiatedTransportStrategy !== 'direct_peer' && negotiatedTransportStrategy !== 'server_routed_stream') {
+    await input.workspaceSyncAdapter?.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace }).catch(() => undefined);
     await abortBoth(input, source.sourceMachineId, handoffId, 'transport_unavailable');
     return { ok: false, errorCode: 'transport_unavailable', error: 'transport_unavailable' };
   }
@@ -244,6 +284,7 @@ export async function coordinateTrackedSessionHandoff(
   publishTargetStatusProgress(input.publishOwnerUpdate, preparedRaw);
   const prepareFailure = readFailure(preparedRaw, 'session_handoff_prepare_failed');
   if (prepareFailure && !isPrepareObservationPending(prepareFailure.errorCode)) {
+    await input.workspaceSyncAdapter?.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace }).catch(() => undefined);
     await abortBoth(input, source.sourceMachineId, handoffId, prepareFailure.errorCode);
     return prepareFailure;
   }
@@ -308,6 +349,7 @@ export async function coordinateTrackedSessionHandoff(
       errorCode: 'session_handoff_resume_failed',
       error: 'session_handoff_resume_failed',
     };
+    await input.workspaceSyncAdapter?.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace });
     await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
     return failure;
   }
@@ -325,11 +367,15 @@ export async function coordinateTrackedSessionHandoff(
       errorCode: 'session_handoff_target_unconfirmed',
       error: 'session_handoff_target_unconfirmed',
     };
+    await input.workspaceSyncAdapter?.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace });
     await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
     return failure;
   }
 
   publishPhase(input.publishOwnerUpdate, 'committing_target', 'Committing target');
+  const workspaceCommitted = preparedWorkspace && input.workspaceSyncAdapter
+    ? await input.workspaceSyncAdapter.commit({ operationId: input.input.sessionId, prepared: preparedWorkspace, signal: input.signal })
+    : undefined;
   const committed = await input.commitTarget({
     machineId: input.input.targetMachineId,
     handoffId,
@@ -352,16 +398,6 @@ export async function coordinateTrackedSessionHandoff(
     machineId: source.sourceMachineId,
     handoffId,
     mode: 'source_cleanup',
-    ...(input.input.workspaceTransfer?.enabled === true
-      ? { workspaceReplicationReverseSourceRootPath: prepared.data.resume.directory }
-      : {}),
-    ...(input.input.workspaceTransfer?.enabled === true
-      && started.data.handoffMetadataV2?.workspaceReplicationSourceRootPath
-      ? {
-          workspaceReplicationReverseTargetRootPath:
-            started.data.handoffMetadataV2.workspaceReplicationSourceRootPath,
-        }
-      : {}),
   }, input.signal);
   const cleanupFailure = readFailure(cleanup, 'session_handoff_source_cleanup_failed');
   const cleanupResponse = SessionHandoffCommitResponseSchema.safeParse(cleanup);
@@ -378,6 +414,7 @@ export async function coordinateTrackedSessionHandoff(
     result: {
       handoffId,
       status: committedResponse.data.status,
+      ...(workspaceCommitted ? { workspace: workspaceCommitted } : {}),
       ...(cleanupWarning
         ? {
             warning: {
@@ -397,6 +434,9 @@ export async function coordinateTrackedSessionHandoff(
       cancellationHandoffId,
       'action_operation_cancelled',
     );
+    if (preparedWorkspace && input.workspaceSyncAdapter) {
+      await input.workspaceSyncAdapter.abort({ operationId: input.input.sessionId, prepared: preparedWorkspace }).catch(() => undefined);
+    }
     if (!acknowledged) {
       return {
         ok: false,

@@ -45,7 +45,10 @@ import {
   publishExternalSessionOperationProgress,
   settlePriorTerminalExternalSessionOperationProgressProjections,
 } from './operationProgressPublisher';
-import { readExternalSessionOperationRecord } from './operationRecordStore';
+import {
+  readExternalSessionOperationRecord,
+  type ExternalSessionOperationAccountScope,
+} from './operationRecordStore';
 import { resolveGenerationBoundExternalSessionFollowSurface } from './providerOpsResolution';
 import { preservesExternalSessionSourceIdentity } from '@/session/external/sourceIdentity';
 
@@ -391,6 +394,8 @@ async function stageRequiredHistoricalItems(input: Readonly<{
 
 export function createDefaultExternalSessionMaterializeActionExecutor(input: Readonly<{
   activeServerDir: string;
+  /** Pinned authenticated Account scope from operation admission, if available. */
+  accountScope?: ExternalSessionOperationAccountScope;
   operationExclusion: ExternalSessionOperationExclusion;
   sendHistoricalCommand(
     command: ExternalSessionOperationSocketCommandV1,
@@ -409,6 +414,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
 }>): ExternalSessionMaterializeActionExecutor {
   const staging = createExternalSessionOperationPrivateStagingStore({
     activeServerDir: input.activeServerDir,
+    ...(input.accountScope ? { accountScope: input.accountScope } : {}),
     limits: {
       perOperation: {
         maxItems: 100_000,
@@ -424,6 +430,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
 
   return createExternalSessionMaterializeActionExecutor({
     activeServerDir: input.activeServerDir,
+    ...(input.accountScope ? { accountScope: input.accountScope } : {}),
     operationExclusion: input.operationExclusion,
     staging,
     createStagedItemPreparationPhase: async (
@@ -464,6 +471,23 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
               sourceReadRoots: [],
               createdWorkspaceMediaPaths,
               persistedWorkspaceMediaPaths,
+              // Cleanup custody is durably admitted from the staging manifest
+              // before each destination write: the crash window between file
+              // creation and the post-item recordCreatedWorkspaceMedia call
+              // below can no longer orphan created workspace media. Intent
+              // entries for candidates that were never created (dedupe or
+              // failure) garbage-collect as a no-op; the later record call is
+              // an idempotent dedupe for entries already admitted here.
+              ...(workingDirectory
+                ? {
+                    recordIntendedWorkspaceMedia: async (media) => {
+                      await staging.recordCreatedWorkspaceMedia({
+                        operationId,
+                        media: [media],
+                      });
+                    },
+                  }
+                : {}),
             });
             const ownedWorkspaceMedia = workingDirectory
               ? createdWorkspaceMediaPaths.map((candidateWorkspaceRelativePath) => ({

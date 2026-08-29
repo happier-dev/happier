@@ -943,6 +943,195 @@ describe('runner Agent daemon facet adapters', () => {
     now.mockRestore();
   });
 
+  it('carries the original exhausted admission deadline and initial replay through a daemon-replacement reopen', async () => {
+    let nowMs = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const admissionDeadlineAtMs = 16_000;
+    const opens: Array<{
+      followId: string;
+      cursor?: string;
+      initialReplay?: boolean;
+      admissionDeadlineAtMs?: number;
+    }> = [];
+    let nextCount = 0;
+    const pageTranscript = vi.fn(async () => ({
+      items: [],
+      nextCursor: null,
+      tailCursor: 'cursor-replay',
+      hasMore: false,
+      truncated: false,
+    }));
+    const events: string[] = [];
+    const dispatch = vi.fn(async (input): Promise<
+      AgentRuntimeDaemonServiceResponseV1
+    > => {
+      const request = input.createRequest('A'.repeat(43));
+      if (request.operation.kind === 'voice.authority.snapshot') {
+        return {
+          ok: true,
+          result: {
+            kind: 'voice.authority.snapshot',
+            agentGeneration: runnerFixture.binding.immutableGenerationId,
+            providers: [],
+          },
+        };
+      }
+      if (request.operation.kind === 'external_session.follow.open') {
+        opens.push({
+          followId: request.operation.followId,
+          ...(request.operation.cursor
+            ? { cursor: request.operation.cursor }
+            : {}),
+          ...(request.operation.initialReplay
+            ? { initialReplay: true }
+            : {}),
+          ...(request.operation.admissionDeadlineAtMs === undefined
+            ? {}
+            : { admissionDeadlineAtMs: request.operation.admissionDeadlineAtMs }),
+        });
+        if (opens.length === 2) {
+          return {
+            ok: true,
+            result: {
+              kind: 'external_session.follow.provider_request',
+              followId: request.operation.followId,
+              providerRequestId: 'daemon-b-replay-provider-request',
+              request: {
+                kind: 'pageTranscript',
+                source: { kind: 'syntheticSource', value: 'test' },
+                remoteSessionId: 'remote-session-1',
+                direction: 'older',
+                maxBytes: 524_288,
+                maxItems: 1,
+                deadlineAtMs: admissionDeadlineAtMs,
+              },
+            },
+          };
+        }
+        return {
+          ok: true,
+          result: {
+            kind: 'external_session.follow.open',
+            followId: request.operation.followId,
+            result: {
+              status: 'following',
+              startingCursor: null,
+            },
+          },
+        };
+      }
+      if (request.operation.kind === 'external_session.follow.next') {
+        if (request.operation.providerResponse) {
+          expect(request.operation.providerResponse).toMatchObject({
+            providerRequestId: 'daemon-b-replay-provider-request',
+            status: 'success',
+            result: { kind: 'pageTranscript' },
+          });
+          return {
+            ok: true,
+            result: {
+              kind: 'external_session.follow.open',
+              followId: request.operation.followId,
+              result: {
+                status: 'following',
+                startingCursor: 'cursor-replay',
+              },
+            },
+          };
+        }
+        nextCount += 1;
+        if (nextCount === 1) {
+          nowMs = 32_000;
+          throw Object.assign(
+            new Error('daemon A replaced by daemon B'),
+            {
+              code:
+                RUNNER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_TRANSITION_CODE,
+            },
+          );
+        }
+        return {
+          ok: true,
+          result: {
+            kind: 'external_session.follow.event',
+            followId: request.operation.followId,
+            eventId: 'event-b-replay-1',
+            event: {
+              kind: 'terminated',
+              reason: 'retired',
+              cursor: 'cursor-replay',
+            },
+          },
+        };
+      }
+      if (request.operation.kind === 'external_session.follow.close') {
+        return {
+          ok: true,
+          result: {
+            kind: 'external_session.follow.closed',
+            followId: request.operation.followId,
+          },
+        };
+      }
+      throw new Error(`unexpected ${request.operation.kind}`);
+    });
+    const facets = await createRunnerAgentDaemonFacets({
+      authority,
+      dispatch,
+      readActiveTurnAdmissionWitness: () => witness,
+      resolveRetainedExternalSessionProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true, source }),
+        resolveLinkIdentity: async ({ source, remoteSessionId }) => ({
+          source,
+          remoteSessionId,
+        }),
+        pageTranscript,
+        readAfterTranscript: async () => ({
+          outcome: 'already_current',
+        }),
+      }),
+    });
+    const port =
+      facets.externalSessionHostOperations.bindSession(
+        runnerFixture.sessionId,
+      );
+    const follow = await port.executeProviderSessionFollow({
+      agentId: runnerFixture.binding.localAgentId,
+      providerSessionId: 'remote-session-1',
+      options: {
+        initialReplay: true,
+        admissionDeadlineAtMs,
+      },
+      listener: async (event) => {
+        events.push(event.kind);
+      },
+    });
+    expect(follow.status).toBe('following');
+    await vi.waitFor(() => {
+      expect(events).toEqual(['terminated']);
+    });
+    expect(opens).toHaveLength(2);
+    // The replacement continues the original admission sequence: the same
+    // absolute deadline and initial replay semantics, never a fresh window
+    // minted at replacement time (here 32_000 + policy deadline would be
+    // 47_000 and must not appear).
+    expect(opens[1]).toEqual({
+      initialReplay: true,
+      admissionDeadlineAtMs,
+      followId: expect.any(String),
+    });
+    expect(opens[1]?.followId).not.toBe(opens[0]?.followId);
+    expect(pageTranscript).toHaveBeenCalledOnce();
+    expect(pageTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      deadlineAtMs: admissionDeadlineAtMs,
+    }));
+    if (follow.status === 'following') {
+      await follow.subscription.dispose();
+    }
+    await facets.dispose();
+    now.mockRestore();
+  });
+
   it('executes only the retained runner companion when the daemon follow owner requests transcript work', async () => {
     const admissionDeadlineAtMs = Date.now() + 30_000;
     let providerSignal: AbortSignal | undefined;
@@ -1786,5 +1975,109 @@ describe('runner Agent daemon facet adapters', () => {
       }),
     });
     expect(facets.agentSessionRealtimeVoiceAuthority).toBeNull();
+  });
+
+  it('delivers pre-open replay events carried by the open exchange and acknowledges each once', async () => {
+    const listenerEvents: unknown[] = [];
+    const acknowledgeEventIds: Array<string | undefined> = [];
+    const dispatch = vi.fn(async (input): Promise<
+      AgentRuntimeDaemonServiceResponseV1
+    > => {
+      const request = input.createRequest('A'.repeat(43));
+      if (request.operation.kind === 'voice.authority.snapshot') {
+        return {
+          ok: true,
+          result: {
+            kind: 'voice.authority.snapshot',
+            agentGeneration: runnerFixture.binding.immutableGenerationId,
+            providers: [],
+          },
+        };
+      }
+      if (request.operation.kind === 'external_session.follow.open') {
+        return {
+          ok: true,
+          result: {
+            kind: 'external_session.follow.event',
+            followId: request.operation.followId,
+            eventId: 'replay-event-1',
+            event: {
+              kind: 'data',
+              phase: 'initial_replay',
+              items: [{
+                id: 'replay-item-1',
+                kind: 'agent',
+                data: {
+                  role: 'agent',
+                  content: {
+                    type: 'codex',
+                    data: { type: 'message', message: 'replayed page' },
+                  },
+                },
+              }],
+              fromCursor: null,
+              nextCursor: 'replay-cursor-2',
+            },
+          },
+        };
+      }
+      if (request.operation.kind === 'external_session.follow.next') {
+        acknowledgeEventIds.push(request.operation.acknowledgeEventId);
+        return {
+          ok: true,
+          result: {
+            kind: 'external_session.follow.open',
+            followId: request.operation.followId,
+            result: {
+              status: 'following',
+              startingCursor: 'replay-cursor-2',
+            },
+          },
+        };
+      }
+      if (request.operation.kind === 'external_session.follow.close') {
+        return {
+          ok: true,
+          result: {
+            kind: 'external_session.follow.closed',
+            followId: request.operation.followId,
+          },
+        };
+      }
+      throw new Error(`unexpected ${request.operation.kind}`);
+    });
+    const facets = await createRunnerAgentDaemonFacets({
+      authority,
+      dispatch,
+    });
+    const port = facets.externalSessionHostOperations.bindSession(
+      runnerFixture.sessionId,
+    );
+
+    const follow = await port.executeProviderSessionFollow({
+      agentId: runnerFixture.binding.localAgentId,
+      providerSessionId: 'provider-session-replay',
+      options: { initialReplay: true },
+      listener: async (event) => {
+        listenerEvents.push(event);
+      },
+    });
+
+    expect(follow).toMatchObject({
+      status: 'following',
+      startingCursor: 'replay-cursor-2',
+    });
+    expect(listenerEvents).toEqual([{
+      kind: 'data',
+      phase: 'initial_replay',
+      items: [expect.objectContaining({ id: 'replay-item-1' })],
+      fromCursor: null,
+      nextCursor: 'replay-cursor-2',
+    }]);
+    expect(acknowledgeEventIds[0]).toBe('replay-event-1');
+    if (follow.status === 'following') {
+      await follow.subscription.dispose();
+    }
+    await facets.dispose();
   });
 });

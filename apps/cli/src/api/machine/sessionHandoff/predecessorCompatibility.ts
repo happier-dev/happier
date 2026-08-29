@@ -563,6 +563,9 @@ export function registerSessionHandoffPredecessorCompatibilityHandlers(input: Re
     async (raw: unknown) => {
       const parsed = PredecessorPrepareTargetRequestV2Schema.safeParse(raw);
       if (!parsed.success) return invalidRequest();
+      if (parsed.data.workspaceTransfer !== undefined) {
+        return { ok: false, errorCode: 'workspace_sync_update_required', error: 'workspace_sync_update_required' } as const;
+      }
       const { sessionId, ...canonicalRequest } = parsed.data;
       const result = await input.prepareTarget(canonicalRequest);
       const finalResponse = SessionHandoffPrepareTargetResponseSchema.safeParse(result);

@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
 
+import { configuration } from '@/configuration';
+import { resolveConnectedServiceMaterializedHomeRoot } from '@/daemon/connectedServices/catalogHooks';
 import {
   resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot,
@@ -141,6 +143,59 @@ describe('validateExternalMachineSource', () => {
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
       },
+    });
+  });
+
+  it('stamps the host-materialized connected home onto a raw machine call that omits homePath', async () => {
+    const materializedRoot = resolveConnectedServiceMaterializedHomeRoot('codex', {
+      activeServerDir: configuration.activeServerDir,
+      serviceId: 'openai-codex',
+      profileId: 'profile-1',
+    });
+    if (!materializedRoot) {
+      throw new Error('Codex connected-service materialized home is unavailable in the test catalog');
+    }
+
+    await expect(
+      validateExternalMachineSource({
+        agentId: 'codex',
+        source: {
+          kind: 'codexHome',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'profile-1',
+        },
+        env: {},
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      source: {
+        kind: 'codexHome',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'profile-1',
+        homePath: materializedRoot,
+      },
+    });
+  });
+
+  it('rejects a raw connected-service machine call whose homePath does not match the materialized root', async () => {
+    await expect(
+      validateExternalMachineSource({
+        agentId: 'codex',
+        source: {
+          kind: 'codexHome',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'profile-1',
+          homePath: '/tmp/elsewhere/codex-home',
+        },
+        env: {},
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'external_session_source_invalid',
     });
   });
 

@@ -12,12 +12,18 @@ import type { StoredCredentials } from '@/persistence';
 
 const mocks = vi.hoisted(() => ({
   loadPersistedLinkedExternalSession: vi.fn(),
+  authenticateOwnedExternalSessionRecord: vi.fn(),
+  readPersistedLinkedExternalSessionFromRaw: vi.fn(),
   callMachineRpc: vi.fn(),
   resolveExternalSessionPluginOperationPreflightAdmission: vi.fn(),
 }));
 
 vi.mock('@/api/session/external/takeover/loadLinkedExternalSession', () => ({
   loadPersistedLinkedExternalSession: mocks.loadPersistedLinkedExternalSession,
+  authenticateOwnedExternalSessionRecord:
+    mocks.authenticateOwnedExternalSessionRecord,
+  readPersistedLinkedExternalSessionFromRaw:
+    mocks.readPersistedLinkedExternalSessionFromRaw,
 }));
 vi.mock('@/session/transport/rpc/machineRpc', () => ({
   callMachineRpc: mocks.callMachineRpc,
@@ -51,6 +57,20 @@ afterEach(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.authenticateOwnedExternalSessionRecord.mockResolvedValue({
+    ok: true,
+    rawSession: { id: 'session-1' },
+    accountEncryptionMode: 'plain',
+  });
+  mocks.readPersistedLinkedExternalSessionFromRaw.mockResolvedValue({
+    ok: true,
+    session: {
+      machineId: 'machine-private',
+      agentId: 'codex',
+      remoteSessionId: 'remote-private',
+      source: { kind: 'codexHome', home: '/private/home' },
+    },
+  });
   mocks.loadPersistedLinkedExternalSession.mockResolvedValue({
     ok: true,
     session: {
@@ -423,11 +443,11 @@ describe('plugin External Session action executor', () => {
     expect(materializeStart).not.toHaveBeenCalled();
   });
 
-  it('authorizes the current linked Session before inspecting a durable materialize receipt or conflict', async () => {
-    mocks.loadPersistedLinkedExternalSession.mockResolvedValueOnce({
+  it('authorizes the current Session owner before consulting the durable author-intent owner', async () => {
+    mocks.authenticateOwnedExternalSessionRecord.mockResolvedValueOnce({
       ok: false,
-      errorCode: 'invalid_request',
-      error: 'Session is unavailable.',
+      errorCode: 'agent_unavailable',
+      error: 'session_metadata_unavailable',
     });
     const materializeStart = vi.fn();
 
@@ -438,16 +458,57 @@ describe('plugin External Session action executor', () => {
       pluginId: 'author.example',
     }, { materializeStart, activeServerDir: '/unused' })).resolves.toEqual({
       ok: false,
-      errorCode: 'invalid_request',
-      error: 'Session is unavailable.',
+      errorCode: 'agent_unavailable',
+      error: 'session_metadata_unavailable',
     });
 
-    expect(mocks.loadPersistedLinkedExternalSession).toHaveBeenCalledWith({
+    expect(mocks.authenticateOwnedExternalSessionRecord).toHaveBeenCalledWith({
       credentials,
       sessionId: 'session-1',
     });
     expect(mocks.resolveExternalSessionPluginOperationPreflightAdmission)
       .not.toHaveBeenCalled();
+    expect(mocks.readPersistedLinkedExternalSessionFromRaw).not.toHaveBeenCalled();
+    expect(materializeStart).not.toHaveBeenCalled();
+  });
+
+  it('replays the durable operation before parsing the mutable current link', async () => {
+    mocks.resolveExternalSessionPluginOperationPreflightAdmission.mockResolvedValue({
+      kind: 'existing_record',
+      record: {
+        request: { sessionId: 'session-1' },
+        operationId: 'operation-committed',
+        revision: 3,
+      },
+    } as Awaited<ReturnType<typeof mocks.resolveExternalSessionPluginOperationPreflightAdmission>>);
+    // The current link has since become unavailable: replay must still win.
+    mocks.readPersistedLinkedExternalSessionFromRaw.mockResolvedValue({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'session_is_not_external',
+    });
+    const materializeStart = vi.fn();
+
+    await expect(executePluginExternalSessionAction({
+      actionId: 'sessions.external.materialize.start',
+      input: materializeInput('replay-before-link-parse'),
+      credentials,
+      pluginId: 'author.example',
+    }, { materializeStart, activeServerDir: '/unused' })).resolves.toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        operation: {
+          sessionId: 'session-1',
+          operationId: 'operation-committed',
+          revision: 3,
+        },
+      },
+    });
+
+    expect(mocks.resolveExternalSessionPluginOperationPreflightAdmission)
+      .toHaveBeenCalledTimes(1);
+    expect(mocks.readPersistedLinkedExternalSessionFromRaw).not.toHaveBeenCalled();
     expect(materializeStart).not.toHaveBeenCalled();
   });
 
@@ -506,7 +567,7 @@ describe('plugin External Session action executor', () => {
       sessionId: 'session-1',
       durableIdempotencyKey: thirdKey,
     }));
-    expect(mocks.loadPersistedLinkedExternalSession).toHaveBeenCalledTimes(3);
+    expect(mocks.readPersistedLinkedExternalSessionFromRaw).toHaveBeenCalledTimes(3);
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
   });
 
@@ -533,16 +594,17 @@ describe('plugin External Session action executor', () => {
         },
       },
     });
-    expect(mocks.loadPersistedLinkedExternalSession).toHaveBeenCalledWith({
+    expect(mocks.authenticateOwnedExternalSessionRecord).toHaveBeenCalledWith({
       credentials,
       sessionId: 'session-1',
     });
     expect(
-      mocks.loadPersistedLinkedExternalSession.mock.invocationCallOrder[0],
+      mocks.authenticateOwnedExternalSessionRecord.mock.invocationCallOrder[0],
     ).toBeLessThan(
       mocks.resolveExternalSessionPluginOperationPreflightAdmission
         .mock.invocationCallOrder[0]!,
     );
+    expect(mocks.readPersistedLinkedExternalSessionFromRaw).not.toHaveBeenCalled();
     expect(materializeStart).not.toHaveBeenCalled();
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
   });
@@ -599,8 +661,35 @@ describe('plugin External Session action executor', () => {
       mocks.resolveExternalSessionPluginOperationPreflightAdmission.mock.calls[1]?.[0]
         .durableIdempotencyKey,
     );
-    expect(mocks.loadPersistedLinkedExternalSession).toHaveBeenCalledTimes(2);
+    expect(mocks.readPersistedLinkedExternalSessionFromRaw).not.toHaveBeenCalled();
     expect(materializeStart).not.toHaveBeenCalled();
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
+  });
+
+  it('refuses a true miss whose current link no longer resolves before Start', async () => {
+    mocks.readPersistedLinkedExternalSessionFromRaw.mockResolvedValue({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_metadata_invalid',
+    });
+    const materializeStart = vi.fn();
+
+    await expect(executePluginExternalSessionAction({
+      actionId: 'sessions.external.materialize.start',
+      input: materializeInput('miss-requires-valid-link'),
+      credentials,
+      pluginId: 'author.example',
+    }, { materializeStart, activeServerDir: '/unused' })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'linked_session_metadata_invalid',
+    });
+
+    expect(mocks.readPersistedLinkedExternalSessionFromRaw).toHaveBeenCalledWith({
+      credentials,
+      rawSession: { id: 'session-1' },
+      accountEncryptionMode: 'plain',
+    });
+    expect(materializeStart).not.toHaveBeenCalled();
   });
 });

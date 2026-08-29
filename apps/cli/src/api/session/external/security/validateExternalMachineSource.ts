@@ -60,7 +60,9 @@ export async function validateExternalMachineSource(params: Readonly<{
   env: NodeJS.ProcessEnv;
 }>): Promise<ValidatedExternalMachineSourceResult> {
   const { agentId, source, env } = params;
-  const resolved = await resolveExternalSessionSourceSurface(agentId, source);
+  const resolved = await resolveExternalSessionSourceSurface(agentId, source, {
+    activeServerDir: configuration.activeServerDir,
+  });
   if (!resolved.ok) {
     return {
       ok: false,

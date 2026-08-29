@@ -27,6 +27,7 @@ import {
   pruneExpiredExternalSessionOperationTerminalReceipts,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
+  resolveExternalSessionOperationAccountScope,
   resolveExternalSessionPluginOperationPreflightAdmission,
   resolveExternalSessionOperationStartAdmission,
   type ExternalSessionOperationTerminalReceiptV1,
@@ -464,6 +465,18 @@ function useAccount(subject: string, marker = 'initial'): void {
   };
 }
 
+/**
+ * The record-store fixtures run without persisted credentials, so the pure
+ * ambient fallback partition subject is 'vitest'. Deletion fixtures pin it
+ * explicitly because abandonment requires the deletion fact's owning Account
+ * scope.
+ */
+function vitestAmbientAccountScope(
+  activeServerDir: string,
+): { activeServerDir: string; accountSubject: string } {
+  return { activeServerDir, accountSubject: 'vitest' };
+}
+
 async function createRoot(): Promise<string> {
   const root = await fsPromises.mkdtemp(join(tmpdir(), 'happier-operation-record-store-'));
   roots.push(root);
@@ -510,7 +523,7 @@ afterEach(async () => {
 });
 
 describe('external session operation record store integrity', () => {
-  it('abandons only nonterminal full records for the exact authoritatively deleted Session', async () => {
+  it('abandons every matching full record for the authoritatively deleted Session, terminal or not', async () => {
     const activeServerDir = await createRoot();
     const deletedSessionRecord = ExternalSessionOperationRecordV1Schema.parse({
       ...advancedOperationRecord(),
@@ -530,6 +543,9 @@ describe('external session operation record store integrity', () => {
         sessionId: 'session-other',
       },
     });
+    // A terminal record whose exact Discard recovery is still admitted: the
+    // durable parent-deletion fact extinguishes that recovery authority, so
+    // the deletion owner must clean and unlink it instead of preserving it.
     const terminal = ExternalSessionOperationRecordV1Schema.parse({
       ...terminalOperationRecord(),
       operationId: 'external-takeover:deleted-session-terminal',
@@ -551,15 +567,17 @@ describe('external session operation record store integrity', () => {
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
       sessionId: 'session-deleted',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
       withSessionOperationBarrier: async (_input, effect) => ({
         status: 'executed' as const,
         value: await effect(),
       }),
       cleanupPrivateOperation,
-    })).resolves.toEqual({ deleted: 1, deferred: 0, retained: 1 });
+    })).resolves.toEqual({ deleted: 2, deferred: 0, retained: 0 });
 
-    expect(cleanupPrivateOperation).toHaveBeenCalledOnce();
+    expect(cleanupPrivateOperation).toHaveBeenCalledTimes(2);
     expect(cleanupPrivateOperation).toHaveBeenCalledWith(deletedSessionRecord);
+    expect(cleanupPrivateOperation).toHaveBeenCalledWith(terminal);
     await expect(readExternalSessionOperationRecord(
       activeServerDir,
       deletedSessionRecord.operationId,
@@ -571,19 +589,174 @@ describe('external session operation record store integrity', () => {
     await expect(readExternalSessionOperationRecord(
       activeServerDir,
       terminal.operationId,
-    )).resolves.toEqual(terminal);
+    )).resolves.toBeNull();
 
-    // Crash/retry and duplicate delivery are idempotent once the exact row is gone.
+    // Crash/retry and duplicate delivery are idempotent once the exact rows are gone.
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
       sessionId: 'session-deleted',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
       withSessionOperationBarrier: async (_input, effect) => ({
         status: 'executed' as const,
         value: await effect(),
       }),
       cleanupPrivateOperation,
-    })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 1 });
-    expect(cleanupPrivateOperation).toHaveBeenCalledOnce();
+    })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 0 });
+    expect(cleanupPrivateOperation).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the matching full record and retries when private cleanup fails before unlink', async () => {
+    const activeServerDir = await createRoot();
+    const record = ExternalSessionOperationRecordV1Schema.parse({
+      ...terminalOperationRecord(),
+      operationId: 'external-takeover:deleted-session-cleanup-failure',
+      request: {
+        ...terminalOperationRecord().request,
+        idempotencyKey: 'deleted-session-cleanup-failure',
+        sessionId: 'session-deleted-cleanup-failure',
+      },
+    });
+    await writeRawRecord(activeServerDir, record.operationId, JSON.stringify(record));
+    const cleanupPrivateOperation = vi.fn(async () => {
+      throw new Error('external_session_operation_cleanup_failed');
+    });
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-cleanup-failure',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).rejects.toThrow('external_session_operation_cleanup_failed');
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toEqual(record);
+
+    // The durable deletion change retries after the failure is repaired.
+    const repairedCleanup = vi.fn(async () => undefined);
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-cleanup-failure',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation: repairedCleanup,
+    })).resolves.toEqual({ deleted: 1, deferred: 0, retained: 0 });
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toBeNull();
+  });
+
+  it('leaves already-compacted terminal receipts on their bounded expiry when the Session is deleted', async () => {
+    const activeServerDir = await createRoot();
+    const terminal = ExternalSessionOperationRecordV1Schema.parse({
+      ...terminalOperationRecord(),
+      operationId: 'external-takeover:deleted-session-receipt',
+      terminalResult: { kind: 'discarded' },
+      progressProjection: { acknowledgedRevision: 1 },
+      request: {
+        ...terminalOperationRecord().request,
+        idempotencyKey: 'deleted-session-receipt',
+        sessionId: 'session-deleted-receipt',
+      },
+    });
+    await writeRawRecord(activeServerDir, terminal.operationId, JSON.stringify(terminal));
+    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
+      activeServerDir,
+      operationId: terminal.operationId,
+      expectedRevision: terminal.revision,
+      stagingDisposition: 'missing',
+    });
+    if (compacted.status !== 'compacted' && compacted.status !== 'already_compacted') {
+      throw new Error(
+        `expected terminal receipt compaction to succeed, received ${compacted.status} (${('reason' in compacted) ? compacted.reason : 'n/a'})`,
+      );
+    }
+    const cleanupPrivateOperation = vi.fn(async () => undefined);
+
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-receipt',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 0 });
+    expect(cleanupPrivateOperation).not.toHaveBeenCalled();
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      terminal.operationId,
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
+  });
+
+  it('fails closed on an A→B account rotation before any pinned-scope effect', async () => {
+    const activeServerDir = await createRoot();
+    useAccount('account-rotation-a', 'a');
+    const pinnedScope = resolveExternalSessionOperationAccountScope(
+      activeServerDir,
+      accountCredentials.current!.token,
+    );
+    if (!pinnedScope) throw new Error('expected pinned account scope');
+    const record = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:rotated-scope-operation',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'rotated-scope-operation',
+        sessionId: 'session-rotated-scope',
+      },
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, record, {
+      accountScope: pinnedScope,
+    });
+
+    // Credentials rotate from Account A to Account B mid-operation.
+    useAccount('account-rotation-b', 'b');
+
+    // A pinned-scope write for A's operation must refuse before any effect:
+    // no B-partition copy, no B record content, and the stale pin cannot
+    // silently land A's private request/source/claim state into B.
+    await expect(writeExternalSessionOperationRecord(
+      activeServerDir,
+      record,
+      { accountScope: pinnedScope },
+    )).rejects.toMatchObject({
+      name: 'ExternalSessionOperationRecordReadError',
+      reason: 'account_scope_unavailable',
+    });
+
+    const accountBDirectory = join(
+      activeServerDir,
+      'external-session-operations',
+      'by-account',
+      `sub-${createHash('sha256').update('account-rotation-b', 'utf8').digest('hex').slice(0, 32)}`,
+    );
+    await expect(fsPromises.stat(accountBDirectory))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+
+    // Pinned reads fail closed under the rotated ambient Account too.
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      record.operationId,
+      pinnedScope,
+    )).rejects.toMatchObject({ reason: 'account_scope_unavailable' });
+
+    // Token refresh with the same subject keeps the pinned scope usable.
+    useAccount('account-rotation-a', 'refreshed');
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      record.operationId,
+      pinnedScope,
+    )).resolves.toEqual(record);
   });
 
   it('defers authoritative deletion while the exact operation claim remains active', async () => {
@@ -603,6 +776,7 @@ describe('external session operation record store integrity', () => {
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
       sessionId: 'session-deleted-active',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
       withSessionOperationBarrier: async () => ({ status: 'active' as const }),
       cleanupPrivateOperation,
     })).resolves.toEqual({ deleted: 0, deferred: 1, retained: 0 });
@@ -635,6 +809,7 @@ describe('external session operation record store integrity', () => {
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
       sessionId: 'session-deleted-before-first-record',
+      accountScope: vitestAmbientAccountScope(activeServerDir),
       withSessionOperationBarrier:
         operationExclusion.withPassiveRepairSessionBarrier,
       cleanupPrivateOperation,
@@ -671,6 +846,7 @@ describe('external session operation record store integrity', () => {
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
       sessionId: record.request.sessionId,
+      accountScope: vitestAmbientAccountScope(activeServerDir),
       withSessionOperationBarrier,
       cleanupPrivateOperation,
     })).rejects.toThrow('simulated_crash_after_private_cleanup');
@@ -682,6 +858,7 @@ describe('external session operation record store integrity', () => {
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
       sessionId: record.request.sessionId,
+      accountScope: vitestAmbientAccountScope(activeServerDir),
       withSessionOperationBarrier,
       cleanupPrivateOperation,
     })).resolves.toEqual({ deleted: 1, deferred: 0, retained: 0 });
@@ -692,25 +869,70 @@ describe('external session operation record store integrity', () => {
     )).resolves.toBeNull();
   });
 
-  it('cannot abandon another Account partition even when Session and operation identities are known', async () => {
+  it('cleans the owning Account partition for an authoritative deletion after an A→B ambient rotation', async () => {
     const activeServerDir = await createRoot();
-    useAccount('account-a');
-    const record = ExternalSessionOperationRecordV1Schema.parse({
+    useAccount('account-deletion-a');
+    const owningScope = resolveExternalSessionOperationAccountScope(
+      activeServerDir,
+      accountCredentials.current!.token,
+    );
+    if (!owningScope) throw new Error('expected Account A operation scope');
+    const runningRecord = ExternalSessionOperationRecordV1Schema.parse({
       ...advancedOperationRecord(),
-      operationId: 'external-takeover:account-a-deleted-session-operation',
+      operationId: 'external-takeover:rotation-deleted-running',
       request: {
         ...advancedOperationRecord().request,
-        idempotencyKey: 'account-a-deleted-session-operation',
-        sessionId: 'session-deleted-account-a',
+        idempotencyKey: 'rotation-deleted-running',
+        sessionId: 'session-deleted-rotation',
       },
     });
-    await writeExternalSessionOperationRecord(activeServerDir, record);
-    useAccount('account-b');
+    const terminalRecord = ExternalSessionOperationRecordV1Schema.parse({
+      ...terminalOperationRecord(),
+      operationId: 'external-takeover:rotation-deleted-terminal',
+      request: {
+        ...terminalOperationRecord().request,
+        idempotencyKey: 'rotation-deleted-terminal',
+        sessionId: 'session-deleted-rotation',
+      },
+    });
+    const otherSessionRecord = ExternalSessionOperationRecordV1Schema.parse({
+      ...advancedOperationRecord(),
+      operationId: 'external-takeover:rotation-other-session',
+      request: {
+        ...advancedOperationRecord().request,
+        idempotencyKey: 'rotation-other-session',
+        sessionId: 'session-rotation-other',
+      },
+    });
+    // Seed the terminal row first; the normal admission owner permits a later
+    // nonterminal row when the existing same-session row is already terminal.
+    await writeExternalSessionOperationRecord(activeServerDir, terminalRecord, {
+      accountScope: owningScope,
+    });
+    await writeExternalSessionOperationRecord(activeServerDir, runningRecord, {
+      accountScope: owningScope,
+    });
+    await writeExternalSessionOperationRecord(
+      activeServerDir,
+      otherSessionRecord,
+      { accountScope: owningScope },
+    );
+    // The ambient Account rotates to B before the durable deletion fact is
+    // consumed.
+    useAccount('account-deletion-b');
+    const ambientBScope = resolveExternalSessionOperationAccountScope(
+      activeServerDir,
+      accountCredentials.current!.token,
+    );
+    if (!ambientBScope) throw new Error('expected Account B operation scope');
     const cleanupPrivateOperation = vi.fn(async () => undefined);
 
+    // Account B can never see or clean Account A's rows through B's own
+    // partition.
     await expect(abandonExternalSessionOperationsForDeletedSession({
       activeServerDir,
-      sessionId: record.request.sessionId,
+      sessionId: 'session-deleted-rotation',
+      accountScope: ambientBScope,
       withSessionOperationBarrier: async (_input, effect) => ({
         status: 'executed' as const,
         value: await effect(),
@@ -719,11 +941,81 @@ describe('external session operation record store integrity', () => {
     })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 0 });
     expect(cleanupPrivateOperation).not.toHaveBeenCalled();
 
-    useAccount('account-a', 'refreshed');
+    // The deletion fact pins the Account whose authoritative changes feed
+    // delivered it, so cleanup retires exactly Account A's partition — the
+    // ambient B credentials are never consulted.
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-rotation',
+      accountScope: owningScope,
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 2, deferred: 0, retained: 0 });
+    // Private staging/media cleanup runs for every matching full record, and
+    // already-compacted terminal receipts carry no private recovery state, so
+    // they are never cleanup candidates.
+    expect(cleanupPrivateOperation).toHaveBeenCalledTimes(2);
+    expect(cleanupPrivateOperation).toHaveBeenCalledWith(runningRecord);
+    expect(cleanupPrivateOperation).toHaveBeenCalledWith(terminalRecord);
+
+    // Retry and duplicate delivery stay idempotent once the rows are gone.
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-rotation',
+      accountScope: owningScope,
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).resolves.toEqual({ deleted: 0, deferred: 0, retained: 0 });
+    expect(cleanupPrivateOperation).toHaveBeenCalledTimes(2);
+
+    // The retired ambient-resolution path fails closed: without the fact's
+    // pinned scope, exact ownership cannot be established.
+    // @ts-expect-error — accountScope is required; ambient resolution is
+    // the retired split-brain this assertion proves closed.
+    await expect(abandonExternalSessionOperationsForDeletedSession({
+      activeServerDir,
+      sessionId: 'session-deleted-rotation',
+      withSessionOperationBarrier: async (_input, effect) => ({
+        status: 'executed' as const,
+        value: await effect(),
+      }),
+      cleanupPrivateOperation,
+    })).rejects.toMatchObject({
+      name: 'ExternalSessionOperationRecordReadError',
+      reason: 'account_scope_unavailable',
+    });
+
+    // Verify Account A's partition through the read owner after A
+    // re-authenticates.
+    useAccount('account-deletion-a', 'refreshed');
     await expect(readExternalSessionOperationRecord(
       activeServerDir,
-      record.operationId,
-    )).resolves.toEqual(record);
+      runningRecord.operationId,
+      owningScope,
+    )).resolves.toBeNull();
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      terminalRecord.operationId,
+      owningScope,
+    )).resolves.toBeNull();
+    // The unacknowledged terminal full record is deleted with the Session;
+    // compacted receipts (when present) retain their normal bounded expiry.
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      terminalRecord.operationId,
+      owningScope,
+    )).resolves.toBeNull();
+    await expect(readExternalSessionOperationRecord(
+      activeServerDir,
+      otherSessionRecord.operationId,
+      owningScope,
+    )).resolves.toEqual(otherSessionRecord);
   });
 
   it('treats an absent operation-storage root as an empty inventory before Account scope is available', async () => {

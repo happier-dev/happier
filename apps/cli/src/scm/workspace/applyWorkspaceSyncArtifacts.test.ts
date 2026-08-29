@@ -11,7 +11,6 @@ import {
   createWorkspaceSyncArtifactsFromManifest,
 } from './workspaceSyncArtifacts';
 import { applyWorkspaceSyncArtifacts } from './applyWorkspaceSyncArtifacts';
-import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { createScmBackendRegistry } from '@/scm/registry';
 
 const tempRoots: string[] = [];
@@ -89,8 +88,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     })).rejects.toThrow(/blob/i);
   });
 
-  it('applies changed workspace artifacts from a CAS-backed blob provider when inline blobs are absent', async () => {
-    const activeServerDir = await makeTempDir('handoff-sync-apply-cas-');
+  it('applies changed workspace artifacts from a source-path blob provider when inline blobs are absent', async () => {
     const targetRoot = await makeTempDir('handoff-sync-apply-provider-target-');
     await writeFile(join(targetRoot, 'README.md'), 'old-readme\n', 'utf8');
 
@@ -107,18 +105,6 @@ describe('applyWorkspaceSyncArtifacts', () => {
       workspaceRoot: sourceRoot,
       scmRegistry,
     }));
-    const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
-
-    for (const entry of nextManifest.entries) {
-      if (entry.kind !== 'file') {
-        continue;
-      }
-      await casStore.commitFile({
-        digest: entry.digest,
-        sourcePath: join(sourceRoot, entry.relativePath),
-      });
-    }
-
     const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
       currentManifest,
       nextManifest,
@@ -129,9 +115,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
       targetPath: targetRoot,
       syncArtifacts,
       registry: scmRegistry,
-      blobProvider: {
-        getBlobFilePath: (digest) => casStore.resolveBlobPath(digest),
-      },
+      blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
     });
 
     expect(applied).toEqual({ targetPath: targetRoot });

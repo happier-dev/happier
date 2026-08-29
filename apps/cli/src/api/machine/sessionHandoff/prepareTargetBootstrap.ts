@@ -1,5 +1,3 @@
-import os from 'node:os';
-
 import {
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffStatus,
@@ -10,9 +8,6 @@ import {
   type SessionHandoffPrepareTargetJobRecordV2,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
-import {
-  createSessionHandoffWorkspaceReplicationAdapter,
-} from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 
 import {
   buildPrepareJobId,
@@ -30,8 +25,6 @@ import type { SessionHandoffRuntimeConfig } from './runtimeConfig';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
-type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
-type SessionHandoffWorkspaceReplicationTransfers = ReturnType<SessionHandoffWorkspaceReplicationAdapter['createReplicationTransfers']>;
 type SessionHandoffPrepareTargetJobInput = Parameters<typeof runSessionHandoffPrepareTargetJob>[0];
 
 type SessionHandoffPrepareTargetBootstrapResponse = Readonly<{
@@ -61,10 +54,7 @@ export type ResolvePrepareTargetBootstrapInput = Readonly<{
   runtimeConfig: SessionHandoffRuntimeConfig;
   machineTransferChannel: SessionHandoffPrepareTargetJobInput['machineTransferChannel'];
   directPeerTransfer: SessionHandoffPrepareTargetJobInput['directPeerTransfer'];
-  workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
-  workspaceReplicationTransfers: SessionHandoffWorkspaceReplicationTransfers;
   importSessionBundle: SessionHandoffPrepareTargetJobInput['importSessionBundle'];
-  savePreparedTargetLocalMetadata?: SessionHandoffPrepareTargetJobInput['savePreparedTargetLocalMetadata'];
   getTransferRouteCache: SessionHandoffPrepareTargetJobInput['getTransferRouteCache'];
   invalidateDirectPeerRouteCacheForHandoffMachines: SessionHandoffPrepareTargetJobInput['invalidateDirectPeerRouteCacheForHandoffMachines'];
 }>;
@@ -178,7 +168,6 @@ export async function resolvePrepareTargetBootstrap(
   if (!runJob) {
     runJob = runSessionHandoffPrepareTargetJob({
       activeServerDir: input.runtimeConfig.activeServerDir,
-      homeDir: os.homedir(),
       runtimeConfig: input.runtimeConfig,
       jobId,
       handoffId: input.request.handoffId,
@@ -187,17 +176,13 @@ export async function resolvePrepareTargetBootstrap(
       actualTransportStrategy: input.request.negotiatedTransportStrategy,
       pendingStatus,
       prepareTargetRequest: persistedJob?.prepareTargetRequest,
-      workspaceReplicationJobId: persistedJob?.workspaceReplicationJobId,
       prepareJobStore: input.prepareJobStore,
       sourceExportStore: input.sourceExportStore,
       prepareTargetJobLeaseOwnerId: input.prepareTargetJobLeaseOwnerId,
       prepareTargetJobLeaseTtlMs: input.prepareTargetJobLeaseTtlMs,
       machineTransferChannel: input.machineTransferChannel,
       directPeerTransfer: input.directPeerTransfer,
-      workspaceReplicationAdapter: input.workspaceReplicationAdapter,
-      workspaceReplicationTransfers: input.workspaceReplicationTransfers,
       importSessionBundle: input.importSessionBundle,
-      savePreparedTargetLocalMetadata: input.savePreparedTargetLocalMetadata,
       getTransferRouteCache: input.getTransferRouteCache,
       invalidateDirectPeerRouteCacheForHandoffMachines: input.invalidateDirectPeerRouteCacheForHandoffMachines,
     }).finally(() => {

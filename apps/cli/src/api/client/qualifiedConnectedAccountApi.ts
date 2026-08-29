@@ -147,6 +147,13 @@ export class QualifiedProviderAccountUsageReadConflictError extends HttpStatusEr
     }
 }
 
+function throwQualifiedProviderAccountUsageReadConflict(
+    data: unknown,
+): never {
+    QualifiedProviderAccountUsageReadErrorV4Schema.parse(data);
+    throw new QualifiedProviderAccountUsageReadConflictError();
+}
+
 function throwQualifiedConnectedAccountGroupConflict(
     data: unknown,
 ): never {
@@ -876,11 +883,15 @@ export async function readQualifiedConnectedAccountQuotaV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
-            validateStatus: (status) => status === 200 || status === 404,
+            validateStatus: (status) =>
+                status === 200 || status === 404 || status === 409,
             ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;
+    if (response.status === 409) {
+        return throwQualifiedProviderAccountUsageReadConflict(response.data);
+    }
     if (response.status !== 200) {
         throw new Error(
             `Qualified Connected Account quota read returned ${response.status}`,
@@ -903,8 +914,12 @@ export async function unlinkQualifiedConnectedAccountQuotaV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: (status) => status === 200 || status === 409,
         },
     );
+    if (response.status === 409) {
+        return throwQualifiedProviderAccountUsageReadConflict(response.data);
+    }
     if (response.status !== 200) {
         throw new Error(
             `Qualified Connected Account quota unlink returned ${response.status}`,
@@ -926,8 +941,12 @@ export async function requestQualifiedConnectedAccountQuotaRefreshV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: (status) => status === 200 || status === 409,
         },
     );
+    if (response.status === 409) {
+        return throwQualifiedProviderAccountUsageReadConflict(response.data);
+    }
     if (response.status !== 200) {
         throw new Error(
             `Qualified Connected Account quota refresh returned ${response.status}`,
@@ -1049,10 +1068,14 @@ export async function requestQualifiedProviderAccountUsageRefreshV4(
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
-            validateStatus: (status) => status === 200 || status === 404,
+            validateStatus: (status) =>
+                status === 200 || status === 404 || status === 409,
         },
     );
     if (response.status === 404) return null;
+    if (response.status === 409) {
+        return throwQualifiedProviderAccountUsageReadConflict(response.data);
+    }
     if (response.status !== 200) {
         throw new Error(
             `Qualified provider-account usage refresh returned ${response.status}`,

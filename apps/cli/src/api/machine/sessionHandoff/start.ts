@@ -1,5 +1,3 @@
-import os from 'node:os';
-
 import {
   resolveLinkedExternalSessionAuthorityV1,
   type SessionHandoffMetadataV2,
@@ -12,9 +10,6 @@ import {
 import type { SessionHandoffPrepareTargetJobRecordInput } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import type { SessionHandoffSourceExportRecord } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
-import { validateSessionHandoffWorkspaceTransferSourcePath } from '../../../session/handoff/workspaceReplication/validateSessionHandoffWorkspaceTransferSourcePath';
-import { validateSessionHandoffWorkspaceTransferStrategy } from '../../../session/handoff/workspaceReplication/validateSessionHandoffWorkspaceTransferStrategy';
-import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 import type {
   ExternalSessionOperationClaimMaintenance,
@@ -30,24 +25,9 @@ import {
   type DeferredDirectPeerPreExportedAgentBundle,
 } from './startDeferredDirectPeer';
 import { startDeferredWork } from './startDeferredWork';
-
-const START_JOB_FAST_PATH_BUDGET_MS = 750;
+import { hasUnsupportedWorkspaceAction, workspaceSyncUpdateRequired } from './workspaceSyncGuard';
 
 type SessionHandoffSourceStopState = 'stopped' | 'already_inactive' | 'failed';
-
-type SessionHandoffStartFastPathResult =
-  | Readonly<{
-      handoffId: string;
-      status: SessionHandoffStatus;
-      endpointCandidates: readonly TransferEndpointCandidate[];
-      targetPath: string;
-      handoffMetadataV2?: SessionHandoffMetadataV2;
-    }>
-  | Readonly<{
-      ok: false;
-      errorCode: 'source_stop_failed';
-      error: string;
-    }>;
 
 type SessionHandoffPrepareJobStoreLike = Readonly<{
   write: (record: SessionHandoffPrepareTargetJobRecordInput) => Promise<void>;
@@ -111,11 +91,6 @@ export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
   invalidateDirectPeerRouteCacheForHandoffMachines: (
     machineIds: readonly (string | undefined)[],
   ) => void;
-  resolveWorkspaceReplicationHandoffBackTargetRootPath: (input: Readonly<{
-    metadata: Record<string, unknown>;
-    workspaceTransfer: SessionHandoffStartRequest['workspaceTransfer'] | undefined;
-    requestedTargetMachineId: string;
-  }>) => string | null;
   buildStartPendingStatus: (input: Readonly<{
     handoffId: string;
     sourceStopState: 'stopped' | 'already_inactive';
@@ -173,23 +148,9 @@ function shouldDeferSourcePreparation(
     return false;
   }
 
-  const workspaceEnabled = request.workspaceTransfer?.enabled === true;
-  const negotiated = request.negotiatedTransportStrategy;
-
   // Cross-daemon direct-peer starts with a server-routed fallback should still acknowledge quickly
   // and publish direct-peer endpoint candidates through the deferred path even without workspace sync.
-  if (!workspaceEnabled) {
-    return negotiated === 'direct_peer' && options.hasServerRoutedFallback;
-  }
-
-  // When workspace transfer is enabled and transport is undecided or explicitly direct-peer,
-  // start() must return quickly without waiting for potentially expensive workspace scans/publications.
-  // In these cases the daemon proceeds in the background and callers poll `status.get`.
-  if (negotiated === undefined) return true;
-  if (negotiated === 'direct_peer') return true;
-
-  // For server-routed handoffs, allow a synchronous fast path (bounded by a budget in the handler).
-  return false;
+  return request.negotiatedTransportStrategy === 'direct_peer' && options.hasServerRoutedFallback;
 }
 
 export function createSessionHandoffStartActionHandler(
@@ -208,7 +169,6 @@ export function createSessionHandoffStartActionHandler(
     exportSessionBundle,
     waitForPersistedSourceExport,
     invalidateDirectPeerRouteCacheForHandoffMachines,
-    resolveWorkspaceReplicationHandoffBackTargetRootPath,
     buildStartPendingStatus,
     buildStartRecoveryStatus,
     buildPrepareJobRecord,
@@ -219,6 +179,7 @@ export function createSessionHandoffStartActionHandler(
   } = params;
 
   return async (raw: unknown, context?: RpcHandlerContext) => {
+    if (hasUnsupportedWorkspaceAction(raw)) return workspaceSyncUpdateRequired();
     const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -254,32 +215,7 @@ export function createSessionHandoffStartActionHandler(
         error: `${sourceTranscriptAuthority.error}:${sourceTranscriptAuthority.reason}`,
       } as const;
     }
-    const workspaceTransferValidation = validateSessionHandoffWorkspaceTransferSourcePath({
-      metadata,
-      fallbackSourceHomeDir: os.homedir(),
-      workspaceTransfer: parsed.data.workspaceTransfer,
-    });
-    if (!workspaceTransferValidation.ok) {
-      return workspaceTransferValidation;
-    }
-    const workspaceTransferStrategyValidation = validateSessionHandoffWorkspaceTransferStrategy({
-      workspaceTransfer: parsed.data.workspaceTransfer,
-      negotiatedTransportStrategy: parsed.data.negotiatedTransportStrategy,
-      hasServerRoutedTransferChannel: machineTransferChannelPresent,
-      hasDirectPeerTransfer: directPeerTransfer !== undefined,
-      allowLocalPrepareReuse: true,
-    });
-    if (!workspaceTransferStrategyValidation.ok) {
-      return workspaceTransferStrategyValidation;
-    }
     invalidateDirectPeerRouteCacheForHandoffMachines([parsed.data.sourceMachineId, parsed.data.targetMachineId]);
-
-    const workspaceReplicationHandoffBackTargetRootPath =
-      resolveWorkspaceReplicationHandoffBackTargetRootPath({
-        metadata,
-        workspaceTransfer: parsed.data.workspaceTransfer,
-        requestedTargetMachineId: parsed.data.targetMachineId,
-      }) ?? undefined;
 
     const handoffId = `handoff_${createUuid()}`;
     const operationRequestId = `handoff:${parsed.data.sessionId}:${parsed.data.sourceMachineId}:${parsed.data.targetMachineId}:${parsed.data.sessionStorageMode}:${parsed.data.negotiatedTransportStrategy ?? 'unselected'}`;
@@ -389,11 +325,6 @@ export function createSessionHandoffStartActionHandler(
       } as const;
     };
 
-    const buildDeferredResponseTargetPath = (): string | null => {
-      const targetPath = resolveSessionHandoffTargetPathFromMetadata(metadata);
-      return targetPath ?? null;
-    };
-
     const ensureDeferredMarker = async (targetPath: string): Promise<void> => {
       if (deferredMarkerWritten) return;
       claimMaintenance.throwIfLost();
@@ -406,97 +337,10 @@ export function createSessionHandoffStartActionHandler(
         sourceMachineId: parsed.data.sourceMachineId,
         targetMachineId: parsed.data.targetMachineId,
         exportedAtMs: Date.now(),
-        workspaceSourceRootPath: targetPath,
       }));
     };
 
-    const attemptDeferredStartFastPath = async (
-      targetPath: string,
-    ): Promise<SessionHandoffStartFastPathResult | null> => {
-      await ensureDeferredMarker(targetPath);
-
-      const fastPathPromise = (async (): Promise<SessionHandoffStartFastPathResult> => {
-        claimMaintenance.throwIfLost();
-        const sourceStopState =
-          stopSessionForHandoff
-            ? await claimMaintenance.race(() => stopSessionForHandoff(parsed.data.sessionId))
-            : 'already_inactive';
-        if (sourceStopState === 'failed') {
-          return {
-            ok: false,
-            errorCode: 'source_stop_failed',
-            error: 'Failed to stop the active source session before handoff cutover',
-          } as const;
-        }
-        claimMaintenance.throwIfLost();
-        const prepared = await claimMaintenance.race(() => prepareStartedState({
-          handoffId,
-          request: parsed.data,
-          metadata,
-          sourceStopState,
-          onProgress: reportBundleProgress('Packaging session state'),
-        }));
-
-        return {
-          handoffId,
-          status: prepared.nextState.status,
-          endpointCandidates: prepared.endpointCandidates,
-          targetPath: prepared.targetPath,
-          ...(prepared.nextState.handoffMetadataV2 ? { handoffMetadataV2: prepared.nextState.handoffMetadataV2 } : {}),
-        };
-      })();
-
-      const fastPathOutcome = await Promise.race([
-        fastPathPromise,
-        new Promise<null>((resolve) => {
-          setTimeout(() => resolve(null), START_JOB_FAST_PATH_BUDGET_MS);
-        }),
-      ]);
-
-      if (fastPathOutcome !== null) {
-        return fastPathOutcome;
-      }
-
-      deferredStartWorkPromise = fastPathPromise.then((outcome) => {
-        if ('ok' in outcome && outcome.ok === false) {
-          throw Object.assign(new Error(outcome.error), {
-            errorCode: outcome.errorCode,
-            error: outcome.error,
-          });
-        }
-      });
-      void fastPathPromise.catch(recordDeferredStartFailure);
-      shouldDefer = true;
-      return null;
-    };
-
     try {
-    const shouldAttemptServerRoutedFastPath =
-      !shouldDefer
-      && parsed.data.negotiatedTransportStrategy === 'server_routed_stream'
-      && parsed.data.workspaceTransfer?.enabled === true
-      && parsed.data.sourceMachineId !== parsed.data.targetMachineId;
-
-    if (shouldAttemptServerRoutedFastPath) {
-      const targetPath = buildDeferredResponseTargetPath();
-      if (!targetPath) {
-        await releaseSessionOperationClaim(handoffId);
-        return {
-          ok: false,
-          errorCode: 'source_export_failed',
-          error: 'Session path is unavailable for handoff',
-        } as const;
-      }
-      const fastPathOutcome = await attemptDeferredStartFastPath(targetPath);
-      if (fastPathOutcome !== null) {
-        if ('ok' in fastPathOutcome && fastPathOutcome.ok === false) {
-          await releaseSessionOperationClaim(handoffId);
-          return fastPathOutcome;
-        }
-        return fastPathOutcome;
-      }
-    }
-
     const pendingStatus = buildStartPendingStatus({
       handoffId,
       sourceStopState: 'already_inactive',
@@ -526,21 +370,7 @@ export function createSessionHandoffStartActionHandler(
       let preExportedAgentBundle: DeferredDirectPeerPreExportedAgentBundle | undefined;
 
       const deferredHandoffMetadataV2: SessionHandoffMetadataV2 | undefined =
-        isDirectPeerDeferredStart || parsed.data.workspaceTransfer?.enabled === true
-          ? {
-              ...(parsed.data.workspaceTransfer?.enabled === true
-                ? {
-                    workspaceReplicationSourceRootPath: targetPath,
-                    ...(workspaceReplicationHandoffBackTargetRootPath
-                      ? { workspaceReplicationHandoffBackTargetRootPath: workspaceReplicationHandoffBackTargetRootPath }
-                      : {}),
-                    workspaceReplicationManifestTransferPublication: {
-                      transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId }),
-                    },
-                  }
-                : {}),
-            }
-          : undefined;
+        isDirectPeerDeferredStart ? {} : undefined;
 
       if (isDirectPeerDeferredStart && directPeerTransfer) {
         const sourceStopState =

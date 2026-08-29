@@ -545,6 +545,7 @@ describe('createAutomationEventActionExecutor', () => {
           triggerId: triggerIdFor('automation-1'),
           triggerRevision,
           eventRef: { pluginId: 'com.acme.github', localId: 'repository-event' },
+          sourceInstanceId: 'repository-1',
           sourceSelectorId,
           sourceContractVersion: 1,
           sourceConfig: {},
@@ -614,7 +615,9 @@ describe('createAutomationEventActionExecutor', () => {
       revalidateCallerMaterialization: async () => true,
       revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
-      resolveAdoptedDefinitionSet: () => adoptedSet,
+      resolveAdoptedDefinitionSet: (_caller, _immutableGenerationId, transport) => (
+        transport.kind === 'durablePush' ? adoptedSet : null
+      ),
     });
     const input = { transport: { kind: 'durablePush' as const }, pageSize: 50 };
     const webhookInvocationReference = {
@@ -837,7 +840,9 @@ describe('createAutomationEventActionExecutor', () => {
       revalidateCallerMaterialization: async () => true,
       revalidateCallerImmutableGeneration: async () => true,
       resolveAccountId: async () => 'account-1',
-      resolveAdoptedDefinitionSet: () => adoptedSet,
+      resolveAdoptedDefinitionSet: (_caller, _immutableGenerationId, transport) => (
+        transport.kind === 'checkpointedPull' ? adoptedSet : null
+      ),
       randomBytes: (length) => Uint8Array.from({ length }, (_, index) => index + 1),
     });
     const input = AutomationEventAdmitInputV1Schema.parse({
@@ -1503,8 +1508,8 @@ describe('createAutomationEventActionExecutor', () => {
       caller: actionCaller,
     })).resolves.toEqual({
       ok: false,
-      errorCode: 'automation_event_adopted_definitions_unavailable',
-      error: 'automation_event_adopted_definitions_unavailable',
+      errorCode: 'automation_event_host_evidence_unavailable',
+      error: 'automation_event_host_evidence_unavailable',
     });
     expect(execute).not.toHaveBeenCalled();
   });

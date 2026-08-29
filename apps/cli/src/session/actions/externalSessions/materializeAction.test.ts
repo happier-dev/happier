@@ -808,7 +808,7 @@ describe('external session materialize action', () => {
       sendHistoricalCommand: vi.fn(),
     });
 
-    await expect(executor.cleanupAbandonedOperation?.(abandoned.operationId))
+    await expect(executor.cleanupAbandonedOperation?.(abandoned))
       .resolves.toBe('cleaned');
     expect(order).toEqual(['media', 'staging']);
     await expect(durableStaging.cleanupAbandonedOperation({

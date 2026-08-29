@@ -238,7 +238,10 @@ export function createAcpTransportHandlerFromDefinition(
     agentName: base.agentName,
     getInitTimeout: () => initMs ?? base.getInitTimeout(),
     ...(initDelayMs !== undefined ? { getInitDelayMs: () => initDelayMs } : {}),
-    filterStdoutLine: (line) => base.filterStdoutLine?.(line) ?? line,
+    filterStdoutLine: (line) => {
+      const filtered = base.filterStdoutLine?.(line);
+      return filtered === undefined ? line : filtered;
+    },
     handleStderr: (text, context) => (
       resolveStderrRuleMessage(definition, text)
       ?? base.handleStderr?.(text, context)

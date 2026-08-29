@@ -188,7 +188,6 @@ function contributions(params: Readonly<{
   const resolveLaunch = vi.fn(params.resolveLaunch ?? (async () => ({
     ok: true as const,
     value: {
-      directory: '/fresh/workspace',
       backendModeHint: 'native-mode',
       environmentVariables: {
         FIXTURE_HOME: '/fresh/runtime',
@@ -254,7 +253,11 @@ describe('External Session takeover launch consumption', () => {
           existingSessionId: 'linked-session-1',
           resume: 'fresh-remote',
           approvedNewDirectoryCreation: true,
-          backendMode: 'native-mode',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: AGENT_ID,
+            agent: { backendMode: 'native-mode' },
+          },
           environmentVariables: {
             FIXTURE_HOME: '/fresh/runtime',
           },
@@ -313,7 +316,6 @@ describe('External Session takeover launch consumption', () => {
       resolveLaunch: async () => ({
         ok: true,
         value: {
-          directory: '/fresh/workspace',
           environmentVariables: {
             FIXTURE_HOME: '/fresh/runtime',
           },
@@ -354,7 +356,6 @@ describe('External Session takeover launch consumption', () => {
       resolveLaunch: async () => ({
         ok: true,
         value: {
-          directory: privateDirectory,
           environmentVariables: {
             FIXTURE_HOME: privateEnvironmentValue,
           },
@@ -428,7 +429,6 @@ describe('External Session takeover launch consumption', () => {
       resolveLaunch: async () => ({
         ok: true,
         value: {
-          directory: '/fresh/workspace',
           environmentVariables: {
             UNDECLARED_KEY: 'rejected',
           },

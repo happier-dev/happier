@@ -22,7 +22,9 @@ import type {
 } from './materializeAction';
 import {
   ExternalSessionOperationRecordReadError,
+  resolveExternalSessionOperationAdmissionAccountScope,
   resolveExternalSessionOperationStartAdmission,
+  type ExternalSessionOperationAccountScope,
 } from './operationRecordStore';
 import {
   readExternalSessionOperationSharedPresentation,
@@ -66,7 +68,21 @@ type MaterializeStartDependencies = Readonly<{
       ExternalSessionOperationAuthorIntentV1,
       { kind: 'materialize' }
     >,
+    /**
+     * Pinned authenticated Account scope captured at admission. When the
+     * provider supplies it, admission resolves inside that Account's
+     * partition, and the pin is carried into the materialize executor so
+     * every record/staging effect verifies the ambient Account still
+     * matches (A→B rotation fails closed).
+     */
+    accountScope?: ExternalSessionOperationAccountScope | null,
   ): ReturnType<typeof resolveExternalSessionOperationStartAdmission>;
+  /**
+   * Captures the exact authenticated Account scope at the admission boundary.
+   * Captured once per Start call and shared by admission resolution and the
+   * carried executor effects.
+   */
+  resolveAdmissionAccountScope?(): Promise<ExternalSessionOperationAccountScope | null>;
   describeSession(intent: MaterializeStartIntent): Promise<MaterializeSemanticRequest>;
   startSemanticRequest:
     ExternalSessionMaterializeActionExecutor['start'];
@@ -131,6 +147,7 @@ export function createExternalSessionMaterializeStartActionExecutor(
         { kind: 'materialize' }
       >;
     }>,
+    accountScope?: ExternalSessionOperationAccountScope | null,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     let admit!: (record: ExternalSessionOperationRecordV1) => void;
     const admitted = new Promise<ExternalSessionOperationRecordV1>((resolve) => {
@@ -139,6 +156,7 @@ export function createExternalSessionMaterializeStartActionExecutor(
     const operation = dependencies.startSemanticRequest({ request }, {
       ...(context?.signal ? { signal: context.signal } : {}),
       ...(context?.authorIntent ? { authorIntent: context.authorIntent } : {}),
+      ...(accountScope ? { accountScope } : {}),
       onAdmitted: admit,
     });
     return await Promise.race([
@@ -181,6 +199,13 @@ export function createExternalSessionMaterializeStartActionExecutor(
           'Linked external session identity changed.',
         );
       }
+      // Capture the exact authenticated Account at the admission boundary, once
+      // per Start call. Both the admission resolution below and the carried
+      // executor effects use this pin, so a rotation after admission can never
+      // let one call resolve into two different Account partitions.
+      const admissionAccountScope = dependencies.resolveAdmissionAccountScope
+        ? await dependencies.resolveAdmissionAccountScope()
+        : null;
       let admission: Awaited<ReturnType<
         MaterializeStartDependencies['resolveAdmission']
       >>;
@@ -188,6 +213,7 @@ export function createExternalSessionMaterializeStartActionExecutor(
         admission = await dependencies.resolveAdmission(
           intent,
           context?.authorIntent,
+          admissionAccountScope ?? undefined,
         );
       } catch (error) {
         if (
@@ -236,10 +262,10 @@ export function createExternalSessionMaterializeStartActionExecutor(
             'Materialization idempotency request changed.',
           );
         }
-        return await admitDurableOperation(existing, context);
+        return await admitDurableOperation(existing, context, admissionAccountScope);
       }
 
-      return await admitDurableOperation(request, context);
+      return await admitDurableOperation(request, context, admissionAccountScope);
     };
 
   return Object.freeze({
@@ -272,12 +298,17 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
 ): ExternalSessionMaterializeStartActionExecutor {
   const nowMs = input.nowMs ?? Date.now;
   return createExternalSessionMaterializeStartActionExecutor({
-    resolveAdmission: async (intent, authorIntent) =>
+    resolveAdmissionAccountScope: async () =>
+      await resolveExternalSessionOperationAdmissionAccountScope(
+        input.activeServerDir,
+      ),
+    resolveAdmission: async (intent, authorIntent, accountScope) =>
       await resolveExternalSessionOperationStartAdmission({
         activeServerDir: input.activeServerDir,
         durableIdempotencyKey: intent.idempotencyKey,
         intent,
         ...(authorIntent ? { authorIntent } : {}),
+        ...(accountScope ? { accountScope } : {}),
         nowMs: nowMs(),
         readSelectedPresentation:
           readExternalSessionOperationSharedPresentation,

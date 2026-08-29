@@ -81,6 +81,88 @@ describe('persistSessionMedia', () => {
     }
   });
 
+  it('admits the intended destination into cleanup custody before the media file is created', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-intent-'));
+    const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
+
+    try {
+      const intendedPaths: Array<{ existedAtIntent: boolean; path: string }> = [];
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry,
+        maxBytes: pngBytes.byteLength,
+        onIntendedWorkspacePath: async (candidateWorkspaceRelativePath) => {
+          intendedPaths.push({
+            existedAtIntent: await stat(join(workingDirectory, candidateWorkspaceRelativePath))
+              .then(() => true)
+              .catch(() => false),
+            path: candidateWorkspaceRelativePath,
+          });
+        },
+        input: {
+          sessionId: 'session-intent',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: pngBytes.toString('base64'),
+            mimeType: 'image/png',
+            fileNameHint: 'intended.png',
+          },
+          origin: { source: 'provider-generated' },
+        },
+      });
+
+      if (!result.success) throw new Error('expected persistence to succeed');
+      expect(result.created).toBe(true);
+      // The intended destination is reported durably-admissible before any
+      // bytes exist, and it is the exact path the write lands on.
+      expect(intendedPaths).toEqual([
+        { existedAtIntent: false, path: result.item.path },
+      ]);
+      await expect(readFile(resolve(workingDirectory, result.item.path)))
+        .resolves.toEqual(pngBytes);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses media creation when intended-destination custody cannot be admitted first', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-intent-refusal-'));
+    const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
+
+    try {
+      await expect(persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry,
+        maxBytes: pngBytes.byteLength,
+        onIntendedWorkspacePath: async () => {
+          throw new Error('custody_admission_failed');
+        },
+        input: {
+          sessionId: 'session-intent-refusal',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'generated',
+          source: {
+            kind: 'base64',
+            data: pngBytes.toString('base64'),
+            mimeType: 'image/png',
+            fileNameHint: 'unreceipted.png',
+          },
+          origin: { source: 'provider-generated' },
+        },
+      })).rejects.toThrow('custody_admission_failed');
+
+      // No unreceipted media file may remain on disk.
+      await expect(stat(join(workingDirectory, '.happier', 'uploads')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('persists an ordinary large decodable image with its dimensions', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-large-image-'));
     const bytes = createOneBitGrayscalePng(4_096, 4_096);

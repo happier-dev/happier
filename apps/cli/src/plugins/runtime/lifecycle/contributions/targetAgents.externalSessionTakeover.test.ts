@@ -129,7 +129,6 @@ describe('target Agent External Session takeover lease', () => {
             return {
                 ok: true as const,
                 value: {
-                    directory: '/takeover/workspace',
                     backendModeHint: 'resume',
                     environmentVariables: { TAKEOVER: '1' },
                 },
@@ -150,7 +149,6 @@ describe('target Agent External Session takeover lease', () => {
         ).resolves.toEqual({
             ok: true,
             value: {
-                directory: '/takeover/workspace',
                 backendModeHint: 'resume',
                 environmentVariables: { TAKEOVER: '1' },
             },
@@ -160,7 +158,7 @@ describe('target Agent External Session takeover lease', () => {
     it('rejects malformed requests before invoking the leaf and malformed results after it', async () => {
         let result: unknown = {
             ok: true,
-            value: { directory: '/takeover/workspace', unexpected: true },
+            value: { unexpected: true },
         };
         const resolveLaunch = vi.fn(async () => (
             result as Awaited<ReturnType<
@@ -183,7 +181,7 @@ describe('target Agent External Session takeover lease', () => {
 
         result = {
             ok: true,
-            value: { directory: '/takeover/workspace' },
+            value: {},
         };
         await expect(takeover.resolveLaunch(request())).resolves.toEqual(result);
     });
@@ -194,7 +192,6 @@ describe('target Agent External Session takeover lease', () => {
         const publicResult = Object.freeze({
             ok: true as const,
             value: {
-                directory: '/takeover/workspace',
                 runtimeDescriptorV1: {
                     v: 1 as const,
                     agentId: 'pi',
@@ -221,7 +218,7 @@ describe('target Agent External Session takeover lease', () => {
             takeover: Object.freeze({
                 resolveLaunch: async () => ({
                     ok: true as const,
-                    value: { directory: '/takeover/workspace' },
+                    value: {},
                     unrecognizedHostExtension: selectedSessionFile,
                 }) as never,
             }),
@@ -236,7 +233,6 @@ describe('target Agent External Session takeover lease', () => {
         let result: AgentExternalSessionTakeoverResolveLaunchResult = {
             ok: true as const,
             value: {
-                directory: '/takeover/workspace',
                 environmentVariables: { TAKEOVER: 'x'.repeat(512) },
             },
         };
@@ -255,7 +251,6 @@ describe('target Agent External Session takeover lease', () => {
         result = {
             ok: true,
             value: {
-                directory: '/takeover/workspace',
                 environmentVariables: Object.fromEntries(
                     Array.from({ length: 17 }, (_, index) => [
                         `TAKEOVER_${index}`,
@@ -271,9 +266,7 @@ describe('target Agent External Session takeover lease', () => {
     it('measures the accepted canonical DTO rather than the plugin-owned object', async () => {
         const raw = Object.assign(Object.create(null), {
             ok: true as const,
-            value: Object.assign(Object.create(null), {
-                directory: '/takeover/workspace',
-            }),
+            value: Object.assign(Object.create(null), {}),
         });
         const stringify = vi.spyOn(JSON, 'stringify');
         const takeover = registry({
@@ -283,13 +276,13 @@ describe('target Agent External Session takeover lease', () => {
 
         await expect(takeover.resolveLaunch(request())).resolves.toEqual({
             ok: true,
-            value: { directory: '/takeover/workspace' },
+            value: {},
         });
         const measured = stringify.mock.calls.at(-1)?.[0];
         expect(measured).not.toBe(raw);
         expect(measured).toEqual({
             ok: true,
-            value: { directory: '/takeover/workspace' },
+            value: {},
         });
     });
 
@@ -304,7 +297,7 @@ describe('target Agent External Session takeover lease', () => {
                 await callbackSettled;
                 return {
                     ok: true as const,
-                    value: { directory: '/takeover/workspace' },
+                    value: {},
                 };
             });
             let current = true;
@@ -353,7 +346,7 @@ describe('target Agent External Session takeover lease', () => {
                 await new Promise<void>(() => undefined);
                 return {
                     ok: true as const,
-                    value: { directory: '/takeover/workspace' },
+                    value: {},
                 };
             });
             const takeover = registry({

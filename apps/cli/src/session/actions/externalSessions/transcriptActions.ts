@@ -255,21 +255,58 @@ export async function executeExternalSessionTranscriptReadAfterAction(
         if (res.outcome === 'read_failed') {
             return externalSessionsError('agent_unavailable', 'transcript_read_failed') satisfies ExternalSessionTranscriptReadAfterResponse;
         }
-        const legacyPage = res.outcome === 'advanced'
-            ? { items: res.items, nextCursor: res.nextCursor, truncated: false }
-            : res.outcome === 'already_current'
-                ? { items: [], nextCursor: cursor, truncated: false }
-                : { items: [], nextCursor: null, truncated: true };
-        const transientMediaReadFiles = collectTransientSessionMediaReadFiles(legacyPage.items, {
+        if (res.outcome === 'advanced') {
+          if (res.nextCursor === cursor) {
+            // The same stalled-advanced decision the secure refresh path
+            // applies server-side: a read that makes no cursor progress is a
+            // gap, not an applicable empty page.
+            return {
+              ok: true,
+              items: [],
+              nextCursor: null,
+              truncated: true,
+              transientMediaReadFiles: [],
+            } satisfies ExternalSessionTranscriptReadAfterResponse;
+          }
+          const transientMediaReadFiles = collectTransientSessionMediaReadFiles(res.items, {
             allowedRoots: validatedSource.transcriptMediaReadRoots,
-        });
-        context?.transientMediaReadAllowance?.grantReadFiles(transientMediaReadFiles);
+          });
+          context?.transientMediaReadAllowance?.grantReadFiles(transientMediaReadFiles);
+          return {
+            ok: true,
+            items: [...res.items],
+            nextCursor: res.nextCursor,
+            truncated: false,
+            // Additive rich continuation facts on the released lossy shape
+            // (open/drop for released readers); the current UI applies the
+            // shared Protocol read-after decision to them.
+            hasMore: res.hasMore,
+            ...(res.diagnostics
+              ? {
+                  diagnostics: res.diagnostics.map((diagnostic) => ({
+                    ...diagnostic,
+                    positions: [...diagnostic.positions],
+                  })),
+                }
+              : {}),
+            transientMediaReadFiles,
+          } satisfies ExternalSessionTranscriptReadAfterResponse;
+        }
+        if (res.outcome === 'already_current') {
+          return {
+            ok: true,
+            items: [],
+            nextCursor: cursor,
+            truncated: false,
+            transientMediaReadFiles: [],
+          } satisfies ExternalSessionTranscriptReadAfterResponse;
+        }
         return {
             ok: true,
-            items: [...legacyPage.items],
-            nextCursor: legacyPage.nextCursor,
-            truncated: legacyPage.truncated,
-            transientMediaReadFiles,
+            items: [],
+            nextCursor: null,
+            truncated: true,
+            transientMediaReadFiles: [],
         } satisfies ExternalSessionTranscriptReadAfterResponse;
     } catch (error) {
         const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);

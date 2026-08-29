@@ -70,7 +70,7 @@ import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/res
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@/transfers/targets/uploadTransferTarget';
 
-// Direct-peer transfers are used for session handoff + workspace replication, which can take
+// Direct-peer transfers are used for session handoff and finite workspace transfers, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default
 // TTL long enough that long-running transfers don't fail mid-flight. Still configurable via env.
 const DIRECT_PEER_PUBLISHED_TRANSFER_REGISTRY_FULL_ERROR = 'Direct peer published transfer registry is full';

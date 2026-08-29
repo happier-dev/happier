@@ -67,6 +67,51 @@ describe('detectSessionTurnActivity', () => {
         expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
     });
 
+    it('does not count a realtime Voice user row as a pending Agent-thread text turn', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => [{
+            id: 'voice-user-row',
+            localId: null,
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            content: {
+                t: 'plain' as const,
+                v: {
+                    role: 'user',
+                    content: { type: 'text', text: 'spoken sentence' },
+                    meta: {
+                        happier: {
+                            conversationTurnOriginV1: {
+                                v: 1,
+                                channel: 'realtime_conversation',
+                                modality: 'voice',
+                            },
+                        },
+                    },
+                },
+            },
+        }]);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+
+        const { detectSessionTurnActivity } = await import('./detectSessionTurnInFlight');
+
+        await expect(detectSessionTurnActivity({
+            token: 'token',
+            sessionId: 'sess-1',
+            encryptionMode: 'plain',
+            encryptionKey: new Uint8Array(32).fill(1),
+            encryptionVariant: 'dataKey',
+        })).resolves.toEqual({
+            pendingUserTurns: 0,
+            activeTaskInFlight: false,
+            turnInFlight: false,
+        });
+    });
+
     it('trusts a complete idle projection over transcript task lifecycle rows', async () => {
         const fetchEncryptedTranscriptPageLatest = vi.fn(async () => [
             {
