@@ -2,6 +2,7 @@ import {
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   type AccountSettings,
+  type ConnectedAccountServiceKey,
   type BuiltInLegacyConnectedAccountOperation,
   type ConnectedServiceCredentialHealthV1,
   ConnectedServiceCredentialRecordV1Schema,
@@ -25,6 +26,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { ApiClient } from '@/api/api';
 import {
+  resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey,
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type {
@@ -3451,11 +3453,17 @@ export class ConnectedServiceRefreshCoordinator {
     target: SpawnTarget;
     binding: BoundProfile;
   }>): string | null {
+    const selection = [...(input.target.childSelectionsByServiceId?.values() ?? [])]
+      .find((candidate) => (
+        resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+          candidate.serviceId,
+        ) === input.binding.serviceId
+      )) ?? null;
     return resolveConnectedServiceMaterializedHomeRoot(input.target.agentId, {
       activeServerDir: this.params.activeServerDir,
       serviceId: input.binding.serviceId,
       profileId: input.binding.profileId,
-      selection: input.target.childSelectionsByServiceId?.get(input.binding.serviceId) ?? null,
+      selection,
     });
   }
 
@@ -3529,13 +3537,16 @@ export class ConnectedServiceRefreshCoordinator {
 
     let changed = false;
     let nextBindings = target.bindings;
-    const nextSelections = new Map<ConnectedServiceId, ConnectedServiceChildSelection>();
+    const nextSelections = new Map<ConnectedAccountServiceKey, ConnectedServiceChildSelection>();
     for (const [serviceId, selection] of target.childSelectionsByServiceId.entries()) {
       if (selection.kind !== 'group') {
         nextSelections.set(serviceId, selection);
         continue;
       }
-      const groupIdentity = { serviceId, groupId: selection.groupId };
+      const legacyServiceId =
+        resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId);
+      if (!legacyServiceId) return null;
+      const groupIdentity = { serviceId: legacyServiceId, groupId: selection.groupId };
       const canonical = options.requireFreshGroupState === true
         ? await this.refreshCanonicalGroupStateForRefresh(groupIdentity, this.params.now())
         : await this.resolveCanonicalGroupStateForRefresh(groupIdentity, this.params.now());
@@ -3573,7 +3584,13 @@ export class ConnectedServiceRefreshCoordinator {
   }
 
   private resolveBoundProfiles(target: SpawnTarget): ReadonlyArray<BoundProfile> {
-    return target.bindings;
+    return target.bindings.flatMap((binding) => {
+      const serviceId =
+        resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+          binding.serviceId,
+        );
+      return serviceId ? [{ ...binding, serviceId }] : [];
+    });
   }
 
   private buildResolvedSelectionsByServiceId(
@@ -3581,7 +3598,12 @@ export class ConnectedServiceRefreshCoordinator {
     recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>,
   ): ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection> {
     const selectionsByServiceId = new Map<ConnectedServiceId, ConnectedServiceResolvedSelection>();
-    for (const [serviceId, selection] of childSelectionsByServiceId.entries()) {
+    for (const [qualifiedServiceId, selection] of childSelectionsByServiceId.entries()) {
+      const serviceId =
+        resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+          qualifiedServiceId,
+        );
+      if (!serviceId) continue;
       const record = recordsByServiceId.get(serviceId);
       if (!record) continue;
       if (selection.kind === 'profile') {

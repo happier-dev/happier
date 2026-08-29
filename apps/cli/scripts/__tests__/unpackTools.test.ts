@@ -343,6 +343,7 @@ describe('unpack-tools managed runtime asset', () => {
     await writeFile(join(staging, 'ripgrep.node'), 'node');
     await writeFile(join(staging, 'zellij'), 'zellij');
     await writeFile(join(staging, 'happier-cliproxyapi-managed'), 'wrapper-bytes');
+    await writeFile(join(staging, 'happier-process-custody'), 'custody-bytes');
     await writeFile(join(staging, 'CLIProxyAPI-LICENSE'), 'cpx license');
     await writeFile(join(staging, 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'cpx notices');
     await writeFile(join(archives, 'difftastic-LICENSE'), 'difft license');
@@ -358,6 +359,7 @@ describe('unpack-tools managed runtime asset', () => {
     await createTarGz(staging, zellijArchive, ['zellij']);
     await createTarGz(staging, wrapperArchive, [
       'happier-cliproxyapi-managed',
+      'happier-process-custody',
       'CLIProxyAPI-LICENSE',
       'CLIProxyAPI-THIRD-PARTY-NOTICES',
     ]);
@@ -378,6 +380,10 @@ describe('unpack-tools managed runtime asset', () => {
 
     const wrapperPath = join(toolsRoot, 'unpacked', 'happier-cliproxyapi-managed');
     await expect(readFile(wrapperPath, 'utf8')).resolves.toBe('wrapper-bytes');
+    await expect(readFile(
+      join(toolsRoot, 'unpacked', 'happier-process-custody'),
+      'utf8',
+    )).resolves.toBe('custody-bytes');
 
     const integrity = cliDistBuildManifest.readCliRuntimeAssetIntegrity({
       runtimeRoot,

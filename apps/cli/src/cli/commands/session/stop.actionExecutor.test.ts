@@ -196,4 +196,29 @@ describe('happier session stop (action executor)', () => {
       output.restore();
     }
   });
+
+  it('rejects a malformed successful Action result instead of reporting a stop', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessionId: 'sess-1', stopped: 'yes' },
+    });
+
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['stop', 'sess-1', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+
+      expect(output.json()).toEqual(expect.objectContaining({
+        ok: false,
+        kind: 'session_stop',
+        error: expect.objectContaining({ code: 'unknown_error' }),
+      }));
+    } finally {
+      output.restore();
+    }
+  });
 });

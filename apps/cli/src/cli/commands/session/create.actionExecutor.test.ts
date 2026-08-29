@@ -75,7 +75,10 @@ beforeEach(() => {
       codex: {
         id: 'codex',
         cliSubcommand: 'codex',
-        connectedServiceIds: ['openai-codex', 'openai'],
+        connectedAccountServiceIds: [
+          'happier.agent.codex/openai-codex',
+          'happier.agent.codex/openai',
+        ],
       },
     },
     executionRunProfiles: [],
@@ -613,9 +616,9 @@ describe('happier session create (action executor)', () => {
       .mockResolvedValueOnce({
         ok: true,
         result: {
-          supportedServiceIds: ['openai-codex'],
-          profileOptionsByServiceId: { 'openai-codex': [] },
-          groupOptionsByServiceId: { 'openai-codex': [{ groupId: 'team' }] },
+          supportedServiceIds: ['happier.agent.codex/openai-codex'],
+          profileOptionsByServiceId: { 'happier.agent.codex/openai-codex': [] },
+          groupOptionsByServiceId: { 'happier.agent.codex/openai-codex': [{ groupId: 'team' }] },
           items: [],
         },
       })
@@ -646,8 +649,8 @@ describe('happier session create (action executor)', () => {
           connectedServices: {
             v: 1,
             bindingsByServiceId: {
-              'openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
-              openai: { source: 'native' },
+              'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
+              'happier.agent.codex/openai': { source: 'native' },
             },
           },
         }),

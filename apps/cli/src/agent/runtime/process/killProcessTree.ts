@@ -151,6 +151,8 @@ export async function killProcessTree(
   opts?: {
     graceMs?: number;
     terminateWindowsTree?: typeof taskkillWindowsProcessTree;
+    /** The caller created and still owns a dedicated POSIX process group whose id is `pid`. */
+    ownedProcessGroup?: boolean;
   }
 ): Promise<void> {
   const pid = proc.pid;
@@ -158,16 +160,19 @@ export async function killProcessTree(
 
   const graceMs = Math.max(1, opts?.graceMs ?? 1000);
 
-  if (
+  const rootIsTerminal = (
     (proc.exitCode !== null && proc.exitCode !== undefined)
     || (proc.signalCode !== null && proc.signalCode !== undefined)
-  ) {
-    // The original root is known terminal. A live process at the same PID is
-    // therefore a replacement, and its same-number process group must never
-    // inherit cleanup custody from the retired root.
-    if (isPidPresent(pid)) throw terminationIncomplete();
+  );
+  if (rootIsTerminal && !opts?.ownedProcessGroup && isPidPresent(pid)) {
+    // Without an explicit group-custody fact, a terminal root's numeric PID
+    // may already name a replacement. Preserve the existing fail-closed rule;
+    // managed SVC09 passes its owned group fact explicitly below.
+    throw terminationIncomplete();
   }
+
   const shouldSignalProcessGroup = process.platform !== 'win32'
+    && (!rootIsTerminal || opts?.ownedProcessGroup === true)
     && probeProcessGroupLiveness(pid) !== 'absent';
 
   // A detached POSIX child is its own process-group leader. Signal that group first so

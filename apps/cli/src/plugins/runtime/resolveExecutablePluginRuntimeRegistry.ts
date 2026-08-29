@@ -157,6 +157,9 @@ import {
     createProductionPluginInvocationServiceOwners,
     type ManagedProviderRuntimeInvocationServices,
 } from './invocation/services/production';
+import type {
+    PluginAccountSettingsRecordAdapter,
+} from './invocation/services/settings';
 import { createStablePluginComposerContentOwner } from './invocation/services/composerContent';
 import type { InvokeContributedAction } from './invocation/services/actions';
 import type { StableTargetedContributionsOwner } from './invocation/services/targetedContributions';
@@ -338,6 +341,7 @@ import {
 import { isPluginHostAccessRequestAuthorizedBySelection } from './hostAccess/resourceSelection';
 import {
     assertContainedRegularGenerationFile,
+    ImmutablePluginGenerationRecordSchema,
     prepareImmutablePluginGeneration,
     persistValidatedAgentSessionRunnerFactories,
     readCurrentCommittedPluginGenerations,
@@ -1586,6 +1590,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         onTerminalActivationFailure?: (pluginId: string) => void;
         /** Process-owned network boundaries for this registry's one plugin HTTP host. */
         networkDependencies?: PluginRuntimeNetworkDependencies;
+        /** Testable port for the canonical Account plugin-settings persistence owner. */
+        accountSettingsRecordAdapter?: PluginAccountSettingsRecordAdapter;
     }>,
 ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
     const generation = params?.generation ?? 0;
@@ -3599,6 +3605,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         contributions: authoritativeContributes.managedDependencies ?? Object.freeze([]),
     });
     const managedDependencies = createStablePluginManagedDependenciesHost({
+        isCurrent: () => !allRuntimeConsumersRetired,
         // V2 request semantics remain source-model owned. Complete managed
         // PyPI sources also project through the same installables descriptor
         // owner used by capability/UI installation.
@@ -4015,6 +4022,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
     invocationServiceOwners = createProductionPluginInvocationServiceOwners({
         ...(params?.stableEventsBroker
             ? { eventsBroker: params.stableEventsBroker }
+            : {}),
+        ...(params?.accountSettingsRecordAdapter
+            ? { accountSettingsRecordAdapter: params.accountSettingsRecordAdapter }
             : {}),
         ...(pluginActionExecutor ? { actionExecutor: pluginActionExecutor } : {}),
         resolveCurrentPluginMaterializationRef,
@@ -4786,7 +4796,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveCurrentPluginMaterializationRef,
         resolveCurrentPluginImmutableGenerationId,
         targetRegistrations: activatedRegistry.targetRegistrations,
-        targetActivationFacts: activatedRegistry.targetActivationFacts,
+        readTargetActivationFacts: () => activatedRegistry.targetActivationFacts,
         resolveAuthorizationFacts: resolveTargetActionAuthorizationFacts,
         resolvePresentUserGatePolicy: resolveActionPresentUserGatePolicy,
         resolveHostBinding: invocationServiceOwners.resolveHostBinding,
@@ -5828,10 +5838,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const deployment = runtimeBindingBasis.deployment;
         if (
             deployment.kind !== 'managedLocal'
-            || !isDeepStrictEqual(
+            || buildQualifiedPluginContributionKey(
                 deployment.implementationIdentity,
-                input.identity,
-            )
+            ) !== buildQualifiedPluginContributionKey(input.identity)
             || !declaration
             || !isDeepStrictEqual(
                 deployment.managedRuntime,
@@ -5871,7 +5880,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 || !exactGeneratedArtifact
                 || !isDeepStrictEqual(
                     admitted.record,
-                    exactGeneratedArtifact.record,
+                    // Same canonical construction as
+                    // `admitBundledImmutablePluginGeneration`: admitted bundled
+                    // records carry stamped provenance while the generated
+                    // artifact intentionally omits it.
+                    ImmutablePluginGenerationRecordSchema.parse({
+                        ...exactGeneratedArtifact.record,
+                        sourceProvenance: pluginSourceProvenanceForKind('bundled'),
+                    }),
                 )
             ) {
                 await Promise.resolve(invocation.cleanup())

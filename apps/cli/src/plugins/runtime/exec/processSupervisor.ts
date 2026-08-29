@@ -339,7 +339,11 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                         }
                         return;
                     }
-                    await killProcessTree(target, { graceMs: 100 });
+                    await killProcessTree(target, {
+                        graceMs: 100,
+                        ownedProcessGroup: process.platform !== 'win32'
+                            && input.spawnOptions?.detached === true,
+                    });
                 });
             const joined = (async () => {
                 // Root exit settles process output, not the owned containment.

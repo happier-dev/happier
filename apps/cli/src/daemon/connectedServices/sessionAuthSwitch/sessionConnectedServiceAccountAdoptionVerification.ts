@@ -1,4 +1,4 @@
-import type { ConnectedServiceBindingsV1, ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -13,9 +13,9 @@ export type ConnectedServiceAccountAdoptionVerificationInput = Readonly<{
   tracked: TrackedSession;
   sessionId: string;
   agentId: CatalogAgentId;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   target: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string | null;
     groupId?: string | null;
   }>;

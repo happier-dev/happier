@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 export const DAEMON_PAT_CACHE_MAX_AGE_MS = 60_000;
 // This caps untrusted distinct bearer inputs to fixed daemon memory. An LRU
@@ -32,14 +33,17 @@ type CacheEntry = Readonly<{
     principalId: string;
     credentialId: string;
     patExpiresAtMs: number | null;
-    cacheExpiresAtMs: number;
+    cacheExpiresAtMonotonicMs: number;
 }>;
 
 type DaemonPatVerifierOptions = Readonly<{
     /** The Account to which this daemon connection is already bound. */
     accountId: string;
     introspect: DaemonPatIntrospector;
+    /** Wall clock; used only for absolute PAT expiry comparisons. */
     now?: () => number;
+    /** Monotonic elapsed clock; owns the bounded positive-cache TTL. */
+    monotonicNow?: () => number;
     maxEntries?: number;
 }>;
 
@@ -102,8 +106,10 @@ function awaitWithAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Pro
 
 /**
  * Produces the sole daemon-side PAT verifier. Successful Account-server
- * responses are kept only in an in-memory bounded LRU for at most 60 seconds;
- * no negative, persistent, refresh, or offline-cache path exists.
+ * responses are kept only in an in-memory bounded LRU for at most 60 seconds of
+ * monotonic elapsed time (wall-clock rollback cannot extend them) and never
+ * past the PAT's absolute wall-clock expiry; no negative, persistent, refresh,
+ * or offline-cache path exists.
  */
 export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): DaemonPatVerifier {
     if (!options.accountId.trim()) {
@@ -116,6 +122,9 @@ export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): Daem
     }
 
     const now = options.now ?? Date.now;
+    // Elapsed TTL time must not inherit wall-clock adjustments: a backwards NTP
+    // step would otherwise extend the promised <=60s positive cache interval.
+    const monotonicNow = options.monotonicNow ?? (() => performance.now());
     const cache = new Map<string, CacheEntry>();
     const inFlight = new Map<string, Promise<DaemonPatVerification>>();
 
@@ -139,23 +148,18 @@ export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): Daem
 
         const verifiedAtMs = now();
         if (patExpiresAtMs !== null && patExpiresAtMs <= verifiedAtMs) return invalidToken();
-        const cacheExpiresAtMs = Math.min(
-            verifiedAtMs + DAEMON_PAT_CACHE_MAX_AGE_MS,
-            patExpiresAtMs ?? Number.POSITIVE_INFINITY,
-        );
-        if (cacheExpiresAtMs > verifiedAtMs) {
-            cache.set(cacheKey, {
-                accountId: verified.accountId,
-                principalId: verified.principalId,
-                credentialId: verified.credentialId,
-                patExpiresAtMs,
-                cacheExpiresAtMs,
-            });
-            while (cache.size > maxEntries) {
-                const leastRecentlyUsedKey = cache.keys().next().value;
-                if (leastRecentlyUsedKey === undefined) break;
-                cache.delete(leastRecentlyUsedKey);
-            }
+        const cacheExpiresAtMonotonicMs = monotonicNow() + DAEMON_PAT_CACHE_MAX_AGE_MS;
+        cache.set(cacheKey, {
+            accountId: verified.accountId,
+            principalId: verified.principalId,
+            credentialId: verified.credentialId,
+            patExpiresAtMs,
+            cacheExpiresAtMonotonicMs,
+        });
+        while (cache.size > maxEntries) {
+            const leastRecentlyUsedKey = cache.keys().next().value;
+            if (leastRecentlyUsedKey === undefined) break;
+            cache.delete(leastRecentlyUsedKey);
         }
         return verificationFromServer(verified);
     };
@@ -166,7 +170,11 @@ export function createDaemonPatVerifier(options: DaemonPatVerifierOptions): Daem
         const cacheKey = hashDaemonPatCacheKey(token);
         const cached = cache.get(cacheKey);
         if (cached) {
-            if (now() < cached.cacheExpiresAtMs) {
+            // The bounded TTL runs on elapsed monotonic time; absolute PAT
+            // expiry stays on the wall clock. Both gates must accept a hit.
+            const ttlCurrent = monotonicNow() < cached.cacheExpiresAtMonotonicMs;
+            const patCurrent = cached.patExpiresAtMs === null || now() < cached.patExpiresAtMs;
+            if (ttlCurrent && patCurrent) {
                 // A read moves the entry to the LRU tail but never changes its expiry.
                 cache.delete(cacheKey);
                 cache.set(cacheKey, cached);

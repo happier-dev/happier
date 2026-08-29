@@ -1,4 +1,5 @@
 import {
+  buildQualifiedPluginContributionKey,
   ConnectedServiceIdSchema,
   ConnectedServiceUsageSourceV1Schema,
   QualifiedConnectedAccountGroupV4Schema,
@@ -109,7 +110,6 @@ function sourcePairsMatch(
 }
 
 function buildCurrentSources(input: Readonly<{
-  serviceId: ConnectedServiceId;
   qualifiedService: QualifiedConnectedAccountServiceRef;
   accounts: Readonly<{
     service: QualifiedConnectedAccountServiceRef;
@@ -126,6 +126,9 @@ function buildCurrentSources(input: Readonly<{
   if (!sameQualifiedService(accountsService, qualifiedService)) {
     throw new Error('Qualified connected-account inventory returned a mismatched service');
   }
+  // Canonical current-shape local store identity: the qualified contribution key
+  // (schema ingress normalizes released legacy scalars to this same key).
+  const serviceId = buildQualifiedPluginContributionKey(qualifiedService);
 
   const sources: ProviderAccountUsageHydrationSource[] = [];
   for (const rawAccount of input.accounts.accounts) {
@@ -135,7 +138,7 @@ function buildCurrentSources(input: Readonly<{
     }
     sources.push({
       localSource: ConnectedServiceUsageSourceV1Schema.parse({
-        serviceId: input.serviceId,
+        serviceId,
         profileId: account.ref.accountId,
         bindingKind: 'profile',
       }),
@@ -155,7 +158,7 @@ function buildCurrentSources(input: Readonly<{
       if (!member.enabled) continue;
       sources.push({
         localSource: ConnectedServiceUsageSourceV1Schema.parse({
-          serviceId: input.serviceId,
+          serviceId,
           profileId: member.connectedAccountId,
           bindingKind: 'group_member',
           groupId: group.ref.groupId,
@@ -192,7 +195,6 @@ async function listCurrentSources(input: Readonly<{
       input.api.listGroups({ service: qualifiedService }),
     ]);
     return buildCurrentSources({
-      serviceId,
       qualifiedService,
       accounts,
       groups,

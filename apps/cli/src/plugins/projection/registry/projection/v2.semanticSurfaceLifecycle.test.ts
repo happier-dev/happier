@@ -154,7 +154,7 @@ function executableRegistry(params: Readonly<{
         targetActionInvocations: buildTargetActionInvocationRegistry({
             contributes: params.registry,
             targetRegistrations: params.targetRegistrations ?? params.activated.targetRegistrations,
-            targetActivationFacts: params.activated.targetActivationFacts,
+            readTargetActivationFacts: () => params.activated.targetActivationFacts,
             resolveAuthorizationFacts: (action) => ({
                 generation: {
                     targetGeneration: action.generation,

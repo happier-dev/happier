@@ -1,11 +1,13 @@
 import {
   ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceRuntimeAuthTargetInput } from './types';
 
 type RuntimeAuthNativeHome = NonNullable<ConnectedServiceRuntimeAuthTargetInput['nativeHome']>;
+type RuntimeAuthSelection = ConnectedServiceRuntimeAuthTargetInput['selection'];
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -33,20 +35,17 @@ function readApplyReason(value: unknown):
     : null;
 }
 
-export function projectConnectedServiceRuntimeAuthSelection(value: Readonly<Record<string, unknown>>) {
-  const strings = Object.fromEntries([
-    'serviceId',
-    'profileId',
-    'activeProfileId',
-    'fallbackProfileId',
-    'groupId',
-    'applyReason',
-    'sourceProviderAccountId',
-    'sourceAccountLabel',
-  ].flatMap((key) => {
-    const projected = readString(value[key]);
-    return projected === null ? [] : [[key, projected] as const];
-  }));
+export function projectConnectedServiceRuntimeAuthSelection(
+  value: Readonly<Record<string, unknown>>,
+): RuntimeAuthSelection {
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(value.serviceId);
+  const profileId = readString(value.profileId);
+  const activeProfileId = readString(value.activeProfileId);
+  const fallbackProfileId = readString(value.fallbackProfileId);
+  const groupId = readString(value.groupId);
+  const applyReason = readString(value.applyReason);
+  const sourceProviderAccountId = readString(value.sourceProviderAccountId);
+  const sourceAccountLabel = readString(value.sourceAccountLabel);
   const kind = value.kind === 'profile' || value.kind === 'group' ? value.kind : null;
   const generation = typeof value.generation === 'number' && Number.isSafeInteger(value.generation) && value.generation >= 0
     ? value.generation
@@ -58,7 +57,14 @@ export function projectConnectedServiceRuntimeAuthSelection(value: Readonly<Reco
     : null;
   const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(value.credentialRevision);
   return Object.freeze({
-    ...strings,
+    ...(serviceId ? { serviceId } : {}),
+    ...(profileId ? { profileId } : {}),
+    ...(activeProfileId ? { activeProfileId } : {}),
+    ...(fallbackProfileId ? { fallbackProfileId } : {}),
+    ...(groupId ? { groupId } : {}),
+    ...(applyReason ? { applyReason } : {}),
+    ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
+    ...(sourceAccountLabel ? { sourceAccountLabel } : {}),
     ...(kind ? { kind } : {}),
     ...(generation === null ? {} : { generation }),
     ...(groupGeneration === null ? {} : { groupGeneration }),
@@ -98,10 +104,15 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
   });
   const applyAuthGenerationSource = sourceSelection.applyConnectedServiceAuthGeneration;
   const applyReason = readApplyReason(selection.applyReason);
+  const selectedServiceId = selection.serviceId
+    ?? (credential.success
+      ? readBuiltInLegacyConnectedAccountServiceKeyIngress(credential.data.serviceId)
+      : null);
   const applySelectedAuthGeneration = typeof applyAuthGenerationSource === 'function'
     && credential.success
+    && selectedServiceId
     ? async () => await applyAuthGenerationSource({
-        serviceId: selection.serviceId ?? credential.data.serviceId,
+        serviceId: selectedServiceId,
         ...(applyReason ? { reason: applyReason } : {}),
         ...(selection.requireDirectLiveHotApply ? { requireDirectLiveHotApply: true } : {}),
         expected: {

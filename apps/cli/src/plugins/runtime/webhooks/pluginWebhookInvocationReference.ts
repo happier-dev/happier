@@ -9,10 +9,8 @@ import {
   type PluginWebhookInvocationReferenceV1,
 } from '@happier-dev/protocol';
 
-type AutomationAdmissionUnresolvedStatusV1 = Readonly<{
-  kind: 'refreshDefinition' | 'blocked';
-  reason: 'definitionStale' | 'observationTargetChanged' | 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict';
-}>;
+type AutomationAdmissionUnresolvedStatusV1 =
+  PluginWebhookAutomationAdmissionUnresolvedV1['entries'][number]['status'];
 
 type AutomationAdmissionUnresolvedCollectorV1 = {
   invalid: boolean;
@@ -89,9 +87,14 @@ export function recordCurrentPluginWebhookAutomationAdmissionResultV1(params: Re
       return;
     }
     scope.automationAdmissionUnresolved.seenAutomationIds.add(automationId);
-    if (item.kind === 'refreshDefinition' || item.kind === 'blocked') {
+    if (item.kind === 'refreshDefinition') {
       scope.automationAdmissionUnresolved.unresolvedByAutomationId.set(automationId, {
-        kind: item.kind,
+        kind: 'refreshDefinition',
+        reason: item.reason,
+      });
+    } else if (item.kind === 'blocked') {
+      scope.automationAdmissionUnresolved.unresolvedByAutomationId.set(automationId, {
+        kind: 'blocked',
         reason: item.reason,
       });
     }

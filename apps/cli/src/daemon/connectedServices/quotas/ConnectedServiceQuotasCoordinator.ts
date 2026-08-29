@@ -86,7 +86,10 @@ import {
   type ProviderAccountUsageStore,
 } from '../accountUsage/store';
 import { computeProviderAccountUsageSnapshotFingerprint } from '../accountUsage/fingerprint';
-import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '../accountUsage/fromConnectedServiceQuotaObservation';
+import {
+  buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation,
+  buildProviderAccountUsageSnapshotFromQualifiedQuotaRow,
+} from '../accountUsage/fromConnectedServiceQuotaObservation';
 import {
   resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence,
 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
@@ -180,6 +183,7 @@ import type {
 import {
   resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey,
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
+  resolveQualifiedConnectedAccountServiceForIngressServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 const DEFAULT_QUOTA_PERSISTENCE_MIN_FRESHNESS_MS = 60_000;
@@ -248,10 +252,27 @@ function matchesQualifiedService(
   return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
+/**
+ * Canonical source identity for the daemon account-usage store: every recorded source key uses
+ * the qualified `ConnectedAccountServiceKey` so canonical consumers (switch state, lifecycle,
+ * startup refresh scheduling) resolve them without a second ingress translation. The legacy
+ * scalar id stays local to the legacy fetch/credential/burn seams and is never recorded as a
+ * store source identity.
+ */
+function canonicalConnectedAccountServiceKeyForSources(
+  serviceId: ConnectedServiceId,
+): ConnectedAccountServiceKey {
+  const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(serviceId);
+  return service ? buildQualifiedPluginContributionKey(service) : serviceId;
+}
+
 function scalarQualifiedGroupAccountUsageView(
   input: ScalarQualifiedConnectedAccountGroup,
 ): ConnectedServiceAuthGroupAccountUsageView {
   return {
+    // Keep the canonical qualified service key: the runtime registry and the
+    // quota lifecycle state are keyed by `ConnectedAccountServiceKey`, and
+    // legacy consumers reverse-project at their own seam.
     serviceId: input.serviceId,
     groupId: input.group.ref.groupId,
     activeProfileId: input.group.activeConnectedAccountId,
@@ -275,6 +296,16 @@ function qualifiedAccountQuotaKey(
     account.service.localId,
     account.accountId,
   ]);
+}
+
+function sameGroupSwitchTarget(
+  left: ActiveGroupQuotaSwitchTarget,
+  right: ActiveGroupQuotaSwitchTarget,
+): boolean {
+  return left.sessionId === right.sessionId
+    && left.serviceId === right.serviceId
+    && left.groupId === right.groupId
+    && left.activeProfileId === right.activeProfileId;
 }
 
 export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota(
@@ -514,7 +545,7 @@ export type ConnectedServiceQuotaCoordinatorDiagnostic = Readonly<{
   reason: string;
   retryAfterMs?: number;
   sessionId?: string;
-  serviceId?: ConnectedServiceId;
+  serviceId?: ConnectedAccountServiceKey;
   groupId?: string;
   activeProfileId?: string;
   eligibilityStatus?: GroupSwitchTargetEligibility['status'];
@@ -540,6 +571,9 @@ export type ConnectedServiceQuotaCoordinatorDiagnostic = Readonly<{
 type QuotaCredentialOpenMaterial =
   | Readonly<{ type: 'legacy'; secret: Uint8Array }>
   | Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
+type LegacyConnectedServiceUsageSource = Omit<ConnectedServiceUsageSourceV1, 'serviceId'> & Readonly<{
+  serviceId: ConnectedServiceId;
+}>;
 function requireQuotaCredentialOpenMaterial(
   material: QuotaCredentialOpenMaterial | null,
 ): QuotaCredentialOpenMaterial {
@@ -669,10 +703,16 @@ type SameAccountFanoutStrategyResolver = (
 type PredictiveSwitchGuardResult =
   | Readonly<{ status: 'allow' }>
   | Readonly<{ status: 'suppress' | 'fold'; reason: string }>;
+/**
+ * Retained legacy predictive switch guard contract: the guard evaluates
+ * first-party scalar-service policy (account settings + turn state), so it
+ * receives the reverse-projected legacy `ConnectedServiceId`, never the
+ * canonical qualified service key.
+ */
 export type ConnectedServiceQuotaPredictiveSwitchGuard = (
   input: Readonly<{
     sessionId: string;
-    serviceId: ConnectedAccountServiceKey;
+    serviceId: ConnectedServiceId;
     groupId: string;
     activeProfileId: string;
     reason: 'soft_threshold';
@@ -1050,7 +1090,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly onQuotaLifecycleTransition: ConnectedServiceQuotaLifecycleListener | null;
   private readonly recoveryCreditConsumeResultsByKey = new Map<string, ConnectedServiceQuotaRecoveryCreditConsumeResult>();
   private readonly recoveryCreditConsumeInFlightByKey = new Map<string, Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>>();
-  private readonly startupCurrentSourceRefreshByKey = new Map<string, ConnectedServiceUsageSourceV1>();
+  private readonly startupCurrentSourceRefreshByKey = new Map<string, LegacyConnectedServiceUsageSource>();
   private lastDiscoveryAt = 0;
 
   public constructor(params: Readonly<{
@@ -1702,6 +1742,7 @@ export class ConnectedServiceQuotasCoordinator {
 
     let latest: ProviderAccountUsageSnapshotV1 | null = null;
     let effectiveMutationRecorded = false;
+    const sourceServiceId = canonicalConnectedAccountServiceKeyForSources(input.serviceId);
     const profileSnapshot = input.providerAccountUsageSnapshot
       ?? buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
         snapshot: input.snapshot,
@@ -1718,7 +1759,7 @@ export class ConnectedServiceQuotasCoordinator {
     const profileRecord = store.recordSnapshot(profileSnapshot, {
       sources: canPersistSourceLinks
         ? [{
-          serviceId: input.serviceId,
+          serviceId: sourceServiceId,
           profileId: input.profileId,
           bindingKind: 'profile',
         }]
@@ -1732,7 +1773,7 @@ export class ConnectedServiceQuotasCoordinator {
       const groupRecord = store.recordSnapshot(groupSnapshot, {
         sources: canPersistSourceLinks
           ? [{
-            serviceId: input.serviceId,
+            serviceId: sourceServiceId,
             profileId: input.profileId,
             bindingKind: 'group_member',
             groupId,
@@ -1748,7 +1789,7 @@ export class ConnectedServiceQuotasCoordinator {
         const groupRecord = store.recordSnapshot(groupSnapshot, {
           sources: canPersistSourceLinks
             ? [{
-              serviceId: input.serviceId,
+              serviceId: sourceServiceId,
               profileId: input.profileId,
               bindingKind: 'group_member',
               groupId,
@@ -1912,11 +1953,17 @@ export class ConnectedServiceQuotasCoordinator {
       this.qualifiedConnectedAccountRuntime?.resolvePeerClass() ?? null;
     for (const candidate of sources) {
       const parsed = ConnectedServiceUsageSourceV1Schema.safeParse(candidate);
+      const legacyServiceId = parsed.success
+        ? resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+          parsed.data.serviceId,
+        )
+        : null;
       if (
         !parsed.success
-        || !this.quotaFetchersByServiceId.has(parsed.data.serviceId)
+        || !legacyServiceId
+        || !this.quotaFetchersByServiceId.has(legacyServiceId)
         || !this.shouldRunLegacyQuotaFetcher(
-          parsed.data.serviceId,
+          legacyServiceId,
           qualifiedPeerClass,
         )
       ) {
@@ -1924,9 +1971,9 @@ export class ConnectedServiceQuotasCoordinator {
         continue;
       }
       const key = parsed.data.bindingKind === 'profile'
-        ? JSON.stringify([parsed.data.serviceId, parsed.data.profileId, 'profile'])
+        ? JSON.stringify([legacyServiceId, parsed.data.profileId, 'profile'])
         : JSON.stringify([
-          parsed.data.serviceId,
+          legacyServiceId,
           parsed.data.profileId,
           'group_member',
           parsed.data.groupId,
@@ -1936,7 +1983,10 @@ export class ConnectedServiceQuotasCoordinator {
         ignored += 1;
         continue;
       }
-      this.startupCurrentSourceRefreshByKey.set(key, parsed.data);
+      this.startupCurrentSourceRefreshByKey.set(key, {
+        ...parsed.data,
+        serviceId: legacyServiceId,
+      });
       accepted += 1;
     }
     return { accepted, ignored };
@@ -2876,7 +2926,19 @@ export class ConnectedServiceQuotasCoordinator {
   public recordRuntimeAccountIdentityFromSnapshot(
     input: RuntimeAccountIdentityRecordInput,
   ): RuntimeAccountIdentityRecordResult {
-    return this.runtimeAccountIdentities.record(input);
+    // Identity index entries are keyed by the canonical qualified service key: every consumer
+    // (fanout lookup, spawn-target binding match, persisted reconciliation) projects ingress
+    // through the canonical key, so a released scalar ingress must be canonicalized here at the
+    // single record owner instead of storing a second, scalar-keyed identity family.
+    const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(
+      input.serviceId,
+    );
+    return this.runtimeAccountIdentities.record({
+      ...input,
+      serviceId: service
+        ? buildQualifiedPluginContributionKey(service)
+        : input.serviceId,
+    });
   }
 
   public invalidateRuntimeAccountIdentityForSession(sessionId: string): void {
@@ -3319,12 +3381,19 @@ export class ConnectedServiceQuotasCoordinator {
       const activeQuotaSnapshot = activeProfileId
         ? switchState.memberStatesByProfileId.get(activeProfileId)?.quotaSnapshot ?? null
         : null;
-      const recentBurn = activeProfileId
+      // The optional runtime burn store is the only legacy-keyed input on this path. Resolve the
+      // legacy scalar id immediately around it: a canonical qualified service without a legacy
+      // projection contributes no burn projection (recentBurn stays null) while its canonical
+      // account-usage evidence stays authoritative for eligibility.
+      const legacyServiceId =
+        resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(input.serviceId);
+      const recentBurn = legacyServiceId
+        && activeProfileId
         && typeof burnHorizonMs === 'number'
         && Number.isFinite(burnHorizonMs)
         && burnHorizonMs > 0
         ? this.runtimeQuotaSnapshots?.getRecentBurn({
-          serviceId: input.serviceId,
+          serviceId: legacyServiceId,
           groupId: input.groupId,
           profileId: activeProfileId,
           groupGeneration: group.generation,
@@ -3379,11 +3448,17 @@ export class ConnectedServiceQuotasCoordinator {
   private async shouldRunSoftSwitchForTarget(target: ActiveGroupQuotaSwitchTarget): Promise<boolean> {
     const guard = this.predictiveSwitchGuard;
     if (!guard) return true;
+    // The retained predictive guard is a legacy scalar-service policy owner, so reverse-project
+    // the qualified service key immediately before that optional guard only. A service without
+    // a legacy scalar identity has no legacy guard to obey and proceeds through the canonical
+    // switch owner instead of failing closed.
+    const legacyServiceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(target.serviceId);
+    if (!legacyServiceId) return true;
     let result: PredictiveSwitchGuardResult;
     try {
       result = await guard({
         sessionId: target.sessionId,
-        serviceId: target.serviceId,
+        serviceId: legacyServiceId,
         groupId: target.groupId,
         activeProfileId: target.activeProfileId,
         reason: 'soft_threshold',
@@ -3951,6 +4026,19 @@ export class ConnectedServiceQuotasCoordinator {
       payload: write,
       payloadBytes: Buffer.byteLength(JSON.stringify(write), 'utf8'),
       run: async (payload) => {
+        // The queued payload may be a canonical V4 PAU write, but it was produced under legacy
+        // fetch authority. Recheck currentness against the LIVE peer class immediately before
+        // resolving the qualified writer: once the peer flips to advertised V4, this queued
+        // write must not land. A plain protocol error classifies as nonretryable.
+        if (!this.shouldRunLegacyQuotaFetcher(
+          input.serviceId,
+          this.qualifiedConnectedAccountRuntime?.resolvePeerClass() ?? null,
+          'provider_account_usage_write',
+        )) {
+          throw new Error(
+            'Queued provider-account usage write is stale for the legacy transport',
+          );
+        }
         const writeProviderAccountUsage =
           this.qualifiedConnectedAccountRuntime?.writeProviderAccountUsage
           ?? writeQualifiedProviderAccountUsageV4;
@@ -4321,9 +4409,159 @@ export class ConnectedServiceQuotasCoordinator {
     return outcome.status === 'written';
   }
 
+  /**
+   * Currentness gate for poll-driven lifecycle/switch side effects: every async group/account
+   * read above this point can observe a stale world. Re-project the runtime registry's exact
+   * current qualified facts (sessionId, qualified service, group, active profile, generation)
+   * and keep only pending targets that still match one current fact exactly.
+   */
+  private resolveCurrentQualifiedGroupSwitchTargets(
+    targets: ReadonlyArray<ActiveGroupQuotaSwitchTarget>,
+  ): ActiveGroupQuotaSwitchTarget[] {
+    const currentTargets: ActiveGroupQuotaSwitchTarget[] = [];
+    for (const registryTarget of this.runtimeRegistry.listQuotaTargets()) {
+      const sessionId = typeof registryTarget.sessionId === 'string' ? registryTarget.sessionId.trim() : '';
+      if (!sessionId) continue;
+      for (const entry of extractActiveBindings(registryTarget.bindings, registryTarget.connectedServiceSelectionsEnv)) {
+        const groupId = typeof entry.groupId === 'string' ? entry.groupId.trim() : '';
+        if (!groupId) continue;
+        const currentTarget: ActiveGroupQuotaSwitchTarget = {
+          sessionId,
+          serviceId: entry.serviceId,
+          groupId,
+          activeProfileId: entry.profileId.trim(),
+          groupGeneration: entry.groupGeneration ?? null,
+        };
+        if (!currentTargets.some((candidate) => sameGroupSwitchTarget(candidate, currentTarget))) {
+          currentTargets.push(currentTarget);
+        }
+      }
+    }
+    return targets.filter((target) => currentTargets.some((candidate) =>
+      sameGroupSwitchTarget(candidate, target)
+      && normalizeNullableGeneration(candidate.groupGeneration) === normalizeNullableGeneration(target.groupGeneration)
+    ));
+  }
+
+  private async recordQualifiedPolledAccountUsageLocally(input: Readonly<{
+    profile: QualifiedConnectedAccountProfileV4;
+    snapshot: ProviderAccountUsageSnapshotV1;
+    /**
+     * Explicit proven provider-account identity feeding the source-link decision
+     * below: the authoritative server row's validated `sourceResolution` for a
+     * fresh-row hydration, or the live profile's `providerIdentity` for a freshly
+     * written poll row. Never inferred from the snapshot itself.
+     */
+    sourceProviderAccountId: string;
+    groupContexts: ReadonlyArray<ConnectedServiceQuotaGroupContext>;
+    qualifiedGroupTargets: ReadonlyArray<ActiveGroupQuotaSwitchTarget>;
+    switchEvaluationTargets: ActiveGroupQuotaSwitchTarget[];
+    /**
+     * Freshly written rows emit the live lifecycle edge; a freshly opened authoritative server
+     * row only hydrates the local store passively and must stay cold (no live edge, no provider
+     * invocation, no server rewrite).
+     */
+    emitLiveLifecycle: boolean;
+  }>): Promise<void> {
+    const store = this.accountUsageStore;
+    if (!store) return;
+    const serviceId = buildQualifiedPluginContributionKey(input.profile.ref.service);
+    const accountId = input.profile.ref.accountId.trim();
+    // Same source-link algebra as the legacy fetch path: sources are recorded only when the
+    // snapshot's account subject is the confirmed fetched identity.
+    const canPersistSourceLinks = canPersistUsageSourceLinkWithProviderIdentity({
+      sourceProviderAccountId: input.sourceProviderAccountId,
+      recordKey: input.snapshot.recordKey,
+    });
+    const sources: ConnectedServiceUsageSourceV1[] = [];
+    if (canPersistSourceLinks && accountId) {
+      sources.push({
+        serviceId,
+        profileId: accountId,
+        bindingKind: 'profile',
+      });
+      for (const context of input.groupContexts) {
+        sources.push({
+          serviceId,
+          profileId: accountId,
+          bindingKind: 'group_member',
+          groupId: context.groupId,
+          ...(context.groupGeneration === null
+            ? {}
+            : { groupGeneration: context.groupGeneration }),
+        });
+      }
+    }
+    store.recordSnapshot(input.snapshot, { sources });
+    if (!accountId) return;
+
+    // Currentness gate before ANY lifecycle/switch side effect: all async group/account reads
+    // have settled above, so re-project the registry's exact current facts now and drop targets
+    // whose session/service/group/active profile/generation no longer matches.
+    const currentTargets = this.resolveCurrentQualifiedGroupSwitchTargets(
+      input.qualifiedGroupTargets,
+    );
+    const lifecycleWorkByKey = new Map<
+      string,
+      ActiveGroupQuotaSwitchTarget & Readonly<{ groupGeneration: number }>
+    >();
+    for (const context of input.groupContexts) {
+      if (context.groupGeneration === null) continue;
+      for (const target of currentTargets) {
+        if (
+          target.serviceId !== serviceId
+          || target.groupId.trim() !== context.groupId
+          || target.activeProfileId !== accountId
+          // Exact generation agreement is required: a target whose generation is null or
+          // diverges from the resolved group context receives no lifecycle/switch authority.
+          || target.groupGeneration === null
+          || target.groupGeneration !== context.groupGeneration
+        ) {
+          continue;
+        }
+        if (!input.switchEvaluationTargets.some((candidate) => sameGroupSwitchTarget(candidate, target))) {
+          input.switchEvaluationTargets.push(target);
+        }
+        // One deterministic representative per {service, group, profile, generation} performs
+        // the live lifecycle work; every exact-current session target still enters the single
+        // switch evaluation above.
+        const workKey = `${serviceId}\u0000${context.groupId}\u0000${accountId}\u0000${context.groupGeneration}`;
+        const representative = lifecycleWorkByKey.get(workKey);
+        if (!representative || target.sessionId < representative.sessionId) {
+          lifecycleWorkByKey.set(workKey, {
+            ...target,
+            groupGeneration: context.groupGeneration,
+          });
+        }
+      }
+    }
+    if (!input.emitLiveLifecycle) return;
+    for (const target of lifecycleWorkByKey.values()) {
+      // Prior representative handles suspend across async lifecycle/switch work, so the world can
+      // move between the shared currentness gate above and this call. Re-fence each singleton
+      // target against the registry's exact current facts immediately before its handle.
+      const stillCurrent = this.resolveCurrentQualifiedGroupSwitchTargets([target]);
+      if (stillCurrent.length === 0) continue;
+      await this.handleAccountUsageChanged({
+        sessionId: target.sessionId,
+        serviceId: target.serviceId,
+        groupId: target.groupId,
+        profileId: accountId,
+        groupGeneration: target.groupGeneration,
+        recordId: input.snapshot.recordId,
+        snapshot: input.snapshot,
+        // The poll performs its OWN soft-switch check once, after the account windows
+        // settle; suppress the reactive burn-projected re-check so one poll emits one
+        // switch request, mirroring the legacy poll ordering.
+        source: 'poll',
+      });
+    }
+  }
+
   private async pollQualifiedConnectedAccountQuotas(input: Readonly<{
     accountMode: 'e2ee' | 'plain';
     now: number;
+    qualifiedGroupTargets: ReadonlyArray<ActiveGroupQuotaSwitchTarget>;
     v4Support: QualifiedConnectedAccountV4Support;
   }>): Promise<void> {
     const runtime = this.qualifiedConnectedAccountRuntime;
@@ -4334,8 +4572,89 @@ export class ConnectedServiceQuotasCoordinator {
     } catch {
       return;
     }
+
+    // Canonical qualified target view: current session targets grouped deterministically by
+    // qualified service + group. The legacy scalar projection is intentionally not consulted
+    // here — source links and group facts stay canonical end to end.
+    const groupViewsByKey = new Map<string, {
+      service: QualifiedConnectedAccountServiceRef;
+      serviceId: ConnectedAccountServiceKey;
+      groupId: string;
+      accountIds: string[];
+    }>();
+    for (const target of input.qualifiedGroupTargets) {
+      const service = parseQualifiedPluginContributionKey(target.serviceId);
+      const groupId = target.groupId.trim();
+      if (!service || !groupId) continue;
+      const key = `${target.serviceId}\u0000${groupId}`;
+      let view = groupViewsByKey.get(key);
+      if (!view) {
+        view = { service, serviceId: target.serviceId, groupId, accountIds: [] };
+        groupViewsByKey.set(key, view);
+      }
+      if (!view.accountIds.includes(target.activeProfileId)) {
+        view.accountIds.push(target.activeProfileId);
+      }
+    }
+    // Scheduled accounts of a targeted service join the group probe so every current group
+    // member receives canonical source links, mirroring the legacy discovery-driven poll.
+    for (const profile of profiles) {
+      const accountId = profile.ref.accountId.trim();
+      const serviceId = buildQualifiedPluginContributionKey(profile.ref.service);
+      if (!accountId) continue;
+      for (const view of groupViewsByKey.values()) {
+        if (view.serviceId !== serviceId) continue;
+        if (!view.accountIds.includes(accountId)) view.accountIds.push(accountId);
+      }
+    }
+
+    // Resolve the canonical current (profile, groupGeneration) facts for each distinct current
+    // group through the existing qualified runtime owner.
+    const groupContextsByAccountKey = new Map<string, ConnectedServiceQuotaGroupContext[]>();
+    const listGroupQuotaTargets = runtime.listGroupQuotaTargets;
+    if (listGroupQuotaTargets) {
+      for (const view of groupViewsByKey.values()) {
+        const controller = new AbortController();
+        const timeoutHandle = setTimeout(
+          () => controller.abort('qualified-quota-group-targets-deadline'),
+          this.fetchTimeoutMs,
+        );
+        (timeoutHandle as unknown as { unref?: () => void }).unref?.();
+        try {
+          const resolvedTargets = await listGroupQuotaTargets({
+            service: view.service,
+            groupId: view.groupId,
+            accountIds: view.accountIds,
+            signal: controller.signal,
+          });
+          for (const resolvedTarget of resolvedTargets) {
+            const accountId = resolvedTarget.profile.ref.accountId.trim();
+            if (!accountId) continue;
+            const accountKey = qualifiedAccountQuotaKey(resolvedTarget.profile.ref);
+            const contexts = groupContextsByAccountKey.get(accountKey) ?? [];
+            if (!contexts.some((context) =>
+              context.groupId === view.groupId
+              && context.groupGeneration === resolvedTarget.groupGeneration
+            )) {
+              contexts.push({
+                groupId: view.groupId,
+                groupGeneration: resolvedTarget.groupGeneration,
+              });
+            }
+            groupContextsByAccountKey.set(accountKey, contexts);
+          }
+        } catch {
+          // Best-effort: those accounts keep polling without group source links.
+          continue;
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+      }
+    }
+
     const readQuota = runtime.readQuota
       ?? readQualifiedConnectedAccountQuotaV4;
+    const switchEvaluationTargets: ActiveGroupQuotaSwitchTarget[] = [];
     for (const profile of profiles) {
       if (!isConnectedServiceCredentialHealthStatusUsable(profile.status)) {
         continue;
@@ -4380,6 +4699,25 @@ export class ConnectedServiceQuotasCoordinator {
           )
         ) {
           this.failureStateByBindingKey.delete(key);
+          // Fresh authoritative server row: hydrate the local canonical store passively
+          // (profile + qualified group_member sources), let the row participate in the later
+          // cold switch evaluation, and keep reconstruction cold — no live lifecycle edge,
+          // no provider invocation, and no server rewrite for a fresh row.
+          await this.recordQualifiedPolledAccountUsageLocally({
+            profile,
+            snapshot: buildProviderAccountUsageSnapshotFromQualifiedQuotaRow({
+              ref: profile.ref,
+              quota: existingSnapshot,
+            }),
+            // The opened authoritative V4 response already validated its provider identity
+            // through sourceResolution (it must equal the row's activeAccountId).
+            sourceProviderAccountId: existing.sourceResolution.providerAccountId,
+            groupContexts:
+              groupContextsByAccountKey.get(qualifiedAccountQuotaKey(profile.ref)) ?? [],
+            qualifiedGroupTargets: input.qualifiedGroupTargets,
+            switchEvaluationTargets,
+            emitLiveLifecycle: false,
+          });
           continue;
         }
         if (!this.shouldRunQualifiedQuotaOperation(
@@ -4407,7 +4745,16 @@ export class ConnectedServiceQuotasCoordinator {
           basis: invocation.basis,
         });
         if (!written) continue;
-        this.accountUsageStore?.recordSnapshot(snapshot);
+        await this.recordQualifiedPolledAccountUsageLocally({
+          profile,
+          snapshot,
+          // Live observation proof: the polled profile's own provider identity.
+          sourceProviderAccountId: profile.providerIdentity?.accountId?.trim() ?? '',
+          groupContexts: groupContextsByAccountKey.get(qualifiedAccountQuotaKey(profile.ref)) ?? [],
+          qualifiedGroupTargets: input.qualifiedGroupTargets,
+          switchEvaluationTargets,
+          emitLiveLifecycle: true,
+        });
         this.failureStateByBindingKey.delete(key);
       } catch (error) {
         this.applyFailureBackoff({
@@ -4416,6 +4763,17 @@ export class ConnectedServiceQuotasCoordinator {
           error,
         });
       }
+    }
+
+    // The single existing convergence owner runs once, over deduped current qualified targets,
+    // only after the poll's account windows have settled. Every window above is async and can
+    // observe a stale world, so re-fence the accumulated targets against the registry's exact
+    // current facts right before the final evaluation.
+    if (switchEvaluationTargets.length > 0) {
+      await this.maybeRequestActiveGroupSwitchForSnapshot({
+        now: input.now,
+        targets: this.resolveCurrentQualifiedGroupSwitchTargets(switchEvaluationTargets),
+      });
     }
   }
 
@@ -4430,6 +4788,7 @@ export class ConnectedServiceQuotasCoordinator {
     const bindingsByServiceId = new Map<ConnectedServiceId, Set<string>>();
     const groupSwitchTargetsByBindingKey = new Map<string, ActiveGroupQuotaSwitchTarget[]>();
     const activeGroupTargetsByServiceId = new Map<ConnectedServiceId, ActiveGroupQuotaSwitchTarget[]>();
+    const qualifiedGroupTargets: ActiveGroupQuotaSwitchTarget[] = [];
     const authGroupByKey = new Map<
       string,
       Promise<ScalarQualifiedConnectedAccountGroup | null>
@@ -4485,6 +4844,24 @@ export class ConnectedServiceQuotasCoordinator {
       for (const entry of extractActiveBindings(target.bindings, target.connectedServiceSelectionsEnv)) {
         const profileId = String(entry.profileId ?? '').trim();
         if (!profileId) continue;
+        const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
+        const groupId = typeof entry.groupId === 'string' ? entry.groupId.trim() : '';
+        // Canonical qualified view first: every current registry entry participates in the
+        // qualified poll-driven convergence regardless of any legacy scalar projection.
+        if (sessionId && groupId) {
+          const qualifiedTarget = {
+            sessionId,
+            serviceId: entry.serviceId,
+            groupId,
+            activeProfileId: profileId,
+            groupGeneration: entry.groupGeneration ?? null,
+          };
+          if (!qualifiedGroupTargets.some((candidate) => sameGroupSwitchTarget(candidate, qualifiedTarget))) {
+            qualifiedGroupTargets.push(qualifiedTarget);
+          }
+        }
+        // Legacy derived view below feeds only the legacy fetcher loop; services without a
+        // legacy scalar projection are intentionally absent from it.
         const legacyServiceId =
           resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(entry.serviceId);
         if (!legacyServiceId) continue;
@@ -4494,32 +4871,20 @@ export class ConnectedServiceQuotasCoordinator {
         } else {
           bindingsByServiceId.set(legacyServiceId, new Set([profileId]));
         }
-        const sessionId = typeof target.sessionId === 'string' ? target.sessionId.trim() : '';
-        const groupId = typeof entry.groupId === 'string' ? entry.groupId.trim() : '';
         if (sessionId && groupId) {
           const bindingKey = this.makeBindingKey({ serviceId: legacyServiceId, profileId });
           const targets = groupSwitchTargetsByBindingKey.get(bindingKey) ?? [];
-          if (!targets.some((candidate) =>
-            candidate.sessionId === sessionId
-            && candidate.serviceId === entry.serviceId
-            && candidate.groupId === groupId
-            && candidate.activeProfileId === profileId
-          )) {
-            const groupTarget = {
-              sessionId,
-              serviceId: entry.serviceId,
-              groupId,
-              activeProfileId: profileId,
-              groupGeneration: entry.groupGeneration ?? null,
-            };
+          const groupTarget = {
+            sessionId,
+            serviceId: entry.serviceId,
+            groupId,
+            activeProfileId: profileId,
+            groupGeneration: entry.groupGeneration ?? null,
+          };
+          if (!targets.some((candidate) => sameGroupSwitchTarget(candidate, groupTarget))) {
             targets.push(groupTarget);
             const serviceTargets = activeGroupTargetsByServiceId.get(legacyServiceId) ?? [];
-            if (!serviceTargets.some((candidate) =>
-              candidate.sessionId === groupTarget.sessionId
-              && candidate.serviceId === groupTarget.serviceId
-              && candidate.groupId === groupTarget.groupId
-              && candidate.activeProfileId === groupTarget.activeProfileId
-            )) {
+            if (!serviceTargets.some((candidate) => sameGroupSwitchTarget(candidate, groupTarget))) {
               serviceTargets.push(groupTarget);
               activeGroupTargetsByServiceId.set(legacyServiceId, serviceTargets);
             }
@@ -4722,6 +5087,7 @@ export class ConnectedServiceQuotasCoordinator {
     await this.pollQualifiedConnectedAccountQuotas({
       accountMode,
       now,
+      qualifiedGroupTargets,
       v4Support:
         qualifiedPeerClass === 'advertised_v4'
           ? 'advertised'

@@ -80,6 +80,37 @@ describe('requireAgentCliLaunchSpec', () => {
     });
   });
 
+  it('resolves a managed JS runtime .cmd wrapper to the direct runtime binary on Windows', async () => {
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform to be configurable for this test');
+    }
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+    const root = await createTempDir('happier-agent-launch-windows-runtime-wrapper-', tmpdir());
+    tempDirs.add(root);
+    const agentCliPath = await createExecutable(root, 'gemini.mjs', 'process.stdout.write("ok\\n");\n');
+    const runtimeWrapperPath = join(root, 'tools', 'js-runtime', 'current', 'bin', 'happier-js-runtime.cmd');
+    const runtimeBinaryPath = join(root, 'tools', 'js-runtime', 'current', 'runtime', 'node.exe');
+    await writeTextFile(runtimeWrapperPath, '@echo off\r\n');
+    await writeTextFile(runtimeBinaryPath, 'managed runtime binary');
+
+    process.env.PATH = '';
+    process.env.HAPPIER_GEMINI_PATH = agentCliPath;
+    process.env.HAPPIER_JS_RUNTIME_PATH = runtimeWrapperPath;
+    delete process.env.HAPPIER_MANAGED_NODE_BIN;
+    delete process.env.HAPPIER_NODE_PATH;
+
+    // The launch spec is consumed by direct child_process spawns with
+    // shell: false, so a .cmd runtime wrapper must resolve to the underlying
+    // managed runtime binary (runtime/node.exe), never stay a .cmd shim.
+    expect(requireAgentCliLaunchSpec('gemini')).toEqual({
+      source: 'override',
+      resolvedPath: agentCliPath,
+      command: runtimeBinaryPath,
+      args: [agentCliPath],
+    });
+  });
+
   it('wraps system node-shebang agent scripts with the configured JS runtime', async () => {
     const root = await createTempDir('happier-agent-launch-', tmpdir());
     tempDirs.add(root);

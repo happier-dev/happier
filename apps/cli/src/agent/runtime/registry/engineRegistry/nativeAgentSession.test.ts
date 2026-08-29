@@ -7140,7 +7140,7 @@ describe('native Agent session host adapter', () => {
             throw new Error('subscriber failed');
         });
         runtime.subscribeRuntimeEvents(laterListener);
-        runtime.setOnPromptDeliveryOutcome(deliveryOutcome);
+        runtime.setOnPromptDeliveryOutcome?.(deliveryOutcome);
 
         await runtime.sendTurnPrompt('hello', {
             localId: 'input-listener-isolation',

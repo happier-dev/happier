@@ -9,7 +9,9 @@ import type {
 } from '@/plugins/runtime/exec/privateContract';
 import {
     type AgentExecutionRunEvent,
+    type AgentExecutionRunOpenRequest,
     type AgentRuntime,
+    type AgentRuntimeContext,
     type AgentSessionHostServices,
     type AgentSessionOpenRequest,
     type AgentSessionRuntimeContext,
@@ -22,6 +24,8 @@ import {
     buildProviderAccountUsageRecordId,
     type BackendSurfaceDeclarationV1,
     type PluginAgentContributionV2,
+    type PluginAgentExecutionRunCapabilitiesV2,
+    type PluginAgentSessionCapabilitiesV2,
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -323,7 +327,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
     }
 
     function createRuntimePlacementSessionClient(sessionId: string) {
-        let metadata: Record<string, unknown> = {
+        let metadata: Metadata = {
             path: '/tmp/runtime-placement',
             host: 'test',
             homeDir: '/tmp',
@@ -338,7 +342,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             },
             updateAgentState: async () => {},
             updateMetadata: async (
-                updater: (state: Record<string, unknown>) => Record<string, unknown>,
+                updater: (state: Metadata) => Metadata,
             ) => {
                 metadata = updater(metadata);
             },
@@ -722,12 +726,15 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
     }
 
+    type SessionOpenCapabilityEntry = PluginAgentSessionCapabilitiesV2['open'][number];
+    type ExecutionRunOpenCapabilityEntry = PluginAgentExecutionRunCapabilitiesV2['open'][number];
+
     function seedExternalPrimaryAgentRegistry(params: Readonly<{
         sessions: boolean;
         executionRuns: boolean;
         externalSessions?: boolean;
-        sessionOpen?: ReadonlyArray<'create' | 'resume'>;
-        executionRunOpen?: ReadonlyArray<'create' | 'resume'>;
+        sessionOpen?: ReadonlyArray<SessionOpenCapabilityEntry>;
+        executionRunOpen?: ReadonlyArray<ExecutionRunOpenCapabilityEntry>;
     }>) {
         const agentId = 'primary-agent';
         const backendId = agentId;
@@ -758,12 +765,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 primary: 'sessions',
                 capabilities: {
                     sessions: {
-                        open: params.sessionOpen ?? ['create'],
+                        open: [...(params.sessionOpen ?? ['create'])],
                         delivery: ['newTurn'],
                         cancel: true,
                     },
                     executionRuns: {
-                        open: params.executionRunOpen ?? ['create'],
+                        open: [...(params.executionRunOpen ?? ['create'])],
                         checkpoint: true,
                         stop: true,
                     },
@@ -778,7 +785,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 primary: 'sessions',
                 capabilities: {
                     sessions: {
-                        open: params.sessionOpen ?? ['create'],
+                        open: [...(params.sessionOpen ?? ['create'])],
                         delivery: ['newTurn'],
                         cancel: true,
                     },
@@ -793,7 +800,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 primary: 'executionRuns',
                 capabilities: {
                     executionRuns: {
-                        open: params.executionRunOpen ?? ['create'],
+                        open: [...(params.executionRunOpen ?? ['create'])],
                         checkpoint: true,
                         stop: true,
                     },
@@ -1089,7 +1096,10 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const send = vi.fn(async () => ({ status: 'admitted' as const }));
         const stop = vi.fn(async () => ({ status: 'requested' as const }));
         const dispose = vi.fn(async () => undefined);
-        const open = vi.fn(async () => ({
+        const open = vi.fn(async (
+            _request: AgentExecutionRunOpenRequest,
+            _context: AgentRuntimeContext,
+        ) => ({
             send,
             stop,
             watch(listener: (event: AgentExecutionRunEvent) => void) {
@@ -2969,7 +2979,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         );
         const parentSession = {
             ...createRuntimePlacementSessionClient('parent-session'),
-            enqueueAgentMessageCommitted: vi.fn(async () => undefined),
+            enqueueAgentMessageCommitted: vi.fn(async () => ({ persisted: true, delivered: false })),
         };
         const handleToolCall = vi.fn(async () => ({
             decision: 'denied' as const,

@@ -1,7 +1,9 @@
 import type {
   ConnectedServiceExecutionAuthorityV1,
+  ConnectedAccountServiceKey,
   ConnectedServiceId,
 } from '@happier-dev/protocol';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 import type { ConnectedServiceRuntimeRefreshTarget } from '../runtimeRegistry/registry';
@@ -20,7 +22,7 @@ type CredentialProjectionRuntimeTarget = Pick<
 
 function targetContainsBinding(
   target: CredentialProjectionRuntimeTarget,
-  binding: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  binding: Readonly<{ serviceId: ConnectedAccountServiceKey; profileId: string }>,
 ): boolean {
   return target.bindings.some((candidate) =>
     candidate.serviceId === binding.serviceId
@@ -44,7 +46,7 @@ function isSameLifecycleTarget(
 
 export async function applyConnectedServiceProjectionCredentialUpdate(params: Readonly<{
   input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     credentialPresence: ConnectedServiceProjectedCredentialPresence;
     executionAuthority: ConnectedServiceExecutionAuthorityV1;
@@ -88,8 +90,16 @@ export async function applyConnectedServiceProjectionCredentialUpdate(params: Re
   if (!coordinator) {
     throw new Error('connected_service_credential_projection_materialization_owner_unavailable');
   }
+  const legacyServiceId =
+    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+      params.input.serviceId,
+    );
+  if (!legacyServiceId) {
+    throw new Error('connected_service_credential_projection_legacy_materialization_unavailable');
+  }
   await coordinator.handleExternalCredentialUpdate({
     ...params.input,
+    serviceId: legacyServiceId,
     credentialPresence: params.input.credentialPresence,
   });
 }

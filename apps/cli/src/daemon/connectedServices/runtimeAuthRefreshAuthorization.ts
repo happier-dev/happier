@@ -1,16 +1,16 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type { ConnectedServiceRuntimeTarget } from './runtimeRegistry/registry';
 
 export type ConnectedServiceRuntimeAuthRefreshSelection = Readonly<
   | {
       kind: 'profile';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       profileId: string;
     }
   | {
       kind: 'group';
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
       activeProfileId: string;
       fallbackProfileId: string;

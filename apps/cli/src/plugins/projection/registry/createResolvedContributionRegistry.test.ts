@@ -510,7 +510,7 @@ describe('getResolvedContributionRegistry', () => {
     const event = (
       pluginId: string,
       localId: string,
-      setupActionLocalId?: string,
+      setupActionLocalId: string,
       historyGapResetActionLocalId?: string,
     ) => ({
       provenance: 'external' as const,
@@ -532,9 +532,7 @@ describe('getResolvedContributionRegistry', () => {
             sourceContractVersion: 1,
             supportedObservationTransports: ['checkpointedPull' as const],
             sourceConfigSchema: { type: 'object', additionalProperties: false },
-            ...(setupActionLocalId
-              ? { setupActionRef: { pluginId, localId: setupActionLocalId } }
-              : {}),
+            setupActionRef: { pluginId, localId: setupActionLocalId },
             ...(historyGapResetActionLocalId
               ? { historyGapResetActionRef: { pluginId, localId: historyGapResetActionLocalId } }
               : {}),
@@ -552,7 +550,6 @@ describe('getResolvedContributionRegistry', () => {
       events: [
         event('alpha.plugin', 'repository/updated', 'configure-source', 'baseline-history-gap'),
         event('beta.plugin', 'repository/updated', 'configure-source'),
-        event('alpha.plugin', 'valid-but-not-composer-eligible', 'missing-setup-action'),
       ],
       immutableGenerationIdsByPluginId: {
         'alpha.plugin': 'alpha-immutable-generation',

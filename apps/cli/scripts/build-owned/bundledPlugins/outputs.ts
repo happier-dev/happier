@@ -70,8 +70,18 @@ export function publishCoherentProjectionOutputs(
 
 export function assertGeneratedOutputMatches(filePath: string, expected: string): void {
   if (!existsSync(filePath)) throw new Error(`missing generated output: ${filePath}`);
-  if (readFileSync(filePath, 'utf8') !== expected) {
-    throw new Error(`generated output differs: ${filePath}`);
+  const actual = readFileSync(filePath, 'utf8');
+  if (actual !== expected) {
+    let offset = 0;
+    const sharedLength = Math.min(actual.length, expected.length);
+    while (offset < sharedLength && actual[offset] === expected[offset]) offset += 1;
+    const start = Math.max(0, offset - 80);
+    const end = offset + 160;
+    throw new Error(
+      `generated output differs: ${filePath} at byte ${offset} `
+      + `(actual=${JSON.stringify(actual.slice(start, end))}, `
+      + `expected=${JSON.stringify(expected.slice(start, end))})`,
+    );
   }
 }
 

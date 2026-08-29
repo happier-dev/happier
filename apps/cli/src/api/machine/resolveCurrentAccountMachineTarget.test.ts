@@ -83,4 +83,17 @@ describe('resolveCurrentAccountMachineTarget', () => {
 
     expect(boundaries.axiosGet).not.toHaveBeenCalled();
   });
+
+  it('parses inventory rows through the Protocol external Action bootstrap schema, not a local grammar', async () => {
+    // A Protocol-invalid id must fail the inventory closed instead of being
+    // silently trimmed into a different machine identity.
+    boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('machine-1'), id: ' machine-1 ' }] });
+    await expect(listCurrentAccountMachines({ token: 'token-1' }))
+      .rejects.toMatchObject({ code: 'machine_inventory_unavailable' });
+
+    // Absolute revocation timestamps are integer wall-clock milliseconds.
+    boundaries.axiosGet.mockResolvedValue({ data: [{ ...currentMachine('machine-1'), revokedAt: 1.5 }] });
+    await expect(listCurrentAccountMachines({ token: 'token-1' }))
+      .rejects.toMatchObject({ code: 'machine_inventory_unavailable' });
+  });
 });

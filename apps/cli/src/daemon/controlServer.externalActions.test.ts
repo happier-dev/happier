@@ -140,7 +140,6 @@ describe('createDaemonControlApp external Action ingress', () => {
       executor: { execute },
       resolveTarget,
     });
-
     try {
       const response = await app.inject({
         method: 'POST',
@@ -162,6 +161,48 @@ describe('createDaemonControlApp external Action ingress', () => {
       });
       expect(resolveTarget).not.toHaveBeenCalled();
       expect(execute).not.toHaveBeenCalled();
+
+      // A request id with outer whitespace is rejected through the same
+      // Protocol request-id schema the external envelope owns — never trimmed
+      // into a different correlation identity.
+      const paddedRequestIdResponse = await app.inject({
+        method: 'POST',
+        url: '/actions/root/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token' },
+        payload: {
+          actionId: 'machines.list',
+          input: {},
+          actionRequestId: ' padded ',
+        },
+      });
+
+      expect(paddedRequestIdResponse.statusCode).toBe(400);
+      expect(paddedRequestIdResponse.json()).toEqual({
+        ok: false,
+        errorCode: 'invalid_action_request',
+        error: 'invalid_action_request',
+      });
+      expect(execute).not.toHaveBeenCalled();
+
+      // Protocol-valid Unicode request ids pass through unchanged.
+      const unicodeRequestIdResponse = await app.inject({
+        method: 'POST',
+        url: '/actions/root/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token' },
+        payload: {
+          actionId: 'machines.list',
+          input: {},
+          targetMachineId: 'machine-local',
+          actionRequestId: 'corrélation-☃',
+        },
+      });
+
+      expect(unicodeRequestIdResponse.statusCode).toBe(200);
+      expect(execute).toHaveBeenCalledWith(
+        'machines.list',
+        {},
+        expect.objectContaining({ actionRequestId: 'corrélation-☃' }),
+      );
     } finally {
       await app.close();
     }

@@ -65,9 +65,9 @@ it('projects an admitted bundled generation through the canonical machine Availa
       contributionId: 'fixture-native',
       tier: 'reactNative',
       platform: 'web',
-      entry: 'entry.mjs.bundle',
+      entry: 'hosted-entry.js',
       files: [{
-        relativePath: 'entry.mjs.bundle',
+        relativePath: 'hosted-entry.js',
         digest: `sha256:${'b'.repeat(64)}`,
         byteSize: 1,
       }],
@@ -75,6 +75,19 @@ it('projects an admitted bundled generation through the canonical machine Availa
       builtWith: { bundler: 'vite', version: '1.0.0' },
       hostUiApiVersion: '1.0.0',
       compat: { react: '19.2.0', reactNative: '0.83.5' },
+    }, {
+      contributionId: 'fixture-hosted',
+      tier: 'hostedWeb',
+      entry: 'entry.mjs.bundle',
+      files: [{
+        relativePath: 'entry.mjs.bundle',
+        digest: `sha256:${'c'.repeat(64)}`,
+        byteSize: 1,
+      }],
+      digest: `sha256:${'d'.repeat(64)}`,
+      builtWith: { bundler: 'vite', version: '1.0.0' },
+      hostUiApiVersion: '1.0.0',
+      compat: {},
     }],
   });
   await writeFile(join(packageRoot, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), uiManifestBytes);
@@ -88,12 +101,12 @@ it('projects an admitted bundled generation through the canonical machine Availa
       immutableGenerationId: 'bundled-generation-fixture',
       createdAtMs: 0,
       manifestRelativePath: '.happier-plugin/plugin.json',
-      files: Object.freeze([
+      files: [
         { relativePath: '.happier-plugin/plugin.json', byteLength: Buffer.byteLength(manifestBytes) },
         { relativePath: 'dist/happier-plugin-ui/ui-artifacts.json', byteLength: Buffer.byteLength(uiManifestBytes) },
         { relativePath: 'dist/index.js', byteLength: Buffer.byteLength(entryBytes) },
         { relativePath: 'package.json', byteLength: Buffer.byteLength(packageMetadataBytes) },
-      ]),
+      ],
     }),
   });
   const store = createPluginRegistryStateStore({
@@ -117,6 +130,11 @@ it('projects an admitted bundled generation through the canonical machine Availa
         tier: 'reactNative',
         platform: 'web',
         artifactDigest,
+      }, {
+        contributionId: 'fixture-hosted',
+        tier: 'hostedWeb',
+        platform: 'web',
+        artifactDigest: `sha256:${'d'.repeat(64)}`,
       }],
       enabled: true,
       trustState: 'trusted',

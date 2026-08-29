@@ -6,6 +6,7 @@ import type {
     AgentExecutionRunRuntime,
     AgentRuntime,
     AgentRuntimeContext,
+    AgentSessionOpenRequest,
     AgentSessionRuntimeEvent,
     AgentSessionRuntime,
     AgentSessionRuntimeContext,
@@ -143,7 +144,10 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         const disposeSessionContext = vi.fn(async () => undefined);
         const runtime: AgentRuntime = Object.freeze({
             sessions: Object.freeze({
-                async open(request, context) {
+                async open(
+                    request: AgentSessionOpenRequest,
+                    context: AgentSessionRuntimeContext,
+                ) {
                     expect(request.sessionId).toBe('session-parent');
                     expect(context.session.id).toBe('session-parent');
                     expect(context.session.services.features.isEnabled('execution.runs')).toBe(true);
@@ -153,9 +157,13 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
                     return {
                         send,
                         cancel,
-                        watch(listener) {
+                        watch(listener: (event: AgentSessionRuntimeEvent) => void) {
                             nativeListeners.add(listener);
-                            return { dispose: () => nativeListeners.delete(listener) };
+                            return {
+                                dispose: () => {
+                                    nativeListeners.delete(listener);
+                                },
+                            };
                         },
                         dispose: disposeSession,
                     };
@@ -656,7 +664,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         const opened: AgentExecutionRunRuntime = Object.freeze({
             async send() { return { status: 'admitted' as const }; },
             async stop() { return { status: 'requested' as const }; },
-            watch(listener) {
+            watch(listener: (event: AgentExecutionRunEvent) => void) {
                 watchState.publish = listener;
                 return { dispose: vi.fn() };
             },

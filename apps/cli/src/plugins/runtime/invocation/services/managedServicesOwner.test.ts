@@ -243,11 +243,14 @@ function createHarness(
     });
     let currentSnapshot: ReturnType<ManagedServiceProcessHandle['snapshot']> =
         legacySnapshot;
+    const stop = vi.fn<ManagedServiceProcessHandle['stop']>(
+        async () => Object.freeze({ status: 'stopped' as const }),
+    );
     const legacyHandle = Object.freeze({
         snapshot: () => currentSnapshot,
         observe: vi.fn(() => Object.freeze({ dispose() {} })),
         waitUntilHealthy: vi.fn(async () => legacySnapshot),
-        stop: vi.fn(async () => Object.freeze({ status: 'stopped' as const })),
+        stop,
         dispose: vi.fn(async () => undefined),
     }) satisfies ManagedServiceProcessHandle;
     const supervise = vi.fn<ManagedServiceProcessSupervisor['supervise']>(
@@ -3588,10 +3591,21 @@ describe('managed-services SVC09 owner', () => {
     });
 
     it('retains real supervisor cleanup custody when post-spawn establishment cleanup fails', async () => {
-        const process = createLifecycleProcess(4_242);
-        process.dispose
-            .mockRejectedValueOnce(new Error('/private/raw-process-secret'))
-            .mockResolvedValueOnce(undefined);
+        const exit = deferred<PluginProcessResult>();
+        const process = Object.freeze({
+            write: vi.fn(async () => undefined),
+            closeStdin: vi.fn(async () => undefined),
+            wait: vi.fn(async () => await exit.promise),
+            onOutput: vi.fn(() => Object.freeze({ dispose() {} })),
+            dispose: vi.fn()
+                .mockRejectedValueOnce(
+                    new Error('/private/raw-process-secret'),
+                )
+                .mockImplementationOnce(async () => {
+                    exit.resolve(MANAGED_SERVICE_CLEAN_EXIT);
+                }),
+        }) satisfies PluginProcessHandle;
+        associateSupervisedPluginProcessHandleForHost(process, { pid: 4_242 });
         const processSupervisorHost = createManagedServiceProcessSupervisorHost({
             createInstanceId: () => 'post-spawn-cleanup-custody',
             durability: Object.freeze({
@@ -4394,7 +4408,6 @@ describe('managed-services SVC09 owner', () => {
         }), harness.exec);
         const pHandle = await pServices.supervise(lifecycleSpec({
             id: 'gateway',
-            port: 43_123,
             args: Object.freeze(['serve', '--generation=P']),
         }));
 
@@ -4405,7 +4418,6 @@ describe('managed-services SVC09 owner', () => {
         }), harness.exec);
         const qEstablishment = qServices.supervise(lifecycleSpec({
             id: 'gateway',
-            port: 43_124,
             args: Object.freeze(['serve', '--generation=Q']),
         }));
         const firstLifecycleEvent = await Promise.race([
@@ -4710,12 +4722,13 @@ describe('managed-services SVC09 owner', () => {
         const secondStop = vi.fn(async () => Object.freeze({
             status: 'stopped' as const,
         }));
+        const secondDispose = vi.fn(async () => undefined);
         const secondHandle = Object.freeze({
             snapshot: () => healthySnapshot,
             observe: vi.fn(() => Object.freeze({ dispose() {} })),
             waitUntilHealthy: vi.fn(async () => healthySnapshot),
             stop: secondStop,
-            dispose: vi.fn(async () => undefined),
+            dispose: secondDispose,
         }) satisfies ManagedServiceProcessHandle;
         const supervise = vi.fn<ManagedServiceProcessSupervisor['supervise']>()
             .mockResolvedValueOnce(firstHandle)
@@ -4791,7 +4804,8 @@ describe('managed-services SVC09 owner', () => {
         expect(firstDispose).toHaveBeenCalledOnce();
 
         await expect(owner.dispose()).resolves.toBeUndefined();
-        expect(secondStop).toHaveBeenCalledOnce();
+        expect(secondDispose).toHaveBeenCalledOnce();
+        expect(secondStop).not.toHaveBeenCalled();
     });
 
     it('keeps a terminal explicit-start claim when its physical cleanup fails', async () => {
@@ -4882,14 +4896,16 @@ describe('managed-services SVC09 owner', () => {
         });
         terminalListener!(currentSnapshot);
         await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+        expect(owner.readRetainedSemanticCustodyCount()).toBe(2);
 
         await expect(owner.runManagedProviderExplicitStart(
             operation(),
         )).rejects.toMatchObject({
             code: 'plugin_managed_service_establishment_failed',
         });
-        expect(establish).toHaveBeenCalledOnce();
         expect(supervise).toHaveBeenCalledOnce();
+        expect(owner.readRetainedSemanticCustodyCount()).toBe(2);
+        expect(dispose).toHaveBeenCalledTimes(2);
 
         await expect(owner.dispose()).rejects.toMatchObject({
             errors: expect.any(Array),

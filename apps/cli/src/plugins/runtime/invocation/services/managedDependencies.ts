@@ -186,6 +186,8 @@ function readVersion(status: unknown, ...keys: readonly string[]): string | null
 export function createStablePluginManagedDependenciesHost(params: Readonly<{
     installablesRegistry: InstallablesRegistry;
     sourceModel?: V2ManagedDependencySourceModel;
+    /** Canonical lifetime of the host that published this service surface. */
+    isCurrent?(): boolean;
     immutableGenerationIdsByPluginId?:
         ReadonlyMap<string, string>;
     getSettings(): unknown;
@@ -321,6 +323,15 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
     let pendingRunnerReservations = 0;
     let generationRetirementReserved = false;
 
+    function assertHostCurrent(): void {
+        if (params.isCurrent?.() === false) {
+            fail(
+                'plugin_managed_dependency_generation_retired',
+                'Managed dependency generation has retired',
+            );
+        }
+    }
+
     const snapshotRunnerRetention = (
         binding: AgentSessionRunnerBindingV1,
         hostAccessRequests: readonly Readonly<{
@@ -328,6 +339,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
             required: boolean;
         }>[],
     ): RunnerManagedDependencyRetentionV1 => {
+        assertHostCurrent();
         const qualifiedDependencyIds =
             resolveRunnerManagedDependencyQualifiedIds(
                 binding,
@@ -561,6 +573,7 @@ export function createStablePluginManagedDependenciesHost(params: Readonly<{
     }
 
     function assertV2Current(owner: DescriptorOwner): void {
+        assertHostCurrent();
         if (owner.kind === 'v2') params.sourceModel?.resolve(owner.dependency.identity);
     }
 

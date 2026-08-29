@@ -22,6 +22,7 @@ import {
   inspectUsableSourceDevSharedDepsLastGreen,
   inspectSourceDevSharedDepsForSourceDev,
   main,
+  publishBundledPluginArtifactsAfterWorkspaceBuild,
   publishSourceDevReadinessAfterRuntimeBuild,
   runCanonicalBundledPluginArtifactPublisher,
   runCanonicalPluginSdkGeneratedCompilerInputs,
@@ -31,6 +32,7 @@ import {
   createPackageLayoutSandbox,
   writeCliBundledHostPackage,
   writeRuntimeDependencyStub,
+  writeWorkspacePackageFixture,
 } from './testkit/packageLayoutSandbox';
 
 const cliScriptsSourceDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -157,6 +159,53 @@ describe('buildSharedDeps', () => {
       })).rejects.toThrow(/code=17[\s\S]*bundled publisher test failure/);
     } finally {
       removeTempDirSync(repoRoot);
+    }
+  });
+
+  it('publishes only the bundled-plugin subset of a mixed CLI bundled workspace selection', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-build-shared-mixed-selection-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: ['@happier-dev/protocol', '@happier-dev/plugins-pi'],
+      });
+      for (const workspace of [
+        { workspacePath: 'packages/protocol', packageName: '@happier-dev/protocol' },
+        { workspacePath: 'packages/plugins/pi', packageName: '@happier-dev/plugins-pi' },
+      ]) {
+        writeWorkspacePackageFixture({
+          repoRoot,
+          ...workspace,
+          files: { 'tsconfig.json': '{}\n' },
+        });
+      }
+
+      const publications: string[][] = [];
+      // Mixed selection shape: host workspaces (`protocol`) plus names that are
+      // not bundled by this checkout (`agents`) plus a real bundled plugin.
+      await expect(publishBundledPluginArtifactsAfterWorkspaceBuild({
+        repoRoot,
+        workspaceNames: ['protocol', 'agents', 'plugins-pi'],
+        env: {},
+        bundledPluginArtifactPublication: { mode: 'write' },
+        publishBundledPluginArtifactsImpl: async ({ workspaceNames }: { workspaceNames: readonly string[] }) => {
+          publications.push([...workspaceNames]);
+          return true;
+        },
+      })).resolves.toBe(true);
+      expect(publications).toEqual([['plugins-pi']]);
+
+      await expect(publishBundledPluginArtifactsAfterWorkspaceBuild({
+        repoRoot,
+        workspaceNames: ['protocol', 'agents'],
+        env: {},
+        publishBundledPluginArtifactsImpl: async () => {
+          throw new Error('a selection without bundled plugins must not invoke the publisher');
+        },
+      })).resolves.toBe(false);
+    } finally {
+      cleanup();
     }
   });
 
@@ -2325,7 +2374,7 @@ describe('buildSharedDeps', () => {
     }
   });
 
-  it('does not trust a current source-dev stamp when installed plugin bytes differ at equal length', () => {
+  it('does not trust or fast-path a current source-dev stamp when installed plugin bytes differ at equal length', async () => {
     const repoRoot = createTempDirSync('happy-cli-dev-sync-plugin-digest-drift-');
     try {
       const packageName = '@happier-dev/plugins-pi';
@@ -2404,6 +2453,27 @@ describe('buildSharedDeps', () => {
         repoRoot,
         workspaceNames: [workspaceName],
       })).toEqual({ current: false, reason: 'not-current' });
+
+      const syncDist = vi.fn(() => {
+        writeFileSync(resolve(installedPackageDir, 'dist', 'index.js'), expectedBytes, 'utf8');
+      });
+      const result = await syncSharedDepsForSourceDev({
+        repoRoot,
+        workspaceNames: [workspaceName],
+        publishBundledPluginArtifacts: false,
+        withBuildSharedDepsLockImpl: async (run: () => Promise<unknown> | unknown) => await run(),
+        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceBuildOwner(vi.fn()),
+        syncBundledWorkspaceDistImpl: syncDist,
+        syncBundledWorkspaceRuntimeDependenciesImpl: () => undefined,
+        syncCliRuntimeDependenciesImpl: () => undefined,
+      });
+
+      expect(syncDist).toHaveBeenCalledOnce();
+      expect(result).toEqual({ synced: true, stamped: true });
+      expect(inspectSourceDevSharedDepsForSourceDev({
+        repoRoot,
+        workspaceNames: [workspaceName],
+      })).toEqual({ current: true, reason: 'current' });
     } finally {
       removeTempDirSync(repoRoot);
     }

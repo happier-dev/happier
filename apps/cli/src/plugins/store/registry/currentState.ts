@@ -15,6 +15,7 @@ import {
 } from '@happier-dev/protocol';
 import { PluginUiArtifactsManifestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
+import { resolvePluginUiArtifactAvailabilityPlatform } from '../../availability/releaseFacts';
 
 import type { PluginAccessSelection } from '../install/accessScopeRegistry';
 import { projectPluginFailureText } from '../../runtime/lifecycle/utils';
@@ -577,7 +578,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           ) as unknown).entries.map((entry) => Object.freeze({
             contributionId: entry.contributionId,
             tier: entry.tier,
-            platform: entry.platform,
+            platform: resolvePluginUiArtifactAvailabilityPlatform(entry),
             artifactDigest: entry.digest,
           }))
         : [];

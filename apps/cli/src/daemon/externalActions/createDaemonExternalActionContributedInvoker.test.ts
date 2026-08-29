@@ -170,7 +170,7 @@ function createExternalActionRuntime(
         },
       },
     }],
-    targetActivationFacts: [{
+    readTargetActivationFacts: () => [{
       pluginId,
       pluginVersion: '1.0.0',
       source: 'localPath',

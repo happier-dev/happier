@@ -4,6 +4,8 @@ import {
   QualifiedConnectedServiceUsageSourceV4Schema,
   openProviderAccountUsageSnapshotCiphertext,
   parseBuiltInLegacyProviderAccountUsageSnapshotV1,
+  parseQualifiedPluginContributionKey,
+  readBuiltInLegacyConnectedServiceIdForQualifiedService,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordId,
   type ProviderAccountUsageSnapshotV1,
@@ -39,8 +41,8 @@ export type ProviderAccountUsageHydrationApi = Readonly<{
 }>;
 
 /**
- * The local store continues to expose scalar connected-service keys to quota
- * consumers, but its source truth comes only from this qualified V4 pair.
+ * The local store's canonical source keys use the qualified Connected Account
+ * service identity, and its source truth comes only from this qualified V4 pair.
  */
 export type ProviderAccountUsageHydrationSource = Readonly<{
   localSource: ConnectedServiceUsageSourceV1;
@@ -231,13 +233,31 @@ export function buildProviderAccountUsageCurrentSourceKey(source: ConnectedServi
     ]);
 }
 
+/**
+ * Adapter seam for the bundled Agents ownership helper: it decides against
+ * released scalar `supportedServiceIds`, while the local store's canonical
+ * source keys are qualified contribution keys. A recognized built-in qualified
+ * service is projected to its sole Protocol-owned released scalar inverse
+ * before the ownership decision; a scalar key is preserved, and a qualified key
+ * with no built-in inverse stays qualified so a direct
+ * `providerId === serviceId` match can still prove ownership instead of
+ * collapsing arbitrary local ids onto some scalar.
+ */
 function isProviderCompatibleWithConnectedServiceSource(input: Readonly<{
   providerId: string;
   source: ConnectedServiceUsageSourceV1;
 }>): boolean {
+  const qualified = parseQualifiedPluginContributionKey(input.source.serviceId);
+  if (!qualified) {
+    return isConnectedServiceUsageProviderCompatible({
+      providerId: input.providerId,
+      serviceId: input.source.serviceId,
+    });
+  }
+  const legacyServiceId = readBuiltInLegacyConnectedServiceIdForQualifiedService(qualified);
   return isConnectedServiceUsageProviderCompatible({
     providerId: input.providerId,
-    serviceId: input.source.serviceId,
+    serviceId: legacyServiceId ?? input.source.serviceId,
   });
 }
 

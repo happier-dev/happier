@@ -12,6 +12,7 @@ import { PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 } from '@happier-dev/protocol/p
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
     defineContributionProtocol,
+    type ContributionActionSurface,
 } from '@happier-dev/plugin-sdk/contributions';
 import {
     defineProtocolLiteral,
@@ -62,7 +63,7 @@ function point(): PluginContributionPointV1 {
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: { type: 'object' },
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         }],
@@ -86,6 +87,7 @@ function canonicalTargetPoint(params: Readonly<{
     operationRole?: string;
     required?: boolean;
     maxContributionsPerContributor?: number;
+    surfaces?: readonly [ContributionActionSurface, ...ContributionActionSurface[]];
 }> = {}) {
     const operationRole = params.operationRole ?? 'setup';
     const target = definePlugin({
@@ -100,7 +102,7 @@ function canonicalTargetPoint(params: Readonly<{
                         required: params.required ?? true,
                         input: { kind: 'contributorDefined' },
                         resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: params.surfaces ?? ['plugin'], dangerLevel: 'safe' },
                     },
                 },
             }).point({
@@ -344,7 +346,7 @@ describe('targeted contribution cold admission', () => {
                             required: false,
                             input: { kind: 'contributorDefined' },
                             resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                         },
                     },
                     surfaces: {
@@ -406,7 +408,7 @@ describe('targeted contribution cold admission', () => {
                             required: false,
                             input: { kind: 'contributorDefined' },
                             resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                         },
                     },
                 }).point(),
@@ -464,7 +466,7 @@ describe('targeted contribution cold admission', () => {
                             required: false,
                             input: { kind: 'contributorDefined' },
                             resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                         },
                     },
                 }).point(),
@@ -527,7 +529,7 @@ describe('targeted contribution cold admission', () => {
                             required: false,
                             input: { kind: 'contributorDefined' },
                             resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                         },
                     },
                 }).point(),
@@ -1126,6 +1128,23 @@ describe('targeted contribution cold admission', () => {
             expect(targetedDiagnosticCodes(catalog), testCase.name)
                 .toEqual([testCase.code]);
         }
+    });
+
+    it('requires every target-owned operation surface before admitting the contributor Action', () => {
+        const dualSurfacePoint = canonicalTargetPoint({ surfaces: ['plugin', 'ui'] }).definition;
+        const catalog = (surfaces: readonly PluginActionSurfaceV2[]) => registry({
+            points: [{ pluginId: targetPluginId, definition: dualSurfacePoint }],
+            actions: [action({ surfaces })],
+        });
+        const read = (surfaces: readonly PluginActionSurfaceV2[]) => catalog(surfaces)
+            .readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol });
+
+        expect(read(['plugin'])).toEqual(expect.objectContaining({ contributions: [] }));
+        expect(read(['ui'])).toEqual(expect.objectContaining({ contributions: [] }));
+        const combined = catalog(['plugin', 'ui']);
+        expect(targetedDiagnosticCodes(combined)).toEqual([]);
+        expect(combined.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol })
+            ?.contributions).toHaveLength(1);
     });
 
     it('rejects duplicate contribution identities and all contributions beyond one contributor-point limit', () => {

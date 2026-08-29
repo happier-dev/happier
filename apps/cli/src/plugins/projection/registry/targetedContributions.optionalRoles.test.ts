@@ -34,7 +34,7 @@ function point(params: Readonly<{ optionalSurface?: boolean }> = {}): ResolvedPl
                         required: false,
                         input: { kind: 'contributorDefined' },
                         resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                 },
                 ...(params.optionalSurface === true

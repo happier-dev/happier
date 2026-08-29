@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import { parseConnectedServiceBindingSelections } from '../../parseConnectedServicesBindings';
 import {
@@ -16,7 +16,7 @@ export type ConnectedServiceGenerationRuntimeTarget = Readonly<{
   connectedServiceMaterializationIdentityV1?: Readonly<{ id: string }> | null;
   connectedServicesBindingsRaw: unknown;
   activeBindings: ReadonlyArray<Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string | null;
     profileId: string;
     generation: number | null;
@@ -25,7 +25,7 @@ export type ConnectedServiceGenerationRuntimeTarget = Readonly<{
 }>;
 
 export type ConnectedServiceProjectedAuthGroup = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   groupId: string;
   activeProfileId: string | null;
   generation: number;
@@ -48,23 +48,23 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function groupScopeKey(input: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>): string {
+function groupScopeKey(input: Readonly<{ serviceId: ConnectedAccountServiceKey; groupId: string }>): string {
   return `${input.serviceId}\0${input.groupId}`;
 }
 
 export async function reconcileConnectedServiceDirectCredentialRevisions(params: Readonly<{
   credentialRevisions: ReadonlyArray<Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     credentialRevision: string;
   }>>;
   resolveCredentialPresence?: (
-    serviceId: ConnectedServiceId,
+    serviceId: ConnectedAccountServiceKey,
     profileId: string,
   ) => ConnectedServiceProjectedCredentialPresence;
   listRuntimeTargets: () => readonly ConnectedServiceGenerationRuntimeTarget[];
   applyLiveCredentialRevision: (input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     credentialPresence: Exclude<ConnectedServiceProjectedCredentialPresence, Readonly<{ status: 'legacy_unfenced' }>>;
     executionAuthority: ConnectedServiceGenerationExecutionAuthority;
@@ -78,7 +78,7 @@ export async function reconcileConnectedServiceDirectCredentialRevisions(params:
     entry.credentialRevision,
   ] as const));
   const liveBindings = new Map<string, Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     credentialPresence: Exclude<ConnectedServiceProjectedCredentialPresence, Readonly<{ status: 'legacy_unfenced' }>>;
   }>>();
@@ -116,10 +116,10 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
   target: ConnectedServiceGenerationRuntimeTarget;
   providerAdoptedTargets?: readonly ConnectedServiceProviderAdoptedGenerationTarget[];
   consumer: ConnectedServiceAuthGroupGenerationConsumer;
-  listCurrentGroups: (serviceId: ConnectedServiceId) => Promise<readonly ConnectedServiceProjectedAuthGroup[]>;
-  resolveCredentialRevision: (serviceId: ConnectedServiceId, profileId: string) => string | null;
+  listCurrentGroups: (serviceId: ConnectedAccountServiceKey) => Promise<readonly ConnectedServiceProjectedAuthGroup[]>;
+  resolveCredentialRevision: (serviceId: ConnectedAccountServiceKey, profileId: string) => string | null;
   resolveCredentialPresence: (
-    serviceId: ConnectedServiceId,
+    serviceId: ConnectedAccountServiceKey,
     profileId: string,
   ) => ConnectedServiceProjectedCredentialPresence;
   executionAuthority: ConnectedServiceGenerationExecutionAuthority;
@@ -129,7 +129,7 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
     return { acknowledgeable: true, reconciledGroupCount: 0, sessionDispositionCount: 0 } as const;
   }
   const scopes = new Map<string, Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     fromProfileId: string | null;
   }>>();

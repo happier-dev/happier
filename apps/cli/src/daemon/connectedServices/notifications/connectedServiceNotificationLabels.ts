@@ -1,6 +1,7 @@
 import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   ConnectedServiceIdSchema,
+  parseQualifiedPluginContributionKey,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
@@ -32,16 +33,15 @@ export function resolveConnectedServiceNotificationProfileLabel(
 }
 
 export function resolveConnectedServiceNotificationDisplayName(
-  serviceId: ConnectedServiceId,
+  serviceId: ConnectedAccountServiceKey,
 ): string | null {
-  const compatibility =
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
-  if (!compatibility) return null;
+  const service = parseQualifiedPluginContributionKey(serviceId);
+  if (!service) return null;
   const contribution = getResolvedContributionRegistry()
     .connectedAccountDescriptors
     ?.find((candidate) => (
-      candidate.pluginId === compatibility.service.pluginId
-      && candidate.definition.id === compatibility.service.localId
+      candidate.pluginId === service.pluginId
+      && candidate.definition.id === service.localId
     ));
   return readConnectedServiceNotificationDisplayText(
     contribution?.definition.title,

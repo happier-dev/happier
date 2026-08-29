@@ -11,6 +11,7 @@ import { createSessionConnectedServiceAuthTransport } from '@/session/runtime/co
 import {
   type AccountSettings,
 } from '@happier-dev/protocol';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 import type { SessionConnectedServiceRuntimeAuthSelectionMaterializerInput } from './switchSessionConnectedServiceAuth';
 
@@ -27,6 +28,11 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<unknown | null> {
   if (params.input.next.source !== 'connected') return null;
+  const legacyServiceId =
+    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+      params.input.serviceId,
+    );
+  if (!legacyServiceId) return null;
   const binding = params.input.normalizedBindings.bindingsByServiceId[params.input.serviceId];
   if (!binding || binding.source !== 'connected') return null;
 
@@ -64,9 +70,9 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   const resolutions = await resolveConnectedServiceCredentialResolutions({
     credentials: params.credentials,
     api: params.api,
-    bindings: [{ serviceId: params.input.serviceId, profileId }],
+    bindings: [{ serviceId: legacyServiceId, profileId }],
   });
-  const resolution = resolutions.get(params.input.serviceId);
+  const resolution = resolutions.get(legacyServiceId);
   if (resolution?.revisionSemantics !== 'revisioned') return null;
   const { record, credentialRevision } = resolution;
   const fallbackProfileId = binding.selection === 'group'
@@ -123,7 +129,7 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   const targetMaterializedRoot = params.activeServerDir
     ? resolveConnectedServiceMaterializedHomeRoot(params.input.agentId, {
         activeServerDir: params.activeServerDir,
-        serviceId: params.input.serviceId,
+        serviceId: legacyServiceId,
         profileId,
         selection: targetSelection,
     })

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
     isPluginError,
+    type JsonValue,
     PluginError,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
@@ -93,7 +94,10 @@ describe('target action invocation registry', () => {
             }),
         }));
         const revalidateConnectedAccountActionFormInput = vi.fn(async () => null);
-        const handler = vi.fn(async (input: Readonly<{ value: string }>) => ({ echoed: input.value }));
+        const handler = vi.fn(async (input: JsonValue) => {
+            const record = isJsonRecord(input) ? input : {};
+            return { echoed: String(record.value) };
+        });
         const registry = createRegistry({
             revalidateConnectedAccountActionFormInput,
             actions: [{

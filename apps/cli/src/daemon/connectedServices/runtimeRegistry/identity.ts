@@ -1,5 +1,6 @@
 import {
   ConnectedAccountServiceKeySchema,
+  BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
   type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
@@ -69,6 +70,8 @@ export function normalizeConnectedServicesBindingsRaw(raw: unknown): Readonly<{
   v?: unknown;
   bindingsByServiceId?: Record<string, unknown>;
 }> {
+  const compatible = BuiltInLegacyConnectedServiceBindingsV1IngressSchema.safeParse(raw);
+  if (compatible.success) return compatible.data;
   if (!isRecord(raw)) return {};
   const bindings = isRecord(raw.bindingsByServiceId)
     ? raw.bindingsByServiceId

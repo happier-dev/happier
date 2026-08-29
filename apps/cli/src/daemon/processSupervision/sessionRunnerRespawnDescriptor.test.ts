@@ -74,13 +74,13 @@ describe('sessionRunnerRespawnDescriptor', () => {
         updatedAt: 10,
         ref: {
           agentTargetKey: 'backend:codex',
-          providerConnectionId: 'pc_gateway',
+          providerConnectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
           modelId: 'selection-model',
         },
       },
       providerBindingMetadataV1: {
         v: 1,
-        connectionId: 'pc_gateway',
+        connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
         contributionKey: 'plugin.gateway/gateway',
         connectionRevision: 2,
         model: { id: 'binding-model', name: 'Binding model' },
@@ -757,8 +757,8 @@ describe('sessionRunnerRespawnDescriptor', () => {
     });
   });
 
-  it('rejects conflicting released Codex respawn selection without throwing from safeParse', () => {
-    expect(SessionRunnerRespawnDescriptorV1Schema.safeParse({
+  it('supersedes a released flat codexBackendMode hint with an admitted runtimeDescriptorV1', () => {
+    const parsed = SessionRunnerRespawnDescriptorV1Schema.safeParse({
       version: 1,
       directory: '/tmp/repo',
       codexBackendMode: 'acp',
@@ -767,7 +767,20 @@ describe('sessionRunnerRespawnDescriptor', () => {
         agentId: 'codex',
         agent: { backendMode: 'appServer' },
       },
-    }).success).toBe(false);
+    });
+
+    expect(parsed.success).toBe(true);
+    const descriptor = parsed.success ? parsed.data : null;
+    expect(descriptor).toMatchObject({
+      version: 1,
+      directory: '/tmp/repo',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
+    });
+    expect(descriptor).not.toHaveProperty('codexBackendMode');
   });
 
   it('round-trips mcpSelection through the respawn descriptor', () => {

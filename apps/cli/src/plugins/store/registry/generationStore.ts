@@ -1206,7 +1206,7 @@ async function admitBundledImmutablePluginGeneration(input: Readonly<{
     pluginId: artifact.record.pluginId,
     immutableGenerationId: artifact.record.immutableGenerationId,
     rootPath: prepared.rootPath,
-    record: prepared.record,
+    record: artifact.record,
   });
 }
 

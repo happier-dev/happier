@@ -124,12 +124,13 @@ describe('Agent daemon spawn-hook lease', () => {
         if (!daemonSpawnHooks?.resolveRuntimePrerequisites || !daemonSpawnHooks.augmentEnv) {
             return;
         }
+        const augmentEnv = daemonSpawnHooks.augmentEnv;
         await expect(daemonSpawnHooks.resolveRuntimePrerequisites({})).resolves.toEqual({
             ok: false,
             reasonCode: 'plugin_spawn_hook_failed',
             errorMessage: 'Agent daemon spawn prerequisite hook failed.',
         });
-        expect(() => daemonSpawnHooks.augmentEnv({})).toThrow(
+        expect(() => augmentEnv({})).toThrow(
             'Agent daemon spawn environment hook failed.',
         );
     });

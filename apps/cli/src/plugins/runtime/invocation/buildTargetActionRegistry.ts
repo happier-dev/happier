@@ -118,7 +118,10 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     /** Canonical committed immutable-generation authority for final Action admission. */
     resolveCurrentPluginImmutableGenerationId?(pluginId: string): Promise<string | null>;
     targetRegistrations: readonly TargetRegistration[];
-    targetActivationFacts: readonly PluginTargetActivationFact[];
+    /** Static facts for immutable fixture/cold registries. */
+    targetActivationFacts?: readonly PluginTargetActivationFact[];
+    /** Reads mutable generation facts at each refresh/lazy activation boundary. */
+    readTargetActivationFacts?: () => readonly PluginTargetActivationFact[];
     resolveAuthorizationFacts: (action: ResolvedTargetAction) => TargetActionAuthorizationFacts;
     /** Read-only runtime final-policy owner; this registry only delegates. */
     resolvePresentUserGatePolicy?: (
@@ -160,8 +163,13 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             : [])
     ));
     const readActions = () => {
+        const targetActivationFacts = params.readTargetActivationFacts?.()
+            ?? params.targetActivationFacts;
+        if (!targetActivationFacts) {
+            throw new Error('Target action registry requires current activation facts');
+        }
         const expectedActionKeys = new Set<string>();
-        for (const fact of params.targetActivationFacts) {
+        for (const fact of targetActivationFacts) {
             if (fact.status !== 'active') continue;
             for (const required of fact.required) {
                 if (required.family === 'actions') expectedActionKeys.add(`${fact.pluginId}\u0000${required.localId}`);
@@ -170,13 +178,24 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         const actions = params.targetRegistrations.flatMap((entry) => {
             if (entry.registration.family !== 'actions') return [];
             const capturedHandler = entry.registration.value;
-            const activationFact = params.targetActivationFacts.find((fact) => (
+            const hasActivePluginGeneration = targetActivationFacts.some((fact) => (
+                fact.pluginId === entry.pluginId && fact.status === 'active'
+            ));
+            const activationFact = targetActivationFacts.find((fact) => (
                 fact.pluginId === entry.pluginId
                 && fact.generation === entry.generation
                 && fact.status === 'active'
                 && fact.bound.some((bound) => bound.family === 'actions' && bound.localId === entry.registration.localId)
             ));
             if (!activationFact) {
+                // Cold activation deliberately retains diagnostics and may
+                // retain a captured registration while the plugin is dormant
+                // or unavailable. Such a plugin contributes no callable
+                // Actions and must not poison unrelated catalog/hook reads.
+                // If the plugin claims any active generation, however, a
+                // mismatched registration is still invariant corruption and
+                // remains fail-closed below.
+                if (!hasActivePluginGeneration) return [];
                 throw new Error(`Target action '${entry.pluginId}/actions/${entry.registration.localId}' is not backed by an active generation fact`);
             }
             const manifest = params.contributes.activationTargets.find((target) => target.pluginId === entry.pluginId)?.manifest;

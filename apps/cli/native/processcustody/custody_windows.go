@@ -20,38 +20,41 @@ import (
 )
 
 var (
-	kernel32                          = syscall.NewLazyDLL("kernel32.dll")
-	procCreateJobObjectW              = kernel32.NewProc("CreateJobObjectW")
-	procSetInformationJobObject       = kernel32.NewProc("SetInformationJobObject")
-	procAssignProcessToJobObject      = kernel32.NewProc("AssignProcessToJobObject")
-	procTerminateJobObject            = kernel32.NewProc("TerminateJobObject")
-	procQueryInformationJobObject     = kernel32.NewProc("QueryInformationJobObject")
-	procOpenJobObjectW                = kernel32.NewProc("OpenJobObjectW")
-	procCreateProcessW                = kernel32.NewProc("CreateProcessW")
-	procResumeThread                  = kernel32.NewProc("ResumeThread")
-	procWaitForSingleObject           = kernel32.NewProc("WaitForSingleObject")
-	procGetExitCodeProcess            = kernel32.NewProc("GetExitCodeProcess")
-	procTerminateProcess              = kernel32.NewProc("TerminateProcess")
-	procCloseHandle                   = kernel32.NewProc("CloseHandle")
-	procGetStdHandle                  = kernel32.NewProc("GetStdHandle")
+	kernel32                      = syscall.NewLazyDLL("kernel32.dll")
+	procCreateJobObjectW          = kernel32.NewProc("CreateJobObjectW")
+	procSetInformationJobObject   = kernel32.NewProc("SetInformationJobObject")
+	procAssignProcessToJobObject  = kernel32.NewProc("AssignProcessToJobObject")
+	procTerminateJobObject        = kernel32.NewProc("TerminateJobObject")
+	procQueryInformationJobObject = kernel32.NewProc("QueryInformationJobObject")
+	procOpenJobObjectW            = kernel32.NewProc("OpenJobObjectW")
+	procCreateProcessW            = kernel32.NewProc("CreateProcessW")
+	procResumeThread              = kernel32.NewProc("ResumeThread")
+	procWaitForSingleObject       = kernel32.NewProc("WaitForSingleObject")
+	procGetExitCodeProcess        = kernel32.NewProc("GetExitCodeProcess")
+	procTerminateProcess          = kernel32.NewProc("TerminateProcess")
+	procCloseHandle               = kernel32.NewProc("CloseHandle")
+	procGetStdHandle              = kernel32.NewProc("GetStdHandle")
 )
 
 const (
-	createSuspended                   = 0x00000004
-	startfUseStdHandles               = 0x00000100
-	jobObjectLimitKillOnJobClose      = 0x00002000
-	jobObjectExtendedLimitInformation = 9
-	jobObjectBasicProcessIdList       = 3
-	jobObjectTerminate                = 0x0008
-	jobObjectQuery                    = 0x0004
+	createSuspended                 = 0x00000004
+	startfUseStdHandles             = 0x00000100
+	jobObjectLimitKillOnJobClose    = 0x00002000
+	jobObjectExtendedLimitInfoClass = 9
+	jobObjectBasicProcessIdList     = 3
+	jobObjectTerminate              = 0x0008
+	jobObjectQuery                  = 0x0004
 	// (DWORD)-10/-11/-12: the Win32 STD_*_HANDLE pseudo-handle numbers.
-	stdInputHandle  = ^uintptr(9)  // -10
-	stdOutputHandle = ^uintptr(10) // -11
-	stdErrorHandle  = ^uintptr(11) // -12
+	stdInputHandle     = ^uintptr(9)  // -10
+	stdOutputHandle    = ^uintptr(10) // -11
+	stdErrorHandle     = ^uintptr(11) // -12
 	errorAlreadyExists = syscall.Errno(183)
 	errorFileNotFound  = syscall.Errno(2)
 	errorMoreData      = syscall.Errno(234)
 	waitInfinite       = 0xFFFFFFFF
+	waitFailed         = 0xFFFFFFFF
+	waitObject0        = 0
+	invalidHandleValue = ^uintptr(0)
 )
 
 type jobObjectBasicLimitInformation struct {
@@ -112,13 +115,6 @@ type processInformation struct {
 	DwThreadId  uint32
 }
 
-// callOK reports whether a LazyProc.Call returned success. LazyProc.Call always
-// yields a non-nil `lastErr` interface carrying the raw errno, including
-// Errno(0) on success, so both nil and Errno(0) mean success.
-func callOK(callErr error) bool {
-	return callErr == nil || callErr == syscall.Errno(0)
-}
-
 // errnoOf extracts the raw errno from a LazyProc.Call error. A nil error is
 // Errno(0) for this purpose.
 func errnoOf(callErr error) syscall.Errno {
@@ -149,7 +145,6 @@ func quoteWindowsArgument(value string) string {
 		switch char {
 		case '\\':
 			backslashes++
-			builder.WriteByte('\\')
 		case '"':
 			builder.WriteString(strings.Repeat(`\`, backslashes*2+1))
 			builder.WriteByte('"')
@@ -163,16 +158,24 @@ func quoteWindowsArgument(value string) string {
 	if needsQuoting {
 		builder.WriteString(strings.Repeat(`\`, backslashes*2))
 		builder.WriteByte('"')
+	} else {
+		builder.WriteString(strings.Repeat(`\`, backslashes))
 	}
 	return builder.String()
 }
 
-func windowsCommandLine(target []string) string {
-	parts := make([]string, 0, len(target))
-	for _, arg := range target {
-		parts = append(parts, quoteWindowsArgument(arg))
+func windowsCommandLine(target []string, verbatimArguments bool) string {
+	if !verbatimArguments {
+		parts := make([]string, 0, len(target))
+		for _, arg := range target {
+			parts = append(parts, quoteWindowsArgument(arg))
+		}
+		return strings.Join(parts, " ")
 	}
-	return strings.Join(parts, " ")
+	// The existing Windows invocation owner uses verbatim arguments only for
+	// cmd.exe shell shims. Preserve its already-escaped argument tail exactly;
+	// quoting it again with the CRT rules changes cmd.exe's /s /c grammar.
+	return quoteWindowsArgument(target[0]) + " " + strings.Join(target[1:], " ")
 }
 
 // writeHandshakeFile publishes the custody fact only after assignment: the
@@ -191,7 +194,7 @@ func writeHandshakeFile(path string, pid int, job string) error {
 	return os.Rename(temporary, path)
 }
 
-func parseRunArgs(args []string) (job string, handshakePath string, target []string, err error) {
+func parseRunArgs(args []string) (job string, handshakePath string, verbatimArguments bool, target []string, err error) {
 	parsingOptions := true
 	for _, arg := range args {
 		if parsingOptions && strings.HasPrefix(arg, "--job=") {
@@ -202,23 +205,27 @@ func parseRunArgs(args []string) (job string, handshakePath string, target []str
 			handshakePath = strings.TrimPrefix(arg, "--handshake=")
 			continue
 		}
+		if parsingOptions && arg == "--target-windows-verbatim" {
+			verbatimArguments = true
+			continue
+		}
 		if parsingOptions && arg == "--" {
 			parsingOptions = false
 			continue
 		}
 		if parsingOptions {
-			return "", "", nil, fmt.Errorf("run requires --job=<name> before --")
+			return "", "", false, nil, fmt.Errorf("run requires --job=<name> before --")
 		}
 		target = append(target, arg)
 	}
 	if job == "" || len(target) == 0 {
-		return "", "", nil, fmt.Errorf("run requires --job=<name> and a target command after --")
+		return "", "", false, nil, fmt.Errorf("run requires --job=<name> and a target command after --")
 	}
-	return job, handshakePath, target, nil
+	return job, handshakePath, verbatimArguments, target, nil
 }
 
 func runCustodyCommand(args []string) error {
-	job, handshakePath, target, err := parseRunArgs(args)
+	job, handshakePath, verbatimArguments, target, err := parseRunArgs(args)
 	if err != nil {
 		usage()
 		os.Exit(exitUsage)
@@ -242,16 +249,16 @@ func runCustodyCommand(args []string) error {
 
 	limits := jobObjectExtendedLimitInformation{}
 	limits.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose
-	if _, _, callErr := procSetInformationJobObject.Call(
+	if result, _, callErr := procSetInformationJobObject.Call(
 		jobHandle,
-		jobObjectExtendedLimitInformation,
+		jobObjectExtendedLimitInfoClass,
 		uintptr(unsafe.Pointer(&limits)),
 		unsafe.Sizeof(limits),
-	); !callOK(callErr) {
+	); result == 0 {
 		return fmt.Errorf("SetInformationJobObject failed: %v", callErr)
 	}
 
-	commandLinePtr, err := syscall.UTF16PtrFromString(windowsCommandLine(target))
+	commandLinePtr, err := syscall.UTF16PtrFromString(windowsCommandLine(target, verbatimArguments))
 	if err != nil {
 		return err
 	}
@@ -259,7 +266,7 @@ func runCustodyCommand(args []string) error {
 	si.DwFlags = startfUseStdHandles
 	for index, pseudoHandle := range []uintptr{stdInputHandle, stdOutputHandle, stdErrorHandle} {
 		handle, _, callErr := procGetStdHandle.Call(pseudoHandle)
-		if !callOK(callErr) {
+		if handle == invalidHandleValue {
 			return fmt.Errorf("GetStdHandle failed: %v", callErr)
 		}
 		switch index {
@@ -272,7 +279,7 @@ func runCustodyCommand(args []string) error {
 		}
 	}
 	var pi processInformation
-	if _, _, callErr := procCreateProcessW.Call(
+	if result, _, callErr := procCreateProcessW.Call(
 		0,
 		uintptr(unsafe.Pointer(commandLinePtr)),
 		0,
@@ -283,7 +290,7 @@ func runCustodyCommand(args []string) error {
 		0, // inherit the helper working directory: the caller's exact cwd
 		uintptr(unsafe.Pointer(&si)),
 		uintptr(unsafe.Pointer(&pi)),
-	); !callOK(callErr) {
+	); result == 0 {
 		return fmt.Errorf("CreateProcessW failed: %v", callErr)
 	}
 	defer procCloseHandle.Call(pi.HThread)
@@ -293,31 +300,34 @@ func runCustodyCommand(args []string) error {
 	// instruction can run outside the job. On failure the suspended target is
 	// destroyed here, so no uncontained process can outlive this failure and
 	// no handshake is ever published.
-	if _, _, callErr := procAssignProcessToJobObject.Call(jobHandle, pi.HProcess); !callOK(callErr) {
+	if result, _, callErr := procAssignProcessToJobObject.Call(jobHandle, pi.HProcess); result == 0 {
 		procTerminateProcess.Call(pi.HProcess, 1)
 		fmt.Fprintf(os.Stderr, "AssignProcessToJobObject failed: %v; suspended target destroyed\n", callErr)
 		os.Exit(exitNotEstablished)
 	}
 
-	if handshakePath != "" {
-		if err := writeHandshakeFile(handshakePath, int(pi.DwProcessId), job); err != nil {
-			fmt.Fprintf(os.Stderr, "handshake write failed: %v\n", err)
-			os.Exit(exitNotEstablished)
-		}
-	}
-
-	if _, _, callErr := procResumeThread.Call(pi.HThread); !callOK(callErr) {
+	if result, _, callErr := procResumeThread.Call(pi.HThread); result == waitFailed {
 		// The target is assigned but could not be started. Terminate the job:
 		// the suspended root dies and KILL_ON_JOB_CLOSE reaps every member.
 		procTerminateJobObject.Call(jobHandle, 1)
 		return fmt.Errorf("ResumeThread failed: %v", callErr)
 	}
 
-	if _, _, callErr := procWaitForSingleObject.Call(pi.HProcess, waitInfinite); !callOK(callErr) {
+	// Publish establishment only after the target was both assigned and
+	// successfully resumed. A pre-resume marker could let the host advertise a
+	// process that can never execute when ResumeThread fails.
+	if handshakePath != "" {
+		if err := writeHandshakeFile(handshakePath, int(pi.DwProcessId), job); err != nil {
+			procTerminateJobObject.Call(jobHandle, 1)
+			return fmt.Errorf("handshake write failed: %w", err)
+		}
+	}
+
+	if result, _, callErr := procWaitForSingleObject.Call(pi.HProcess, waitInfinite); result != waitObject0 {
 		return fmt.Errorf("WaitForSingleObject failed: %v", callErr)
 	}
 	var exitCode uint32
-	if _, _, callErr := procGetExitCodeProcess.Call(pi.HProcess, uintptr(unsafe.Pointer(&exitCode))); !callOK(callErr) {
+	if result, _, callErr := procGetExitCodeProcess.Call(pi.HProcess, uintptr(unsafe.Pointer(&exitCode))); result == 0 {
 		return fmt.Errorf("GetExitCodeProcess failed: %v", callErr)
 	}
 	// Closing the last job handle here is containment enforcement, not
@@ -354,14 +364,14 @@ func openJobByName(name string, access uint32) (uintptr, bool, error) {
 func jobMemberCount(jobHandle uintptr) (int, error) {
 	buffer := make([]byte, 64*1024)
 	var returnLength uint32
-	_, _, callErr := procQueryInformationJobObject.Call(
+	result, _, callErr := procQueryInformationJobObject.Call(
 		jobHandle,
 		jobObjectBasicProcessIdList,
 		uintptr(unsafe.Pointer(&buffer[0])),
 		uintptr(len(buffer)),
 		uintptr(unsafe.Pointer(&returnLength)),
 	)
-	if !callOK(callErr) {
+	if result == 0 {
 		if errnoOf(callErr) == errorMoreData {
 			// More members than the bounded buffer can hold: report a
 			// fail-closed non-zero count instead of a guess.
@@ -415,7 +425,7 @@ func terminateCustodyJob(args []string) error {
 		return emit(map[string]any{"state": "absent"})
 	}
 	defer procCloseHandle.Call(jobHandle)
-	if _, _, callErr := procTerminateJobObject.Call(jobHandle, 1); !callOK(callErr) {
+	if result, _, callErr := procTerminateJobObject.Call(jobHandle, 1); result == 0 {
 		return fmt.Errorf("TerminateJobObject failed: %v", callErr)
 	}
 	deadline := time.Now().UnixMilli() + int64(timeoutMs)
@@ -462,4 +472,8 @@ func queryCustodyJob(args []string) error {
 		return emit(map[string]any{"state": "absent"})
 	}
 	return emit(map[string]any{"state": "live", "members": members})
+}
+
+func pidStartIdentityCommand(args []string) error {
+	return fmt.Errorf("Darwin process identity is unavailable on Windows")
 }

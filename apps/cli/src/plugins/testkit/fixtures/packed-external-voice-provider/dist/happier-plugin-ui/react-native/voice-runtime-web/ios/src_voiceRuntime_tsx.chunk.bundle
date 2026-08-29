@@ -385,6 +385,8 @@ function activate(api) {
                 opened: true
             };
         })());
+    var activeMediatedInputCapture = null;
+    var activeRawInputCapture = null;
     var mediatedRuntime = {
         kind: CONVERSATION_KIND,
         settingsOperations: {
@@ -525,6 +527,15 @@ function activate(api) {
                 var emitControl = null;
                 var nextCurrentUiResponse = 0;
                 var pendingCurrentUiCommands = new Map();
+                var inputCapture = Object.freeze({
+                    setMuted (muted) {
+                        fixtureEvents.push({
+                            kind: 'mediated_input_muted',
+                            muted
+                        });
+                    }
+                });
+                activeMediatedInputCapture = inputCapture;
                 var emitCurrentUiRead = ()=>{
                     if (!emitControl) return;
                     var responseId = `${CURRENT_UI_READ_RESPONSE_PREFIX}${++nextCurrentUiResponse}`;
@@ -609,6 +620,7 @@ function activate(api) {
                             return _async_to_generator._(function*() {
                                 pendingCurrentUiCommands.clear();
                                 emitControl = null;
+                                if (activeMediatedInputCapture === inputCapture) activeMediatedInputCapture = null;
                                 fixtureEvents.push({
                                     kind: 'closed',
                                     reason
@@ -618,6 +630,11 @@ function activate(api) {
                     }
                 });
             })();
+        },
+        setInputMuted (muted) {
+            var inputCapture = activeMediatedInputCapture;
+            if (!inputCapture) throw new Error('fixture_provider_input_capture_unavailable');
+            inputCapture.setMuted(muted);
         },
         encodeToolResults (results) {
             return [
@@ -697,6 +714,15 @@ function activate(api) {
                 fixtureEvents.push({
                     kind: 'raw_connection_authorized'
                 });
+                var inputCapture = Object.freeze({
+                    setMuted (muted) {
+                        fixtureEvents.push({
+                            kind: 'raw_input_muted',
+                            muted
+                        });
+                    }
+                });
+                activeRawInputCapture = inputCapture;
                 return input.media.createSdkHandleConnection({
                     driver: {
                         open () {
@@ -716,6 +742,7 @@ function activate(api) {
                         },
                         close (reason) {
                             return _async_to_generator._(function*() {
+                                if (activeRawInputCapture === inputCapture) activeRawInputCapture = null;
                                 fixtureEvents.push({
                                     kind: 'raw_closed',
                                     reason
@@ -739,7 +766,12 @@ function activate(api) {
             return [];
         },
         outputLevelMeter: 'unavailable',
-        microphoneMode: 'provider_managed'
+        microphoneMode: 'provider_managed',
+        setInputMuted (muted) {
+            var inputCapture = activeRawInputCapture;
+            if (!inputCapture) throw new Error('fixture_provider_input_capture_unavailable');
+            inputCapture.setMuted(muted);
+        }
     };
     api.voiceProviders.register('conversation-raw', rawRuntime);
 }

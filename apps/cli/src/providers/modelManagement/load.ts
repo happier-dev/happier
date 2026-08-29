@@ -16,7 +16,6 @@ import {
   ProviderProbeClientError,
   type ProviderModelLoadPostRequest,
   type ProviderModelLoadPostResult,
-  type ProviderProbeCredential,
   type ProviderProbeHttpCredentialLease,
 } from '../probe/client';
 import {
@@ -96,10 +95,7 @@ export type ProviderModelLoadAuthorizationPort<TTicket, TCredentialRef> = Readon
   resolveCredential(reference: TCredentialRef): Promise<
     | Readonly<{
         ok: true;
-        lease: Readonly<{
-          credential: ProviderProbeCredential;
-          close(): void;
-        }>;
+        lease: ProviderProbeHttpCredentialLease;
       }>
     | Readonly<{ ok: false; error: ProviderErrorV1 }>
   >;

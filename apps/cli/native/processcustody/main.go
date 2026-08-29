@@ -29,11 +29,11 @@ import (
 )
 
 const (
-	exitOK            = 0
-	exitUsage         = 2
-	exitNotProven     = 3
+	exitOK             = 0
+	exitUsage          = 2
+	exitNotProven      = 3
 	exitNotEstablished = 4
-	exitOSError       = 5
+	exitOSError        = 5
 )
 
 // emit writes the one machine-readable outcome line for this invocation.
@@ -50,7 +50,7 @@ func emit(payload map[string]any) error {
 func usage() {
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(`
 usage:
-  happier-process-custody run --job=<name> -- <command> [args...]
+  happier-process-custody run --job=<name> [--target-windows-verbatim] -- <command> [args...]
   happier-process-custody terminate --job=<name> [--timeout-ms=<ms>]
   happier-process-custody query --job=<name>
   happier-process-custody pid-startidentity <pid>`))

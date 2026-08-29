@@ -3,7 +3,6 @@ import { win32 as windowsPath } from 'node:path';
 import { execFileWithDeadline, isPidPresent } from '@happier-dev/cli-common/process';
 import {
   taskkillWindowsProcessTree,
-  type TaskkillWindowsProcessTreeDisposition,
 } from '@/subprocess/supervision/taskkillWindowsProcessTree';
 
 import { readProcessIdentityByPid } from '../../processIdentity';
@@ -47,7 +46,7 @@ export type WindowsProcessCustodyDependencies = Readonly<{
   terminateProcessTreeFn?: (input: Readonly<{
     pid: number;
     force: boolean;
-  }>) => Promise<TaskkillWindowsProcessTreeDisposition | void>;
+  }>) => Promise<void>;
   isPidAliveFn?: (pid: number) => boolean;
   nowFn?: () => number;
   sleepFn?: (ms: number) => Promise<void>;
@@ -128,7 +127,7 @@ export function createExactWindowsProcessCancellation(
     terminateProcessTreeFn?: (input: Readonly<{
       pid: number;
       force: boolean;
-    }>) => Promise<TaskkillWindowsProcessTreeDisposition | void>;
+    }>) => Promise<void>;
     isPidAliveFn?: (pid: number) => boolean;
   }>,
 ): CancelStartupLaunch {
@@ -176,16 +175,10 @@ export function createExactWindowsProcessCancellation(
         };
       }
       try {
-        const disposition = await terminateProcessTree({
+        await terminateProcessTree({
           pid: params.pid,
           force: true,
         });
-        if (disposition === 'root_not_found') {
-          return {
-            status: 'incomplete' as const,
-            reason: 'terminal_host_disposition_failed' as const,
-          };
-        }
       } catch {
         return {
           status: 'incomplete' as const,

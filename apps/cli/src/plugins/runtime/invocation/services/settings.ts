@@ -506,7 +506,10 @@ export function createAccountSettingsBackedSettingsRecordStore(
             operation: (
                 current: unknown | null,
             ) => Readonly<{ record: CanonicalPluginSettingsRecord; result: T }>,
-            options?: Readonly<{ signal?: AbortSignal }>,
+            options?: Readonly<{
+                signal?: AbortSignal;
+                settleOutcomeUnknown?(current: CanonicalPluginSettingsRecord): T | undefined;
+            }>,
         ): Promise<T> {
             assertAccountSettingsModel(model);
             const current = await readAccountPluginSettingsRecord(model, adapter, options);

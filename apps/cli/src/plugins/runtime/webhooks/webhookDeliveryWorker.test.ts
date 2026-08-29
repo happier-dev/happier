@@ -459,27 +459,32 @@ describe('plugin webhook claimed delivery worker', () => {
           definitions: [
             {
               automationId: 'automation-b',
-              templateVersion: 1,
+              triggerId: 'trigger-b',
+              triggerRevision: 1,
               sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
             },
             {
               automationId: 'automation-a',
-              templateVersion: 1,
+              triggerId: 'trigger-a',
+              triggerRevision: 1,
               sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
             },
             {
               automationId: 'automation-safe',
-              templateVersion: 1,
+              triggerId: 'trigger-safe',
+              triggerRevision: 1,
               sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
             },
             {
               automationId: 'automation-rejoined',
-              templateVersion: 1,
+              triggerId: 'trigger-rejoined',
+              triggerRevision: 1,
               sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
             },
             {
               automationId: 'automation-skipped',
-              templateVersion: 1,
+              triggerId: 'trigger-skipped',
+              triggerRevision: 1,
               sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
             },
           ],
@@ -559,7 +564,8 @@ describe('plugin webhook claimed delivery worker', () => {
           payload: {},
           definitions: [{
             automationId: 'automation-timeout',
-            templateVersion: 1,
+            triggerId: 'trigger-timeout',
+            triggerRevision: 1,
             sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
           }],
         },
@@ -623,9 +629,10 @@ describe('plugin webhook claimed delivery worker', () => {
           occurredAt: 1,
           observationReceivedAt: 1,
           payload: {},
-          definitions: automationIds.map((automationId) => ({
+          definitions: automationIds.map((automationId, index) => ({
             automationId,
-            templateVersion: 1,
+            triggerId: `trigger-${index}`,
+            triggerRevision: 1,
             sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
           })),
         },

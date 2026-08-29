@@ -496,12 +496,14 @@ describe('External Sessions hook installation configuration', () => {
             ownedEntries: [
                 {
                     eventId: 'start-settings',
+                    entryIdentity: 'entry-v1:fe70786c9d36d2ed6760e48b53d5006e9794ef346f4c6e262e630b596c85f908',
                     occurrenceCount: 1,
                     entryIndex: 0,
                     identicalEntriesBefore: 0,
                 },
                 {
                     eventId: 'stop-settings',
+                    entryIdentity: 'entry-v1:40046917ebfb682f7db299413abe74ca747cd5308ffb40bf3e8152384db7990b',
                     occurrenceCount: 1,
                     entryIndex: 2,
                     identicalEntriesBefore: 1,

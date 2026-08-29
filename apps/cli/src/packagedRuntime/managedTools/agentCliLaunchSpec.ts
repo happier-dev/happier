@@ -89,10 +89,26 @@ export function resolveAgentCliLaunchSpecForRuntime(
   }
   if (!runtimeCommand) return null;
 
+  // This launch spec is consumed by direct child_process spawns (shell: false).
+  // On Windows a JS runtime that resolves to a .cmd wrapper (the managed
+  // runtime wrapper) cannot be spawned that way, so reuse the direct-runtime
+  // resolver to launch the underlying managed runtime binary
+  // (runtime/node.exe) instead. There is deliberately no cmd.exe/shell/PATH
+  // fallback here: a runtime command that cannot resolve directly keeps the
+  // previously resolved command and fails at spawn, as before.
+  const launchCommand =
+    process.platform === 'win32' && isWindowsShellShimPath(runtimeCommand)
+      ? (resolveDirectJavaScriptRuntimeCommand({
+          isBunRuntime: isBun(),
+          processEnv,
+          currentExecPath: process.execPath,
+        }) ?? runtimeCommand)
+      : runtimeCommand;
+
   return {
     source: resolved.source,
     resolvedPath: resolved.command,
-    command: runtimeCommand,
+    command: launchCommand,
     args: [resolved.command],
   };
 }

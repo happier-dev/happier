@@ -1380,6 +1380,11 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             signal: AbortSignal;
         }): Promise<AgentRuntime> => {
             const loaded = await source.createRuntime(input);
+            if ('executionRuns' in loaded) {
+                throw new Error(
+                    'Expected a sessions AgentRuntime from the runner source, not an executionRuns runtime',
+                );
+            }
             const sessionsFactory: NonNullable<AgentRuntime['sessions']> = {
                 async open(request, context) {
                     observedOpenRequest.current = request;
@@ -1403,7 +1408,9 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                                 });
                             return { status: 'admitted' as const };
                         },
-                        async cancel() {},
+                        async cancel(request) {
+                            return { status: 'requested' as const, turnId: request.turnId };
+                        },
                         watch(listener) {
                             listeners.add(listener);
                             return Object.freeze({

@@ -48,7 +48,6 @@ async function readCodexRuntimeAuthAdapterRegistration() {
   return await projectAgentConnectedAccountLaunchCatalogEntry({
     agentId: 'codex',
     connectedAccountLaunch: launch,
-    hostAccess: CODEX_PLUGIN.manifest.hostAccess,
     isCurrent: () => true,
   }).getConnectedServiceRuntimeAuthAdapter?.();
 }

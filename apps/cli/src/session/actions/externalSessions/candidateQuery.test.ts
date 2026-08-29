@@ -627,8 +627,8 @@ describe('External Sessions candidate query owner', () => {
             'external-sessions',
             'candidate-indexes',
             'v1',
-            expect.stringMatching(/^[a-f0-9]{64}$/),
-            expect.stringMatching(/^[a-f0-9]{64}$/),
+            'affaeb8649569e10d08f4f0facd82970f3c84877322dcb59f0660e379c3668c5',
+            '20685dac3ac0cd9e37177e86b7d8550bfeeb4eeeca016e72d0168e8729c300c8',
             'index.json',
         ]);
         const raw = await readFile(indexPath, 'utf8');

@@ -463,6 +463,8 @@ describe('runner daemon PluginServices v1 protocol', () => {
             actionId: 'voice_agent.start',
             input: { t: 'object', value: {} },
         }).success).toBe(true);
+        // D121 keeps the raw six-member subagent registry RPC-only. Plugins use
+        // the user-facing planning/delegation Actions instead of this transport.
         for (const actionId of [
             'sessions.subagents.list',
             'sessions.subagents.get',

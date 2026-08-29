@@ -6,7 +6,7 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
-import { hasFlag, readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { hasFlag, readCommandPositionals, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { ExternalActionRequestIdV1Schema, getActionContextualDefaults, type ActionId } from '@happier-dev/protocol';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
@@ -66,7 +66,7 @@ export async function cmdSessionActionsExecute(
     startIndex: 2,
     valueFlags: ['--input-json', '--action-request-id'],
   });
-  const actionRequestId = readFlagValue(argv, '--action-request-id') ?? '';
+  const actionRequestId = readRawFlagValue(argv, '--action-request-id') ?? '';
   if (actionRequestId && !ExternalActionRequestIdV1Schema.safeParse(actionRequestId).success) {
     throw new Error('Invalid --action-request-id.');
   }

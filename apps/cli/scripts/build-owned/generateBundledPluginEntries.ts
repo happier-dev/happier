@@ -304,7 +304,12 @@ async function synchronizeGeneratorAuthoringRuntimeClosure(
     await syncSharedDepsForSourceDev({
       repoRoot: CANONICAL_GENERATOR_REPO_ROOT,
       workspaceNames,
-      generatedCompilerInputMode: mode,
+      // Preparation is the same canonical materialization operation for write
+      // and check. Passing check mode here produced a distinct rebuilt plugin
+      // closure after publication (different chunks/daemon bytes), so the
+      // checker invalidated the artifacts it was about to compare. Drift is
+      // still read-only at the projection/output boundary below.
+      generatedCompilerInputMode: 'write',
       includeRuntimeDependencies: true,
       publishBundledPluginArtifacts: false,
       preserveBundledPluginArtifacts,
@@ -319,10 +324,12 @@ async function synchronizeGeneratorAuthoringRuntimeClosure(
     });
   };
 
-  if (mode === 'write') {
-    // First make ordinary declarations and non-runtime package outputs current.
-    await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);
-  }
+  // First make ordinary declarations and non-runtime package outputs current.
+  // Checks must prepare the same authoring declaration closure as writes before
+  // loading manifests; otherwise a newly added public manifest field can be
+  // present for publication and then disappear from the immediately following
+  // drift projection through a stale materialized Plugin SDK parser.
+  await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);
   // Both write and check must stage under the exact same materialized runtime
   // closure. This second bounded pass preserves generator-owned plugin bundles
   // while synchronizing the host/runtime dependencies used by esbuild.
@@ -2210,9 +2217,7 @@ async function synchronizeSerializedPluginManifest(params: Readonly<{
   const serializedManifest = manifestSerializer.serializeCanonicalPluginManifest(params.manifest);
   const manifestPath = resolve(params.packageRoot, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH);
   if (params.mode === 'check') {
-    if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8') !== serializedManifest) {
-      throw new Error(`Bundled plugin manifest artifact differs: ${manifestPath}`);
-    }
+    assertGeneratedOutputMatches(manifestPath, serializedManifest);
     return;
   }
   writeFileAtomic(manifestPath, serializedManifest);
@@ -4736,14 +4741,24 @@ function renderAgentRuntimeDescriptorReadersTs(
 function renderCliBundledPluginManifestEntriesTs(params: Readonly<{
   pluginPackages: readonly BundledPluginPackage[];
 }>): string {
-  const metadata = params.pluginPackages.map((entry) => ({
-    ...(entry.agentId ? { agentId: entry.agentId } : {}),
-    manifestPath: `bundled:${entry.pluginId}`,
-    packageName: entry.packageName,
-    packageVersion: entry.packageVersion,
-    pluginId: entry.pluginId,
-    pluginPackageId: entry.pluginPackageId,
-  }));
+  const metadata = params.pluginPackages.map((entry) => {
+    const manifestAgent = readManifestContributionArray(entry.manifest, 'agents')[0];
+    const manifestAgentId = manifestAgent === undefined
+      ? undefined
+      : readRequiredContributionId(manifestAgent, 'agents', entry.pluginPackageId);
+    return {
+      // Locator metadata describes the public manifest identity. A registration
+      // binding may map that local id to a legacy canonical implementation id;
+      // importing the private Agent definition here made source publication and
+      // serialized-artifact checks disagree for OhMyPi.
+      ...(manifestAgentId ? { agentId: manifestAgentId } : {}),
+      manifestPath: `bundled:${entry.pluginId}`,
+      packageName: entry.packageName,
+      packageVersion: entry.packageVersion,
+      pluginId: entry.pluginId,
+      pluginPackageId: entry.pluginPackageId,
+    };
+  });
 
   const lines: string[] = [];
   lines.push('/* eslint-disable @typescript-eslint/naming-convention */');

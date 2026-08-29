@@ -1,6 +1,7 @@
 import {
   AccountProfileSchema,
-  type ConnectedServiceId,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceProjectedAuthGroup } from './reconcileConnectedServiceAuthGroupGenerations';
@@ -9,13 +10,13 @@ export type ConnectedServiceProjectionSnapshot = Readonly<{
   /** Legacy V2 compatibility projection for scalar runtime bindings. */
   groups: readonly ConnectedServiceProjectedAuthGroup[];
   credentialRevisions: ReadonlyArray<Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     credentialRevision: string;
   }>>;
-  resolveCredentialRevision: (serviceId: ConnectedServiceId, profileId: string) => string | null;
+  resolveCredentialRevision: (serviceId: ConnectedAccountServiceKey, profileId: string) => string | null;
   resolveCredentialPresence: (
-    serviceId: ConnectedServiceId,
+    serviceId: ConnectedAccountServiceKey,
     profileId: string,
   ) => ConnectedServiceProjectedCredentialPresence;
 }>;
@@ -40,15 +41,14 @@ export async function publishObservedConnectedServiceProjectionThenApply<T>(
   return await input.applyToRuntime(input.projection);
 }
 
-function credentialScopeKey(serviceId: ConnectedServiceId, profileId: string): string {
+function credentialScopeKey(serviceId: ConnectedAccountServiceKey, profileId: string): string {
   return `${serviceId}\0${profileId}`;
 }
 
 /**
- * This snapshot exists for the legacy `ConnectedServiceId`-keyed generation and
- * credential-currentness reconciler. Native qualified Account V4 truth is not projected
- * here: it has no legacy service id to key on, and its daemon consumers already read it
- * directly through the V4 list/read, materialization, and invalidation owners.
+ * V2 source facts are normalized to the canonical qualified service key before they enter
+ * generation/currentness reconciliation. Native Account V4 truth is not duplicated here:
+ * it already arrives qualified through its direct V4 owners.
  */
 export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
   connectedServicesV2: unknown;
@@ -59,22 +59,35 @@ export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
     connectedServicesV2: input.connectedServicesV2,
     connectedServiceCredentialRevisionsV1: input.connectedServiceCredentialRevisionsV1,
   });
-  const revisions = new Map(profile.connectedServiceCredentialRevisionsV1.map((entry) => [
-    credentialScopeKey(entry.serviceId, entry.profileId),
-    entry.credentialRevision,
-  ] as const));
+  const revisions = new Map(profile.connectedServiceCredentialRevisionsV1.flatMap((entry) => {
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(entry.serviceId);
+    return serviceId
+      ? [[credentialScopeKey(serviceId, entry.profileId), entry.credentialRevision] as const]
+      : [];
+  }));
   const presentCredentialScopes = new Set(profile.connectedServicesV2.flatMap((service) => (
-    service.profiles.map((credentialProfile) => credentialScopeKey(service.serviceId, credentialProfile.profileId))
+    service.profiles.flatMap((credentialProfile) => {
+      const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(service.serviceId);
+      return serviceId ? [credentialScopeKey(serviceId, credentialProfile.profileId)] : [];
+    })
   )));
-  const groups = profile.connectedServicesV2.flatMap((service) => service.groups.map((group) => ({
-    serviceId: service.serviceId,
-    groupId: group.groupId,
-    activeProfileId: group.activeProfileId,
-    generation: group.generation,
-  })));
+  const groups = profile.connectedServicesV2.flatMap((service) => {
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(service.serviceId);
+    return serviceId
+      ? service.groups.map((group) => ({
+          serviceId,
+          groupId: group.groupId,
+          activeProfileId: group.activeProfileId,
+          generation: group.generation,
+        }))
+      : [];
+  });
   return {
     groups,
-    credentialRevisions: profile.connectedServiceCredentialRevisionsV1,
+    credentialRevisions: profile.connectedServiceCredentialRevisionsV1.flatMap((entry) => {
+      const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(entry.serviceId);
+      return serviceId ? [{ ...entry, serviceId }] : [];
+    }),
     resolveCredentialRevision: (serviceId, profileId) => revisions.get(credentialScopeKey(serviceId, profileId)) ?? null,
     resolveCredentialPresence: (serviceId, profileId) => {
       const key = credentialScopeKey(serviceId, profileId);

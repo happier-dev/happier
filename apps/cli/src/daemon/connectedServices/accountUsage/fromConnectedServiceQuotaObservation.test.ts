@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import type {
+  ConnectedServiceQuotaSnapshotV1,
+  QualifiedConnectedAccountQuotaSnapshotV4,
+} from '@happier-dev/protocol';
 
-import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from './fromConnectedServiceQuotaObservation';
+import {
+  buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation,
+  buildProviderAccountUsageSnapshotFromQualifiedQuotaRow,
+} from './fromConnectedServiceQuotaObservation';
 
 function createSnapshot(
   overrides: Partial<ConnectedServiceQuotaSnapshotV1> = {},
@@ -97,5 +103,32 @@ describe('buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation'
         quotaScope: 'account',
       },
     });
+  });
+});
+
+describe('buildProviderAccountUsageSnapshotFromQualifiedQuotaRow', () => {
+  it('keeps an opened row provisional when its optional provider subject is absent', () => {
+    const snapshot = buildProviderAccountUsageSnapshotFromQualifiedQuotaRow({
+      ref: {
+        service: { pluginId: 'acme.agent', localId: 'acme-account' },
+        accountId: 'connected-account-1',
+      },
+      quota: {
+        ...createSnapshot({ activeAccountId: undefined }),
+        ref: {
+          service: { pluginId: 'acme.agent', localId: 'acme-account' },
+          accountId: 'connected-account-1',
+        },
+        serviceId: undefined,
+        profileId: undefined,
+      } as unknown as QualifiedConnectedAccountQuotaSnapshotV4,
+    });
+
+    expect(snapshot.accountSubject).toEqual({
+      kind: 'provisionalLocalSubject',
+      id: 'legacy-connected-service:acme.agent/acme-account:connected-account-1',
+      mergeKey: 'acme.agent/acme-account:connected-account-1',
+    });
+    expect(snapshot.recordKey.subjectKind).toBe('unknown');
   });
 });

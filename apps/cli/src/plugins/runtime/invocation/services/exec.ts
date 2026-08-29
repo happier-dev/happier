@@ -56,7 +56,7 @@ const INTERNAL_PREAUTHORIZED_SPAWNS = new WeakMap<
  * command/args/cwd/env and stdio stay exactly the authorized ones.
  */
 const INTERNAL_MANAGED_PROCESS_CUSTODY = new WeakMap<
-    ExecService,
+    object,
     WeakMap<object, ProcessCustodySpawnSpec>
 >();
 
@@ -678,6 +678,9 @@ export function createStablePluginExecService(params: Readonly<{
                         'run',
                         `--job=${managedCustody.jobName}`,
                         `--handshake=${managedCustody.handshakePath}`,
+                        ...(launch.windowsVerbatimArguments
+                            ? ['--target-windows-verbatim']
+                            : []),
                         '--',
                         launch.command,
                         ...launch.args,

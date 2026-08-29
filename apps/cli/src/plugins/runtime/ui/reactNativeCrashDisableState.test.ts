@@ -296,7 +296,7 @@ describe('React Native crash-state daemon owner', () => {
         })).status).toBe('binding_token_mismatch');
     });
 
-    it('isolates an exact targeted surface mount from a destination and replaces it when the target generation changes', async () => {
+    it('isolates an exact targeted surface mount from a destination and gives a new target generation its own durable slot', async () => {
         const store = createReactNativeCrashStateStore({
             happyHomeDir: await mkdtemp(join(tmpdir(), 'happier-rn-crash-state-targeted-')),
         });
@@ -339,27 +339,39 @@ describe('React Native crash-state daemon owner', () => {
                 { mount: replacementMount, renderer, artifactDigest: digestOne },
             ],
         });
-        const replacementToken = replacement.statesByBindingKey[
-            createReactNativeCrashStateBindingKey({ mount: replacementMount, renderer })
-        ]!.token;
-        expect(replacementToken).toMatchObject({
-            mount: replacementMount,
-            crashStateEpoch: targetedToken.crashStateEpoch + 1,
+        const replacementKey = createReactNativeCrashStateBindingKey({ mount: replacementMount, renderer });
+        expect(replacementKey).not.toBe(targetedKey);
+        // The canonical Protocol mount key includes every immutable generation,
+        // so a target-generation change owns a NEW durable slot: clean counts,
+        // not disabled, epoch 0. It never inherits the predecessor's failures.
+        expect(replacement.statesByBindingKey[replacementKey]).toMatchObject({
+            token: { mount: replacementMount, crashStateEpoch: 0 },
+            disabled: false,
         });
         expect((await store.read()).records[destinationKey]).toMatchObject({
             renderFailureCount: 0,
             disabled: false,
         });
 
+        // The predecessor slot keeps its exact durable evidence, and its exact
+        // token still fences only that historical record — never the new slot.
         await expect(recordReactNativeCrashFailure({
             store,
             token: targetedToken,
             failureOccurrenceId: '99999999-9999-4999-8999-999999999999',
             failure: 'render_error',
-        })).resolves.toMatchObject({ status: 'binding_token_mismatch' });
+        })).resolves.toMatchObject({ status: 'recorded' });
+        expect((await store.read()).records[targetedKey]).toMatchObject({
+            renderFailureCount: 2,
+            disabled: true,
+        });
+        expect((await store.read()).records[replacementKey]).toMatchObject({
+            renderFailureCount: 0,
+            disabled: false,
+        });
     });
 
-    it('isolates a Composer mount and advances only its durable slot when the Composer generation changes', async () => {
+    it('isolates a Composer mount and gives a new Composer generation its own durable slot', async () => {
         const store = createReactNativeCrashStateStore({
             happyHomeDir: await mkdtemp(join(tmpdir(), 'happier-rn-crash-state-composer-')),
         });
@@ -391,20 +403,29 @@ describe('React Native crash-state daemon owner', () => {
                 { mount: replacementMount, renderer, artifactDigest: digestOne },
             ],
         });
-        const replacementToken = replacement.statesByBindingKey[
-            createReactNativeCrashStateBindingKey({ mount: replacementMount, renderer })
-        ]!.token;
-
-        expect(replacementToken).toMatchObject({
-            mount: replacementMount,
-            crashStateEpoch: composerToken.crashStateEpoch + 1,
+        const replacementKey = createReactNativeCrashStateBindingKey({ mount: replacementMount, renderer });
+        expect(replacementKey).not.toBe(composerKey);
+        // Generation-exact durable slots: the new Composer generation starts
+        // clean (epoch 0, no failures), while the predecessor slot keeps its
+        // own evidence and its exact token fences only that historical slot.
+        expect(replacement.statesByBindingKey[replacementKey]).toMatchObject({
+            token: { mount: replacementMount, crashStateEpoch: 0 },
+            disabled: false,
         });
         await expect(recordReactNativeCrashFailure({
             store,
             token: composerToken,
             failureOccurrenceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
             failure: 'render_error',
-        })).resolves.toMatchObject({ status: 'binding_token_mismatch' });
+        })).resolves.toMatchObject({ status: 'recorded' });
+        expect((await store.read()).records[composerKey]).toMatchObject({
+            renderFailureCount: 2,
+            disabled: true,
+        });
+        expect((await store.read()).records[replacementKey]).toMatchObject({
+            renderFailureCount: 0,
+            disabled: false,
+        });
     });
 
     it('accepts current tokens and fails closed for stale destination, targeted, and Composer persisted bindings', async () => {

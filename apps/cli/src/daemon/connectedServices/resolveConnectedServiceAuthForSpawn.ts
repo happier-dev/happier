@@ -1,7 +1,9 @@
 import {
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  parseQualifiedPluginContributionKey,
   type AccountSettings,
   type BuiltInLegacyConnectedAccountCompatibility,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
   type QualifiedConnectedAccountGroupV4,
@@ -76,6 +78,7 @@ import {
   resolveFirstPartyConnectedAccountServiceId,
 } from './requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import {
+  resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey,
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import {
@@ -399,12 +402,12 @@ function readConnectedServiceSpawnSwitchAuthority(
 
 export class ConnectedServiceSpawnAuthGroupAuthorityError extends Error {
   readonly kind: 'resolution_unavailable' | 'resolution_failed' | 'group_missing' | 'active_profile_missing';
-  readonly serviceId: ConnectedServiceId;
+  readonly serviceId: ConnectedAccountServiceKey;
   readonly groupId: string;
 
   constructor(params: Readonly<{
     kind: ConnectedServiceSpawnAuthGroupAuthorityError['kind'];
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     cause?: unknown;
   }>) {
@@ -724,23 +727,32 @@ async function resolveCredentialBindings(params: Readonly<{
   const groupSelections = new Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>();
 
   for (const selection of params.selections) {
+    const legacyServiceId =
+      resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+        selection.serviceId,
+      );
+    if (!legacyServiceId) {
+      throw new ConnectedServiceSpawnAuthGroupAuthorityError({
+        kind: 'resolution_unavailable',
+        serviceId: selection.serviceId,
+        groupId: selection.kind === 'group' ? selection.groupId : '',
+      });
+    }
     if (selection.kind === 'profile') {
       const profileStatusByProfileId = await resolveProfileStatusByProfileId({
         api: params.api,
-        serviceId: selection.serviceId,
+        serviceId: legacyServiceId,
       });
       throwIfProfileRequiresAction({
-        serviceId: selection.serviceId,
+        serviceId: legacyServiceId,
         profileId: selection.profileId,
         profileStatusByProfileId,
       });
-      credentialBindings.push({ serviceId: selection.serviceId, profileId: selection.profileId });
+      credentialBindings.push({ serviceId: legacyServiceId, profileId: selection.profileId });
       continue;
     }
 
-    const qualifiedService = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
-      selection.serviceId,
-    );
+    const qualifiedService = parseQualifiedPluginContributionKey(selection.serviceId);
     if (!qualifiedService) {
       throw new ConnectedServiceSpawnAuthGroupAuthorityError({
         kind: 'resolution_unavailable',
@@ -800,7 +812,7 @@ async function resolveCredentialBindings(params: Readonly<{
       agentId: params.agentId,
       group,
       state,
-      serviceId: selection.serviceId,
+      serviceId: legacyServiceId,
       groupId: selection.groupId,
       accountUsageStore: params.accountUsageStore,
       profileStatusByProfileId,
@@ -815,12 +827,12 @@ async function resolveCredentialBindings(params: Readonly<{
       throw new Error(`Connected service auth group has no active profile (${selection.serviceId}/${selection.groupId})`);
     }
     throwIfProfileRequiresAction({
-      serviceId: selection.serviceId,
+      serviceId: legacyServiceId,
       profileId: activeProfileId,
       profileStatusByProfileId,
     });
-    credentialBindings.push({ serviceId: selection.serviceId, profileId: activeProfileId });
-    groupSelections.set(selection.serviceId, {
+    credentialBindings.push({ serviceId: legacyServiceId, profileId: activeProfileId });
+    groupSelections.set(legacyServiceId, {
       groupId: selection.groupId,
       activeProfileId,
       fallbackProfileId: selection.fallbackProfileId ?? activeProfileId,
@@ -961,9 +973,19 @@ async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonl
 }>): Promise<boolean> {
   const diagnostic = params.error.diagnostics.find((candidate) => {
     if (!candidate.serviceId) return false;
-    return params.groupSelections.has(candidate.serviceId);
+    const legacyServiceId =
+      resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+        candidate.serviceId,
+      );
+    return legacyServiceId
+      ? params.groupSelections.has(legacyServiceId)
+      : false;
   });
-  const serviceId = diagnostic?.serviceId;
+  if (!diagnostic?.serviceId) return false;
+  const serviceId =
+    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+      diagnostic.serviceId,
+    );
   if (!serviceId) return false;
 
   const group = params.groupSelections.get(serviceId);
@@ -994,15 +1016,22 @@ function buildCurrentSpawnCredentialBindings(params: Readonly<{
   groupSelections: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
 }>): ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }> {
   return params.selections.map((selection) => {
-    if (selection.kind === 'profile') {
-      return { serviceId: selection.serviceId, profileId: selection.profileId };
+    const serviceId =
+      resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+        selection.serviceId,
+      );
+    if (!serviceId) {
+      throw new Error(`Connected-service ${selection.serviceId} has no legacy credential projection`);
     }
-    const profileId = params.groupSelections.get(selection.serviceId)?.activeProfileId
+    if (selection.kind === 'profile') {
+      return { serviceId, profileId: selection.profileId };
+    }
+    const profileId = params.groupSelections.get(serviceId)?.activeProfileId
       ?? selection.fallbackProfileId;
     if (!profileId) {
       throw new Error(`Connected-service group ${selection.groupId} has no resolved active profile`);
     }
-    return { serviceId: selection.serviceId, profileId };
+    return { serviceId, profileId };
   });
 }
 
@@ -1015,24 +1044,29 @@ function buildSelectionsByServiceIdForSpawn(params: Readonly<{
   const selectionsByServiceId = new Map<ConnectedServiceId, ConnectedServiceResolvedSelection>();
 
   for (const selection of params.selections) {
-    const record = params.recordsByServiceId.get(selection.serviceId);
-    const credentialRevision = params.credentialResolutionsByServiceId.get(selection.serviceId)?.credentialRevision;
+    const serviceId =
+      resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+        selection.serviceId,
+      );
+    if (!serviceId) continue;
+    const record = params.recordsByServiceId.get(serviceId);
+    const credentialRevision = params.credentialResolutionsByServiceId.get(serviceId)?.credentialRevision;
     if (!record) continue;
     if (selection.kind === 'profile') {
-      selectionsByServiceId.set(selection.serviceId, {
+      selectionsByServiceId.set(serviceId, {
         kind: 'profile',
-        serviceId: selection.serviceId,
+        serviceId,
         profileId: selection.profileId,
         record,
         ...(credentialRevision ? { credentialRevision } : {}),
       });
       continue;
     }
-    const group = params.groupSelections.get(selection.serviceId);
+    const group = params.groupSelections.get(serviceId);
     if (!group) continue;
-    selectionsByServiceId.set(selection.serviceId, {
+    selectionsByServiceId.set(serviceId, {
       kind: 'group',
-      serviceId: selection.serviceId,
+      serviceId,
       groupId: group.groupId,
       activeProfileId: group.activeProfileId,
       fallbackProfileId: group.fallbackProfileId,
@@ -1090,7 +1124,13 @@ function buildCanonicalConnectedServicesBindingsForSpawn(params: Readonly<{
       };
       continue;
     }
-    const group = params.groupSelections.get(selection.serviceId);
+    const legacyServiceId =
+      resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
+        selection.serviceId,
+      );
+    const group = legacyServiceId
+      ? params.groupSelections.get(legacyServiceId)
+      : null;
     if (!group) continue;
     bindingsByServiceId[selection.serviceId] = {
       source: 'connected',

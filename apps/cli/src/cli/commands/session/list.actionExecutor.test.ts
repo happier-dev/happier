@@ -182,7 +182,15 @@ describe('happier session list (action executor)', () => {
     execute.mockResolvedValueOnce({
       ok: true,
       result: {
-        sessions: [{ id: 'sess_1234567890', title: 'Session' }],
+        sessions: [{
+          id: 'sess_1234567890',
+          title: 'Session',
+          createdAt: 1,
+          updatedAt: 2,
+          active: false,
+          activeAt: 0,
+          encryption: { type: 'legacy' },
+        }],
         rows: [{
           id: 'sess_1234567890',
           agentId: 'claude',
@@ -256,5 +264,20 @@ describe('happier session list (action executor)', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it('rejects a malformed successful Action result instead of treating it as an empty list', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessions: 'not-a-session-list' },
+    });
+    const { cmdSessionList } = await import('./list');
+
+    await expect(cmdSessionList(['list', '--json'], {
+      readCredentialsFn: async () => ({
+        token: 'token_test',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      }),
+    })).rejects.toThrow();
   });
 });

@@ -27,8 +27,11 @@ import type {
 import type {
     PluginJsonStreamClient,
     PluginProtocolClientHandle,
+    PluginProtocolClientKind,
+    PluginProtocolClientSpecByKind,
 } from '@happier-dev/plugin-sdk/exec/protocol-clients';
-import type { SettingsScopeRef } from '@happier-dev/plugin-sdk/settings';
+import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
+import type { SettingsScopeRef, SettingsService } from '@happier-dev/plugin-sdk/settings';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -202,9 +205,13 @@ function createBoundarySession(): AgentSessionRuntime {
         })),
         watch: (listener) => {
             listeners.add(listener);
-            return { dispose: () => listeners.delete(listener) };
+            return {
+                dispose: () => {
+                    listeners.delete(listener);
+                },
+            };
         },
-        dispose: vi.fn(async () => undefined),
+        dispose: vi.fn(() => undefined),
     };
 }
 
@@ -225,7 +232,7 @@ async function exerciseSessionLifecycle(
         status: 'requested',
         turnId,
     });
-    await expect(session.dispose('session_closed')).resolves.toBeUndefined();
+    await Promise.resolve(session.dispose('session_closed'));
 }
 
 async function withinMatrixDeadline<T>(
@@ -251,14 +258,16 @@ async function withinMatrixDeadline<T>(
 
 function createMatrixSettingsService(
     values: Readonly<Record<string, JsonValue>> = {},
-) {
+): SettingsService {
     const unavailableServices = createUnavailablePluginServices();
     return {
         ...unavailableServices.settings,
         forScope(scope: SettingsScopeRef) {
             return {
                 ...unavailableServices.settings.forScope(scope),
-                get: async (key: string) => values[key] ?? null,
+                get: async <T extends JsonValue = JsonValue>(
+                    key: string,
+                ): Promise<T | null> => (values[key] ?? null) as T | null,
             };
         },
     };
@@ -315,7 +324,11 @@ function createAcpBoundaryContext(
             resolveForSession: async () => Object.freeze([]),
         }),
         toolExecution: Object.freeze({
-            before: async (request) => Object.freeze({
+            before: async (
+                request: Parameters<
+                    NativeAgentSessionHostServiceOwners['toolExecution']['before']
+                >[0],
+            ) => Object.freeze({
                 status: 'continue' as const,
                 input: request.input,
             }),
@@ -354,6 +367,7 @@ function createAcpBoundaryContext(
             info: () => undefined,
             warn: () => undefined,
             error: () => undefined,
+            diagnostic: () => undefined,
         },
         settings: createMatrixSettingsService(),
         connectedAccounts: {
@@ -540,7 +554,7 @@ async function exerciseAntigravitySessionLifecycle(
         status: 'unavailable',
         retryable: true,
     });
-    await expect(session.dispose('session_closed')).resolves.toBeUndefined();
+    await Promise.resolve(session.dispose('session_closed'));
 }
 
 function createClaudeExecBoundaryContext(input: Readonly<{
@@ -585,6 +599,7 @@ function createClaudeExecBoundaryContext(input: Readonly<{
                 info: () => undefined,
                 warn: () => undefined,
                 error: () => undefined,
+                diagnostic: () => undefined,
             },
             settings: createMatrixSettingsService({
                 claudeUnifiedTerminalEnabled: true,
@@ -627,7 +642,15 @@ function createClaudeExecBoundaryContext(input: Readonly<{
                     }),
                 },
                 clients: {
-                    spawn: async () => handle,
+                    spawn: async <K extends PluginProtocolClientKind>(
+                        spec: PluginProtocolClientSpecByKind<K>,
+                        _options?: { signal?: AbortSignal },
+                    ): Promise<PluginProtocolClientHandle<K>> => {
+                        if (spec.kind !== 'jsonStream') {
+                            throw new Error('Claude matrix boundary expects a jsonStream protocol client');
+                        }
+                        return handle as PluginProtocolClientHandle<K>;
+                    },
                 },
             },
         },
@@ -743,9 +766,10 @@ function createClaudeExecBoundaryContext(input: Readonly<{
                     }),
                 },
                 auth: {
-                    refreshRuntimeAuth: async () => ({
+                    refreshRuntimeAuth: vi.fn<SessionAuthService['services']['refreshRuntimeAuth']>(async () => ({
                         status: 'unavailable' as const,
-                    }),
+                        reason: 'runtime_auth_selection_unavailable' as const,
+                    })),
                 },
                 systemRecords: {
                     read: async () => null,
@@ -841,6 +865,7 @@ function createPiExecBoundaryContext(input: Readonly<{
                 info: () => undefined,
                 warn: () => undefined,
                 error: () => undefined,
+                diagnostic: () => undefined,
             },
             connectedAccounts: {
                 ...baseContext.services.connectedAccounts,
@@ -873,7 +898,15 @@ function createPiExecBoundaryContext(input: Readonly<{
                     }),
                 },
                 clients: {
-                    spawn: async () => handle,
+                    spawn: async <K extends PluginProtocolClientKind>(
+                        spec: PluginProtocolClientSpecByKind<K>,
+                        _options?: { signal?: AbortSignal },
+                    ): Promise<PluginProtocolClientHandle<K>> => {
+                        if (spec.kind !== 'jsonStream') {
+                            throw new Error('Pi matrix boundary expects a jsonStream protocol client');
+                        }
+                        return handle as PluginProtocolClientHandle<K>;
+                    },
                 },
             },
         }),

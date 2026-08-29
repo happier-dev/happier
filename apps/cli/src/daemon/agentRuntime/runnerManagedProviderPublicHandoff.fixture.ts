@@ -96,7 +96,7 @@ export async function writePublicHandoffAgentPluginFixture(input: Readonly<{
         '      async open() {',
         '        return {',
         "          async send() { return { status: 'admitted' }; },",
-        '          async cancel() {},',
+        "          async cancel(request) { return { status: 'requested', turnId: request.turnId }; },",
         '          watch() { return { dispose() {} }; },',
         '          async dispose() {},',
         '        };',

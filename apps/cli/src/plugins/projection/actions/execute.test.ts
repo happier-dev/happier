@@ -376,6 +376,32 @@ describe('executePluginActionIfAvailable', () => {
       });
 
       expect(activateContributionsOnDemand).not.toHaveBeenCalled();
+
+      // A plugin-authority ingress stamps the invocation surface itself, so the
+      // live Account settings gate reads the `plugin` surface entry (not
+      // disabled here) even though the `api` entry above is disabled.
+      await expect(executePluginActionIfAvailable({
+        runtimeRegistry: createExecutableRegistry({
+          action,
+          targetActionInvocations,
+          activateContributionsOnDemand,
+        }),
+        actionId: action.definition.id,
+        input: {},
+        context: {
+          surface: 'plugin',
+          invocationSurface: 'plugin',
+        },
+      })).resolves.toEqual({
+        matched: true,
+        result: { ok: true, result: { executed: true } },
+      });
+      expect(handler).toHaveBeenCalledOnce();
+
+      // The caller kind never relocates the settings surface: a plugin-kind
+      // caller stamped with the `api` invocation origin is refused by the same
+      // live Account settings before the handler is entered.
+      handler.mockClear();
       await expect(executePluginActionIfAvailable({
         runtimeRegistry: createExecutableRegistry({
           action,
@@ -404,9 +430,14 @@ describe('executePluginActionIfAvailable', () => {
         },
       })).resolves.toEqual({
         matched: true,
-        result: { ok: true, result: { executed: true } },
+        result: {
+          ok: false,
+          errorCode: 'plugin_action_unavailable',
+          error: 'Plugin action is disabled by Action settings',
+          actionHandlerInvocation: 'notStarted',
+        },
       });
-      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).not.toHaveBeenCalled();
     } finally {
       resetActiveAccountSettingsSnapshotForTests();
       if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
@@ -845,7 +876,7 @@ describe('executePluginActionIfAvailable', () => {
     await serviceOwners.dispose();
   });
 
-  it('derives the plugin target surface from host-stamped plugin caller identity', async () => {
+  it('refuses a mounted UI dispatch of a target that only the plugin declaration would admit', async () => {
     const externalAction = createAction('/unused/daemon.mjs', 'publish');
     const action: ResolvedActionContribution = {
       ...externalAction,
@@ -867,6 +898,12 @@ describe('executePluginActionIfAvailable', () => {
       actions: [createTargetActionRegistration({ action, handler: target })],
     });
 
+    // The mounted UI caller derives a plugin-kind caller (the plugin that owns
+    // the validated mount), but the declared-surface check follows the
+    // authenticated invoking surface: `ui`. A write reachable only through the
+    // `plugin` declaration is a plugin-authority capability, so the mounted UI
+    // press is refused before the handler is entered instead of riding the
+    // plugin declaration.
     await expect(executePluginActionIfAvailable({
       runtimeRegistry: createExecutableRegistry({
         action,
@@ -896,27 +933,13 @@ describe('executePluginActionIfAvailable', () => {
     })).resolves.toEqual({
       matched: true,
       result: {
-        ok: true,
-        result: {
-          surface: 'plugin',
-          caller: {
-            kind: 'plugin',
-            pluginId: 'acme.mounted',
-            contribution: {
-              id: 'dashboard',
-              qualifiedId: 'acme.mounted/dashboard',
-            },
-            materialization: {
-              machineId: 'machine-1',
-              materializationId: 'materialization-mounted-current',
-              pluginId: 'acme.mounted',
-            },
-            originSurface: 'ui',
-          },
-        },
+        ok: false,
+        errorCode: 'plugin_action_unavailable',
+        error: 'Plugin action is not available on the requested surface',
+        actionHandlerInvocation: 'notStarted',
       },
     });
-    expect(target).toHaveBeenCalledTimes(1);
+    expect(target).not.toHaveBeenCalled();
   });
 
   it('returns the target execution origin only after rereading it at settlement', async () => {

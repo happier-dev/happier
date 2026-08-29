@@ -136,10 +136,17 @@ describe('hydrateProviderAccountUsageStoreFromConnectedServiceInventory', () => 
       nowMs: 1_001,
     });
 
+    // Canonical source identity: the exact qualified contribution key the current
+    // lifecycle/group resolution looks up. Store source lookup is literal; there
+    // is deliberately no alias/fallback path.
     expect(result.sources).toEqual([
-      { serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile' },
       {
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
+        profileId: 'work',
+        bindingKind: 'profile',
+      },
+      {
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'work',
         bindingKind: 'group_member',
         groupId: 'team',
@@ -147,6 +154,21 @@ describe('hydrateProviderAccountUsageStoreFromConnectedServiceInventory', () => 
       },
     ]);
     expect(result.hydration.hydratedRecordIds).toEqual([snapshot.recordId]);
+    // The hydrated snapshot must be immediately visible through the current
+    // lifecycle lookup key: the qualified profile source and the
+    // generation-qualified group_member source committed by the atomic passes.
+    expect(store.resolveBySource({
+      serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'work',
+      bindingKind: 'profile',
+    })).not.toBeNull();
+    expect(store.resolveBySource({
+      serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'work',
+      bindingKind: 'group_member',
+      groupId: 'team',
+      groupGeneration: 4,
+    })).not.toBeNull();
     expect(listAccounts).toHaveBeenCalledTimes(2);
     expect(listGroups).toHaveBeenCalledTimes(2);
     expect(resolveSource).toHaveBeenCalledTimes(4);

@@ -27,14 +27,16 @@ describe('Windows process launch custody', () => {
     expect(terminate).toHaveBeenCalledWith({ pid: 4_242, force: true });
   });
 
-  it('retains custody when taskkill loses the exact root before tree disposition', async () => {
+  it('retains custody when taskkill refuses tree disposition', async () => {
     const cancel = createExactWindowsProcessCancellation({
       pid: 4_242,
       processStartTimeMs: 1_000,
       readProcessIdentityByPidFn: vi.fn(async () => ({
         processStartTimeMs: 1_000,
       })),
-      terminateProcessTreeFn: vi.fn(async () => 'root_not_found' as const),
+      terminateProcessTreeFn: vi.fn(async () => {
+        throw Object.assign(new Error('taskkill refused'), { code: 1 });
+      }),
       isPidAliveFn: () => false,
     });
 

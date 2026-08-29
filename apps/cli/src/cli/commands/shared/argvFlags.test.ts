@@ -6,6 +6,7 @@ import {
   readFlagValue,
   readFlagValueUnlessFlagToken,
   readIntFlagValue,
+  readRawFlagValue,
 } from './argvFlags';
 
 describe('long option parsing', () => {
@@ -29,6 +30,13 @@ describe('long option parsing', () => {
     expect(readFlagValue(['command', '--ui'], '--ui')).toBeNull();
     expect(readFlagValue(['command', '--ui='], '--ui')).toBeNull();
     expect(readFlagValueUnlessFlagToken(['command', '--ui', '--json'], '--ui')).toBeNull();
+  });
+
+  it('can preserve caller-owned flag bytes for Protocol validation', () => {
+    expect(readRawFlagValue(['command', '--request-id', ' correlation '], '--request-id'))
+      .toBe(' correlation ');
+    expect(readRawFlagValue(['command', '--request-id=correlation'], '--request-id'))
+      .toBe('correlation');
   });
 });
 

@@ -410,9 +410,18 @@ export async function executeContributedAction(params: Readonly<{
 
   const surface = params.context.surface ?? 'cli';
   const invocationSurface = params.context.invocationSurface ?? surface;
-  const actionSurface = params.context.caller?.kind === 'plugin' || surface === 'background'
+  // The declared-surface check follows the host-stamped invocation origin, not
+  // the caller kind. A mounted Plugin UI invocation derives a plugin-kind
+  // caller — the plugin that owns the validated mount — but its authority is
+  // the user's UI interaction itself: the daemon ingress admits that caller
+  // only after matching the request's mounted binding against the live
+  // registry lease, so the `ui`/`voice` execution surface it stamped is UI
+  // authority no direct plugin call can claim. The plugin runtime
+  // (ActionsService) and background/automation ingresses are the real
+  // plugin-authority callers and check the target's `plugin` surface.
+  const actionSurface = invocationSurface === 'plugin' || invocationSurface === 'background'
     ? 'plugin'
-    : surface;
+    : invocationSurface;
   if (action.definition.surfaces[actionSurface] !== true) {
     return {
       matched: true,

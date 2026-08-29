@@ -21,6 +21,7 @@ import {
 import {
     PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES,
 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
     type AgentExternalSessionHookInstallationVariant,
@@ -219,21 +220,8 @@ function stableDigest(prefix: string, value: string | Buffer): string {
     return `${prefix}:${sha256Hex(value)}`;
 }
 
-function canonicalJson(value: ExternalSessionHookJsonValue): string {
-    if (Array.isArray(value)) {
-        return `[${value.map(canonicalJson).join(',')}]`;
-    }
-    if (isPlainObject(value)) {
-        return `{${Object.keys(value)
-            .sort()
-            .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key] as ExternalSessionHookJsonValue)}`)
-            .join(',')}}`;
-    }
-    return JSON.stringify(value);
-}
-
 function entryIdentity(value: ExternalSessionHookJsonValue): string {
-    return stableDigest('entry-v1', canonicalJson(value));
+    return stableDigest('entry-v1', createCanonicalJsonSigningInput(value));
 }
 
 function configurationIdentity(bytes: Buffer): string {

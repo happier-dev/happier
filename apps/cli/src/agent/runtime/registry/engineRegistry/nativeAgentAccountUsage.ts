@@ -1,9 +1,10 @@
 import {
     buildProviderAccountUsageRecordId,
+    ConnectedAccountServiceKeyIngressSchema,
     ConnectedServiceUsageSourceV1Schema,
     ProviderAccountUsageRecordKeyV1Schema,
     ProviderAccountUsageSnapshotV1Schema,
-    type ConnectedServiceId,
+    type ConnectedAccountServiceKey,
     type ConnectedServiceUsageSourceV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -250,23 +251,23 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
     else params.signal.addEventListener('abort', dispose, { once: true });
 
     const parseSourceAddress = (value: unknown): Readonly<{
-        serviceId: string;
+        serviceId: ConnectedAccountServiceKey;
         env: Readonly<Record<string, string | undefined>> | null;
     }> | null => {
         if (!isRecord(value)) return null;
-        const serviceId = readTrimmedString(value.serviceId);
-        if (!serviceId) return null;
+        const serviceId = ConnectedAccountServiceKeyIngressSchema.safeParse(readTrimmedString(value.serviceId));
+        if (!serviceId.success) return null;
         const serializedSelection = isRecord(value.env)
             ? readTrimmedString(value.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY])
             : null;
         const env = serializedSelection
             ? { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: serializedSelection }
             : null;
-        return { serviceId, env };
+        return { serviceId: serviceId.data, env };
     };
 
     const resolveSourceAddress = (address: Readonly<{
-        serviceId: string;
+        serviceId: ConnectedAccountServiceKey;
         env: Readonly<Record<string, string | undefined>> | null;
     }>): Readonly<{
         publicSource: Awaited<ReturnType<AgentAccountUsageService['resolveSourceContext']>>;
@@ -275,11 +276,11 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
         const context = address.env
             ? resolveConnectedServiceRuntimeAuthContextFromEnv(
                 address.env,
-                address.serviceId as ConnectedServiceId,
+                address.serviceId,
             )
             : resolveConnectedServiceRuntimeAuthContextFromSessionMetadata(
                 params.session,
-                address.serviceId as ConnectedServiceId,
+                address.serviceId,
             );
         if (!context?.profileId) return null;
         const source = {

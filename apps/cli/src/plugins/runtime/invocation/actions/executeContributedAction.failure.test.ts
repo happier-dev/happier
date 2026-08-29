@@ -29,6 +29,147 @@ function lazyTargetActionRegistry(
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
 }
 
+/**
+ * Mounted Plugin UI provenance fixtures: the daemon ingress derives this exact
+ * caller only after matching the request's mounted binding against the live
+ * registry lease, so a plugin-kind caller whose origin is the mounted UI
+ * surface carries present-user UI authority, not plugin authority.
+ */
+function mountedUiCaller() {
+    return {
+        kind: 'plugin' as const,
+        pluginId: 'acme.target',
+        contribution: {
+            id: 'dashboard',
+            qualifiedId: 'acme.target/dashboard',
+        },
+        materialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'acme.target' },
+        originSurface: 'ui' as const,
+    };
+}
+
+function surfacesRegistry(
+    surfaces: Record<string, boolean>,
+): ResolvedExecutablePluginRuntimeRegistry {
+    const action = {
+        pluginId: 'acme.target',
+        definition: { id: 'commit', surfaces },
+    } as unknown as ResolvedActionContribution;
+    const invocations: Record<string, unknown>[] = [];
+    return {
+        contributes: {
+            actionsById: new Map([['acme.target/commit', action]]),
+        },
+        targetActionInvocations: {
+            expects: () => true,
+            has: () => true,
+            invoke: async (invocation: Record<string, unknown>) => {
+                invocations.push(invocation);
+                return { status: 'executed' as const, value: { committed: true } };
+            },
+        },
+    } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+}
+
+describe('executeContributedAction invocation-authority derivation', () => {
+    it('admits a mounted Plugin UI user press on a UI-declared target as UI authority', async () => {
+        const registry = surfacesRegistry({ ui: true });
+        await expect(executeContributedAction({
+            runtimeRegistry: registry,
+            actionId: 'acme.target/commit',
+            context: {
+                surface: 'ui',
+                invocationSurface: 'ui',
+                caller: mountedUiCaller(),
+            },
+        })).resolves.toEqual({
+            matched: true,
+            result: { ok: true, result: { committed: true } },
+        });
+    });
+
+    it('refuses a mounted Plugin UI press that only the plugin declaration would admit', async () => {
+        const registry = surfacesRegistry({ plugin: true });
+        await expect(executeContributedAction({
+            runtimeRegistry: registry,
+            actionId: 'acme.target/commit',
+            context: {
+                surface: 'ui',
+                invocationSurface: 'ui',
+                caller: mountedUiCaller(),
+            },
+        })).resolves.toEqual({
+            matched: true,
+            result: {
+                ok: false,
+                errorCode: 'plugin_action_unavailable',
+                error: 'Plugin action is not available on the requested surface',
+                actionHandlerInvocation: 'notStarted',
+            },
+        });
+    });
+
+    it('uses the host-stamped invocation surface when the target capability surface is plugin', async () => {
+        const registry = surfacesRegistry({ plugin: true });
+        await expect(executeContributedAction({
+            runtimeRegistry: registry,
+            actionId: 'acme.target/commit',
+            context: {
+                surface: 'plugin',
+                invocationSurface: 'ui',
+                caller: mountedUiCaller(),
+            },
+        })).resolves.toEqual({
+            matched: true,
+            result: {
+                ok: false,
+                errorCode: 'plugin_action_unavailable',
+                error: 'Plugin action is not available on the requested surface',
+                actionHandlerInvocation: 'notStarted',
+            },
+        });
+    });
+
+    it('keeps direct plugin invocation plugin-authority only and unable to claim UI', async () => {
+        const pluginDeclared = surfacesRegistry({ plugin: true });
+        await expect(executeContributedAction({
+            runtimeRegistry: pluginDeclared,
+            actionId: 'acme.target/commit',
+            context: { surface: 'plugin' },
+        })).resolves.toEqual({
+            matched: true,
+            result: { ok: true, result: { committed: true } },
+        });
+
+        const uiDeclared = surfacesRegistry({ ui: true });
+        await expect(executeContributedAction({
+            runtimeRegistry: uiDeclared,
+            actionId: 'acme.target/commit',
+            context: { surface: 'plugin' },
+        })).resolves.toEqual({
+            matched: true,
+            result: {
+                ok: false,
+                errorCode: 'plugin_action_unavailable',
+                error: 'Plugin action is not available on the requested surface',
+                actionHandlerInvocation: 'notStarted',
+            },
+        });
+    });
+
+    it('keeps background invocations on the plugin declaration and present-user intent off', async () => {
+        const registry = surfacesRegistry({ plugin: true });
+        await expect(executeContributedAction({
+            runtimeRegistry: registry,
+            actionId: 'acme.target/commit',
+            context: { surface: 'background' },
+        })).resolves.toEqual({
+            matched: true,
+            result: { ok: true, result: { committed: true } },
+        });
+    });
+});
+
 describe('executeContributedAction lazy activation failures', () => {
     it('captures the exact prepared target without invoking it during contributed admission', async () => {
         const action = {

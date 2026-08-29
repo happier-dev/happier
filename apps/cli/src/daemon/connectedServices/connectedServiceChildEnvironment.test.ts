@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildConnectedServiceCredentialRecord,
-  ConnectedServiceBindingsV1Schema,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol';
 
 import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
@@ -19,42 +16,29 @@ import {
 
 describe('connectedServiceChildEnvironment', () => {
   it('serializes connected-service selections without credential records', () => {
-    const record = buildConnectedServiceCredentialRecord({
-      now: 10,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      kind: 'oauth',
-      expiresAt: null,
-      oauth: {
-        accessToken: 'secret-access',
-        refreshToken: 'secret-refresh',
-        idToken: 'secret-id',
-        scope: null,
-        tokenType: null,
-        providerAccountId: 'acct',
-        providerEmail: null,
-      },
-    });
-
     const serialized = serializeConnectedServiceChildSelections(new Map([
-      ['openai-codex', {
+      ['happier.agent.codex/openai-codex', {
         kind: 'group',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'codex-main',
         activeProfileId: 'work',
         fallbackProfileId: 'work',
         generation: 3,
         policy: { v: 1 },
-        record,
+        // Persist only the explicit non-secret selection projection even if a
+        // predecessor/in-memory producer supplies an extra credential-shaped
+        // property at this serialization boundary.
+        record: { accessToken: 'secret-access', refreshToken: 'secret-refresh' },
       }],
-    ]));
+    ] as unknown as Parameters<typeof serializeConnectedServiceChildSelections>[0]));
 
     expect(serialized).not.toBeNull();
     expect(serialized).not.toContain('secret-access');
+    expect(serialized).not.toContain('secret-refresh');
     const selections = readConnectedServiceChildSelectionsFromEnv({
       [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: serialized ?? undefined,
     });
-    expect(selections?.get('openai-codex')).toMatchObject({
+    expect(selections?.get('happier.agent.codex/openai-codex')).toMatchObject({
       kind: 'group',
       groupId: 'codex-main',
       activeProfileId: 'work',
@@ -65,14 +49,14 @@ describe('connectedServiceChildEnvironment', () => {
   it('resolves runtime auth context from a selected group', () => {
     expect(resolveConnectedServiceRuntimeAuthContextFromSelection({
       kind: 'group',
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'happier',
       activeProfileId: 'bot',
       fallbackProfileId: 'leeroy',
       generation: 3,
       policy: { v: 1 },
-    }, 'openai-codex')).toEqual({
-      serviceId: 'openai-codex',
+    }, 'happier.agent.codex/openai-codex')).toEqual({
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'bot',
       groupId: 'happier',
       groupGeneration: 3,
@@ -83,11 +67,11 @@ describe('connectedServiceChildEnvironment', () => {
     expect(resolveConnectedServiceRuntimeAuthContextFromEnv({
       [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
         kind: 'profile',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'leeroy',
       }]),
-    }, 'openai-codex')).toEqual({
-      serviceId: 'openai-codex',
+    }, 'happier.agent.codex/openai-codex')).toEqual({
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'leeroy',
       groupId: null,
     });
@@ -97,10 +81,10 @@ describe('connectedServiceChildEnvironment', () => {
     const connectedServices = ConnectedServiceBindingsV1Schema.parse({
       v: 1,
       bindingsByServiceId: {
-        'openai-codex': {
+        'happier.agent.codex/openai-codex': {
           source: 'connected',
           selection: 'group',
-          serviceId: 'openai-codex',
+          serviceId: 'happier.agent.codex/openai-codex',
           groupId: 'codex',
           profileId: 'backup',
           groupGeneration: 7,
@@ -110,8 +94,8 @@ describe('connectedServiceChildEnvironment', () => {
 
     expect(resolveConnectedServiceRuntimeAuthContextFromSessionMetadata({
       getMetadataSnapshot: () => ({ connectedServices }),
-    }, 'openai-codex')).toEqual({
-      serviceId: 'openai-codex',
+    }, 'happier.agent.codex/openai-codex')).toEqual({
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'backup',
       groupId: 'codex',
       groupGeneration: 7,

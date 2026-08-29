@@ -23,7 +23,11 @@ describe('happier session run wait (action executor)', () => {
   it('does not add a default timeout when --timeout is omitted', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true, status: 'succeeded', result: {} },
+      result: {
+        ok: true,
+        status: 'succeeded',
+        result: { run: { runId: 'run-1', status: 'succeeded' } },
+      },
     });
 
     const { handleSessionCommand } = await import('../handleSessionCommand');
@@ -52,7 +56,11 @@ describe('happier session run wait (action executor)', () => {
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true, status: 'succeeded', result: {} },
+      result: {
+        ok: true,
+        status: 'succeeded',
+        result: { run: { runId: 'run-1', status: 'succeeded' } },
+      },
     });
 
     const { handleSessionCommand } = await import('../handleSessionCommand');
@@ -99,7 +107,14 @@ describe('happier session run wait (action executor)', () => {
   });
 
   it('does not resolve an API-token Session through the generic transport', async () => {
-    execute.mockResolvedValueOnce({ ok: true, result: { ok: true, status: 'succeeded', result: {} } });
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'succeeded',
+        result: { run: { runId: 'run-1', status: 'succeeded' } },
+      },
+    });
     const { handleSessionCommand } = await import('../handleSessionCommand');
     const output = captureConsoleJsonOutput();
     try {

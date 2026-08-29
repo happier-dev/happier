@@ -56,7 +56,7 @@ const coldTarget = definePlugin({
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         }).point(),
@@ -218,7 +218,7 @@ function defineExternalSemanticTarget(pluginId: string) {
                         required: true,
                         input: { kind: 'contributorDefined' },
                         resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                 },
                 surfaces: {
@@ -255,7 +255,7 @@ function defineBundledSemanticTarget(pluginId: string) {
                         required: true,
                         input: { kind: 'contributorDefined' },
                         resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                 },
                 surfaces: {

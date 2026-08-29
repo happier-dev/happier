@@ -1,6 +1,7 @@
 import {
   AcpConfigOptionOverridesV1Schema,
   ConnectedServiceBindingsV1Schema,
+  ExternalActionRequestIdV1Schema,
   SessionMcpSelectionV1Schema,
   type AcpConfigOptionOverridesV1,
   type ConnectedServiceBindingsV1,
@@ -8,7 +9,7 @@ import {
   type SpawnConfigOptionValue,
 } from '@happier-dev/protocol';
 
-import { readCommandPositionals, readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
+import { readCommandPositionals, readFlagValue, readRawFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import {
@@ -248,8 +249,11 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
   const profileId = (launchProfileId ?? legacyProfileId ?? '').trim();
   const machineId = (readFlagValue(argv, '--machine-id') ?? '').trim();
   const serverId = (readFlagValue(argv, '--server-id') ?? '').trim();
-  const spawnAttemptId = (readFlagValue(argv, '--spawn-attempt-id') ?? '').trim() || null;
-  if (spawnAttemptId && (spawnAttemptId.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(spawnAttemptId))) {
+  // Request identities reuse the Protocol-owned opaque identifier schema at
+  // this sole validation point: 1-128 code units, Unicode allowed, no local
+  // trim or character whitelist beyond the shared argv boundary.
+  const spawnAttemptId = readRawFlagValue(argv, '--spawn-attempt-id');
+  if (spawnAttemptId !== null && !ExternalActionRequestIdV1Schema.safeParse(spawnAttemptId).success) {
     throw new Error('Invalid --spawn-attempt-id.');
   }
   const resumeSpawnAttempt = hasFlag(argv, '--resume-spawn-attempt');

@@ -12,7 +12,7 @@ type ConnectedServiceSwitchDeferralCompletionReason =
     | 'daemon_shutdown';
 
 export type ConnectedServiceSwitchTarget = Readonly<{
-    serviceId: string;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     groupId: string;
     generation: number;
@@ -525,3 +525,4 @@ export function createConnectedServiceSwitchDeferralQueue(
         cancelAll,
     };
 }
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';

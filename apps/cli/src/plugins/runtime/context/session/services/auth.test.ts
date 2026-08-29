@@ -53,7 +53,9 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
         expect(resolveAdapter).toHaveBeenCalledWith('codex');
     });
     it('forwards refresh intent and failed-token proof to the provider adapter', async () => {
-        const refreshActiveProfile = vi.fn(async () => ({
+        const refreshActiveProfile = vi.fn<
+            ConnectedServiceProviderRuntimeAuthAdapter['refreshActiveProfile']
+        >(async () => ({
             status: 'refreshed' as const,
             result: { accessToken: 'fresh' },
         }));
@@ -77,7 +79,7 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
 
         expect(refreshActiveProfile).toHaveBeenCalledWith(expect.objectContaining({
             target: { agentId: 'codex' },
-            selection: expect.objectContaining({ serviceId: 'openai-codex' }),
+            selection: expect.objectContaining({ serviceId: 'happier.agent.codex/openai-codex' }),
         }));
         const refreshInput = refreshActiveProfile.mock.calls[0]?.[0];
         expect(refreshInput).not.toHaveProperty('failingAccessTokenFingerprint');
@@ -255,7 +257,7 @@ describe('createSessionHandleAuthService runtime auth refresh', () => {
             selection: {
                 kind: 'profile',
                 profileId: 'work',
-                serviceId: 'openai-codex',
+                serviceId: 'happier.agent.codex/openai-codex',
             },
             planType: 'plus',
             failingAccessTokenFingerprint: 'sha256:failed',

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { PublicActionResultById } from '@happier-dev/protocol';
+import { SessionStopResultSchema } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';
@@ -62,10 +62,10 @@ export async function cmdSessionStop(
     throw new Error(normalized.errorCode);
   }
 
-  const result = normalized.data as PublicActionResultById['session.stop'];
-  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_stop', json, result: normalized.data })) {
     return;
   }
+  const result = SessionStopResultSchema.parse(normalized.data);
   if (json) {
     await printJsonEnvelope({
       ok: true,

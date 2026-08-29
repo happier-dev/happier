@@ -1442,6 +1442,56 @@ describe('buildTargetActionInvocationRegistry', () => {
         })).toThrow(/no matching manifest action/i);
     });
 
+    it.each(['dormant', 'unavailable'] as const)(
+        'omits retained registrations when the plugin generation is %s',
+        (status) => {
+            const target = buildRegistry({
+                contributes: registry(),
+                targetRegistrations: [{
+                    pluginId: 'acme.alpha',
+                    generation: '7',
+                    registration: { family: 'actions', localId: 'run', value: handler },
+                }],
+                targetActivationFacts: [fact({ status })],
+            });
+
+            expect(target.has('acme.alpha', 'run')).toBe(false);
+            expect(target.evaluateCatalogPolicy('acme.alpha', 'run')).toMatchObject({
+                outcome: 'unavailable',
+                code: 'plugin_action_handler_missing',
+            });
+        },
+    );
+
+    it('refreshes a lazily published Action against the current activation facts', async () => {
+        const targetRegistrations: Array<{
+            pluginId: string;
+            generation: string;
+            registration: { family: 'actions'; localId: string; value: typeof handler };
+        }> = [];
+        let targetActivationFacts: readonly PluginTargetActivationFact[] = [];
+        const target = buildRegistry({
+            contributes: registry(),
+            targetRegistrations,
+            readTargetActivationFacts: () => targetActivationFacts,
+        });
+
+        targetRegistrations.push({
+            pluginId: 'acme.alpha',
+            generation: '7',
+            registration: { family: 'actions', localId: 'run', value: handler },
+        });
+        targetActivationFacts = [fact()];
+
+        expect(() => target.refresh()).not.toThrow();
+        await expect(target.invoke({
+            pluginId: 'acme.alpha',
+            localId: 'run',
+            input: {},
+            surface: 'cli',
+        })).resolves.toEqual({ status: 'executed', value: { ok: true } });
+    });
+
     it('uses host-owned activation metadata and exact qualified identity', async () => {
         let contextVersion: string | undefined;
         const target = buildRegistry({

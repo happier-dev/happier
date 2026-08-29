@@ -7,9 +7,8 @@ import {
 
 describe('parseConnectedServiceProjectionSnapshot', () => {
   it('projects nothing for a service that has no legacy connected-service id', () => {
-    // The legacy generation/currentness reconciler is `ConnectedServiceId`-keyed, so a
-    // novel qualified service cannot appear in it. Its daemon consumers read V4 truth
-    // through the direct V4 owners instead of a second projection here.
+    // Novel qualified services have no legacy V2 projection. Their daemon consumers read
+    // V4 truth directly instead of manufacturing a scalar identity here.
     const snapshot = parseConnectedServiceProjectionSnapshot({
       connectedServicesV2: [],
       connectedServiceCredentialRevisionsV1: [],
@@ -18,7 +17,7 @@ describe('parseConnectedServiceProjectionSnapshot', () => {
     expect(snapshot.groups).toEqual([]);
     expect(snapshot.credentialRevisions).toEqual([]);
     expect(snapshot.resolveCredentialPresence(
-      'anthropic',
+      'happier.agent.claude/anthropic',
       'external-account',
     )).toEqual({ status: 'absent' });
   });
@@ -44,19 +43,19 @@ describe('parseConnectedServiceProjectionSnapshot', () => {
     });
 
     expect(snapshot.groups).toEqual([
-      { serviceId: 'anthropic', groupId: 'group-a', activeProfileId: 'profile-a', generation: 9 },
-      { serviceId: 'anthropic', groupId: 'group-b', activeProfileId: 'profile-b', generation: 9 },
+      { serviceId: 'happier.agent.claude/anthropic', groupId: 'group-a', activeProfileId: 'profile-a', generation: 9 },
+      { serviceId: 'happier.agent.claude/anthropic', groupId: 'group-b', activeProfileId: 'profile-b', generation: 9 },
     ]);
-    expect(snapshot.resolveCredentialRevision('anthropic', 'profile-a')).toBe('csr_aaaaaaaaaaaaaaaaaaaaaa');
-    expect(snapshot.resolveCredentialRevision('anthropic', 'profile-b')).toBeNull();
-    expect(snapshot.resolveCredentialPresence('anthropic', 'profile-a')).toEqual({
+    expect(snapshot.resolveCredentialRevision('happier.agent.claude/anthropic', 'profile-a')).toBe('csr_aaaaaaaaaaaaaaaaaaaaaa');
+    expect(snapshot.resolveCredentialRevision('happier.agent.claude/anthropic', 'profile-b')).toBeNull();
+    expect(snapshot.resolveCredentialPresence('happier.agent.claude/anthropic', 'profile-a')).toEqual({
       status: 'present',
       credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
     });
-    expect(snapshot.resolveCredentialPresence('anthropic', 'profile-b')).toEqual({
+    expect(snapshot.resolveCredentialPresence('happier.agent.claude/anthropic', 'profile-b')).toEqual({
       status: 'legacy_unfenced',
     });
-    expect(snapshot.resolveCredentialPresence('anthropic', 'deleted')).toEqual({
+    expect(snapshot.resolveCredentialPresence('happier.agent.claude/anthropic', 'deleted')).toEqual({
       status: 'absent',
     });
   });
@@ -102,7 +101,7 @@ describe('parseConnectedServiceProjectionSnapshot', () => {
 
     expect(observed).toBe(newProjection);
     expect(publications).toEqual([newProjection]);
-    expect(observed.resolveCredentialRevision('openai-codex', 'work'))
+    expect(observed.resolveCredentialRevision('happier.agent.codex/openai-codex', 'work'))
       .toBe('csr_bbbbbbbbbbbbbbbbbbbbbb');
   });
 });

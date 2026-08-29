@@ -16,6 +16,7 @@ import type {
     ExternalSessionsSource,
     PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import {
     compareExternalSessionCandidatePrecedence,
     resolveExternalSessionCandidateIdentityKey,
@@ -257,25 +258,6 @@ function assertCandidateIndexStateWithinByteCapacity(
     });
 }
 
-function canonicalJson(value: unknown): string {
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-        return JSON.stringify(value);
-    }
-    if (typeof value === 'number') {
-        if (!Number.isFinite(value)) throw new Error('Candidate-index identity contains a non-finite number');
-        return JSON.stringify(value);
-    }
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-    if (!value || typeof value !== 'object') {
-        throw new Error('Candidate-index identity is not strict JSON');
-    }
-    const record = value as Readonly<Record<string, unknown>>;
-    return `{${Object.keys(record)
-        .sort()
-        .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-        .join(',')}}`;
-}
-
 function digest(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -297,7 +279,7 @@ function resolveKeys(
     runtimeGeneration: string | null,
 ): CandidateIndexKeys {
     const agentKey = digest(`${agentIdentity.pluginId}\u0000${agentIdentity.localId}`);
-    const sourceKey = digest(canonicalJson(source));
+    const sourceKey = digest(createCanonicalJsonSigningInput(source));
     return Object.freeze({
         agentKey,
         sourceKey,
@@ -608,7 +590,7 @@ function extendCorpusDigest(
     let nextDigest = current.digest;
     let nextCount = current.count;
     for (const candidate of candidates) {
-        nextDigest = digest(canonicalJson({
+        nextDigest = digest(createCanonicalJsonSigningInput({
             v: CORPUS_DIGEST_VERSION,
             previous: nextDigest,
             candidate,
@@ -643,7 +625,7 @@ function computeIndexGeneration(
     corpus: CandidateCorpusDigest,
     sortedCandidates: readonly StoredCandidate[],
 ): string {
-    return digest(canonicalJson({
+    return digest(createCanonicalJsonSigningInput({
         v: CORPUS_DIGEST_VERSION,
         corpus,
         candidates: sortedCandidates,
@@ -656,7 +638,7 @@ function computePersistedCandidateDigest(
     indexOrdinal: number,
     candidate: StoredCandidate,
 ): string {
-    return digest(canonicalJson({
+    return digest(createCanonicalJsonSigningInput({
         v: 1,
         indexGeneration,
         candidateCount,
@@ -966,7 +948,8 @@ function parseIndexRecord(
         if (record.state === 'complete') {
             const sortedCandidates = sortCandidates(parsedCandidates);
             if (
-                canonicalJson(parsedCandidates) !== canonicalJson(sortedCandidates)
+                createCanonicalJsonSigningInput(parsedCandidates)
+                    !== createCanonicalJsonSigningInput(sortedCandidates)
                 || record.indexGeneration !== computeIndexGeneration(corpus, sortedCandidates)
             ) return null;
         }
@@ -1409,7 +1392,7 @@ function computeCandidatePageDigest(
     offset: number,
     byteOffset: number,
 ): string {
-    return digest(canonicalJson({
+    return digest(createCanonicalJsonSigningInput({
         offset,
         byteOffset,
         candidates,
@@ -1439,12 +1422,12 @@ function candidateHeadAnchor(page: ExternalSessionCandidatesPage): readonly stri
         });
     }
     return Object.freeze((candidates as StoredCandidate[]).map(
-        (candidate) => `${candidateIdentity(candidate)}${digest(canonicalJson(candidate))}`,
+        (candidate) => `${candidateIdentity(candidate)}${digest(createCanonicalJsonSigningInput(candidate))}`,
     ));
 }
 
 function candidateHeadAnchorToken(anchor: readonly string[]): string {
-    return digest(canonicalJson(anchor));
+    return digest(createCanonicalJsonSigningInput(anchor));
 }
 
 /**

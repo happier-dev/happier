@@ -1,5 +1,5 @@
 import type {
-  ConnectedServiceId,
+  ConnectedAccountServiceKey,
   ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 
@@ -32,7 +32,7 @@ export type ConnectedServiceAuthGroupQuotaLifecycleEdge =
   | Readonly<{ phase: 'no_edge' }>
   | Readonly<{
     phase: 'blocked';
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     activeProfileId: string | null;
     sessionIds: ReadonlyArray<string>;
@@ -43,7 +43,7 @@ export type ConnectedServiceAuthGroupQuotaLifecycleEdge =
   }>
   | Readonly<{
     phase: 'recovered';
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     activeProfileId: string | null;
     sessionIds: ReadonlyArray<string>;

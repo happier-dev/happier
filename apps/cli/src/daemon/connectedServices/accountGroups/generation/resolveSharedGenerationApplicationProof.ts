@@ -70,7 +70,6 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
       },
       credential: resolution.record,
       ...(nativeHome ? { nativeHome } : {}),
-      targetMaterializedEnv: input.targetMaterializedEnv,
     });
   } catch {
     return null;

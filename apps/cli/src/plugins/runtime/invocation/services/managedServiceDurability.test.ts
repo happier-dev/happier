@@ -26,12 +26,16 @@ type ManagedServiceProjectionFacts = Readonly<{
     createdAtMs: number;
 }>;
 
+function processIdentity(pid: number, generation = 1): string {
+    return `${pid}:${generation * 1_000}`;
+}
+
 function record(instanceId: string, pid = 41): ManagedServiceProjectionFacts {
     return {
         instanceId,
         immutableGenerationId: 'immutable-generation-a',
         pid,
-        processStartIdentity: `start-${pid}`,
+        processStartIdentity: processIdentity(pid),
         endpoint: { host: '127.0.0.1', port: 4312 },
         createdAtMs: 1_000,
     };
@@ -73,8 +77,8 @@ describe('managed server durability owner', () => {
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
             observeProcessStartIdentity: async (pid) => (
-                pid === 41 ? 'start-41'
-                    : pid === 42 ? 'start-recycled'
+                pid === 41 ? processIdentity(41)
+                    : pid === 42 ? processIdentity(42, 2)
                         : null
             ),
             terminateProcessTree: async ({ pid }) => {
@@ -128,7 +132,7 @@ describe('managed server durability owner', () => {
 
     it('forgets a managed child only after post-termination identity proves absence', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-confirmed-'));
-        let observed: string | null = 'start-41';
+        let observed: string | null = processIdentity(41);
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
             observeProcessStartIdentity: async () => observed,
@@ -234,6 +238,7 @@ describe('managed server durability owner', () => {
             readProcessIdentityByPidFn: async () => ({
                 pid: 4_321,
                 processStartTimeMs: 12_345,
+                command: 'fixture-managed-service',
             }),
         })).resolves.toBe('42:12345');
 
@@ -350,7 +355,7 @@ describe('managed server durability owner', () => {
         const secretDerivedFingerprint = createHash('sha256')
             .update(rawHeader)
             .digest('hex');
-        let observedStartIdentity: string | null = 'runner-start-42';
+        let observedStartIdentity: string | null = processIdentity(42);
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
             observeProcessStartIdentity: async () => observedStartIdentity,
@@ -358,7 +363,7 @@ describe('managed server durability owner', () => {
         const projection = {
             ...endpointProjection(record('runner-instance', 42)),
             custodyOwner: 'sessionRunner' as const,
-            process: { pid: 42, startIdentity: 'runner-start-42' },
+            process: { pid: 42, startIdentity: processIdentity(42) },
         };
         const projectionToken = await owner.publishEndpointProjection(projection);
 
@@ -379,11 +384,11 @@ describe('managed server durability owner', () => {
             custodyOwner: 'sessionRunner',
             process: {
                 pid: 42,
-                startIdentity: 'runner-start-42',
+                startIdentity: processIdentity(42),
             },
         });
 
-        observedStartIdentity = 'reused-pid-start';
+        observedStartIdentity = processIdentity(42, 2);
         await expect(owner.resolveEndpointProjection({
             pluginId: 'opencode',
             sessionId: 'session-one',
@@ -397,13 +402,13 @@ describe('managed server durability owner', () => {
         const projection = {
             ...endpointProjection(record('runner-instance', 42)),
             custodyOwner: 'sessionRunner' as const,
-            process: { pid: 42, startIdentity: 'runner-start-42' },
+            process: { pid: 42, startIdentity: processIdentity(42) },
         };
         const daemonA = createManagedServiceDurabilityOwner({ rootDir: root });
         const projectionToken = await daemonA.publishEndpointProjection(projection);
         const daemonB = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async () => 'runner-start-42',
+            observeProcessStartIdentity: async () => processIdentity(42),
         });
 
         await expect(daemonB.resolveEndpointProjection({
@@ -415,7 +420,7 @@ describe('managed server durability owner', () => {
 
     it.each([
         ['dead process', null],
-        ['reused PID', 'replacement-start-42'],
+        ['reused PID', processIdentity(42, 2)],
     ])('reaps a session-runner projection after positive %s evidence', async (_label, observedIdentity) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-stale-runner-projection-'));
         const owner = createManagedServiceDurabilityOwner({
@@ -425,7 +430,7 @@ describe('managed server durability owner', () => {
         const projectionToken = await owner.publishEndpointProjection({
             ...endpointProjection(record('runner-instance', 42)),
             custodyOwner: 'sessionRunner',
-            process: { pid: 42, startIdentity: 'runner-start-42' },
+            process: { pid: 42, startIdentity: processIdentity(42) },
         });
 
         await expect(owner.resolveEndpointProjection({
@@ -449,7 +454,7 @@ describe('managed server durability owner', () => {
         const projectionToken = await owner.publishEndpointProjection({
             ...endpointProjection(record('runner-instance', 42)),
             custodyOwner: 'sessionRunner',
-            process: { pid: 42, startIdentity: 'runner-start-42' },
+            process: { pid: 42, startIdentity: processIdentity(42) },
         });
 
         await expect(owner.resolveEndpointProjection({
@@ -497,7 +502,7 @@ describe('managed server durability owner', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-runner-base-ambiguity-'));
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async (pid) => pid === 41 ? 'start-41' : null,
+            observeProcessStartIdentity: async (pid) => pid === 41 ? processIdentity(41) : null,
         });
         const liveToken = await owner.publishEndpointProjection({
             ...endpointProjection(record('live-runner', 41)),
@@ -523,7 +528,7 @@ describe('managed server durability owner', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-cross-session-base-ambiguity-'));
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async (pid) => `start-${pid}`,
+            observeProcessStartIdentity: async (pid) => processIdentity(pid),
         });
         await owner.publishEndpointProjection({
             ...endpointProjection(record('session-one-runner', 41)),
@@ -551,7 +556,7 @@ describe('managed server durability owner', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-generation-binding-'));
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async (pid) => `start-${pid}`,
+            observeProcessStartIdentity: async (pid) => processIdentity(pid),
         });
         const immutableGenerationG = 'immutable-generation-g';
         const immutableGenerationH = 'immutable-generation-h';
@@ -597,7 +602,7 @@ describe('managed server durability owner', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-current-contribution-'));
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async (pid) => `start-${pid}`,
+            observeProcessStartIdentity: async (pid) => processIdentity(pid),
         });
         const immutableGeneration = 'immutable-generation-current';
         const currentToken = await owner.publishEndpointProjection({
@@ -654,7 +659,7 @@ describe('managed server durability owner', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-current-session-'));
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async (pid) => `start-${pid}`,
+            observeProcessStartIdentity: async (pid) => processIdentity(pid),
         });
         await owner.publishEndpointProjection({
             ...endpointProjection(record('session-one-runner', 41)),
@@ -745,7 +750,7 @@ describe('managed server durability owner', () => {
         expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
         const resolver = createManagedServiceDurabilityOwner({
             rootDir: root,
-            observeProcessStartIdentity: async () => 'start-43',
+            observeProcessStartIdentity: async () => processIdentity(43),
         });
         await expect(resolver.resolveEndpointProjection({
             pluginId: 'opencode',
@@ -756,7 +761,7 @@ describe('managed server durability owner', () => {
             },
         })).resolves.toMatchObject({
             instanceId: 'runner-instance',
-            process: { pid: 43, startIdentity: 'start-43' },
+            process: { pid: 43, startIdentity: processIdentity(43) },
         });
     });
 
@@ -765,7 +770,7 @@ describe('managed server durability owner', () => {
         const owner = createManagedServiceDurabilityOwner({
             rootDir: root,
             maxEndpointProjections: 1,
-            observeProcessStartIdentity: async (pid) => pid === 41 ? null : `start-${pid}`,
+            observeProcessStartIdentity: async (pid) => pid === 41 ? null : processIdentity(pid),
         });
         await owner.publishEndpointProjection({
             ...endpointProjection(record('crashed-runner', 41)),
@@ -948,6 +953,7 @@ describe('managed server durability owner', () => {
         await expect(owner.resolveEndpointProjection({
             pluginId: 'opencode',
             sessionId: 'session-one',
+            contributionId: 'opencode/agent',
             selector: { kind: 'currentSessionManagedSpawn' },
         })).resolves.toMatchObject({
             process: { pid: 42, startIdentity: jobIdentity },
@@ -991,6 +997,7 @@ describe('managed server durability owner', () => {
         await expect(owner.resolveEndpointProjection({
             pluginId: 'opencode',
             sessionId: 'session-one',
+            contributionId: 'opencode/agent',
             selector: { kind: 'currentSessionManagedSpawn' },
         })).resolves.toBeNull();
         expect(await readdir(join(root, 'endpoint-projections'))).toHaveLength(1);
@@ -1004,6 +1011,7 @@ describe('managed server durability owner', () => {
         await expect(absentOwner.resolveEndpointProjection({
             pluginId: 'opencode',
             sessionId: 'session-one',
+            contributionId: 'opencode/agent',
             selector: { kind: 'currentSessionManagedSpawn' },
         })).resolves.toBeNull();
         expect(await readdir(join(root, 'endpoint-projections'))).toEqual([]);
@@ -1020,6 +1028,7 @@ describe('managed server durability owner', () => {
                 throw new Error('native witness present: ps must not be consulted');
             },
         })).resolves.toBe('darwin-proc:41:1754041400:123456');
+        observeNativeDarwinProcessStartIdentityFn.mockClear();
 
         const helperUnavailable = vi.fn(() => null);
         const readProcessIdentityByPidFn = vi.fn(async () => ({

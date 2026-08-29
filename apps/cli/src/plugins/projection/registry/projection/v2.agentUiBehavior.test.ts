@@ -76,6 +76,7 @@ describe('external Agent UI-behavior descriptor projection', () => {
                     purpose: 'primary',
                     service: 'account',
                     required: false,
+                    credentialKinds: ['token'],
                 }],
                 capabilities: {
                     sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
@@ -103,6 +104,7 @@ describe('external Agent UI-behavior descriptor projection', () => {
             purpose: 'primary',
             service: { pluginId: 'acme.accounts', localId: 'account' },
             required: false,
+            credentialKinds: ['token'],
         }]);
         expect(PluginProjectionV2Schema.parse(projection).agentsById['acme-account-agent']?.connectedAccounts)
             .toEqual(projection.agentsById['acme-account-agent']?.connectedAccounts);

@@ -326,7 +326,7 @@ describe('createCliActionInventoryDeps', () => {
   it('projects connected-service spawn options as references without profile secrets', async () => {
     resolveAvailableAccountSettings.mockResolvedValue({
       connectedServicesProfileLabelByKey: {
-        'openai-codex/work': 'Work Codex',
+        'happier.agent.codex%2Fopenai-codex/work': 'Work Codex',
       },
       connectedServicesDefaultProfileByServiceId: {
         'openai-codex': 'work',
@@ -337,7 +337,7 @@ describe('createCliActionInventoryDeps', () => {
           codex: {
             v: 1,
             bindingsByServiceId: {
-              'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+              'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
             },
           },
         },
@@ -356,30 +356,47 @@ describe('createCliActionInventoryDeps', () => {
         metadata: {},
       },
       accountProfile: {
-        connectedServicesV2: [
-          {
-            serviceId: 'openai-codex',
-            profiles: [
-              {
-                profileId: 'work',
-                status: 'connected',
-                kind: 'oauth',
-                providerEmail: 'work@example.test',
-                providerAccountId: 'acct_secret_should_not_return',
-                health: { reconnectRequired: false },
-              },
-            ],
-            groups: [
-              {
-                groupId: 'team',
-                displayName: 'Team Pool',
-                activeProfileId: 'work',
-                generation: 4,
-                memberProfileIds: ['work'],
-              },
-            ],
+        connectedAccountsV4: [{
+          ref: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            accountId: 'work',
           },
-        ],
+          status: 'connected',
+          authenticationModeId: 'oauth',
+          revisionSemantics: 'legacy_unfenced',
+          credentialRevision: null,
+          configurationReady: true,
+          configurationRevision: null,
+          kind: 'oauth',
+          providerIdentity: { accountId: 'acct_secret_should_not_return', email: 'work@example.test' },
+          displayName: 'Work account',
+          scopes: [],
+        }],
+        connectedAccountGroupsV4: [{
+          v: 1,
+          ref: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            groupId: 'team',
+          },
+          incarnation: 'group-incarnation-1',
+          displayName: 'Team Pool',
+          policy: { autoSwitch: false },
+          activeConnectedAccountId: 'work',
+          generation: 4,
+          runtimeStateRevision: 0,
+          state: {},
+          createdAt: 1,
+          updatedAt: 1,
+          members: [{
+            v: 1,
+            connectedAccountId: 'work',
+            priority: 100,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        }],
       },
     } as any) as any;
 
@@ -390,9 +407,9 @@ describe('createCliActionInventoryDeps', () => {
 
     expect(result).toEqual({
       agentId: 'codex',
-      supportedServiceIds: ['openai-codex', 'openai'],
+      supportedServiceIds: ['happier.agent.codex/openai-codex'],
       profileOptionsByServiceId: {
-        'openai-codex': [
+        'happier.agent.codex/openai-codex': [
           {
             profileId: 'work',
             status: 'connected',
@@ -403,7 +420,7 @@ describe('createCliActionInventoryDeps', () => {
         ],
       },
       groupOptionsByServiceId: {
-        'openai-codex': [
+        'happier.agent.codex/openai-codex': [
           {
             groupId: 'team',
             label: 'Team Pool',
@@ -419,11 +436,10 @@ describe('createCliActionInventoryDeps', () => {
       defaultBindings: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
-          openai: { source: 'native' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         },
       },
-      items: [{ value: 'openai-codex:profile:work', label: 'Work Codex' }],
+      items: [{ value: 'happier.agent.codex/openai-codex:profile:work', label: 'Work Codex' }],
     });
     expect(JSON.stringify(result)).not.toContain('acct_secret_should_not_return');
   });

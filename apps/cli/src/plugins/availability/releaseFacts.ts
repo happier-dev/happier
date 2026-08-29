@@ -13,6 +13,18 @@ import {
   type PluginInstallationAvailabilityProjection,
 } from '@/plugins/store/registry/generationStore';
 
+export function resolvePluginUiArtifactAvailabilityPlatform(
+  artifact: PluginUiArtifactsManifestV1['entries'][number],
+): 'web' | 'ios' | 'android' {
+  if (artifact.tier === 'hostedWeb') return 'web';
+  if (
+    artifact.platform === 'web'
+    || artifact.platform === 'ios'
+    || artifact.platform === 'android'
+  ) return artifact.platform;
+  throw new Error('React Native Availability artifacts require web, iOS, or Android platform identity');
+}
+
 /**
  * Projects only facts the existing verified acquisition and canonical manifest
  * owners have already produced. Generated UI artifact manifests carry the
@@ -51,7 +63,7 @@ export function createVerifiedPortablePluginInstallationAvailability(input: Read
     uiSlots: input.generatedUiArtifacts.entries.map((artifact) => ({
       contributionId: artifact.contributionId,
       tier: artifact.tier,
-      platform: artifact.tier === 'hostedWeb' ? 'web' : artifact.platform,
+      platform: resolvePluginUiArtifactAvailabilityPlatform(artifact),
       artifactDigest: artifact.digest,
       compatibility: {
         hostUiApiVersion: artifact.hostUiApiVersion,

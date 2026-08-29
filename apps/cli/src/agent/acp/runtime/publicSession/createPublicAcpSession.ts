@@ -1380,7 +1380,7 @@ export async function createPublicAcpSessionFromAwaitableAdapter(
           conversation: conversationRollback ? 'supported' : 'unsupported',
         },
       },
-    },
+    } as const,
     getProviderSessionId(): string | null {
       return providerSessionId;
     },

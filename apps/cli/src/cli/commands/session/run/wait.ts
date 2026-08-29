@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
+import { ExecutionRunWaitResultSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
@@ -62,11 +63,11 @@ export async function cmdSessionRunWait(
     throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
-  const result = normalized.data as any;
-  const status = result && typeof result === 'object' ? String(result.status ?? '') : '';
-  if (!status) {
-    throw new Error('execution_run_wait_failed');
+  const result = ExecutionRunWaitResultSchema.parse(normalized.data);
+  if (!result.ok) {
+    throw new Error(`execution_run_wait_${result.code}`);
   }
+  const status = result.status;
 
   if (json) {
     await printJsonEnvelope({ ok: true, kind: 'session_run_wait', data: { sessionId, runId, status } });

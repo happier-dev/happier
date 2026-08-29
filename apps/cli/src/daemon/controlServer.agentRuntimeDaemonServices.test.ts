@@ -173,7 +173,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
           },
         });
 
-        expect(response.statusCode).toBe(503);
+        expect(response.statusCode).toBe(revocationPhase === 'before' ? 403 : 503);
         expect(recordAdmission).not.toHaveBeenCalled();
         expect(dispatch).toHaveBeenCalledTimes(
           revocationPhase === 'during' ? 1 : 0,
@@ -303,7 +303,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       });
 
       expect(response.statusCode).toBe(503);
-      expect(response.text()).not.toContain('must-not-escape');
+      expect(response.body).not.toContain('must-not-escape');
       expect(dispatch).toHaveBeenCalledOnce();
     } finally {
       await app.close();

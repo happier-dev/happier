@@ -164,12 +164,14 @@ describe("qualified Connected Account V4 API", () => {
             },
         });
 
+        const expectedViolation: Partial<QualifiedConnectedAccountCompatibilityError> = {
+            code: "connected_account_v4_contract_violation",
+        };
+
         await expect(readQualifiedConnectedAccountGroupV4({
             token: "token",
             group: { service, groupId: "primary-group" },
-        })).rejects.toMatchObject<QualifiedConnectedAccountCompatibilityError>({
-            code: "connected_account_v4_contract_violation",
-        });
+        })).rejects.toMatchObject(expectedViolation);
     });
 
     it("resolves, reads, and refreshes provider-account usage through the V4 record owner", async () => {

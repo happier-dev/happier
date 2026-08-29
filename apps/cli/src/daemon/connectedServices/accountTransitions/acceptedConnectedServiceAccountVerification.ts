@@ -1,4 +1,4 @@
-import type { ConnectedServiceCredentialRevisionV1, ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceAccountTransitionVerificationResult } from '../runtimeAuth/types';
 
@@ -84,7 +84,7 @@ export function isExactAcceptedConnectedServiceAccountVerification(
 }
 
 export function serializeAcceptedConnectedServiceAccountVerifications(
-  verificationsByServiceId: ReadonlyMap<ConnectedServiceId, AcceptedConnectedServiceAccountVerification>,
+  verificationsByServiceId: ReadonlyMap<ConnectedAccountServiceKey, AcceptedConnectedServiceAccountVerification>,
 ): AcceptedConnectedServiceAccountVerificationByServiceId | undefined {
   if (verificationsByServiceId.size === 0) return undefined;
   return Object.fromEntries(verificationsByServiceId.entries());

@@ -1,7 +1,7 @@
 import type {
+    ConnectedAccountServiceKey,
     ConnectedServiceAuthGroupMemberStateV1,
     ConnectedServiceAuthGroupPolicyV1,
-    ConnectedServiceId,
     ConnectedServiceUsageSourceV1,
     ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -29,13 +29,15 @@ export type AccountUsageStoreForAuthGroupSwitchState = Pick<
 >;
 
 /**
- * The scalar account-usage projection needs only this group state, regardless
- * of whether canonical persistence is the historical service-keyed shape or a
- * qualified Connected Account group. Callers retain the source scalar at the
- * ingress boundary; this view never selects or mutates a group.
+ * The account-usage projection needs only this group state, regardless of
+ * whether canonical persistence is the historical service-keyed shape or a
+ * qualified Connected Account group. `serviceId` stays the canonical
+ * `ConnectedAccountServiceKey` ingress identity end to end; consumers that
+ * need the legacy scalar id reverse-project at their own legacy seam. This
+ * view never selects or mutates a group.
  */
 export type ConnectedServiceAuthGroupAccountUsageView = Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     activeProfileId: string | null;
     generation: number;

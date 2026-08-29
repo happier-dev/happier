@@ -70,7 +70,7 @@ describe('bundled plugin locators', () => {
                             required: true,
                             input: { kind: 'contributorDefined' },
                             resultSchema: defineProtocolObject({}, { policy: 'closed' }),
-                            action: { surface: 'plugin', dangerLevel: 'safe' },
+                            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                         },
                     },
                 }).point(),

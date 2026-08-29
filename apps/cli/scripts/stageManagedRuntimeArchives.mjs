@@ -31,6 +31,7 @@ import {
   execOrThrow,
   resolveYarnCommand,
   stageCliProxyApiManagedRuntime,
+  stageProcessCustodyRuntime,
 } from '@happier-dev/cli-common/componentArtifacts';
 
 const require = createRequire(import.meta.url);
@@ -94,6 +95,7 @@ export async function stageManagedRuntimeArchives({
   runCommand = execOrThrow,
   yarn = resolveYarnCommand({}),
   stageManagedRuntime = stageCliProxyApiManagedRuntime,
+  stageProcessCustody = stageProcessCustodyRuntime,
 } = {}) {
   const manifest = getCliRuntimeAssetArchiveManifest();
   const selected = platformDirs && platformDirs.length > 0
@@ -111,10 +113,15 @@ export async function stageManagedRuntimeArchives({
       const target = resolveBinaryTargetForPlatformDir(entry.platformDir);
       const payloadDir = join(stagingRoot, entry.platformDir);
       await stageManagedRuntime({ repoRoot, payloadDir, target, yarn, runCommand });
+      await stageProcessCustody({ repoRoot, payloadDir, target, runCommand });
 
       const sourceDir = join(payloadDir, 'tools', 'unpacked');
       const contents = (await readdir(sourceDir)).sort();
-      const expected = [entry.binaryName, ...entry.licenseNames].sort();
+      const expected = [
+        entry.binaryName,
+        ...(entry.extraBinaries ?? []),
+        ...entry.licenseNames,
+      ].sort();
       for (const name of expected) {
         if (!contents.includes(name)) {
           throw new Error(`[stage-managed-runtime] staged payload is missing ${name} for ${entry.platformDir}`);

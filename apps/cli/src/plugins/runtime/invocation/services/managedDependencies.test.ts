@@ -115,6 +115,7 @@ function v2Host(params: Readonly<{
     removeManagedSource?: NonNullable<Parameters<typeof createStablePluginManagedDependenciesHost>[0]['removeManagedSource']>;
     legacyDescriptors?: readonly InstallableDependencyDescriptor[];
     immutableGenerationIdsByPluginId?: ReadonlyMap<string, string>;
+    isCurrent?: () => boolean;
 }>) {
     const legacyContributions = (params.legacyDescriptors ?? []).map((value) => ({
         provenance: 'external' as const,
@@ -140,6 +141,7 @@ function v2Host(params: Readonly<{
             { platform: 'linux', architecture: 'x64' },
         ),
         sourceModel,
+        ...(params.isCurrent ? { isCurrent: params.isCurrent } : {}),
         ...(params.immutableGenerationIdsByPluginId
             ? {
                 immutableGenerationIdsByPluginId:
@@ -870,6 +872,28 @@ describe('stable plugin managed dependencies host', () => {
         await expect(host.retireGeneration('registry:generation-v2')).resolves.toBeUndefined();
         await expect(host.bind('acme.plugin').status('tool')).resolves.toEqual({
             state: 'unsupported', id: 'tool', code: 'plugin_managed_dependency_generation_retired',
+        });
+    });
+
+    it('fences the current-registry service surface when its publishing owner retires', async () => {
+        let current = true;
+        const host = v2Host({
+            contributions: [v2Contribution('acme.plugin', 'tool', [
+                { kind: 'system', executableNames: ['tool'] },
+            ])],
+            resolveSourceAdapter: async () => adapter('tool'),
+            isCurrent: () => current,
+        });
+
+        await expect(host.bind('acme.plugin').status('tool')).resolves.toMatchObject({
+            state: 'ready',
+            id: 'tool',
+        });
+        current = false;
+        await expect(host.bind('acme.plugin').status('tool')).resolves.toEqual({
+            state: 'unsupported',
+            id: 'tool',
+            code: 'plugin_managed_dependency_generation_retired',
         });
     });
 

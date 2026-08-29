@@ -1,4 +1,5 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type {
   AgentConnectedAccountSwitchTransitionV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -140,9 +141,14 @@ export type ConnectedServiceGenerationApplicationScopeResolution =
   | Readonly<{ status: 'unsupported' | 'unavailable'; errorCode: string }>;
 
 export async function resolveConnectedServiceGenerationApplicationScope(
-  serviceId: ConnectedServiceId,
+  serviceId: ConnectedAccountServiceKey,
   agentId?: CatalogAgentId | null,
 ): Promise<ConnectedServiceGenerationApplicationScopeResolution> {
+  const legacyServiceId =
+    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId);
+  if (!legacyServiceId) {
+    return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
+  }
   let entry: AgentCatalogEntry | null;
   let ownerId: string;
   try {
@@ -151,7 +157,7 @@ export async function resolveConnectedServiceGenerationApplicationScope(
       ownerId = String(agentId);
     } else {
       const matches = Object.values(AGENTS).filter((candidate) => (
-        candidate?.connectedServiceIds?.includes(serviceId)
+        candidate?.connectedServiceIds?.includes(legacyServiceId)
       ));
       if (matches.length === 0) {
         return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
@@ -169,7 +175,7 @@ export async function resolveConnectedServiceGenerationApplicationScope(
   } catch {
     return { status: 'unavailable', errorCode: 'generation_application_scope_unavailable' };
   }
-  if (!entry?.connectedServiceIds?.includes(serviceId)) {
+  if (!entry?.connectedServiceIds?.includes(legacyServiceId)) {
     return { status: 'unsupported', errorCode: 'generation_application_scope_unsupported' };
   }
   const descriptor = await entry.getConnectedServiceStateSharingDescriptor?.()

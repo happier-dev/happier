@@ -14,6 +14,7 @@ func TestQuoteWindowsArgumentRoundTripsThroughArgvDecoding(t *testing.T) {
 		"with space",
 		`quoted "inside"`,
 		`trailing backslash \`,
+		`C:\tool\`,
 		`backslash before quote \"`,
 		"--port=43111",
 		`C:\Program Files\Tool\tool.exe serve`,
@@ -69,9 +70,10 @@ func decodeMSVCRTArgument(argument string) string {
 }
 
 func TestParseRunArgsRequiresJobAndTarget(t *testing.T) {
-	job, handshake, target, err := parseRunArgs([]string{
+	job, handshake, verbatim, target, err := parseRunArgs([]string{
 		"--handshake=C:\\tmp\\hs.json",
 		"--job=Local\\happier-svc09-abc",
+		"--target-windows-verbatim",
 		"--",
 		"tool.exe",
 		"--serve",
@@ -80,17 +82,26 @@ func TestParseRunArgsRequiresJobAndTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	if job != `Local\happier-svc09-abc` || handshake != `C:\tmp\hs.json` {
+	if job != `Local\happier-svc09-abc` || handshake != `C:\tmp\hs.json` || !verbatim {
 		t.Fatalf("unexpected options: job=%q handshake=%q", job, handshake)
 	}
 	if len(target) != 3 || target[0] != "tool.exe" || target[2] != "443" {
 		t.Fatalf("unexpected target: %v", target)
 	}
-	if _, _, _, err := parseRunArgs([]string{"--job=x", "tool.exe"}); err == nil {
+	if _, _, _, _, err := parseRunArgs([]string{"--job=x", "tool.exe"}); err == nil {
 		t.Fatalf("target before -- must be rejected")
 	}
-	if _, _, _, err := parseRunArgs([]string{"--", "tool.exe"}); err == nil {
+	if _, _, _, _, err := parseRunArgs([]string{"--", "tool.exe"}); err == nil {
 		t.Fatalf("missing --job must be rejected")
+	}
+}
+
+func TestWindowsCommandLinePreservesVerbatimCmdTail(t *testing.T) {
+	target := []string{`C:\Windows\System32\cmd.exe`, "/d", "/s", "/c", `""C:\Program Files\tool.cmd" "a&b""`}
+	got := windowsCommandLine(target, true)
+	want := `C:\Windows\System32\cmd.exe /d /s /c ""C:\Program Files\tool.cmd" "a&b""`
+	if got != want {
+		t.Fatalf("verbatim command line changed cmd.exe grammar: got %q want %q", got, want)
 	}
 }
 

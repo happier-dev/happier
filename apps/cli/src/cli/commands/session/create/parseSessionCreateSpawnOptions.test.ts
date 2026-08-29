@@ -7,7 +7,7 @@ describe('parseSessionCreateSpawnOptions', () => {
     const connectedServices = {
       v: 1,
       bindingsByServiceId: {
-        'openai-codex': {
+        'happier.agent.codex/openai-codex': {
           source: 'connected',
           selection: 'profile',
           profileId: 'codex-profile',
@@ -123,8 +123,6 @@ describe('parseSessionCreateSpawnOptions', () => {
   });
 
   it('requires and preserves a stable attempt id for resolve-only retries', () => {
-    expect(() => parseSessionCreateSpawnOptions(['create', '--spawn-attempt-id', 'attempt\n2']))
-      .toThrow('Invalid --spawn-attempt-id.');
     expect(() => parseSessionCreateSpawnOptions(['create', '--resume-spawn-attempt']))
       .toThrow('Invalid --resume-spawn-attempt without --spawn-attempt-id.');
 
@@ -136,6 +134,23 @@ describe('parseSessionCreateSpawnOptions', () => {
       spawnAttemptId: 'attempt-1',
       resumeSpawnAttempt: true,
     });
+  });
+
+  it('validates --spawn-attempt-id through the Protocol request-id schema with no local grammar', () => {
+    // Protocol-exact: Unicode allowed, 1-128 code units, original value kept.
+    expect(parseSessionCreateSpawnOptions([
+      'create', '--spawn-attempt-id', 'corrélation-☃',
+    ])).toMatchObject({ spawnAttemptId: 'corrélation-☃' });
+    expect(parseSessionCreateSpawnOptions([
+      'create', '--spawn-attempt-id', `r${'x'.repeat(127)}`,
+    ])).toMatchObject({ spawnAttemptId: `r${'x'.repeat(127)}` });
+
+    expect(() => parseSessionCreateSpawnOptions([
+      'create', '--spawn-attempt-id', 'x'.repeat(129),
+    ])).toThrow('Invalid --spawn-attempt-id.');
+    expect(() => parseSessionCreateSpawnOptions([
+      'create', '--spawn-attempt-id', ' padded ',
+    ])).toThrow('Invalid --spawn-attempt-id.');
   });
 
   it.each([
@@ -170,7 +185,7 @@ describe('parseSessionCreateSpawnOptions', () => {
   it('supports --auth-json while rejecting competing shortcut and JSON inputs', () => {
     expect(parseSessionCreateSpawnOptions([
       'create',
-      '--auth-json', '{"v":1,"bindingsByServiceId":{"openai-codex":{"source":"native"}}}',
+      '--auth-json', '{"v":1,"bindingsByServiceId":{"happier.agent.codex/openai-codex":{"source":"native"}}}',
     ]).spawnRequest).toHaveProperty('connectedServices');
 
     expect(() => parseSessionCreateSpawnOptions([

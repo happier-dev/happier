@@ -148,6 +148,11 @@ describe('process custody runtime outcomes', () => {
         await expect(observeNativeDarwinProcessStartIdentity({
             executablePath: 'custody',
             pid: 4242,
+            execFile: fakeExec('{"v":1,"pid":99,"sec":1754041400,"usec":123456}\n'),
+        })).resolves.toBeNull();
+        await expect(observeNativeDarwinProcessStartIdentity({
+            executablePath: 'custody',
+            pid: 4242,
             execFile: fakeExec('', 5),
         })).resolves.toBeNull();
     });

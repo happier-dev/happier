@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PermissionMode } from '@/api/types';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import type { ConnectedServiceBindingsV1, ProviderBoundModelRef } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 type RuntimeSnapshotValue<T> = Readonly<{ value: T; updatedAt: number }>;
 
@@ -36,7 +37,7 @@ async function loadRuntimeSnapshotModule(): Promise<RuntimeSnapshotModule | null
 const persistedConnectedServices = {
   v: 1,
   bindingsByServiceId: {
-    'claude-subscription': {
+    'happier.agent.claude/claude-subscription': {
       source: 'connected',
       selection: 'profile',
       profileId: 'persisted-profile',
@@ -52,7 +53,7 @@ const persistedMaterializationIdentity = {
 
 const persistedProviderBinding = {
   v: 1,
-  connectionId: 'pc_work',
+  connectionId: ProviderConnectionIdSchema.parse('pc_work'),
   contributionKey: 'plugin.gateway/gateway',
   connectionRevision: 2,
   protocol: 'openai-responses',
@@ -202,7 +203,7 @@ describe('resolveSessionRuntimeSnapshot', () => {
       updatedAt: 90,
       ref: {
         agentTargetKey: 'backend:codex',
-        providerConnectionId: 'pc_work',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
         modelId: 'retained-model',
       },
     };
@@ -265,7 +266,7 @@ describe('resolveSessionRuntimeSnapshot', () => {
         updatedAt: 90,
         ref: {
           agentTargetKey: 'backend:codex',
-          providerConnectionId: 'pc_work',
+          providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
           modelId: 'retained-model',
         },
       };
@@ -308,7 +309,7 @@ describe('resolveSessionRuntimeSnapshot', () => {
           updatedAt: 100,
           ref: {
             agentTargetKey: 'backend:codex',
-            providerConnectionId: 'pc_work',
+            providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
             modelId: 'next-model',
           },
         },

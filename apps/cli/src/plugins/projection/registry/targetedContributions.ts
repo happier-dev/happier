@@ -254,6 +254,13 @@ function hasRequiredActionSurface(
     return Array.isArray(contributionSurfaces) && contributionSurfaces.includes(surface);
 }
 
+function hasRequiredActionSurfaces(
+    action: ResolvedActionContribution,
+    surfaces: readonly PluginActionSurfaceV2[],
+): boolean {
+    return surfaces.every((surface) => hasRequiredActionSurface(action, surface));
+}
+
 function prepareDescriptorValidation(
     validationsByPointProtocol: Map<TargetPointProtocol, PreparedPluginJsonSchema | null>,
     protocol: TargetPointProtocol,
@@ -597,7 +604,7 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             // contributor's structurally admitted declaration.
             const requirement = pointProtocol.operations[role];
             if (!requirement) continue;
-            if (!hasRequiredActionSurface(action, requirement.action.surface)) {
+            if (!hasRequiredActionSurfaces(action, requirement.action.surfaces)) {
                 failure = 'action_surface_mismatch';
                 break;
             }

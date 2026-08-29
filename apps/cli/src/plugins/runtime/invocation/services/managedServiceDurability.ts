@@ -351,7 +351,8 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
             ?? resolveProcessCustodyRuntimeExecutable
         )('win32');
         if (!executablePath) return 'unknown';
-        return await queryProcessCustodyJob({ executablePath, jobName });
+        const outcome = await queryProcessCustodyJob({ executablePath, jobName });
+        return outcome === 'unavailable' ? 'unknown' : outcome;
     }
 
     async function terminateWindowsJobCustody(jobName: string): Promise<boolean> {
@@ -366,10 +367,7 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
     async function observeManagedSpawnProjectionState(
         projection: ManagedServiceEndpointProjectionV1,
     ): Promise<'live_root' | 'live_group' | 'stale' | 'unknown'> {
-        if (
-            projection.mode !== 'managedSpawn'
-            || !params.observeProcessStartIdentity
-        ) return 'unknown';
+        if (projection.mode !== 'managedSpawn') return 'unknown';
         if (platform === 'win32') {
             // Windows recovery acts on the named job containment, never on a
             // pid birth comparison. Tagged records query the job; predecessor
@@ -388,6 +386,7 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                     ? 'stale'
                     : 'unknown';
         }
+        if (!params.observeProcessStartIdentity) return 'unknown';
         try {
             const currentStartIdentity = await params
                 .observeProcessStartIdentity(projection.process.pid);
@@ -698,7 +697,9 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                                     pid: number;
                                     exitCode?: number | null;
                                 }>) =>
-                                    killProcessTree(target)))({
+                                    killProcessTree(target, {
+                                        ownedProcessGroup: platform !== 'win32',
+                                    })))({
                                 pid: projection.process.pid,
                                 ...(state === 'live_group'
                                     ? { exitCode: 0 }

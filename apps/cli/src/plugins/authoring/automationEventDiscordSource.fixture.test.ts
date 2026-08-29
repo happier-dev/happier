@@ -145,23 +145,48 @@ const GATEWAY_FRAMES: readonly unknown[] = Object.freeze([
   },
 ]);
 
+/** The Automation result the core delivers back into the watched channel. */
+const DELIVERED_RESULT_TEXT = 'Automation result: the deploy passed.';
+const DELIVERED_MESSAGE_ID = '777666555444333222111000999';
+
 function discordGatewaySocket() {
-  const pending = [...GATEWAY_FRAMES];
-  return {
+  const pending: unknown[] = [...GATEWAY_FRAMES];
+  let wakeReceive: (() => void) | null = null;
+  const socket = {
     url: 'wss://gateway.discord.gg/?v=10&encoding=json',
     protocol: '',
-    // 4004 ends the session after the dispatch drains, exactly as the provider's
-    // own worker proof does; the observation reaches Channels before teardown.
+    // The supervised session stays open until the fixture enqueues the next
+    // Gateway frame or aborts the invocation, so the delivered result's own
+    // MESSAGE_CREATE is observed on the same live session that saw the human
+    // message.
     closed: Promise.resolve({ kind: 'remote', code: 4_004, wasClean: true }),
     send: vi.fn(async () => undefined),
-    receive: vi.fn(async () => {
+    receive: vi.fn(async (options?: Readonly<{ signal?: AbortSignal }>) => {
       const frame = pending.shift();
-      return frame === undefined
+      if (frame !== undefined) return { kind: 'text' as const, text: JSON.stringify(frame) };
+      await new Promise<void>((resolve, reject) => {
+        wakeReceive = resolve;
+        options?.signal?.addEventListener(
+          'abort',
+          () => reject(options.signal?.reason ?? new Error('Gateway socket receive aborted.')),
+          { once: true },
+        );
+      });
+      const next = pending.shift();
+      return next === undefined
         ? { kind: 'closed' as const, close: { kind: 'remote' as const, code: 4_004, wasClean: true } }
-        : { kind: 'text' as const, text: JSON.stringify(frame) };
+        : { kind: 'text' as const, text: JSON.stringify(next) };
     }),
     close: vi.fn(),
     dispose: vi.fn(async () => undefined),
+  };
+  return {
+    socket,
+    enqueueGatewayFrame(frame: unknown): void {
+      pending.push(frame);
+      wakeReceive?.();
+      wakeReceive = null;
+    },
   };
 }
 
@@ -175,7 +200,12 @@ const connectionSnapshot = Object.freeze({
   authorityEpoch: 7,
   enabled: true,
   deletionState: 'none',
-  requiresFullSharedMessageContent: false,
+  // The watched shared channel's content demand is real: with the Message
+  // Content intent active the worker can read every dispatched message,
+  // including the integration's own result deliveries, so the composed proof
+  // exercises the self-observation drop instead of an unsupported-content
+  // shortcut.
+  requiresFullSharedMessageContent: true,
 });
 
 describe('Discord Channels as a first-class Automation Event source', () => {
@@ -243,11 +273,19 @@ describe('Discord Channels as a first-class Automation Event source', () => {
       })),
       watch: vi.fn(() => ({ dispose: vi.fn() })),
     };
-    const socket = discordGatewaySocket();
+    const socketEnvelope = discordGatewaySocket();
+    const socket = socketEnvelope.socket;
+    const messagePosts: Array<Readonly<{ content?: unknown }>> = [];
     const http = {
-      request: vi.fn(async (request: Readonly<{ url: string }>) => {
+      request: vi.fn(async (request: Readonly<{ url: string; method?: string; body?: Uint8Array }>) => {
         if (request.url.endsWith('/oauth2/applications/@me')) {
-          return discordRestResponse({ id: APPLICATION_ID, flags: 0, flags_new: '0' });
+          // The Message Content intent bit is set, so a demanded intent can be
+          // requested and prove active on this session.
+          return discordRestResponse({
+            id: APPLICATION_ID,
+            flags: 1 << 18,
+            flags_new: String(1 << 18),
+          });
         }
         if (request.url.endsWith('/users/@me')) {
           return discordRestResponse({ id: BOT_USER_ID, username: 'Happier', bot: true });
@@ -266,6 +304,13 @@ describe('Discord Channels as a first-class Automation Event source', () => {
         }
         if (request.url.endsWith(`/channels/${CHANNEL_ID}`)) {
           return discordRestResponse({ id: CHANNEL_ID, type: 0, name: 'deploys' });
+        }
+        if (
+          request.url.endsWith(`/channels/${CHANNEL_ID}/messages`)
+          && request.method === 'POST'
+        ) {
+          messagePosts.push(JSON.parse(new TextDecoder().decode(request.body ?? new Uint8Array())));
+          return discordRestResponse({ id: DELIVERED_MESSAGE_ID, channel_id: CHANNEL_ID });
         }
         throw new Error(`Unexpected Discord request ${request.url}`);
       }),
@@ -409,6 +454,73 @@ describe('Discord Channels as a first-class Automation Event source', () => {
       serviceHost.start();
       await vi.waitFor(() => expect(coreActionIds).toContain('provider/connections-list-v1'), { timeout: 15_000 });
       await vi.waitFor(() => expect(observationIngests).toHaveLength(1), { timeout: 15_000 });
+
+      // Deliver one Automation result back into the watched endpoint through
+      // the provider's real delivery Action, invoked with the exact Channels
+      // core caller proof the host enforces.
+      const deliverMessage = testkit.registration('actions', 'discord/post-message');
+      if (!deliverMessage) throw new Error('the Discord plugin must register its message-delivery Action');
+      await expect(deliverMessage({
+        v: 1,
+        connectionId: 'connection-1',
+        providerConnectionKey: `discord:application:${APPLICATION_ID}`,
+        providerConfigVersion: 1,
+        providerConfig: { applicationId: APPLICATION_ID, botUserId: BOT_USER_ID },
+        credentialRef,
+        endpoint: { kind: 'shared', audience: 'shared', id: `discord:channel:${CHANNEL_ID}` },
+        content: DELIVERED_RESULT_TEXT,
+        deliveryKey: 'automation-result-delivery-1',
+        mentionPolicy: 'suppress',
+        linkPreviewPolicy: 'providerDefault',
+      }, {
+        plugin: { id: PLUGIN_ID, version: '0.0.0' },
+        contribution: {
+          id: 'discord/post-message',
+          qualifiedId: `${PLUGIN_ID}/actions/discord/post-message`,
+        },
+        surface: 'plugin',
+        caller: {
+          kind: 'plugin',
+          pluginId: CHANNELS_CORE_PLUGIN_ID,
+          contribution: {
+            id: 'messageDeliver',
+            qualifiedId: `${CHANNELS_CORE_PLUGIN_ID}/actions/message-deliver`,
+          },
+          materialization: {
+            machineId: 'machine-1',
+            materializationId: 'channels-core-materialization',
+            pluginId: CHANNELS_CORE_PLUGIN_ID,
+          },
+        },
+        signal: invocationController.signal,
+        services: { http, connectedAccounts, actions: pluginActions },
+      } as never)).resolves.toEqual({
+        kind: 'delivered',
+        providerMessageIds: [DELIVERED_MESSAGE_ID],
+      });
+      expect(messagePosts).toHaveLength(1);
+      expect(messagePosts[0]?.content).toEqual(DELIVERED_RESULT_TEXT);
+
+      // Discord echoes the delivered bot-authored message back over the same
+      // live Gateway session.
+      socketEnvelope.enqueueGatewayFrame({
+        op: 0,
+        s: 3,
+        t: 'MESSAGE_CREATE',
+        d: {
+          id: DELIVERED_MESSAGE_ID,
+          channel_id: CHANNEL_ID,
+          timestamp: '2026-01-01T00:01:00.000Z',
+          type: 0,
+          content: DELIVERED_RESULT_TEXT,
+          author: { id: BOT_USER_ID, bot: true },
+          application_id: APPLICATION_ID,
+          mentions: [],
+          attachments: [],
+          embeds: [],
+        },
+      });
+      await vi.waitFor(() => expect(observationIngests).toHaveLength(2), { timeout: 15_000 });
     } finally {
       invocationController.abort(new Error('Discord fixture complete.'));
       await serviceHost.dispose();
@@ -426,7 +538,8 @@ describe('Discord Channels as a first-class Automation Event source', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(socket.receive.mock.calls.length).toBeGreaterThanOrEqual(GATEWAY_FRAMES.length);
-    expect(observationIngests).toEqual([{
+    expect(observationIngests).toHaveLength(2);
+    expect(observationIngests[0]).toEqual({
       connectionId: 'connection-1',
       entry: {
         observation: {
@@ -456,6 +569,30 @@ describe('Discord Channels as a first-class Automation Event source', () => {
           },
         },
       },
-    }]);
+    });
+    // The delivered result's own MESSAGE_CREATE reached Channels as a normal
+    // observation, but the provider Event candidate owner dropped the
+    // integration's own message, so the census can never freeze a second Event
+    // obligation for it and no second admission can occur. No loop detector,
+    // lineage counter, or delivery ledger participates: the single candidate
+    // owner is the only place the loop closes.
+    expect(observationIngests[1]).toMatchObject({
+      connectionId: 'connection-1',
+      entry: {
+        observation: {
+          kind: 'fullText',
+          observation: {
+            occurrenceId: `discord:message:${DELIVERED_MESSAGE_ID}`,
+            actor: {
+              principalId: `discord:application:${APPLICATION_ID}`,
+              kind: 'integration',
+              isIntegrationSelf: true,
+            },
+            message: expect.objectContaining({ text: DELIVERED_RESULT_TEXT }),
+          },
+        },
+        eventCandidate: null,
+      },
+    });
   }, 30_000);
 });

@@ -323,7 +323,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
     }
 
     if (args.actionId === 'automation.event.sources.list') {
-      if (!adoptedDefinitionSet) {
+      if (!adoptedDefinitionSet || !sourceListInput) {
         return failure('automation_event_adopted_definitions_unavailable');
       }
       let accountId: string;
@@ -336,7 +336,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
       try {
         result = await adoptedDefinitionSet.listPublicProjection({
           accountId,
-          input: sourceListInput!,
+          input: sourceListInput,
           ...(sourceListWebhookInvocationReference === null
             ? {}
             : { webhookInvocationReference: sourceListWebhookInvocationReference }),
@@ -469,10 +469,10 @@ export function createAutomationEventActionExecutor(params: Readonly<{
             || selectors.length === 0
             || expectedSelectors === null
             || selectors.length !== expectedSelectors.length
-            || !selectors.every((selector, index) => isSameAdmissionSelector(
-              selector,
-              expectedSelectors[index]!,
-            ))
+            || !selectors.every((selector, index) => {
+              const expected = expectedSelectors[index];
+              return expected !== undefined && isSameAdmissionSelector(selector, expected);
+            })
           ) {
             appendUnavailableTail();
             break;
@@ -511,8 +511,15 @@ export function createAutomationEventActionExecutor(params: Readonly<{
           }
           successorAccountCurrentness = callResult.data.continuation.accountCurrentness;
         }
+        const orderedResults = preparedGroupByPosition.map((group) => {
+          const result = mergedResults[group];
+          if (result === undefined) {
+            throw new Error('Automation Event admission result mapping is incomplete');
+          }
+          return result;
+        });
         const result: AutomationEventAdmitResultV1 = AutomationEventAdmitResultV1Schema.parse({
-          results: preparedGroupByPosition.map((group) => mergedResults[group]!),
+          results: orderedResults,
         });
         recordCurrentPluginWebhookAutomationAdmissionResultV1({ input: admissionInput.data, result });
         return result;

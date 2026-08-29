@@ -1,6 +1,8 @@
 import {
     ConnectedServiceCredentialRevisionV1Schema,
+    readBuiltInLegacyConnectedAccountServiceKeyIngress,
     type ConnectedAccountPurposeDeclarationV1,
+    type ConnectedAccountServiceKey,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceCredentialRecordV1,
     type ConnectedServiceCredentialRevisionV1,
@@ -104,13 +106,13 @@ export function projectLegacyConnectedServiceBindingsToQualifiedPurposeBindingSn
 
 type FirstPartyRequestAuthProjection = Readonly<{
     groups: readonly Readonly<{
-        serviceId: ConnectedServiceId;
+        serviceId: ConnectedAccountServiceKey;
         groupId: string;
         activeProfileId: string | null;
         generation: number;
     }>[];
     resolveCredentialRevision: (
-        serviceId: ConnectedServiceId,
+        serviceId: ConnectedAccountServiceKey,
         profileId: string,
     ) => string | null;
 }>;
@@ -124,10 +126,12 @@ export function resolveFirstPartyConnectedAccountBinding(
         : binding.target.service;
     const serviceId = resolveFirstPartyLegacyRequestAuthServiceId(service);
     if (!serviceId) return null;
+    const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+    if (!serviceKey) return null;
 
     if (binding.target.kind === 'account') {
         const credentialRevision = projection.resolveCredentialRevision(
-            serviceId,
+            serviceKey,
             binding.target.account.accountId,
         );
         const parsedRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(credentialRevision);
@@ -143,12 +147,12 @@ export function resolveFirstPartyConnectedAccountBinding(
 
     const groupTarget = binding.target;
     const group = projection.groups.find((candidate) => (
-        candidate.serviceId === serviceId
+        candidate.serviceId === serviceKey
         && candidate.groupId === groupTarget.groupId
     ));
     if (!group?.activeProfileId) return null;
     const credentialRevision = projection.resolveCredentialRevision(
-        serviceId,
+        serviceKey,
         group.activeProfileId,
     );
     const parsedRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(credentialRevision);

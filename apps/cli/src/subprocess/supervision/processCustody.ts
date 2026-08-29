@@ -64,8 +64,6 @@ export type ProcessCustodyExecFile = typeof execFileWithDeadline;
 const HANDSHAKE_TIMEOUT_MS = 15_000;
 const CUSTODY_RUNTIME_EXEC_TIMEOUT_MS = 10_000;
 const CUSTODY_TERMINATE_TIMEOUT_MS = 5_000;
-const MAX_HANDSHAKE_BYTES = 4_096;
-const MAX_JOB_NAME_LENGTH = 512;
 
 function isPositiveSafeInteger(value: unknown): value is number {
     return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -78,7 +76,7 @@ function isPositiveSafeInteger(value: unknown): value is number {
  */
 export function createWindowsJobCustodyName(instanceId: string): string {
     const normalized = instanceId.trim();
-    if (!normalized || normalized.length > MAX_JOB_NAME_LENGTH || /[^\w-]/u.test(normalized)) {
+    if (!normalized || /[^\w-]/u.test(normalized)) {
         throw new TypeError('Windows job custody requires a path-safe instance identity');
     }
     return `Local\\happier-svc09-${normalized}`;
@@ -140,7 +138,7 @@ export function parseProcessCustodyStartIdentity(value: string): ParsedProcessCu
     if (typeof value !== 'string') return null;
     if (value.startsWith(WINDOWS_JOB_IDENTITY_PREFIX)) {
         const jobName = value.slice(WINDOWS_JOB_IDENTITY_PREFIX.length);
-        if (!jobName.trim() || jobName.length > MAX_JOB_NAME_LENGTH) return null;
+        if (!jobName.trim()) return null;
         return Object.freeze({ kind: 'win32-job', jobName });
     }
     if (value.startsWith(DARWIN_NATIVE_IDENTITY_PREFIX)) {
@@ -164,7 +162,7 @@ export function parseProcessCustodyHandshakeLine(
     raw: string,
     expectedJobName: string,
 ): Readonly<{ pid: number; jobName: string }> | null {
-    if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_HANDSHAKE_BYTES) return null;
+    if (typeof raw !== 'string' || raw.length === 0) return null;
     let parsed: unknown;
     try {
         parsed = JSON.parse(raw.trim());
@@ -334,7 +332,7 @@ export async function observeNativeDarwinProcessStartIdentity(
             timeout: CUSTODY_RUNTIME_EXEC_TIMEOUT_MS,
         });
         const outcome = readJsonLineOutcome(result.stdout);
-        if (!outcome || outcome.v !== 1) return null;
+        if (!outcome || outcome.v !== 1 || outcome.pid !== input.pid) return null;
         const sec = outcome.sec;
         const usec = outcome.usec;
         if (!isPositiveSafeInteger(sec) || typeof usec !== 'number' || !Number.isSafeInteger(usec) || usec < 0 || usec > 999_999) {

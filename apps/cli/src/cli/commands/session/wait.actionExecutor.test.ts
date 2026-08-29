@@ -15,7 +15,7 @@ describe('happier session wait (action executor)', () => {
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true, sessionId: 'sess-1', observedAt: 123 },
+      result: { ok: true, sessionId: 'sess-1', idle: true, observedAt: 123 },
     });
 
     const { handleSessionCommand } = await import('./handleSessionCommand');
@@ -49,7 +49,7 @@ describe('happier session wait (action executor)', () => {
   it('prints concise human success output without dumping the Action result', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true, sessionId: 'sess-1', observedAt: 123 },
+      result: { ok: true, sessionId: 'sess-1', idle: true, observedAt: 123 },
     });
 
     const { handleSessionCommand } = await import('./handleSessionCommand');
@@ -96,7 +96,7 @@ describe('happier session wait (action executor)', () => {
   ])('%s', async (_label, argv, expectedTimeoutSeconds) => {
     execute.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true, sessionId: 'sess-1', observedAt: 123 },
+      result: { ok: true, sessionId: 'sess-1', idle: true, observedAt: 123 },
     });
     const { cmdSessionWait } = await import('./wait');
 
@@ -117,5 +117,20 @@ describe('happier session wait (action executor)', () => {
     } finally {
       output.restore();
     }
+  });
+
+  it('rejects a malformed successful Action result instead of reporting idle', async () => {
+    execute.mockResolvedValueOnce({
+      ok: true,
+      result: { sessionId: 'sess-1', idle: false, observedAt: 123 },
+    });
+    const { cmdSessionWait } = await import('./wait');
+
+    await expect(cmdSessionWait(['wait', 'sess-1', '--json'], {
+      readCredentialsFn: async () => ({
+        token: 'token_test',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      }),
+    })).rejects.toThrow();
   });
 });

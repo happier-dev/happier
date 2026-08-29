@@ -1,4 +1,4 @@
-import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 export type ConnectedServiceDaemonAuthBridgeRefreshRequest = Readonly<{
   sessionId: string;
@@ -16,7 +16,7 @@ export type ConnectedServiceDaemonAuthBridgeRefreshResult = Readonly<
 >;
 
 export type ConnectedServiceDaemonAuthBridgeRegistration = Readonly<{
-  serviceId: string;
+  serviceId: ConnectedAccountServiceKey;
   refresh: (
     request: ConnectedServiceDaemonAuthBridgeRefreshRequest,
   ) => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult>;

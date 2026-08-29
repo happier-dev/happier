@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentId } from '@happier-dev/agents';
 import {
+    accountSettingsParse,
     convertBackendTargetRefV2ToV1,
     readBackendTargetRefV2,
+    type AccountSettings,
     type AcpConfigOptionOverridesV1,
     type BackendTargetRefV1,
     type BackendTargetRefV2,
@@ -48,15 +50,15 @@ import {
     type PreparedExecutionRunProviderLaunch,
 } from './providerLaunch';
 
-function normalizeAccountSettings(value: unknown): Readonly<Record<string, unknown>> | null {
+function normalizeAccountSettings(value: unknown): AccountSettings | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    return value as Readonly<Record<string, unknown>>;
+    return accountSettingsParse(value);
 }
 
 function resolveExecutionRunAccountSettings(params: Readonly<{
     backendTarget?: BackendTargetRefV2 | null;
     accountSettings?: unknown;
-}>): Readonly<Record<string, unknown>> | null {
+}>): AccountSettings | null {
     const explicitSettings = normalizeAccountSettings(params.accountSettings);
     if (explicitSettings) return explicitSettings;
     if (params.backendTarget?.sourceKind === 'configured') {
@@ -134,7 +136,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     permissionMode: string;
-    accountSettings?: Readonly<Record<string, unknown>> | null;
+    /** Normalized Protocol settings; the outer input normalizes raw settings exactly once. */
+    accountSettings?: AccountSettings | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
     connectedServicesDefaultServiceIds?: readonly string[];
     start?: Readonly<{ intentInput?: unknown; retentionPolicy?: string; intent?: string }> | null;

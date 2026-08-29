@@ -12,7 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { assertCommandArguments, readCommandPositionals, readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { assertCommandArguments, readCommandPositionals, readFlagValue, readIntFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -90,7 +90,12 @@ function unwrapOuterActionResult(result: ActionExecuteResult): unknown {
 
 async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal): Promise<void> {
   const subcommand = args[0];
-  if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') { showHelp(); return; }
+  if (
+    !subcommand
+    || subcommand === 'help'
+    || args.includes('--help')
+    || args.includes('-h')
+  ) { showHelp(); return; }
   const json = wantsJson(args);
   const usage = subcommand === 'search' ? SEARCH_USAGE : subcommand === 'get' ? GET_USAGE : INVOKE_USAGE;
   if (!['search', 'get', 'invoke'].includes(subcommand)) throw Object.assign(new Error(`Unknown actions subcommand: ${subcommand}\n${usage}`), { code: 'unknown_subcommand' });
@@ -117,7 +122,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
     actionId = 'action.spec.get'; input = { id: positionals[0] };
   } else {
     const requested = positionals[0]!;
-    const requestId = readFlagValue(args, '--request-id') ?? randomUUID();
+    const requestId = readRawFlagValue(args, '--request-id') ?? randomUUID();
     if (!ExternalActionRequestIdV1Schema.safeParse(requestId).success) {
       throw Object.assign(new Error('Invalid --request-id.'), { code: 'invalid_arguments' });
     }

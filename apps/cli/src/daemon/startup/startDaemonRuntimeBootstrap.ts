@@ -29,6 +29,7 @@ import { createDaemonTransferRuntimeState, createDaemonTransferRuntimeStatePubli
 import { resolveTailscaleTransferListenerState } from '../resolveTailscaleTransferListenerState';
 import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import {
@@ -791,12 +792,17 @@ export async function startDaemonRuntimeBootstrap(
         // persisted-identity fanout proof; do NOT introduce a second metadata reader.
         const persistedSession = await runBounded(fetchSessionByIdCompat({ token, sessionId: input.sessionId }));
         if (!persistedSession) return null;
+        // The released V2/V3 credential resolver consumes the legacy scalar service id only.
+        // Reverse-project the qualified key once at this legacy resolver; the scalar id is used
+        // only for the binding/map lookup while the returned proof keeps the qualified identity.
+        const legacyServiceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(input.serviceId);
+        if (!legacyServiceId) return null;
         const byServiceId = await runBounded(resolveConnectedServiceCredentialResolutions({
           credentials: params.credentials,
           api: params.api,
-          bindings: [{ serviceId: input.serviceId, profileId: input.profileId }],
+          bindings: [{ serviceId: legacyServiceId, profileId: input.profileId }],
         }));
-        const resolution = byServiceId?.get(input.serviceId) ?? null;
+        const resolution = byServiceId?.get(legacyServiceId) ?? null;
         if (resolution?.revisionSemantics !== 'revisioned') return null;
         const record = resolution.record;
         const providerAccountId = readConnectedServiceCredentialProviderAccountId(record);

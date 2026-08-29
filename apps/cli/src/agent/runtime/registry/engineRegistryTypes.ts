@@ -5,7 +5,7 @@ import type {
 } from '@/agent/catalog/types';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type { AttachSurfaceV1, CheckpointSurfaceV1, ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, HostSemanticEventV1, ProviderBoundModelRef, ProviderErrorV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV2Input, HostSemanticEventV1, ProviderBoundModelRef, ProviderErrorV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import type {
     AgentSessionConfigurationSnapshot,
     AgentSessionProviderBinding,
@@ -62,7 +62,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     permissionMode: string;
     /** Host-only active-turn authority; never a public backend request field. */
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
-    accountSettings?: Readonly<Record<string, unknown>> | null;
+    accountSettings?: AccountSettings | null;
     start?: ExecutionRunBackendStartContext | null;
     isolation?: ExecutionRunBackendIsolation;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;

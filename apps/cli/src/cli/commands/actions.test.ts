@@ -22,6 +22,17 @@ describe('actions root command', () => {
     expect(help).not.toContain('Idempotency request identifier');
   });
 
+  it('shows help from a concrete subcommand without reading credentials', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const readCredentialsFn = vi.fn();
+
+    await handleActionsCommand(['search', '--help'], { readCredentialsFn });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join('\n')).toContain('happier actions search');
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it('preserves canonical Action failure code, candidates, and details as expected exit 1', async () => {
     let output = '';
     vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: any, ...args: any[]) => {
@@ -123,6 +134,25 @@ describe('actions root command', () => {
     const execute = vi.fn();
 
     await handleActionsCommand(['invoke', 'machines.list', '--request-id', 'x'.repeat(129), '--json'], {
+      readCredentialsFn: async () => credentials('api_token'),
+      createExecutorFn: (() => ({ execute })) as any,
+    });
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('rejects request-id outer whitespace instead of silently changing the Protocol identity', async () => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: any, ...args: any[]) => {
+      output += String(chunk);
+      args.find((value) => typeof value === 'function')?.();
+      return true;
+    }) as any);
+    const execute = vi.fn();
+
+    await handleActionsCommand(['invoke', 'machines.list', '--request-id', ' correlation ', '--json'], {
       readCredentialsFn: async () => credentials('api_token'),
       createExecutorFn: (() => ({ execute })) as any,
     });

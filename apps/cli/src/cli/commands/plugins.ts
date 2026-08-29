@@ -32,6 +32,7 @@ import {
   type MarketplaceIndexSourceConfig,
 } from '@/plugins/store/marketplace/service';
 import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
 import { resolveArchiveExpectedIntegrity } from '@/plugins/distribution/archive/integrity';

@@ -96,11 +96,11 @@ describe('native Agent account-usage host owner', () => {
         });
 
         const source = await service.resolveSourceContext({
-            serviceId: 'acme-usage',
+            serviceId: 'acme.agent/usage',
             env: {
                 HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
                     kind: 'group',
-                    serviceId: 'acme-usage',
+                    serviceId: 'acme.agent/usage',
                     groupId: 'team',
                     activeProfileId: 'profile-1',
                     fallbackProfileId: 'profile-2',
@@ -111,7 +111,7 @@ describe('native Agent account-usage host owner', () => {
         });
 
         expect(source).toEqual({
-            serviceId: 'acme-usage',
+            serviceId: 'acme.agent/usage',
             profileId: 'profile-1',
             bindingKind: 'group_member',
             groupId: 'team',
@@ -128,7 +128,7 @@ describe('native Agent account-usage host owner', () => {
         const env: Record<string, string | undefined> = {
             HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
                 kind: 'group',
-                serviceId: 'openai-codex',
+                serviceId: 'happier.agent.codex/openai-codex',
                 groupId: 'team',
                 activeProfileId: 'profile-1',
                 fallbackProfileId: 'profile-2',
@@ -136,7 +136,7 @@ describe('native Agent account-usage host owner', () => {
                 policy: null,
             }]),
         };
-        const source = { serviceId: 'openai-codex', env } as const;
+        const source = { serviceId: 'happier.agent.codex/openai-codex', env } as const;
         const service = createNativeAgentAccountUsageService({
             sessionId: 'session-1',
             session: {
@@ -160,7 +160,7 @@ describe('native Agent account-usage host owner', () => {
 
         env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON = JSON.stringify([{
             kind: 'group',
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             groupId: 'team',
             activeProfileId: 'profile-2',
             fallbackProfileId: 'profile-1',
@@ -176,7 +176,7 @@ describe('native Agent account-usage host owner', () => {
         expect(notifySnapshot).toHaveBeenNthCalledWith(1, expect.objectContaining({
             deriveCredentialFingerprintFromSource: true,
             source: expect.objectContaining({
-                serviceId: 'openai-codex',
+                serviceId: 'happier.agent.codex/openai-codex',
                 profileId: 'profile-1',
                 groupId: 'team',
                 groupGeneration: 7,
@@ -185,7 +185,7 @@ describe('native Agent account-usage host owner', () => {
         expect(notifySnapshot).toHaveBeenNthCalledWith(2, expect.objectContaining({
             deriveCredentialFingerprintFromSource: true,
             source: expect.objectContaining({
-                serviceId: 'openai-codex',
+                serviceId: 'happier.agent.codex/openai-codex',
                 profileId: 'profile-2',
                 groupId: 'team',
                 groupGeneration: 8,
@@ -203,17 +203,17 @@ describe('native Agent account-usage host owner', () => {
         let connectedServices: ConnectedServiceBindingsV1 = {
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'group',
-                    serviceId: 'openai-codex',
+                    serviceId: 'happier.agent.codex/openai-codex',
                     groupId: 'team',
                     profileId: 'profile-1',
                     groupGeneration: 7,
                 },
             },
         };
-        const source = { serviceId: 'openai-codex' } as const;
+        const source = { serviceId: 'happier.agent.codex/openai-codex' } as const;
         const service = createNativeAgentAccountUsageService({
             sessionId: 'session-1',
             session: {
@@ -239,10 +239,10 @@ describe('native Agent account-usage host owner', () => {
         connectedServices = {
             v: 1,
             bindingsByServiceId: {
-                'openai-codex': {
+                'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'group',
-                    serviceId: 'openai-codex',
+                    serviceId: 'happier.agent.codex/openai-codex',
                     groupId: 'team',
                     profileId: 'profile-2',
                     groupGeneration: 8,

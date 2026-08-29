@@ -3,6 +3,7 @@ import type {
   ConnectedServiceId,
 } from '@happier-dev/protocol';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol';
 
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';
@@ -80,7 +81,8 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
   // The transcript event still commits (the visibility policy above owns full silence).
   if (params.source.reason === 'manual') return;
 
-  const serviceId = ConnectedServiceIdSchema.safeParse(params.source.serviceId);
+  const canonicalServiceId =
+    readBuiltInLegacyConnectedAccountServiceKeyIngress(params.source.serviceId);
   const profilesById = await loadConnectedServiceNotificationProfilesById({
     serviceId: params.source.serviceId,
     listConnectedServiceProfiles: params.listConnectedServiceProfiles,
@@ -95,8 +97,8 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
       sessionTitle: params.source.sessionTitle ?? null,
       serviceId: params.source.serviceId,
       serviceDisplayName:
-        serviceId.success
-          ? resolveConnectedServiceNotificationDisplayName(serviceId.data)
+        canonicalServiceId
+          ? resolveConnectedServiceNotificationDisplayName(canonicalServiceId)
           : null,
       groupId: params.source.groupId,
       fromProfileId: params.source.fromProfileId,

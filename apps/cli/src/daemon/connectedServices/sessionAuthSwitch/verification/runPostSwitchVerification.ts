@@ -1,6 +1,6 @@
 import type {
   ConnectedServiceBindingsV1,
-  ConnectedServiceId,
+  ConnectedAccountServiceKey,
   ConnectedServiceUxDiagnosticV1,
 } from '@happier-dev/protocol';
 
@@ -18,12 +18,12 @@ import type { ConnectedServiceAccountTransitionVerificationResult } from '../../
 export type PostSwitchVerificationEffectiveBinding = Readonly<{
   source: 'native' | 'connected';
   selection: 'native' | 'profile' | 'group';
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string | null;
   groupId: string | null;
 }>;
 
-export type RuntimeAuthSelectionsByServiceId = ReadonlyMap<ConnectedServiceId, unknown>;
+export type RuntimeAuthSelectionsByServiceId = ReadonlyMap<ConnectedAccountServiceKey, unknown>;
 
 export type PostSwitchVerificationMode = Readonly<{
   kind: 'disabled_for_test_only';
@@ -31,7 +31,7 @@ export type PostSwitchVerificationMode = Readonly<{
 }>;
 
 export type PostSwitchVerificationFailureInput = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   result: Exclude<
     ConnectedServiceAccountTransitionVerificationResult,
     Readonly<{ status: 'verified' | 'weakly_verified' }>
@@ -64,9 +64,9 @@ export async function runPostSwitchVerification<TFailure>(input: Readonly<{
     tracked: TrackedSession;
     sessionId: string;
     agentId: CatalogAgentId;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     target: Readonly<{
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       profileId: string | null;
       groupId?: string | null;
     }>;
@@ -80,14 +80,14 @@ export async function runPostSwitchVerification<TFailure>(input: Readonly<{
   sessionId: string;
   agentId: CatalogAgentId;
   normalizedBindings: ConnectedServiceBindingsV1;
-  nextByServiceId: ReadonlyMap<ConnectedServiceId, PostSwitchVerificationEffectiveBinding>;
-  serviceIds: ReadonlySet<ConnectedServiceId>;
+  nextByServiceId: ReadonlyMap<ConnectedAccountServiceKey, PostSwitchVerificationEffectiveBinding>;
+  serviceIds: ReadonlySet<ConnectedAccountServiceKey>;
   action: 'hot_applied' | 'restart_requested';
   acceptedVerificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
   runtimeAuthSelectionsByServiceId?: RuntimeAuthSelectionsByServiceId;
   buildVerificationFailure(input: PostSwitchVerificationFailureInput): TFailure;
 }>): Promise<PostSwitchVerificationOutcome<TFailure>> {
-  const acceptedVerificationsByServiceId = new Map<ConnectedServiceId, AcceptedConnectedServiceAccountVerification>();
+  const acceptedVerificationsByServiceId = new Map<ConnectedAccountServiceKey, AcceptedConnectedServiceAccountVerification>();
   for (const serviceId of input.serviceIds) {
     const accepted = input.acceptedVerificationByServiceId?.[serviceId];
     if (isExactAcceptedConnectedServiceAccountVerification(accepted)) {

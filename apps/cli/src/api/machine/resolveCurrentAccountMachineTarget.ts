@@ -1,16 +1,17 @@
 import axios from 'axios';
 import { z } from 'zod';
+import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
-const ACCOUNT_MACHINE_ROW_SCHEMA = z.object({
-  id: z.string().trim().min(1),
-  metadata: z.string().optional(),
-  active: z.boolean(),
-  revokedAt: z.number().nullable(),
-  replacedByMachineId: z.string().nullable(),
-}).passthrough();
+// The machine bootstrap rows reuse the one Protocol-owned external Action
+// bootstrap projection; this parser extends it only with the legacy/full-account
+// `metadata` blob it genuinely needs. Labels remain a CLI projection of that
+// metadata and never alter machine identity.
+const ACCOUNT_MACHINE_ROW_SCHEMA = ExternalActionMachineBootstrapV1Schema
+  .extend({ metadata: z.string().optional() })
+  .passthrough();
 
 const ACCOUNT_MACHINE_INVENTORY_SCHEMA = z.array(ACCOUNT_MACHINE_ROW_SCHEMA);
 

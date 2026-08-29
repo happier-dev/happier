@@ -137,7 +137,7 @@ describe('engineRegistry account-configured ACP ingestion', () => {
       cwd: '/workspace',
       backendId: 'account-configured-acp',
       permissionMode: 'read_only',
-      accountSettings: {},
+      accountSettings: accountSettingsParse({}),
     })).not.toThrow();
   });
 

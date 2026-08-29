@@ -199,6 +199,14 @@ export async function resolveCliCommonWorkspacesHelpersAfterBuild(options = {}) 
   return loadedModule?.helpers ?? loadedModule;
 }
 
+/**
+ * Spawns the canonical bundled-plugin generator. `workspaceNames` are bundled
+ * plugin workspace names forwarded verbatim as the generator's plugin-only
+ * `--workspace` selectors; omit them to publish the complete bundled set.
+ * Callers holding a mixed CLI bundled workspace selection must route through
+ * `publishBundledPluginArtifactsAfterWorkspaceBuild`, which selects the plugin
+ * subset; the generator rejects non-plugin selectors.
+ */
 export async function runCanonicalBundledPluginArtifactPublisher({
   repoRoot,
   workspaceNames = [],
@@ -475,7 +483,17 @@ async function ensureWorkspacePackagesBuiltWithPluginIsolation({
   };
 }
 
-async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}) {
+/**
+ * Canonical select-then-publish operation for bundled-plugin artifacts given a
+ * CLI bundled workspace selection. `workspaceNames` (or an already-rebuilt
+ * `pluginWorkspaceNames` selection) may name any CLI bundled workspace; the
+ * selection owner intersects it with this checkout's bundled plugin
+ * workspaces, so host names such as `protocol` or `agents` never reach the
+ * plugin-only generator CLI. Returns false — without invoking the publisher —
+ * when the selection contains no bundled plugin workspace; throws when the
+ * publisher does not complete for a non-empty selection.
+ */
+export async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}) {
   const pluginWorkspaceNames = resolveSelectedBundledPluginWorkspaceNames({
     repoRoot: opts.repoRoot,
     workspaceNames: opts.pluginWorkspaceNames ?? opts.workspaceNames,
@@ -1877,18 +1895,25 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     readDir,
     stat,
   });
-  resolvedLockOptions.tryResolveWaiter = async () => {
-    const waitSignature = computeSignature();
-    if (!isSourceDevSharedDepsCurrent({
+  const isCurrentRuntimeClosure = (candidateSignature) => (
+    isSourceDevSharedDepsCurrent({
       repoRoot,
       stampPath,
-      signature: waitSignature,
+      signature: candidateSignature,
       exists,
       readFile,
       readDir,
       stat,
       includeRuntimeDependencies,
-    })) {
+    })
+    && collectInstalledBundledPluginWorkspaceNamesDivergingFromInventory({
+      repoRoot,
+      workspaceNames,
+    }).length === 0
+  );
+  resolvedLockOptions.tryResolveWaiter = async () => {
+    const waitSignature = computeSignature();
+    if (!isCurrentRuntimeClosure(waitSignature)) {
       return { resolved: false };
     }
     reportSourceDevSharedDepsProgress(reportProgress, {
@@ -1913,7 +1938,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     event: 'done',
     workspaceCount: workspaceNames.length,
   });
-  if (isSourceDevSharedDepsCurrent({ repoRoot, stampPath, signature, exists, readFile, readDir, stat, includeRuntimeDependencies })) {
+  if (isCurrentRuntimeClosure(signature)) {
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'complete',
       event: 'done',
@@ -2156,7 +2181,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       event: 'done-after-lock',
       workspaceCount: workspaceNames.length,
     });
-    if (isSourceDevSharedDepsCurrent({ repoRoot, stampPath, signature, exists, readFile, readDir, stat, includeRuntimeDependencies })) {
+    if (isCurrentRuntimeClosure(signature)) {
       reportSourceDevSharedDepsProgress(reportProgress, {
         stage: 'complete',
         event: 'done',

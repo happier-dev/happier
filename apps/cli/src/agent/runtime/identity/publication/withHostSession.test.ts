@@ -5,6 +5,7 @@ import {
   HOST_SESSION_RUNTIME_PLAN_KIND,
   type HostSessionRuntimePlan,
 } from '@/agent/runtime/session/loop/lifecycle';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { withHostSessionRuntimeIdentityPublication } from './withHostSession';
@@ -389,10 +390,9 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       readSessionIdentity: vi.fn(() => ({ sessionId: 'fallback-session-1' })),
       subscribeRuntimeEvents: vi.fn((handler) => {
         handler({
-          kind: 'descriptor-update',
-          sessionId: 'happier-session-1',
-          emittedAtMs: 1,
-          descriptor: upstreamDescriptor,
+          type: 'event',
+          name: 'runtime.descriptor',
+          payload: upstreamDescriptor,
         });
         return () => undefined;
       }),
@@ -493,10 +493,9 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       throw new Error('expected runtime event subscription');
     }
     publishRuntimeMessage({
-      kind: 'descriptor-update',
-      sessionId: 'session-1',
-      emittedAtMs: 123,
-      descriptor,
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: descriptor,
     });
     unsubscribe();
 
@@ -654,8 +653,9 @@ describe('external Agent native resume identity — composed host publication', 
   it('carries the native id from the public event to the daemon resume-id reader', async () => {
     const metadata = await runExternalAgentSession();
 
-    expect(metadata.runtimeDescriptorV1).toMatchObject({ agentId: 'acme' });
-    expect(metadata.runtimeDescriptorV1.agent).not.toHaveProperty('providerSessionId');
+    const publishedDescriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+    expect(publishedDescriptor).toMatchObject({ agentId: 'acme' });
+    expect(publishedDescriptor?.agent).not.toHaveProperty('providerSessionId');
     expect(metadata.nativeResumeIdentityV1).toEqual({
       v: 1,
       vendorResumeId: 'acme-native-1',

@@ -160,7 +160,7 @@ export type ConnectedServiceResumeContinuityDiagnostics = Readonly<{
 export type ConnectedServiceSwitchEffectiveBinding = Readonly<{
   source: 'native' | 'connected';
   selection: 'native' | 'profile' | 'group';
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string | null;
   groupId: string | null;
 }>;
@@ -168,7 +168,7 @@ export type ConnectedServiceSwitchEffectiveBinding = Readonly<{
 export type ConnectedServiceSwitchContinuityParams = Readonly<{
   sessionId: string;
   agentId: CatalogAgentId;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   previousBinding: ConnectedServiceSwitchEffectiveBinding | null;
   nextBinding: ConnectedServiceSwitchEffectiveBinding;
   fromBindings: ConnectedServiceBindingsV1;

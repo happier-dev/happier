@@ -1248,6 +1248,13 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                             try {
                                 await process.dispose();
                                 processContainmentTerminated = true;
+                                // The canonical process handle only resolves
+                                // disposal after its exact terminal result is
+                                // available. Join that same waiter here so the
+                                // managed-service snapshot and projection are
+                                // decided from the terminal fact, not a later
+                                // microtask scheduling accident.
+                                await processTerminalObservation;
                             } catch (error) {
                                 processDisposalFailure = error;
                             }
@@ -1257,14 +1264,6 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         // fact. Join that already-started waiter before
                         // deciding whether cleanup proved termination; merely
                         // returning from the termination request is not proof.
-                        if (processTerminalObservation) {
-                            // Publish an already-settled waiter without
-                            // turning cleanup into an unbounded wait when a
-                            // defective handle returns from `dispose()` while
-                            // its terminal waiter is still pending.
-                            await Promise.resolve();
-                            await Promise.resolve();
-                        }
                         if (
                             process
                             && spec.mode.kind === 'managedSpawn'
@@ -1369,7 +1368,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     );
                 }
                 managedProcessCustody = Object.freeze({
-                    jobName: createWindowsJobCustodyName(createInstanceId()),
+                    jobName: createWindowsJobCustodyName(instanceId),
                     executablePath: custodyExecutablePath,
                     handshakePath: createProcessCustodyHandshakePath(),
                 });

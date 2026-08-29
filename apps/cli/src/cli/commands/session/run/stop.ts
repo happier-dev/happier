@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
-import { ExecutionRunStopRequestSchema } from '@happier-dev/protocol';
+import { ExecutionRunStopRequestSchema, ExecutionRunStopResponseSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';
@@ -59,6 +59,7 @@ export async function cmdSessionRunStop(
     }
     throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
+  ExecutionRunStopResponseSchema.parse(normalized.data);
 
   if (json) {
     await printJsonEnvelope({ ok: true, kind: 'session_run_stop', data: { sessionId, runId, stopped: true } });

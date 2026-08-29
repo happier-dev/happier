@@ -5,6 +5,7 @@ import {
     AgentToolExecuteBeforeHookPayloadSchema,
     isFeatureId,
     type PluginExecutionInterceptionCapability,
+    type AccountSettings,
 } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
@@ -108,7 +109,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     hostSession: Readonly<{
         session: Pick<ApiSessionClient, 'getMetadataSnapshot'>;
         machineId: string;
-        accountSettings?: Readonly<Record<string, unknown>> | null;
+        accountSettings?: AccountSettings | null;
         permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
     }>;
     sessionId: string;

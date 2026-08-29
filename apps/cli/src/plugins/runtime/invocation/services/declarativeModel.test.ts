@@ -645,9 +645,11 @@ describe('stable declarative plugin model', () => {
         }), 'plugin_declarative_availability_invalid');
     });
 
-    // The renderer owns its semantic-node ceiling. Strict JSON itself has no
-    // generic depth quota, so valid deep data reaches that owner unchanged.
-    it('enforces the declarative node ceiling without borrowing a JSON depth quota', () => {
+    // The renderer owns its semantic-node ceiling and its earned whole-document
+    // plain-data depth profile (48, counting every object/array container).
+    // Strict JSON itself has no generic quota; the declarative preflight owns
+    // this document's own bounds and both static and dynamic paths share them.
+    it('enforces the declarative node and earned depth ceilings', () => {
         const nest = (depth: number): { kind: 'stack'; children: readonly unknown[] } | { kind: 'text'; text: string } => (
             depth === 0
                 ? { kind: 'text', text: 'leaf' }
@@ -668,7 +670,11 @@ describe('stable declarative plugin model', () => {
             renderer: { id: 'bounded', kind: 'declarative', root: root as never },
         });
 
-        expect(build(nest(24)).root).toBeDefined();
+        // Each semantic level costs one object plus one children array, and
+        // the deepest node's own scalars land at plain-data depth 2N+3, so
+        // the earned depth-48 boundary admits a 22-level chain and rejects 23.
+        expect(build(nest(22)).root).toBeDefined();
+        expectPluginError(() => build(nest(23)), 'plugin_declarative_document_depth_exceeded');
 
         // The root stack counts, so 511 children is exactly 512 nodes.
         expect(build(flat(511)).root).toBeDefined();

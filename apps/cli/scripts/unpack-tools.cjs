@@ -52,11 +52,11 @@ const ARCHIVE_CHECKSUM_MANIFEST_NAMES = Object.freeze([
  * unlisted-but-present archive both fail closed rather than being skipped.
  */
 const CLI_RUNTIME_ASSET_ARCHIVE_MANIFEST = [
-    { asset: 'cliproxyapi-managed', platformDir: 'arm64-darwin', archiveName: 'happier-cliproxyapi-managed-arm64-darwin.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', version: '1' },
-    { asset: 'cliproxyapi-managed', platformDir: 'x64-darwin', archiveName: 'happier-cliproxyapi-managed-x64-darwin.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', version: '1' },
-    { asset: 'cliproxyapi-managed', platformDir: 'arm64-linux', archiveName: 'happier-cliproxyapi-managed-arm64-linux.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', version: '1' },
-    { asset: 'cliproxyapi-managed', platformDir: 'x64-linux', archiveName: 'happier-cliproxyapi-managed-x64-linux.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', version: '1' },
-    { asset: 'cliproxyapi-managed', platformDir: 'x64-win32', archiveName: 'happier-cliproxyapi-managed-x64-win32.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed.exe', version: '1' },
+    { asset: 'cliproxyapi-managed', platformDir: 'arm64-darwin', archiveName: 'happier-cliproxyapi-managed-arm64-darwin.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', extraBinaries: ['happier-process-custody'], version: '1' },
+    { asset: 'cliproxyapi-managed', platformDir: 'x64-darwin', archiveName: 'happier-cliproxyapi-managed-x64-darwin.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', extraBinaries: ['happier-process-custody'], version: '1' },
+    { asset: 'cliproxyapi-managed', platformDir: 'arm64-linux', archiveName: 'happier-cliproxyapi-managed-arm64-linux.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', extraBinaries: ['happier-process-custody'], version: '1' },
+    { asset: 'cliproxyapi-managed', platformDir: 'x64-linux', archiveName: 'happier-cliproxyapi-managed-x64-linux.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed', extraBinaries: ['happier-process-custody'], version: '1' },
+    { asset: 'cliproxyapi-managed', platformDir: 'x64-win32', archiveName: 'happier-cliproxyapi-managed-x64-win32.tar.gz', archiveType: 'tar.gz', binaryName: 'happier-cliproxyapi-managed.exe', extraBinaries: ['happier-process-custody.exe'], version: '1' },
 ].map((entry) => Object.freeze({
     ...entry,
     licenseNames: Object.freeze(['CLIProxyAPI-LICENSE', 'CLIProxyAPI-THIRD-PARTY-NOTICES']),

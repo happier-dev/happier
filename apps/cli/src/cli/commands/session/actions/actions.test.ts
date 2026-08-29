@@ -180,6 +180,22 @@ describe('happier session actions (unit)', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('rejects Session Action request-id outer whitespace without normalizing the correlation identity', async () => {
+    await expect(handleSessionCommand([
+      'actions',
+      'execute',
+      'sess-1',
+      'review.start',
+      '--action-request-id',
+      ' correlation ',
+    ], {
+      readCredentialsFn: vi.fn(),
+    })).rejects.toThrow('Invalid --action-request-id.');
+
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('preserves an inner {ok:false} domain result as opaque success data for actions execute', async () => {
     resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,

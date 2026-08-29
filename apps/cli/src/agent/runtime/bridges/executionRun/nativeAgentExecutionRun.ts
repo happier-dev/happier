@@ -7,11 +7,13 @@ import type {
     AgentExecutionRunEvent,
     AgentExecutionRunOpenRequest,
     AgentExecutionRunRuntime,
+    AgentExecutionRunRuntimeFactory,
     AgentLaunchEnvironment,
     AgentRuntime,
     AgentRuntimeContext,
     AgentSessionInput,
     AgentSessionOpenRequest,
+    AgentSessionRuntime,
     AgentSessionRuntimeContext,
     AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -499,9 +501,11 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
     if (!sessions) {
         throw new Error(`Agent runtime '${params.lease.agentId}' does not support sessions`);
     }
-    const derivedRuntime: AgentRuntime = Object.freeze({
-        executionRuns: Object.freeze({
-            async open(request, executionContext) {
+    const executionRuns: AgentExecutionRunRuntimeFactory = Object.freeze({
+        async open(
+            request: AgentExecutionRunOpenRequest,
+            executionContext: AgentRuntimeContext,
+        ) {
                 if (request.kind === 'fork') {
                     throw new Error('Host-derived Session execution runs do not support fork');
                 }
@@ -545,8 +549,10 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                         }
                     },
                 });
-            },
-        }),
+        },
+    });
+    const derivedRuntime: AgentRuntime = Object.freeze({
+        executionRuns,
     });
     return createNativeAgentExecutionRunHostRuntime({
         runtime: derivedRuntime,

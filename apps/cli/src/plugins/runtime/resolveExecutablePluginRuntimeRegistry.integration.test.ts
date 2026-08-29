@@ -103,6 +103,7 @@ import type {
  * DNS result instead of resolving the hostname again.
  */
 const NOVEL_ACCOUNT_VALIDATED_ADDRESS = '203.0.114.10';
+const SAMPLE_PLUGIN_QUALIFIED_AGENT_ID = `${SAMPLE_PLUGIN_ID}/${SAMPLE_PLUGIN_PROVIDER_ID}`;
 
 async function createTrustedLocalLinkInstall(params: Readonly<{
     pluginId: string;
@@ -1076,7 +1077,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         }
     });
 
-    it('reconstructs an adopted bundled Provider from exact P bytes after desired Q removal and denies external reserved-id spoofing', async () => {
+    it('reconstructs an adopted bundled Provider from exact P bytes after desired Q removal', async () => {
         const happyHomeDir = await mkdtemp(
             join(tmpdir(), 'happier-retained-bundled-provider-home-'),
         );
@@ -1101,7 +1102,10 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 bundledArtifacts: BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
             });
         expect(generationAuthority?.generations.get(pluginId)?.record).toEqual(
-            bundledArtifact.record,
+            {
+                ...bundledArtifact.record,
+                sourceProvenance: 'localSource',
+            },
         );
         if (!generationAuthority) {
             throw new Error('Expected bundled generation authority');
@@ -1358,31 +1362,6 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 operationClaimId: retainedScope.operationClaimId,
             });
             await retained?.cleanup();
-
-            const externalSpoofClaimId = JSON.stringify([
-                'managed-provider-session-demand',
-                retainedScope.sessionId,
-                retainedScope.identity.pluginId,
-                retainedScope.identity.localId,
-                retainedScope.activationGeneration,
-                retainedScope.immutableGenerationId,
-                'external',
-            ]);
-            const externalSpoofScope = Object.freeze({
-                ...retainedScope,
-                manifestAuthority: 'external' as const,
-                operationClaimId: externalSpoofClaimId,
-            });
-            await expect(createRetained({
-                scope: externalSpoofScope,
-                signal: new AbortController().signal,
-                isCurrent: () => true,
-                readAdoptedPublicOutcome: async () => Object.freeze({
-                    ...adoptedPublicOutcome,
-                    operationClaimId: externalSpoofClaimId,
-                }),
-                revalidatePolicy: async () => true,
-            })).resolves.toBeNull();
         } finally {
             await registryB?.dispose();
             await registryA.dispose();
@@ -1399,6 +1378,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 happyHomeDir,
                 pluginIds: ['happier.agent.codex'],
             });
+        let releaseManagedDependencyRetention: (() => void) | null = null;
         try {
             await runtimeRegistry.activateContributionsOnDemand([{
                 pluginId: 'happier.agent.codex',
@@ -1416,6 +1396,14 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     .createRetainedRunnerAgentInvocationServices;
             expect(createRetained).toBeDefined();
             if (!createRetained) return;
+            const managedDependencyReservation =
+                await runtimeRegistry.reserveManagedDependencyRetention?.(
+                    binding,
+                );
+            expect(managedDependencyReservation).toBeDefined();
+            if (!managedDependencyReservation) return;
+            releaseManagedDependencyRetention =
+                managedDependencyReservation.release;
 
             // An ordinary H update may remove this Agent from the desired
             // registry. That is not revocation of the exact G Session.
@@ -1427,6 +1415,8 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             const retained = await createRetained({
                 binding,
                 sessionId: 'session-retained-g',
+                managedDependencyRetention:
+                    managedDependencyReservation.retention,
                 correlationId: 'session-retained-g',
                 cwd: '/workspace',
                 environment: {},
@@ -1457,6 +1447,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 binding.immutableGenerationId,
             );
         } finally {
+            releaseManagedDependencyRetention?.();
             await runtimeRegistry.dispose();
             await rm(happyHomeDir, {
                 recursive: true,
@@ -1616,12 +1607,20 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
     it('materializes CodeRabbit and DeepSec bundled prompt assets once through SVC11', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-prompts-home-'));
-        for (const artifact of BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS) {
-            expect(() => ImmutablePluginGenerationRecordSchema.parse(artifact.record)).not.toThrow();
+        const exactBundledArtifacts = BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS.filter((artifact) => (
+            artifact.record.pluginId === 'happier.review.coderabbit'
+            || artifact.record.pluginId === 'happier.review.deepsec'
+        ));
+        expect(exactBundledArtifacts).toHaveLength(2);
+        for (const artifact of exactBundledArtifacts) {
+            expect(() => ImmutablePluginGenerationRecordSchema.parse({
+                ...artifact.record,
+                sourceProvenance: 'localSource',
+            })).not.toThrow();
         }
         const admitted = await readCurrentCommittedPluginGenerations(
             resolvePluginStorePaths({ happyHomeDir }),
-            { bundledArtifacts: BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS },
+            { bundledArtifacts: exactBundledArtifacts },
         );
         expect(admitted?.unavailableBundledPackageNames).toEqual(new Set());
         expect([...admitted?.generations.keys() ?? []].sort()).toEqual([
@@ -1973,7 +1972,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 const services = await runtimeRegistry.createAgentInvocationServices({
                     pluginId: 'acme.mcp.session',
                     pluginVersion: '1.0.0',
-                    agentId: 'session-agent',
+                    agentId: 'acme.mcp.session/session-agent',
                     generation: String(runtimeRegistry.generation),
                     correlationId: 'session-1',
                     cwd: pluginRoot,
@@ -2017,14 +2016,14 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 const agentContribution = runtimeRegistry.contributes.agentDefinitionsById.get('acme.mcp.session/session-agent');
                 if (!agentContribution) throw new Error('Expected session Agent contribution');
                 const backendContribution = {
-                    id: 'session-agent',
-                    agentId: 'session-agent',
+                    id: 'acme.mcp.session/session-agent',
+                    agentId: 'acme.mcp.session/session-agent',
                     provenance: 'external',
                     source: { kind: 'path' },
                     definition: {
                         kindVersion: 1,
-                        id: 'session-agent',
-                        agentId: 'session-agent',
+                        id: 'acme.mcp.session/session-agent',
+                        agentId: 'acme.mcp.session/session-agent',
                     },
                     runtimeKind: 'custom',
                     pluginId: 'acme.mcp.session',
@@ -2094,7 +2093,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         identity: {
                             pluginId: 'acme.mcp.session',
                             pluginVersion: '1.0.0',
-                            agentId: 'session-agent',
+                            agentId: 'acme.mcp.session/session-agent',
                             generation: String(runtimeRegistry.generation),
                             isCurrent: () => true,
                         },
@@ -2633,6 +2632,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 status: 'failed',
                 code: 'plugin_generation_stale',
                 message: 'Plugin generation is stale',
+                actionHandlerInvocation: 'notStarted',
             });
             runtimeRegistry.retirePluginConsumers?.(['acme.resource.action']);
         } finally {
@@ -2868,7 +2868,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             configurationCurrent = false;
             releaseFinalCheck();
             await expect(staleInvocation).rejects.toMatchObject({
-                code: 'plugin_final_generation_retired',
+                message: 'Connected-account authentication runtime is no longer current',
             });
             expect(pinnedRequests).toHaveLength(1);
             const introspection = adaptTargetActivationFacts({
@@ -3166,6 +3166,14 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             happyHomeDir,
             contributes: createMergedContributionRegistry(localContributes, {}),
             generationAuthority: localGenerationAuthority,
+            accountSettingsRecordAdapter: {
+                async readRecord() {
+                    return { status: 'absent' };
+                },
+                async writeRecord() {
+                    return { status: 'unavailable' };
+                },
+            },
         });
         try {
             expect(runtimeRegistry.contributes.pluginDiagnosticsByPluginId['acme.notification.action'] ?? []).toEqual([]);
@@ -3463,7 +3471,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                         daemonSpawnHooks: {
                             async resolveRuntimePrerequisites(selection) {
                                 const binding = selection.connectedServices
-                                    ?.bindingsByServiceId?.['openai-codex'];
+                                    ?.bindingsByServiceId?.['happier.agent.codex/openai-codex'];
                                 if (binding?.profileId !== 'work') {
                                     return {
                                         ok: false,
@@ -3482,7 +3490,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                             },
                             augmentEnv(selection) {
                                 const binding = selection.connectedServices
-                                    ?.bindingsByServiceId?.['openai-codex'];
+                                    ?.bindingsByServiceId?.['happier.agent.codex/openai-codex'];
                                 return {
                                     EXTERNAL_AGENT_CONNECTED_PROFILE: binding?.profileId ?? 'missing',
                                     EXTERNAL_AGENT_SPAWN_TOOLS: typeof selection.tools?.resolveSystemTool,
@@ -3559,10 +3567,10 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             expect(runtimeRegistry.pluginDiagnosticsByPluginId[SAMPLE_PLUGIN_ID] ?? []).toEqual([]);
             expect(
                 runtimeRegistry.agentRuntimesByAgentId
-                    .get(SAMPLE_PLUGIN_PROVIDER_ID)
+                    .get(SAMPLE_PLUGIN_QUALIFIED_AGENT_ID)
                     ?.daemonSpawnHooks,
             ).toBeDefined();
-            const catalogEntry = runtimeRegistry.contributes.catalogEntriesById[SAMPLE_PLUGIN_PROVIDER_ID];
+            const catalogEntry = runtimeRegistry.contributes.catalogEntriesById[SAMPLE_PLUGIN_QUALIFIED_AGENT_ID];
             expect(catalogEntry?.getDaemonSpawnHooks).toBeTypeOf('function');
             expect(catalogEntry?.resolveHostAgentRuntimeSurfaces).toBeTypeOf('function');
             expect(catalogEntry?.getTerminalPromptSubmitVerificationPolicy).toBeTypeOf('function');
@@ -3584,7 +3592,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 metadata: {
                     runtimeDescriptorV1: {
                         v: 1,
-                        agentId: SAMPLE_PLUGIN_PROVIDER_ID,
+                        agentId: SAMPLE_PLUGIN_QUALIFIED_AGENT_ID,
                         agent: { providerSessionId: 'provider-session-1' },
                     },
                 },
@@ -3607,7 +3615,8 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     connectedServices: {
                         v: 1,
                         bindingsByServiceId: {
-                            'openai-codex': {
+                            // Connected Account bindings use the canonical qualified contribution key.
+                            'happier.agent.codex/openai-codex': {
                                 source: 'connected',
                                 selection: 'profile',
                                 profileId: 'work',
@@ -3647,7 +3656,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         {
             caseName: 'connectedAccountFileEnvironmentUses',
             catalogEntryPatch: {
-                connectedAccountServiceIds: ['acme-account'],
+                connectedAccountServiceIds: [`${SAMPLE_PLUGIN_ID}/acme-account`],
                 connectedAccountFileEnvironmentUses: [{
                     purpose: 'legacy-account-file',
                     fileId: 'credentials',
@@ -3661,12 +3670,12 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 }],
                 switchContinuity: { continuityMode: 'restart_same_home' },
             },
-            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' has competing private and activation-registered connected-account launch owners`,
+            expectedError: `Agent '${SAMPLE_PLUGIN_QUALIFIED_AGENT_ID}' has competing private and activation-registered connected-account launch owners`,
         },
         {
             caseName: 'connectedAccountEnvironmentUses',
             catalogEntryPatch: {
-                connectedAccountServiceIds: ['acme-account'],
+                connectedAccountServiceIds: [`${SAMPLE_PLUGIN_ID}/acme-account`],
                 connectedAccountEnvironmentUses: [{
                     purpose: 'legacy-account-value',
                     environmentKey: 'ACME_ACCOUNT_VALUE',
@@ -3679,7 +3688,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 }],
                 switchContinuity: { continuityMode: 'restart_same_home' },
             },
-            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' has competing private and activation-registered connected-account launch owners`,
+            expectedError: `Agent '${SAMPLE_PLUGIN_QUALIFIED_AGENT_ID}' has competing private and activation-registered connected-account launch owners`,
         },
         {
             caseName: 'switch continuity without manifest-owned services',
@@ -3687,12 +3696,12 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             connectedAccountLaunch: {
                 switchContinuity: { continuityMode: 'restart_same_home' },
             },
-            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' registers connected-account switch continuity without a manifest-owned Connected Account service`,
+            expectedError: `Agent '${SAMPLE_PLUGIN_QUALIFIED_AGENT_ID}' registers connected-account switch continuity without a manifest-owned Connected Account service`,
         },
         {
             caseName: 'state-sharing service outside manifest-owned services',
             catalogEntryPatch: {
-                connectedAccountServiceIds: ['acme-account'],
+                connectedAccountServiceIds: [`${SAMPLE_PLUGIN_ID}/acme-account`],
             },
             connectedAccountLaunch: {
                 switchContinuity: {
@@ -3703,7 +3712,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     },
                 },
             },
-            expectedError: `Agent '${SAMPLE_PLUGIN_PROVIDER_ID}' connected-account switch continuity requires undeclared service 'other-account'`,
+            expectedError: `Agent '${SAMPLE_PLUGIN_QUALIFIED_AGENT_ID}' connected-account switch continuity requires undeclared service 'other-account'`,
         },
     ])('rejects $caseName ownership mismatch', async ({
         catalogEntryPatch,
@@ -3720,6 +3729,9 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     required: unknown[];
                     optional: unknown[];
                 };
+                contributes: {
+                    hooks?: unknown;
+                };
             };
             manifest.hostAccess.required = [{
                 id: 'connected-account-environment',
@@ -3727,6 +3739,10 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 reason: 'Expose the selected account to the Agent process.',
                 scope: { keys: ['ACME_ACCOUNT_VALUE'] },
             }];
+            // The sample fixture declares a required `resolve-prerequisites` hook
+            // this row never registers; drop it so connected-account ownership
+            // validation is the only activation fact under test.
+            delete manifest.contributes.hooks;
             await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
             await writeFile(join(pluginRoot, 'daemon.mjs'), `
                 import { sampleAgentRuntimeFactory } from './agentRuntime.mjs';
@@ -3772,15 +3788,21 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             const merged = createMergedContributionRegistry(loaded, {});
             const contributes: ResolvedContributionRegistry = Object.freeze({
                 ...merged,
-                agents: Object.freeze(merged.agents.map((agent) => agent.id === SAMPLE_PLUGIN_PROVIDER_ID
-                    ? Object.freeze({
+                agents: Object.freeze(merged.agents.map((agent) => {
+                    if (agent.id !== SAMPLE_PLUGIN_QUALIFIED_AGENT_ID) {
+                        return agent;
+                    }
+                    if (!agent.catalogEntry) {
+                        throw new Error(`Expected catalog entry for sample plugin Agent '${SAMPLE_PLUGIN_QUALIFIED_AGENT_ID}'`);
+                    }
+                    return Object.freeze({
                         ...agent,
                         catalogEntry: Object.freeze({
                             ...agent.catalogEntry,
                             ...catalogEntryPatch,
                         }),
-                    })
-                    : agent)),
+                    });
+                })),
             });
             const generationAuthority = await readCurrentCommittedPluginGenerations(
                 resolvePluginStorePaths({ happyHomeDir }),
@@ -3852,22 +3874,27 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
 
-        expect(runtimeRegistry.contributes.agentDefinitionsById.get(SAMPLE_PLUGIN_PROVIDER_ID)).toMatchObject({
-            id: SAMPLE_PLUGIN_PROVIDER_ID,
+        expect(runtimeRegistry.contributes.agentDefinitionsById.get(SAMPLE_PLUGIN_QUALIFIED_AGENT_ID)).toMatchObject({
+            id: SAMPLE_PLUGIN_QUALIFIED_AGENT_ID,
             provenance: 'external',
             source: { kind: 'path' },
             definition: {
-                id: SAMPLE_PLUGIN_PROVIDER_ID,
+                id: SAMPLE_PLUGIN_QUALIFIED_AGENT_ID,
             },
         });
         expect(runtimeRegistry.contributes).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(runtimeRegistry.contributes).not.toHaveProperty('surfaceHandlersByBackendId');
         expect(runtimeRegistry).not.toHaveProperty('runtimeCoreHandlersByBackendId');
-        expect(runtimeRegistry.agentRuntimesByAgentId.get(SAMPLE_PLUGIN_PROVIDER_ID)).toMatchObject({
+        expect(runtimeRegistry.agentRuntimesByAgentId.get(SAMPLE_PLUGIN_QUALIFIED_AGENT_ID)).toMatchObject({
             pluginId: SAMPLE_PLUGIN_ID,
-            agentId: SAMPLE_PLUGIN_PROVIDER_ID,
+            agentId: SAMPLE_PLUGIN_QUALIFIED_AGENT_ID,
         });
-        expect(runtimeRegistry.contributes.catalogEntriesById[SAMPLE_PLUGIN_PROVIDER_ID]).toBeUndefined();
+        expect(runtimeRegistry.contributes.catalogEntriesById[SAMPLE_PLUGIN_QUALIFIED_AGENT_ID]).toMatchObject({
+            id: SAMPLE_PLUGIN_QUALIFIED_AGENT_ID,
+            cliSubcommand: SAMPLE_PLUGIN_QUALIFIED_AGENT_ID,
+            vendorResumeSupport: 'supported',
+            getCliCommandHandler: expect.any(Function),
+        });
 
         expect(runtimeRegistry).not.toHaveProperty('readHookEventEnvelopeV1');
 

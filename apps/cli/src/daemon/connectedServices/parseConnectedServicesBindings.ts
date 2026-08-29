@@ -8,6 +8,7 @@
 
 import {
   BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+  ConnectedAccountServiceKeySchema,
   ConnectedServiceBindingsV1Schema,
   type ConnectedAccountServiceKey,
   type ConnectedServiceBindingsV1 as ProtocolConnectedServicesBindingsV1,
@@ -42,7 +43,9 @@ export function parseConnectedServiceBindingSelections(raw: unknown): ConnectedS
 
   const out: ConnectedServiceBindingSelection[] = [];
   for (const [serviceIdRaw, bindingRaw] of Object.entries(bindings)) {
-    const serviceId = serviceIdRaw as ConnectedAccountServiceKey;
+    const serviceIdParsed = ConnectedAccountServiceKeySchema.safeParse(serviceIdRaw);
+    if (!serviceIdParsed.success) continue;
+    const serviceId = serviceIdParsed.data;
     const source = bindingRaw.source;
     if (source !== 'connected') continue;
     const profileId = readTrimmedString(bindingRaw.profileId);

@@ -9,11 +9,11 @@
       "files": [
         {
           "relativePath": "react-native-web/voice-runtime-web/entry.mjs.bundle",
-          "digest": "sha256:146b038efe4df18f6437720c6a6426f0b2e8f78b3b5bd0945e50a37a023fef79",
-          "byteSize": 18726
+          "digest": "sha256:17858329820494ef0601d6aaa04a73d0e10aa6a93e088e2273c933a918b86a03",
+          "byteSize": 19814
         }
       ],
-      "digest": "sha256:43ec964e413c66d6e8f147b7f0563b639c205b5aac6599f7410310582efd6033",
+      "digest": "sha256:13413288de6562fdcfed70a51a4a1370becd5769b8f40305d5529e34f9927585",
       "builtWith": {
         "bundler": "vite",
         "version": "7.3.1"
@@ -42,16 +42,16 @@
         },
         {
           "relativePath": "react-native/voice-runtime-web/ios/src_voiceRuntime_tsx.chunk.bundle",
-          "digest": "sha256:2c8313727aecba6b50636a6bcce9a850e0befb444b73477bcdba506040d8c3f2",
-          "byteSize": 31453
+          "digest": "sha256:39724ce0042c16000d36ff48afb47414419d3d5bec18bb624c96eba2ab4ad715",
+          "byteSize": 32929
         },
         {
           "relativePath": "react-native/voice-runtime-web/ios/src_voiceRuntime_tsx.chunk.bundle.map",
-          "digest": "sha256:5790d2abdc58ad19bba5cb061b38bab15459eca80975d2a196cd389348de5efc",
-          "byteSize": 14117
+          "digest": "sha256:26fa88179e3f25dee24899b8b5524407994d5be8eda760887cd73acb117079f1",
+          "byteSize": 14772
         }
       ],
-      "digest": "sha256:34318c17b635cf69240ab4e61e156b423aa5926ac5c0529b90bc7fdc996a06cd",
+      "digest": "sha256:aca9899971d7a9604c66b80739153b26969599c43699453c0be81557c9d7c9b7",
       "builtWith": {
         "bundler": "repack",
         "version": "5.2.5"
@@ -85,16 +85,16 @@
         },
         {
           "relativePath": "react-native/voice-runtime-web/android/src_voiceRuntime_tsx.chunk.bundle",
-          "digest": "sha256:2c8313727aecba6b50636a6bcce9a850e0befb444b73477bcdba506040d8c3f2",
-          "byteSize": 31453
+          "digest": "sha256:39724ce0042c16000d36ff48afb47414419d3d5bec18bb624c96eba2ab4ad715",
+          "byteSize": 32929
         },
         {
           "relativePath": "react-native/voice-runtime-web/android/src_voiceRuntime_tsx.chunk.bundle.map",
-          "digest": "sha256:5790d2abdc58ad19bba5cb061b38bab15459eca80975d2a196cd389348de5efc",
-          "byteSize": 14117
+          "digest": "sha256:26fa88179e3f25dee24899b8b5524407994d5be8eda760887cd73acb117079f1",
+          "byteSize": 14772
         }
       ],
-      "digest": "sha256:0759b6a5438463f6c1c9a688c89f872c7a5a16327c81696c11a61344316eabd3",
+      "digest": "sha256:7475091341489ef56b3a440d07cf546860281cc34361f7cacdf8332bd5ea042d",
       "builtWith": {
         "bundler": "repack",
         "version": "5.2.5"

@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,11 +8,13 @@ import { createManagedServiceProcessSupervisorHost } from './managedProcessSuper
 import type { ManagedServiceProcessSpec } from './managedProcessSupervisor';
 import type { ManagedServiceProcessDurabilityOwner } from './managedServiceDurability';
 import { createStablePluginExecService } from './exec';
+import type { terminateProcessCustodyByJob as terminateProcessCustodyByJobOwner } from '@/subprocess/supervision/processCustody';
 
 // The custody helper's OS job operations are a genuine system boundary: these
 // tests fake only terminate/query while the spawn wrap, the post-assignment
 // handshake, custody projection, and every internal decision stay real.
-const terminateProcessCustodyByJob = vi.hoisted(() => vi.fn(async () => 'absent' as const));
+const terminateProcessCustodyByJob = vi.hoisted(() =>
+    vi.fn<typeof terminateProcessCustodyByJobOwner>(async () => 'absent' as const));
 
 vi.mock('@/subprocess/supervision/processCustody', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/subprocess/supervision/processCustody')>();
@@ -52,7 +53,6 @@ if (process.env.FIXTURE_CUSTODY_WITHOUT_HANDSHAKE === '1') {
     process.exit(4);
 }
 writeFileSync(handshakePath, JSON.stringify({ v: 1, pid: process.pid, job: jobName }) + '\\n');
-writeFileSync(handshakePath + '.test-target-pid', String(process.pid));
 const killMarker = handshakePath + '.kill';
 const poll = setInterval(() => {
     if (existsSync(killMarker)) {
@@ -99,8 +99,17 @@ function windowsManagedSpec(): ManagedServiceProcessSpec {
 
 describe('managed SVC09 Windows job custody', () => {
     it('refuses to spawn a Windows managed server when the custody helper is unavailable', async () => {
-        const spawn = vi.fn(async () => {
-            throw new Error('must not spawn');
+        const resolveExecutable = vi.fn(async () => {
+            throw new Error('must not resolve');
+        });
+        const exec = createStablePluginExecService({
+            allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+            resolveExecutable,
+            resolvePath: async () => {
+                throw new Error('must not resolve a path');
+            },
         });
         const host = createManagedServiceProcessSupervisorHost({
             platform: 'win32',
@@ -111,13 +120,13 @@ describe('managed SVC09 Windows job custody', () => {
             pluginId: 'fixture.plugin',
             contributionId: 'fixture.agent',
             isGenerationCurrent: () => true,
-            exec: { spawn, run: spawn },
+            exec,
         });
 
         await expect(servers.supervise(windowsManagedSpec())).rejects.toMatchObject({
             code: 'plugin_managed_server_custody_failed',
         });
-        expect(spawn).not.toHaveBeenCalled();
+        expect(resolveExecutable).not.toHaveBeenCalled();
     });
 
     it('establishes job custody, projects the target pid and job identity, and terminates by job', async () => {
@@ -129,6 +138,12 @@ describe('managed SVC09 Windows job custody', () => {
             allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
             signal: new AbortController().signal,
             isGenerationCurrent: () => true,
+            resolveExecutable: async () => {
+                throw new Error('preauthorized launch must not resolve an executable');
+            },
+            resolvePath: async () => {
+                throw new Error('preauthorized launch must not resolve a path');
+            },
             authorizeLaunch: async () => ({
                 command: '/bin/sleep',
                 args: ['30'],
@@ -157,11 +172,7 @@ describe('managed SVC09 Windows job custody', () => {
 
         // The projected pid is the TARGET pid from the post-assignment
         // handshake — never the pid of the process the host spawned itself.
-        const targetPidSidecar = readdirSync(root)
-            .filter((entry) => entry.endsWith('.test-target-pid'))
-            .map((entry) => join(root, entry))
-            .map((path) => Number(readFileSync(path, 'utf8')))
-            .at(0);
+        const targetPidSidecar = handle.snapshot().pid;
         expect(targetPidSidecar).toBeGreaterThan(0);
         expect(handle.snapshot().pid).toBe(targetPidSidecar);
 
@@ -203,6 +214,12 @@ describe('managed SVC09 Windows job custody', () => {
             allowedExecutables: [{ kind: 'systemTool', id: 'fixture.server' }],
             signal: new AbortController().signal,
             isGenerationCurrent: () => true,
+            resolveExecutable: async () => {
+                throw new Error('preauthorized launch must not resolve an executable');
+            },
+            resolvePath: async () => {
+                throw new Error('preauthorized launch must not resolve a path');
+            },
             authorizeLaunch: async () => ({
                 command: helperPath,
                 args: [],

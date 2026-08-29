@@ -300,6 +300,7 @@ describe('createNativeAgentSessionHostServiceOwners', () => {
                     });
                     return {
                         send: async () => ({ status: 'admitted' }),
+                        cancel: async ({ turnId }) => ({ status: 'requested', turnId }),
                         watch: () => ({ dispose: () => undefined }),
                         dispose: async () => undefined,
                     };

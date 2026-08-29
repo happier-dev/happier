@@ -1,6 +1,7 @@
 import {
   ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema,
   ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
+  ConnectedServiceIdSchema,
   type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -27,9 +28,14 @@ export function registerMachineConnectedServiceQuotaRpcHandlers(params: Readonly
     async (raw: unknown): Promise<ConnectedServiceQuotaRecoveryCreditConsumeResponseV1> => {
       const request = ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema.safeParse(raw);
       if (!request.success) return failure('invalid_parameters');
+      const legacyServiceId = ConnectedServiceIdSchema.safeParse(request.data.serviceId);
+      if (!legacyServiceId.success) return failure('invalid_parameters');
 
       try {
-        const daemonResponse = await notifyDaemonConnectedServiceQuotaRecoveryCreditConsume(request.data);
+        const daemonResponse = await notifyDaemonConnectedServiceQuotaRecoveryCreditConsume({
+          ...request.data,
+          serviceId: legacyServiceId.data,
+        });
         if (daemonResponse?.error) {
           return failure('daemon_control_failed', String(daemonResponse.error));
         }

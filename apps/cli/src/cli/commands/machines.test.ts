@@ -7,6 +7,17 @@ import { handleMachinesCommand } from './machines';
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
 describe('machines root command', () => {
+  it('shows help from the list subcommand without reading credentials', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const readCredentialsFn = vi.fn();
+
+    await handleMachinesCommand(['list', '--help'], { readCredentialsFn });
+
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join('\n')).toContain('happier machines list');
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it('uses the real stored-credential source so a token-only PAT reaches machine transport', async () => {
     credentialBoundary.readStoredCredentials.mockResolvedValue({ token: 'pat', encryption: null, credentialProvenance: 'api_token' });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);

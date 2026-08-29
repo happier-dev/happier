@@ -9,7 +9,7 @@ import { assertSessionCommandArguments } from '@/cli/commands/session/shared/ass
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { configuration } from '@/configuration';
 import { cmd, errorFrame, gray, yellow } from '@happier-dev/cli-common/output';
-import type { PublicActionResultById } from '@happier-dev/protocol';
+import { SessionListResultSchema } from '@happier-dev/protocol';
 
 const SESSION_LIST_USAGE = `Usage: ${SESSION_HELP_LINES.list}`;
 const SESSION_LIST_BOOLEAN_FLAGS = ['--active', '--archived', '--include-system', '--resumable', '--plain', '--json'] as const;
@@ -104,10 +104,10 @@ export async function cmdSessionList(
     }
     throw new Error(result.errorMessage ?? result.errorCode);
   }
-  const payload = result.data as PublicActionResultById['session.list'];
-  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_list', json, result: payload })) {
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_list', json, result: result.data })) {
     return;
   }
+  const payload = SessionListResultSchema.parse(result.data);
   const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
   const rows = Array.isArray(payload?.rows) ? payload.rows : [];
   const nextCursor = typeof payload?.nextCursor === 'string' ? payload.nextCursor : payload?.nextCursor === null ? null : null;

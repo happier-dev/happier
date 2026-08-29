@@ -47,7 +47,7 @@ func callSysctl(mib []uint32, old []byte, size *uintptr) error {
 		oldPtr = uintptr(unsafe.Pointer(&old[0]))
 	}
 	_, _, errno := syscall.Syscall6(
-		syscall.SYS_SYSCTL,
+		syscall.SYS___SYSCTL,
 		uintptr(unsafe.Pointer(&mib[0])),
 		uintptr(len(mib)),
 		oldPtr,
@@ -59,6 +59,21 @@ func callSysctl(mib []uint32, old []byte, size *uintptr) error {
 		return errno
 	}
 	return nil
+}
+
+// Windows Job Object commands are intentionally unavailable on Darwin. Keep
+// the command surface total so the shared main dispatcher compiles while each
+// platform still fails closed outside its owned primitive.
+func runCustodyCommand(args []string) error {
+	return fmt.Errorf("Windows job custody is unavailable on Darwin")
+}
+
+func terminateCustodyJob(args []string) error {
+	return fmt.Errorf("Windows job custody is unavailable on Darwin")
+}
+
+func queryCustodyJob(args []string) error {
+	return fmt.Errorf("Windows job custody is unavailable on Darwin")
 }
 
 // sysctlBuffer returns the exact bytes of one numeric-MIB sysctl node: a size

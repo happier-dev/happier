@@ -1679,7 +1679,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       if (request.kind !== 'questions') throw new Error('questions expected');
       const question = request.questions[0];
       if (!question || question.type !== 'singleChoice') throw new Error('single choice expected');
-      visitedPages.push(question.choices.map((choice) => choice.label));
+      visitedPages.push(question.choices.map((choice) => choice.label ?? choice.id));
       const desiredLabel = visitedPages.length === 1
         ? 'Next page'
         : visitedPages.length === 2

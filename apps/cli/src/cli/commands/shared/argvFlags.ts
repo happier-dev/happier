@@ -38,6 +38,14 @@ export function readCommandPositionals(
 }
 
 export function readFlagValue(argv: readonly string[], flag: string): string | null {
+  const raw = readRawFlagValue(argv, flag);
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Reads a flag value without changing the caller-owned bytes. */
+export function readRawFlagValue(argv: readonly string[], flag: string): string | null {
   const idx = argv.findIndex((value) => value === flag || value.startsWith(`${flag}=`));
   if (idx < 0) return null;
   const argument = argv[idx]!;
@@ -45,8 +53,7 @@ export function readFlagValue(argv: readonly string[], flag: string): string | n
     ? argv[idx + 1]
     : argument.slice(flag.length + 1);
   if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return raw;
 }
 
 export function readFlagValueUnlessFlagToken(argv: readonly string[], flag: string): string | null {

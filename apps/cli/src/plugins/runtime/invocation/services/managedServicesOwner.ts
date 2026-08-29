@@ -1462,19 +1462,20 @@ function wrapHandle(
         lifetimeSignal: AbortSignal,
     ) => Promise<ManagedServiceResponse>,
     signal?: AbortSignal,
-    onTerminal?: () => void,
+    onTerminalDetected?: () => void,
+    onTerminalComplete?: () => void,
 ): ManagedServiceHandle {
     let underlyingCleanupPromise: Promise<void> | null = null;
     let cleanupPromise: Promise<void> | null = null;
     let underlyingCleanupComplete = false;
     let credentialCleanupComplete = false;
     let terminal = false;
+    let terminalCompletionPublished = false;
     const requestLifetime = new AbortController();
     const markTerminal = (): void => {
         if (terminal) return;
         terminal = true;
         requestLifetime.abort('Managed-service handle is terminal');
-        onTerminal?.();
     };
     const cleanup = async (): Promise<void> => {
         if (credentialCleanupComplete) return;
@@ -1545,10 +1546,7 @@ function wrapHandle(
             cleanupError = error;
         }
         let observationError: unknown;
-        if (
-            operationError === undefined
-            && cleanupError === undefined
-        ) {
+        if (operationError === undefined) {
             try {
                 detachTerminalObservation();
             } catch (error) {
@@ -1577,6 +1575,10 @@ function wrapHandle(
         }
         signal?.removeEventListener('abort', abort);
         markTerminal();
+        if (!terminalCompletionPublished) {
+            terminalCompletionPublished = true;
+            onTerminalComplete?.();
+        }
     };
     abort = (): void => {
         void runWithFinalization(
@@ -1593,6 +1595,7 @@ function wrapHandle(
                 snapshot.state === 'stopped'
                 || processTerminal
             ) {
+                onTerminalDetected?.();
                 void runWithFinalization(
                     async () => await handle.dispose(),
                 ).catch(() => undefined);
@@ -2712,7 +2715,12 @@ export function createManagedServicesOwner(input: Readonly<{
         }
     };
     const managedServiceEntriesForExplicitStartOperation = (
-        operation: ManagedProviderExplicitStartOperationEntry,
+        operation: Readonly<{
+            operationId: string;
+            pluginId: string;
+            contributionQualifiedId: string;
+            generation: string;
+        }>,
     ): readonly ManagedServiceSemanticEntry[] => (
         [...semanticEntries.values()]
             .filter(isManagedServiceSemanticEntry)
@@ -3298,16 +3306,22 @@ export function createManagedServicesOwner(input: Readonly<{
                             scope.signal,
                             () => {
                                 entry.terminal = true;
+                                const operation =
+                                    explicitStartOperationForScope(scope);
+                                if (operation) operation.terminal = true;
+                            },
+                            () => {
                                 removeSemanticEntry(entry);
                                 const operation =
                                     explicitStartOperationForScope(scope);
-                                if (!operation || operation.terminal) return;
-                                operation.terminal = true;
-                                void retireExplicitStartOperation(
-                                    operation,
-                                    false,
-                                )
-                                    .catch(() => undefined);
+                                if (
+                                    operation?.terminal
+                                    && managedServiceEntriesForExplicitStartOperation(
+                                        operation,
+                                    ).length === 0
+                                ) {
+                                    removeSemanticEntry(operation);
+                                }
                             },
                         );
                         if (context.managedProvider) {
@@ -3449,6 +3463,29 @@ export function createManagedServicesOwner(input: Readonly<{
             if (existing && isManagedServiceSemanticEntry(existing)) {
                 return Object.freeze({ status: 'unavailable' as const });
             }
+            const retainedServices =
+                managedServiceEntriesForExplicitStartOperation({
+                    operationId,
+                    pluginId,
+                    contributionQualifiedId,
+                    generation,
+                });
+            if (retainedServices.some((entry) => entry.terminal)) {
+                for (const retained of retainedServices) {
+                    if (retained.terminal) await retireEntry(retained);
+                }
+                existing = semanticEntries.get(entryKey);
+                if (existing && isManagedServiceSemanticEntry(existing)) {
+                    return Object.freeze({ status: 'unavailable' as const });
+                }
+            }
+            if (
+                existing
+                && managedServiceEntriesForExplicitStartOperation(existing)
+                    .some((entry) => entry.terminal)
+            ) {
+                existing.terminal = true;
+            }
             if (
                 existing
                 && existing.purposeBindingsEqualityKey
@@ -3473,8 +3510,13 @@ export function createManagedServicesOwner(input: Readonly<{
                 }
                 try {
                     const value = await existing.establishment;
+                    if (existing.terminal) {
+                        await retireExplicitStartOperation(existing);
+                        return Object.freeze({
+                            status: 'not_current' as const,
+                        });
+                    }
                     return !permanentRetirementStarted
-                        && !existing.terminal
                         && semanticEntries.get(entryKey) === existing
                         && readsCurrent(operationInput.isCurrent)
                         ? Object.freeze({ status: 'established' as const, value })
@@ -3482,6 +3524,25 @@ export function createManagedServicesOwner(input: Readonly<{
                 } catch (error) {
                     throw error;
                 }
+            }
+
+            // A terminal physical service can outlive its explicit-start
+            // claim while cleanup is incomplete.  Re-admit through that
+            // retained custody before invoking the caller's establishment
+            // callback; otherwise a new launch attempt could race an exact
+            // child whose absence has not been proven.
+            const orphanedRetainedServices =
+                managedServiceEntriesForExplicitStartOperation({
+                    operationId,
+                    pluginId,
+                    contributionQualifiedId,
+                    generation,
+                });
+            if (orphanedRetainedServices.some((entry) => !entry.terminal)) {
+                return Object.freeze({ status: 'unavailable' as const });
+            }
+            for (const retained of orphanedRetainedServices) {
+                await retireEntry(retained);
             }
 
             const abort = new AbortController();
@@ -3820,7 +3881,17 @@ export function createManagedServicesOwner(input: Readonly<{
         async dispose() {
             permanentRetirementStarted = true;
             while (semanticEntries.size > 0) {
-                const retiring = [...semanticEntries.values()];
+                // Physical service custody is the leaf authority. Retire it
+                // before its explicit-start claim so two semantic entries do
+                // not concurrently join and then erase the same failed
+                // cleanup attempt.
+                const entries = [...semanticEntries.values()];
+                const physical = entries.filter(
+                    isManagedServiceSemanticEntry,
+                );
+                const retiring = physical.length > 0
+                    ? physical
+                    : entries;
                 const results = await Promise.allSettled(
                     retiring.map(async (entry) => {
                         await retireSemanticEntry(entry);

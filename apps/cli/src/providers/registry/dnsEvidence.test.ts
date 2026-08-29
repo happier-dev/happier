@@ -175,6 +175,7 @@ describe('provider connection DNS evidence', () => {
     const base = customConnectionSettings();
     const baseConnection = base.connections[0]!;
     if (baseConnection.source.kind !== 'custom') throw new Error('Expected custom fixture');
+    const baseSourceTemplate = baseConnection.source.template;
     const providerSettings = ProviderSettingsV1Schema.parse({
       ...base,
       connections: Array.from({ length: 12 }, (_, index) => ({
@@ -183,7 +184,7 @@ describe('provider connection DNS evidence', () => {
         source: {
           kind: 'custom',
           template: {
-            ...baseConnection.source.template,
+            ...baseSourceTemplate,
             v: 1,
             name: `Custom ${index}`,
             endpointTemplates: [{

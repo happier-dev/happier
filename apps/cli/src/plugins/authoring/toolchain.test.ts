@@ -786,7 +786,17 @@ describe('runPluginAuthorToolchain', () => {
         buildManagedPnpmEnvironment: (env = {}) => env,
         ensureManagedJavaScriptRuntimeCommand: async () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
         resolveNativeTypeScriptBin: () => '/fixture/plugin/node_modules/@typescript/native/bin/tsc',
-        materializeBundledPrepublicationPackages: async () => ({ packageRootsByName, cleanup }),
+        materializeBundledPrepublicationPackages: async (packageNames) => {
+          // The materialization request must name exactly the author-declared
+          // packages — never the predecessor fixed set. A manual plugin-ui or
+          // triage-protocol injection here would be the retired fixed-set path
+          // surviving inside the toolchain.
+          expect(packageNames).toEqual([
+            '@happier-dev/channels-protocol',
+            '@happier-dev/plugin-sdk',
+          ]);
+          return { packageRootsByName, cleanup };
+        },
         spawn,
         processEnv: {},
       });

@@ -25,6 +25,10 @@ import {
 import { PluginStateInstallRecordSchema } from '@/plugins/store/state';
 import { createSelectedPluginOptionalAccess } from '@/plugins/daemon/optionalAccessSelections';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import type {
+  PinnedHttpStreamRequest,
+  PinnedHttpStreamResponse,
+} from '@/network/pinnedHttp';
 
 const filesystemBoundary = vi.hoisted(() => ({
   retiredMarkerPath: '',
@@ -87,6 +91,35 @@ const FIXTURE_AGENT_ID = 'fixture-agent';
 const FIXTURE_MCP_ACCESS_ID = 'fixture-mcp';
 const FIXTURE_MCP_SERVER_ID = 'fixture-tools';
 const FIXTURE_MCP_SUBSCRIPTIONS_GLOBAL = '__happier_fixture_mcp_subscriptions__';
+const FIXTURE_VALIDATED_ADDRESS = '203.0.114.10';
+
+function createFixtureNetworkDependencies() {
+  const resolveNetworkAddresses = vi.fn(async (hostname: string) => {
+    if (hostname !== 'tenant.example.test') {
+      throw new Error(`Unexpected DNS lookup for ${hostname}`);
+    }
+    return Object.freeze([FIXTURE_VALIDATED_ADDRESS]);
+  });
+  const openPinnedStream = vi.fn(async (request: PinnedHttpStreamRequest) => {
+    if (!request.validatedAddresses.includes(FIXTURE_VALIDATED_ADDRESS)) {
+      throw new Error('Pinned HTTP fixture did not receive the admitted address');
+    }
+    const bytes = new TextEncoder().encode('{}');
+    let delivered = false;
+    return Object.freeze({
+      status: 200,
+      headers: Object.freeze({ 'content-type': 'application/json' }),
+      contentLength: bytes.byteLength,
+      read: async () => {
+        if (delivered) return null;
+        delivered = true;
+        return bytes;
+      },
+      cancel: () => {},
+    }) satisfies PinnedHttpStreamResponse;
+  });
+  return Object.freeze({ resolveNetworkAddresses, openPinnedStream });
+}
 
 type FixtureMcpResourceSubscription = {
   listener: (event: Readonly<{ uri: string }>) => void | Promise<void>;
@@ -428,8 +461,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
     const { happyHomeDir, pluginId } = await createFixture();
     const artifact = BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS[0];
     if (!artifact) throw new Error('Expected the generated bundled artifact fixture');
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    const networkDependencies = createFixtureNetworkDependencies();
 
     const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({
       loadResult: await loadInstalledPlugins({ happyHomeDir }),
@@ -444,6 +476,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
       happyHomeDir,
       contributes,
       generationAuthority,
+      networkDependencies,
     });
     try {
       const lease = await runtime.resolveConnectedAccountRuntime?.({
@@ -502,7 +535,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
       });
 
       expect(result).toMatchObject({ status: 'connected', accountId: 'fixture-account-id' });
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(networkDependencies.openPinnedStream).toHaveBeenCalledOnce();
       expect(filesystemBoundary.retiredMarkerChecks).toBe(0);
     } finally {
       await runtime.dispose();
@@ -744,8 +777,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
 
   it('keeps a retained G HTTP operation available while durable H is desired', async () => {
     const { happyHomeDir, pluginId, pluginRoot } = await createFixture();
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    const networkDependencies = createFixtureNetworkDependencies();
     const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({
       loadResult: await loadInstalledPlugins({ happyHomeDir }),
       provenance: 'external',
@@ -761,6 +793,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
       happyHomeDir,
       contributes,
       generationAuthority,
+      networkDependencies,
     });
     try {
       const lease = await runtime.resolveConnectedAccountRuntime?.({
@@ -820,7 +853,7 @@ describe('resolveExecutablePluginRuntimeRegistry bundled immutable currentness',
         status: 'connected',
         accountId: 'fixture-account-id',
       });
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(networkDependencies.openPinnedStream).toHaveBeenCalledOnce();
     } finally {
       await runtime.dispose();
     }

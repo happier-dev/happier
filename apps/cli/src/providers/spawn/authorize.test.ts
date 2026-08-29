@@ -714,6 +714,7 @@ describe('provider spawn authorization lifecycle', () => {
         observedValues.push([...values]);
         return {
           redact: (value) => value,
+          containsSensitiveValue: (value) => values.some((secret) => value.includes(secret)),
           values: () => values,
           add: () => {},
           snapshotRedactor: () => (value) => value,

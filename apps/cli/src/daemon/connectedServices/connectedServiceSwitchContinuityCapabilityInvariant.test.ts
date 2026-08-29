@@ -15,6 +15,7 @@ import {
   resolveExecutablePluginRuntimeRegistry,
   type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
 const acquireAuthoritativePluginRuntimeRegistryLease = vi.hoisted(() => vi.fn());
 vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
@@ -56,7 +57,12 @@ async function resolvePrimaryServiceId(
   if (!serviceId) {
     throw new Error(`missing public connected-account service declaration for ${agentId}`);
   }
-  return serviceId;
+  const legacyServiceId =
+    resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(serviceId);
+  if (!legacyServiceId) {
+    throw new Error(`missing released scalar service projection for ${serviceId}`);
+  }
+  return legacyServiceId;
 }
 
 async function declarationAdvertisesSwitchTransition(

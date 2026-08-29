@@ -7,6 +7,7 @@ import {
 import { resolveConnectedServiceRuntimeAuthRecoverySelection } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 import { ConnectedServiceRuntimeAuthSwitchAttemptTracker } from './ConnectedServiceRuntimeAuthSwitchAttemptTracker';
+import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import { buildConnectedServiceSwitchContinuationAttemptId } from '../sessionAuthSwitch/buildConnectedServiceSwitchContinuationAttemptId';
 
 /**
@@ -28,11 +29,12 @@ const externalClassification = {
     groupId: 'acme-gateway',
     groupGeneration: 3,
     expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+    quotaScope: 'account' as const,
     resetsAtMs: null,
     planType: null,
     rateLimits: null,
     source: 'structured_provider_error' as const,
-};
+} satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('qualified external connected-service runtime-auth failure contract', () => {
     it('attributes a sanitized classification to the exact external qualified service key', () => {
@@ -133,7 +135,10 @@ describe('qualified external connected-service runtime-auth failure contract', (
                 },
             },
         };
-        const switchAfterClassifiedFailure = vi.fn(async () => ({
+        const switchAfterClassifiedFailure = vi.fn(async (_input: Readonly<{
+            serviceId: string;
+            groupId: string;
+        }>) => ({
             status: 'observed_generation' as const,
             serviceId: EXTERNAL_SERVICE_KEY,
             groupId: 'acme-gateway',
@@ -144,19 +149,34 @@ describe('qualified external connected-service runtime-auth failure contract', (
             retryAtMs: null,
             excluded: [],
         }));
-        const continueAfterRuntimeAuthSwitch = vi.fn();
+        type ContinueAfterRuntimeAuthSwitch = NonNullable<
+            Parameters<typeof handleConnectedServiceRuntimeAuthFailureForSession>[0]['continueAfterRuntimeAuthSwitch']
+        >;
+        const continueAfterRuntimeAuthSwitch = vi.fn<ContinueAfterRuntimeAuthSwitch>(
+            async () => undefined,
+        );
         const restartSession = vi.fn();
 
         const result = await handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [tracked],
             switchCoordinator: { switchAfterClassifiedFailure } as never,
-            switchAttemptTracker: new ConnectedServiceRuntimeAuthSwitchAttemptTracker(),
+            switchAttemptTracker: new ConnectedServiceRuntimeAuthSwitchAttemptTracker({
+                nowMs: () => 1_000,
+                windowMs: 60_000,
+            }),
             emitSessionEvent: async () => undefined,
             restartSession,
             continueAfterRuntimeAuthSwitch,
             sessionId: 'sess_external_switch',
             switchesThisTurn: 0,
             classification: externalClassification,
+            resolveRegisteredRuntimeAuthFailureSource: async () => ({
+                serviceId: EXTERNAL_SERVICE_KEY,
+                groupId: 'acme-gateway',
+                profileId: 'gateway-primary',
+                generation: 3,
+                credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+            }),
         });
 
         expect(result.status).toBe('switch_attempted');

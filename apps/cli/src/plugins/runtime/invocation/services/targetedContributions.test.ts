@@ -114,7 +114,7 @@ const admittedOperationProtocol = defineContributionProtocol({
             required: true,
             input: { kind: 'contributorDefined' },
             resultSchema: admittedOperationResultSchema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
     },
 });

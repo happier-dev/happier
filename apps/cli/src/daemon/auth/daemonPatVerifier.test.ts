@@ -33,6 +33,7 @@ describe("createDaemonPatVerifier", () => {
             accountId: "account-a",
             introspect,
             now: () => now,
+            monotonicNow: () => now,
         });
 
         await expect(verifyPat(PAT)).resolves.toEqual(verifiedPat());
@@ -134,6 +135,7 @@ describe("createDaemonPatVerifier", () => {
         const verifyPat = createDaemonPatVerifier({
             accountId: "account-a",
             now: () => now,
+            monotonicNow: () => now,
             introspect: async () => {
                 calls += 1;
                 return verifiedPat({ credentialId: `credential-${calls}` });
@@ -146,12 +148,72 @@ describe("createDaemonPatVerifier", () => {
         expect(calls).toBe(2);
     });
 
+    it("keeps the promised 60-second positive TTL when the wall clock rolls backwards", async () => {
+        let wallNow = 1_000_000;
+        let monotonicNowMs = 0;
+        let calls = 0;
+        const verifyPat = createDaemonPatVerifier({
+            accountId: "account-a",
+            now: () => wallNow,
+            monotonicNow: () => monotonicNowMs,
+            introspect: async () => {
+                calls += 1;
+                return verifiedPat({ credentialId: `credential-${calls}` });
+            },
+        });
+
+        await expect(verifyPat(PAT)).resolves.toEqual(verifiedPat({ credentialId: "credential-1" }));
+
+        // An NTP correction steps the wall clock backwards while monotonic time
+        // still advances. The cached authority must expire on elapsed time, not
+        // survive the rollback for another wall-clock minute.
+        wallNow = 0;
+        monotonicNowMs = 59_999;
+        await expect(verifyPat(PAT)).resolves.toEqual(verifiedPat({ credentialId: "credential-1" }));
+        expect(calls).toBe(1);
+
+        monotonicNowMs = 60_000;
+        await expect(verifyPat(PAT)).resolves.toEqual(verifiedPat({ credentialId: "credential-2" }));
+        expect(calls).toBe(2);
+    });
+
+    it("still enforces absolute PAT expiry on the wall clock during a rollback", async () => {
+        let wallNow = 0;
+        let monotonicNowMs = 0;
+        let calls = 0;
+        const verifyPat = createDaemonPatVerifier({
+            accountId: "account-a",
+            now: () => wallNow,
+            monotonicNow: () => monotonicNowMs,
+            introspect: async () => {
+                calls += 1;
+                return verifiedPat({
+                    expiresAt: new Date(calls === 1 ? 30_000 : 130_000),
+                    credentialId: `credential-${calls}`,
+                });
+            },
+        });
+
+        await verifyPat(PAT);
+        // The positive TTL has not elapsed, but the PAT itself expired on the
+        // wall clock: the cache must not serve it past absolute expiry, and the
+        // refreshed credential takes over from the wall-clock expiry onward.
+        wallNow = 30_000;
+        monotonicNowMs = 10_000;
+        await expect(verifyPat(PAT)).resolves.toEqual(verifiedPat({
+            expiresAt: new Date(130_000),
+            credentialId: "credential-2",
+        }));
+        expect(calls).toBe(2);
+    });
+
     it("uses the earlier PAT expiry rather than extending it to the cache maximum", async () => {
         let now = 0;
         let calls = 0;
         const verifyPat = createDaemonPatVerifier({
             accountId: "account-a",
             now: () => now,
+            monotonicNow: () => now,
             introspect: async () => {
                 calls += 1;
                 return verifiedPat({ expiresAt: new Date(30_000) });
@@ -176,6 +238,7 @@ describe("createDaemonPatVerifier", () => {
         const verifyPat = createDaemonPatVerifier({
             accountId: "account-a",
             now: () => now,
+            monotonicNow: () => now,
             introspect: async () => {
                 await introspectionReleased;
                 return verifiedPat({ expiresAt: new Date(1_000) });
@@ -196,6 +259,7 @@ describe("createDaemonPatVerifier", () => {
         const verifyPat = createDaemonPatVerifier({
             accountId: "account-a",
             now: () => now,
+            monotonicNow: () => now,
             introspect: async () => {
                 calls += 1;
                 return revoked ? { ok: false, code: "invalid_token" } : verifiedPat();
@@ -218,6 +282,7 @@ describe("createDaemonPatVerifier", () => {
         const verifyPat = createDaemonPatVerifier({
             accountId: "account-a",
             now: () => now,
+            monotonicNow: () => now,
             introspect: async () => {
                 calls += 1;
                 if (!available) {

@@ -30,7 +30,7 @@ describe('projectConnectedServiceRuntimeAuthTargetInput', () => {
     const request = projectConnectedServiceRuntimeAuthTargetInput({
       agentId: 'claude',
       materializedSelection: {
-        serviceId: 'claude-subscription',
+        serviceId: 'happier.agent.claude/claude-subscription',
         profileId: 'team',
         credential,
         record: credential,
@@ -58,7 +58,7 @@ describe('projectConnectedServiceRuntimeAuthTargetInput', () => {
       readProviderAccount: expect.any(Function),
       readProviderUsage: expect.any(Function),
       selection: {
-        serviceId: 'claude-subscription',
+        serviceId: 'happier.agent.claude/claude-subscription',
         profileId: 'team',
         sourceProviderAccountId: 'team-account',
         sourceAccountLabel: 'team@example.com',
@@ -76,7 +76,7 @@ describe('projectConnectedServiceRuntimeAuthTargetInput', () => {
     await expect(request.applySelectedAuthGeneration?.()).resolves.toEqual({ ok: true });
     await expect(request.readProviderAccount?.()).resolves.toEqual({ account: 'team-account' });
     expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith(expect.objectContaining({
-      serviceId: 'claude-subscription',
+      serviceId: 'happier.agent.claude/claude-subscription',
       authGeneration: expect.objectContaining({ credential }),
     }));
     expect(providerRequest).toHaveBeenCalledWith('account/read');

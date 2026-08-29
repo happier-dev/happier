@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type { ConnectedServiceBindingSelection } from '../parseConnectedServicesBindings';
 import { resolveFirstPartyConnectedAccountServiceId } from './firstPartyConnectedAccountRequestAuthAdapter';
@@ -7,11 +7,11 @@ import type { AgentSpawnQualifiedPurposeBindingSnapshot } from './prepareConnect
 export class ConnectedServiceQualifiedPurposeAuthorityError extends Error {
   readonly code = 'connected_service_qualified_purpose_authority_unavailable' as const;
   readonly reason: 'snapshot_unavailable' | 'selected_service_unrepresented';
-  readonly missingServiceIds: readonly ConnectedServiceId[];
+  readonly missingServiceIds: readonly ConnectedAccountServiceKey[];
 
   constructor(params: Readonly<{
     reason: ConnectedServiceQualifiedPurposeAuthorityError['reason'];
-    missingServiceIds: readonly ConnectedServiceId[];
+    missingServiceIds: readonly ConnectedAccountServiceKey[];
   }>) {
     super(
       `Qualified Connected Account purpose authority is unavailable (${params.missingServiceIds.join(', ')})`,

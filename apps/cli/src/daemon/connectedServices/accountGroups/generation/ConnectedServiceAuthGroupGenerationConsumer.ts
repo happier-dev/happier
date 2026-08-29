@@ -1,5 +1,5 @@
 import type { ConnectedServiceSessionAuthSwitchReason } from '../../runtimeAuth/connectedServiceSessionAuthSwitchCore';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 import {
   applyConnectedServiceAuthGroupGenerationToSessions,
   type ApplyAuthGroupGenerationToSessionsResult,
@@ -87,7 +87,7 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
     }>>;
     enforceGroupUnavailable?(input: Readonly<{
       sessionId: string;
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       groupId: string;
     }>): Promise<void>;
     clearAdoptedGeneration(input: Readonly<{
@@ -96,7 +96,7 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
     }>): Promise<void | Readonly<{ status: 'cleared' | 'superseded' }>>;
     resolveGenerationApplicationScope(input: Readonly<{
       sessionId: string;
-      serviceId: ConnectedServiceId;
+      serviceId: ConnectedAccountServiceKey;
       applicationOwnerId: string | null;
     }>): Promise<
       | Readonly<{
@@ -124,7 +124,7 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
   }
 
   async consumeUnavailable(input: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     groupId: string;
     sessions: readonly Pick<LocalGenerationSession, 'sessionId' | 'activity'>[];
     signal?: AbortSignal;

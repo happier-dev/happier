@@ -1,11 +1,14 @@
 import {
     buildProviderAccountUsageRecordId,
+    buildQualifiedPluginContributionKey,
     ProviderAccountUsageSnapshotV1Schema,
     type ConnectedServiceQuotaSnapshotV1,
     type ProviderAccountUsageConfidenceV1,
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSourceV1,
     type ProviderAccountUsageSnapshotV1,
+    type QualifiedConnectedAccountQuotaSnapshotV4,
+    type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 
 function mapQuotaSourceToUsageSource(source: ConnectedServiceQuotaSnapshotV1['source']): ProviderAccountUsageSourceV1 {
@@ -34,12 +37,22 @@ function mapQuotaConfidenceToUsageConfidence(
     return 'unknown';
 }
 
+/**
+ * Quota observation input for the canonical scalar codec. `serviceId` accepts
+ * either the released bundled scalar id or the canonical qualified contribution
+ * key: both are canonical Connected Account service identities, and this
+ * mapper reads the field only as fallback/merge identity text.
+ */
+type ConnectedServiceQuotaObservation = Omit<ConnectedServiceQuotaSnapshotV1, 'serviceId'> & Readonly<{
+    serviceId: string;
+}>;
+
 export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation(input: Readonly<{
-    snapshot: ConnectedServiceQuotaSnapshotV1;
+    snapshot: ConnectedServiceQuotaObservation;
     observedAtMs?: number;
     sourceProviderAccountId?: string | null;
 }>): ProviderAccountUsageSnapshotV1 {
-    const snapshot = input.snapshot;
+    const snapshot: ConnectedServiceQuotaObservation = input.snapshot;
     const providerId = (snapshot.providerId ?? snapshot.serviceId).trim();
     const sourceProviderAccountId = typeof input.sourceProviderAccountId === 'string'
         ? input.sourceProviderAccountId.trim()
@@ -78,5 +91,36 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
         accountLabel: snapshot.accountLabel,
         ...(snapshot.recoveryCredits ? { recoveryCredits: snapshot.recoveryCredits } : {}),
         meters: snapshot.meters,
+    });
+}
+
+/**
+ * Canonical local hydration of a freshly opened qualified V4 quota row (server-side projection
+ * of the authoritative provider-account-usage record) into the PAU snapshot shape the daemon
+ * account-usage store records. The V4 row content is the quota-fields projection of the stored
+ * PAU record, and its validated source resolution pins `activeAccountId` to the stored provider
+ * account subject, so the record key reconstructs the same stable identity the writer used.
+ *
+ * This is a thin delegation to the incumbent scalar observation codec: the qualified ref is
+ * projected onto the canonical scalar observation shape (qualified contribution key as service
+ * id, the qualified account id as profile id) and the row's `activeAccountId` is handed over as
+ * the proven source provider account. There is deliberately no second record-key/subject/
+ * source/confidence/state implementation here.
+ */
+export function buildProviderAccountUsageSnapshotFromQualifiedQuotaRow(input: Readonly<{
+    ref: QualifiedConnectedAccountRef;
+    quota: QualifiedConnectedAccountQuotaSnapshotV4;
+    observedAtMs?: number;
+}>): ProviderAccountUsageSnapshotV1 {
+    const contributionKey = buildQualifiedPluginContributionKey(input.ref.service);
+    const { ref: _qualifiedRef, ...quotaFields } = input.quota;
+    return buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+        snapshot: {
+            ...quotaFields,
+            serviceId: contributionKey,
+            profileId: input.ref.accountId.trim(),
+        },
+        ...(input.observedAtMs === undefined ? {} : { observedAtMs: input.observedAtMs }),
+        sourceProviderAccountId: input.quota.activeAccountId,
     });
 }

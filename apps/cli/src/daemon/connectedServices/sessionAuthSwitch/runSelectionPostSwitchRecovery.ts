@@ -1,17 +1,17 @@
 import type {
   ConnectedServiceBindingsV1,
-  ConnectedServiceId,
+  ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import type { TrackedSession } from '@/daemon/types';
 
-type RuntimeAuthSelectionsByServiceId = ReadonlyMap<ConnectedServiceId, unknown>;
+type RuntimeAuthSelectionsByServiceId = ReadonlyMap<ConnectedAccountServiceKey, unknown>;
 
 type ProviderPostSwitchRecoverContext = Readonly<{
   tracked: TrackedSession;
   sessionId: string;
   normalizedBindings: ConnectedServiceBindingsV1;
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   action: 'hot_applied' | 'restart_requested';
   countTrackedClaimsForStatePath?: (statePath: string) => number;
   hasUnknownTrackedClaims?: boolean;
@@ -24,7 +24,7 @@ type RunSelectionPostSwitchRecoveryInput = Readonly<{
   tracked: TrackedSession;
   sessionId: string;
   normalizedBindings: ConnectedServiceBindingsV1;
-  serviceIds: ReadonlySet<ConnectedServiceId>;
+  serviceIds: ReadonlySet<ConnectedAccountServiceKey>;
   action: 'hot_applied' | 'restart_requested';
   runtimeAuthSelectionsByServiceId?: RuntimeAuthSelectionsByServiceId;
   countTrackedClaimsForStatePath?: (statePath: string) => number;
@@ -48,11 +48,11 @@ function readProviderPostSwitchRecover(value: unknown): ProviderPostSwitchRecove
 
 function listConnectedTargetServiceIds(input: Readonly<{
   normalizedBindings: ConnectedServiceBindingsV1;
-  serviceIds: ReadonlySet<ConnectedServiceId>;
-}>): ConnectedServiceId[] {
+  serviceIds: ReadonlySet<ConnectedAccountServiceKey>;
+}>): ConnectedAccountServiceKey[] {
   return Object.entries(input.normalizedBindings.bindingsByServiceId)
     .flatMap(([serviceIdRaw, binding]) => {
-      const serviceId = serviceIdRaw as ConnectedServiceId;
+      const serviceId = serviceIdRaw;
       if (binding.source !== 'connected') return [];
       if (!input.serviceIds.has(serviceId)) return [];
       return [serviceId];

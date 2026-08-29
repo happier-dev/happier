@@ -51,7 +51,7 @@ import {
   readQualifiedConnectedAccountGroupV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
 import {
-  resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
+  resolveQualifiedConnectedAccountServiceForIngressServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import {
   tryDecryptSessionMetadata,
@@ -359,7 +359,7 @@ async function executeUsageLimitControl(params: Readonly<{
       loadGroupPolicy: async (selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] | null) => {
         if (selectedAuth?.kind !== 'group') return null;
         const service =
-          resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(
+          resolveQualifiedConnectedAccountServiceForIngressServiceId(
             selectedAuth.serviceId,
           );
         if (!service) return null;

@@ -35,7 +35,12 @@ async function list(credentials: StoredCredentials, signal?: AbortSignal): Promi
 export async function handleMachinesCommand(args: string[], deps: Partial<MachinesDeps> = {}, signal?: AbortSignal): Promise<void> {
   try {
     const subcommand = args[0];
-    if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') { showHelp(); return; }
+    if (
+      !subcommand
+      || subcommand === 'help'
+      || args.includes('--help')
+      || args.includes('-h')
+    ) { showHelp(); return; }
     assertCommandArguments(args, { usage: USAGE, startIndex: 1, booleanFlags: ['--json'], maxPositionals: 0 });
     if (subcommand !== 'list' || readCommandPositionals(args, { startIndex: 1 }).length > 0) {
       throw Object.assign(new Error(`Unknown machines subcommand: ${subcommand}\n${USAGE}`), { code: 'unknown_subcommand' });

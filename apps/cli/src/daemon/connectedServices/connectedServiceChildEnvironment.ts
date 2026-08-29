@@ -1,5 +1,6 @@
 import {
   ConnectedServiceBindingsV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type ConnectedAccountServiceKey,
   type ConnectedServiceBindingSelectionV1,
   type ConnectedServiceProfileId,
@@ -48,17 +49,23 @@ export type ConnectedServiceRuntimeAuthMetadataSession = Readonly<{
 function serializeSelection(
   selection: ConnectedServiceResolvedSelection | ConnectedServiceChildSelection,
 ): SerializedConnectedServiceSelection {
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(
+    selection.serviceId,
+  );
+  if (!serviceId) {
+    throw new Error('connected_service_child_selection_service_id_invalid');
+  }
   if (selection.kind === 'profile') {
     return {
       kind: 'profile',
-      serviceId: selection.serviceId,
+      serviceId,
       profileId: selection.profileId,
       credentialRevision: selection.credentialRevision,
     };
   }
   return {
     kind: 'group',
-    serviceId: selection.serviceId,
+    serviceId,
     groupId: selection.groupId,
     activeProfileId: selection.activeProfileId,
     fallbackProfileId: selection.fallbackProfileId,
@@ -85,7 +92,7 @@ function readNonnegativeInteger(value: unknown): number | null {
 function parseSelection(value: unknown): SerializedConnectedServiceSelection | null {
   if (!isRecord(value)) return null;
   const kind = value.kind;
-  const serviceId = readTrimmedString(value.serviceId) as ConnectedAccountServiceKey;
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(value.serviceId);
   const credentialRevision = readTrimmedString(value.credentialRevision) as ConnectedServiceCredentialRevisionV1;
   if (!serviceId) return null;
   if (kind === 'profile') {
@@ -125,7 +132,10 @@ export function serializeConnectedServiceChildSelectionValues(
 }
 
 export function serializeConnectedServiceChildSelections(
-  selectionsByServiceId: ReadonlyMap<ConnectedAccountServiceKey, ConnectedServiceResolvedSelection> | undefined,
+  selectionsByServiceId: ReadonlyMap<
+    ConnectedAccountServiceKey,
+    ConnectedServiceResolvedSelection | ConnectedServiceChildSelection
+  > | undefined,
 ): string | null {
   if (!selectionsByServiceId || selectionsByServiceId.size === 0) return null;
   return JSON.stringify([...selectionsByServiceId.values()].map(serializeSelection));
@@ -192,7 +202,9 @@ export function resolveConnectedServiceRuntimeAuthContextFromSelection(
   if (!isRecord(selection)) {
     return { serviceId: fallbackServiceId, profileId: null, groupId: null };
   }
-  const serviceId = (readTrimmedString(selection.serviceId) || fallbackServiceId) as ConnectedAccountServiceKey;
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(
+    selection.serviceId,
+  ) ?? fallbackServiceId;
   if (selection.kind === 'group') {
     const groupGeneration = readNonnegativeInteger(selection.generation);
     return {

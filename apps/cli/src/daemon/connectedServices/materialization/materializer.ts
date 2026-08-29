@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceCredentialRevisionV1,
+  ConnectedAccountServiceKey,
   ConnectedServiceId,
   QualifiedConnectedAccountPurposeBindingV1,
 } from '@happier-dev/protocol';
@@ -50,7 +51,7 @@ export type ConnectedServiceMaterializationCredentialRefreshFailureCategory =
 export type ConnectedServicesMaterializationDiagnostic = Readonly<{
   code: string;
   providerId?: string;
-  serviceId?: ConnectedServiceId;
+  serviceId?: ConnectedAccountServiceKey;
   severity?: 'info' | 'warning' | 'blocking';
   requestedStateMode?: string;
   effectiveStateMode?: string;

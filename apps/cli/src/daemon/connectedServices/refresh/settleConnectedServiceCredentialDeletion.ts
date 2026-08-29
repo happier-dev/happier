@@ -1,9 +1,9 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 export type ConnectedServiceBindingRef = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: ConnectedAccountServiceKey;
   profileId: string;
 }>;
 

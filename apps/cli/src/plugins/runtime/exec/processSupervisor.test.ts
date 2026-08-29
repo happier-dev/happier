@@ -19,6 +19,7 @@ describe('spawnSupervisedPluginProcess', () => {
                 'const { spawn } = require("node:child_process");',
                 'const fs = require("node:fs");',
                 'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+                'child.unref();',
                 `fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));`,
             ].join('\n')],
             env: {},
