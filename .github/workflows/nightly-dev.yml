@@ -157,6 +157,7 @@ jobs:
     name: Verify exact nightly source CI
     needs: [prepare_release_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       actions: read
       contents: read
