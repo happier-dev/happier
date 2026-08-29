@@ -196,6 +196,12 @@ export type AgentCliSessionCommandParsedArgsV1 = Readonly<{
   agentArgs: readonly string[];
 }>;
 
+/** Exact non-secret Settings records owned by the Agent, kept scope-qualified. */
+export type AgentCliSessionCommandPluginSettingsV1 = Readonly<Partial<Record<
+  'account' | 'daemon',
+  Readonly<Record<string, unknown>>
+>>>;
+
 export type AgentCliSessionCommandBuildInputV1 = Readonly<{
   isExplicitCliSubcommand: boolean;
   parsed: AgentCliSessionCommandParsedArgsV1;
@@ -205,6 +211,13 @@ export type AgentCliSessionCommandBuildInputV1 = Readonly<{
    * host settings store.
    */
   settings: Readonly<Record<string, unknown>>;
+  /**
+   * Exact Settings record for the owning Agent contribution. This projection
+   * contains declaration defaults and persisted non-secret fields only; it is
+   * intentionally separate from host Account settings so an Agent cannot
+   * accidentally read a same-named field from the wrong scope.
+   */
+  pluginSettings: AgentCliSessionCommandPluginSettingsV1;
   /**
    * Current host-resolved launch environment for this Session. This is data,
    * not a process environment handle; process construction remains host-owned.
@@ -251,7 +264,7 @@ export type AgentCliSessionCommandDeclarationV1 = Readonly<{
   infoCommandPrefixes?: readonly (readonly string[])[];
   buildSessionOptions?: (
     input: AgentCliSessionCommandBuildInputV1,
-  ) => AgentCliSessionCommandBuildOptionsResultV1;
+  ) => AgentCliSessionCommandBuildOptionsResultV1 | Promise<AgentCliSessionCommandBuildOptionsResultV1>;
 }>;
 
 /** The normalized result of one Agent-owned CLI authentication probe. */

@@ -1,7 +1,67 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import {
+  admitCheckpointedPluginEventObservationV1,
+  createPluginEventAutomationSetupResultV1JsonSchema,
+} from '@happier-dev/plugin-sdk/events';
 import { PUBLIC_TOOLCHAIN_COMPATIBILITY_V1 } from '@happier-dev/plugin-sdk/browser';
+
+const PLUGIN_ID = 'examples.automation-event-source';
+const EVENT_ID = 'repository-pushed';
+
+/**
+ * Deterministic upstream facts keep this copyable example executable without
+ * credentials. A real source replaces this array with its provider poll and
+ * persists its provider cursor only after the helper returns checkpoint-safe.
+ */
+const EXAMPLE_PUSHES = Object.freeze([
+  Object.freeze({
+    occurrenceId: 'example/repository:refs/heads/main:7f6d9d4',
+    repository: 'example/repository',
+    ref: 'refs/heads/main',
+    occurredAt: 1_725_000_000_000,
+  }),
+]);
+
+function waitForRetirement(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
+
+/**
+ * Complete public source lifecycle: the SDK helper performs the current,
+ * revision-stable source scan, canonical admission, catalog report and source
+ * status report. The plugin remains only the upstream observation owner.
+ */
+export async function runRepositoryPushObserver(context: BackgroundServiceContext): Promise<void> {
+  for (const push of EXAMPLE_PUSHES) {
+    context.signal.throwIfAborted();
+    const disposition = await admitCheckpointedPluginEventObservationV1({
+      eventRef: { pluginId: PLUGIN_ID, localId: EVENT_ID },
+      sourceInstanceId: push.repository,
+      sourceContractVersion: 1,
+      occurrenceId: push.occurrenceId,
+      occurredAt: push.occurredAt,
+      observationReceivedAt: push.occurredAt + 1,
+      observedDelta: 1,
+      payload: { repository: push.repository, ref: push.ref },
+    }, context);
+    context.services.logger.info('automation_event_source.observation_settled', {
+      occurrenceId: push.occurrenceId,
+      disposition,
+    });
+    if (disposition.kind !== 'checkpointSafe') {
+      throw new Error('The example repository push remains unsettled; its provider checkpoint was not advanced.');
+    }
+  }
+
+  // A background service that resolves is no longer available. Stay healthy
+  // and idle until this exact plugin generation is retired by the host.
+  await waitForRetirement(context.signal);
+}
 
 const repositoryInputSchema = {
   type: 'object',
@@ -11,10 +71,10 @@ const repositoryInputSchema = {
 } satisfies PluginJsonSchema;
 
 export const { manifest, activate } = definePlugin({
-  id: 'examples.automation-event-source',
+  id: PLUGIN_ID,
   version: '0.1.0',
-  displayName: 'Automation Event Source Setup Example',
-  description: 'External Event source declaration and optional setup presentation.',
+  displayName: 'Automation Event Source Example',
+  description: 'External Event source declaration, setup presentation, and checkpoint-safe observer.',
   runtime: { apiVersion: Number(PUBLIC_TOOLCHAIN_COMPATIBILITY_V1.framework.runtime) as 1 },
   entrypoints: { daemon: './dist/index.js' },
   hostAccess: { required: [], optional: [] },
@@ -69,7 +129,7 @@ export const { manifest, activate } = definePlugin({
             supportedObservationTransports: ['checkpointedPull'],
             sourceConfigSchema: repositoryInputSchema,
             setupActionRef: {
-              pluginId: 'examples.automation-event-source',
+              pluginId: PLUGIN_ID,
               localId: 'setup-repository',
             },
             setupSurface: {
@@ -101,4 +161,11 @@ export const { manifest, activate } = definePlugin({
     }],
     translations: [],
   },
+  backgroundServices: [{
+    declaration: {
+      id: 'repository-push-observer',
+      title: 'Repository push observer',
+    },
+    runner: runRepositoryPushObserver,
+  }],
 });

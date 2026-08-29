@@ -9,7 +9,7 @@ const EXTERNAL_AUTHOR_PROOF = 'packages/plugin-sdk/examples/action-contract-prod
 const EXTERNAL_TARGET_PROOF = 'packages/plugin-sdk/fixtures/external-targeted-packages/target/src/index.ts';
 const EXTERNAL_CONTRIBUTOR_PROOF = 'packages/plugin-sdk/fixtures/external-targeted-packages/contributor/src/index.ts';
 const EXTERNAL_COMPOSER_AUTHOR_PROOF = 'packages/plugin-ui/fixtures/external-authoring/src/index.ts';
-const TRIAGE_COMPOSER_PROOF = 'packages/plugins/triage/src/manifest.ts';
+const EXTERNAL_COMPOSER_DOGFOOD_PROOF = 'packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs';
 const CHANNELS_COMPOSER_PROOF = 'packages/plugins/channels/src/manifest.ts';
 
 function assertDeferredExternalDevelopmentProof(declaration) {
@@ -164,8 +164,8 @@ test('retains SecretsService source coverage without claiming external lifecycle
 test('records current Composer and Session-header source consumers without promoting unrecorded loaded or release proof', async () => {
   const expectedConsumers = {
     composerReferences: EXTERNAL_COMPOSER_AUTHOR_PROOF,
-    composerAttachments: TRIAGE_COMPOSER_PROOF,
-    composerControls: TRIAGE_COMPOSER_PROOF,
+    composerAttachments: EXTERNAL_COMPOSER_DOGFOOD_PROOF,
+    composerControls: EXTERNAL_COMPOSER_DOGFOOD_PROOF,
     composerRegions: EXTERNAL_COMPOSER_AUTHOR_PROOF,
     sessionHeaderActions: CHANNELS_COMPOSER_PROOF,
   };
@@ -178,16 +178,19 @@ test('records current Composer and Session-header source consumers without promo
   }
 
   const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
-  const [externalAuthor, triage, channels] = await Promise.all([
+  const [externalAuthor, externalDogfood, channels] = await Promise.all([
     readFile(resolve(repoRoot, EXTERNAL_COMPOSER_AUTHOR_PROOF), 'utf8'),
-    readFile(resolve(repoRoot, TRIAGE_COMPOSER_PROOF), 'utf8'),
+    readFile(resolve(repoRoot, EXTERNAL_COMPOSER_DOGFOOD_PROOF), 'utf8'),
     readFile(resolve(repoRoot, CHANNELS_COMPOSER_PROOF), 'utf8'),
   ]);
   assert.match(externalAuthor, /composer:\s*\{/u);
   assert.match(externalAuthor, /references:\s*\{/u);
   assert.match(externalAuthor, /regions:\s*\{/u);
-  assert.match(triage, /attachments:\s*\{/u);
-  assert.match(triage, /controls:\s*\{/u);
+  assert.match(externalDogfood, /attachments:\s*\{/u);
+  assert.match(externalDogfood, /picker:\s*ISSUE_SURFACE_RENDERER_ID/u);
+  assert.match(externalDogfood, /display:\s*\{/u);
+  assert.match(externalDogfood, /preview:\s*\{/u);
+  assert.match(externalDogfood, /controls:\s*\{/u);
   assert.match(channels, /sessionHeaderActions:\s*\{/u);
   assert.equal(
     Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies, 'composerReferenceProviders'),

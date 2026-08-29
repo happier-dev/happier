@@ -23,3 +23,4 @@ export type { StorageScopeService } from '../storage.js';
 export type { StorageService } from '../storage.js';
 export type { StorageTransaction } from '../storage.js';
 export { requireAccountStorage } from '../storage.js';
+export { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '../storage.js';

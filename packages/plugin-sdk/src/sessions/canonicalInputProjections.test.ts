@@ -10,6 +10,7 @@ import {
 import {
     AgentPermissionIntentV1Schema,
     type AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1,
+    type SessionMessageProvenanceV1 as CanonicalSessionMessageProvenanceV1,
 } from '@happier-dev/protocol/sessions/general';
 import {
     SessionAuthoringCheckoutCreationDraftV1Schema as canonicalSessionAuthoringCheckoutCreationDraftV1Schema,
@@ -28,6 +29,7 @@ import type {
     AgentPermissionIntentV1 as PublicAgentPermissionIntentV1,
     SessionId as PublicSessionId,
     SessionAuthoringCheckoutCreationDraftV1 as PublicSessionAuthoringCheckoutCreationDraftV1,
+    SessionMessageProvenanceV1 as PublicSessionMessageProvenanceV1,
     SessionServerStartSpawnDraftV1 as PublicSessionServerStartSpawnDraftV1,
     SessionSpawnNewInputV2 as PublicSessionSpawnNewInputV2,
 } from './index.js';
@@ -102,6 +104,8 @@ describe('Session input canonical SDK projections', () => {
             .toMatchTypeOf<PublicSessionSpawnNewInputV2>();
         expectTypeOf<CanonicalSessionServerStartSpawnDraftV1>()
             .toMatchTypeOf<PublicSessionServerStartSpawnDraftV1>();
+        expectTypeOf<CanonicalSessionMessageProvenanceV1>()
+            .toMatchTypeOf<PublicSessionMessageProvenanceV1>();
         expectTypeOf<typeof sessions.SessionIdSchema>()
             .toEqualTypeOf<ProtocolComposableSchema<PublicSessionId>>();
         expectTypeOf<typeof sessions.AgentPermissionIntentV1Schema>()

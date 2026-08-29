@@ -123,6 +123,7 @@ export type { AgentConnectedAccountRuntimeAuthVerificationInputV1 } from '../../
 export type { AgentConnectedAccountNativeAuthCodecInspectInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountNativeAuthCodecMaterializeInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountNativeAuthCodecV1 } from '../../agentRuntime/projections.js';
+export type { AgentConnectedAccountRuntimeLimitCategoryV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountRuntimeFailureClassificationV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountRuntimeFailureInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountTransitionVerificationResultV1 } from '../../agentRuntime/projections.js';
@@ -144,6 +145,7 @@ export type { AgentDeferredStartupEligibilityInputV1 } from '../../agentRuntime/
 export type { AgentExperimentalVendorResumeSupportContributionV1 } from '../../agentRuntime/projections.js';
 export type { AgentExperimentalVendorResumeSupportInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandBuildInputV1 } from '../../agentRuntime/projections.js';
+export type { AgentCliSessionCommandPluginSettingsV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandBuildOptionsResultV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandDeclarationV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandOptionsV1 } from '../../agentRuntime/projections.js';

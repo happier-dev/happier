@@ -21,6 +21,7 @@ export type { PluginClientActionHandler } from './service.js';
 export type { PluginClientActionUi } from './service.js';
 export type { ActionInputFieldHint } from './inputHints.js';
 export type { ActionInputHints } from './inputHints.js';
+export type { ActionFormFieldHint, ActionFormHints } from './inputHints.js';
 export type { ActionInputOption } from './inputHints.js';
 export type { ActionInputOptionValue } from './inputHints.js';
 export type { ActionInputPredicate } from './inputHints.js';
@@ -56,7 +57,7 @@ export {
   isExternalActionResultWithinResponseEnvelopeLimitV1,
   measureExternalActionResultResponseEnvelopeUtf8BytesV1,
 } from './externalActionLimits.js';
-export { isPluginActionHandlerInvocationKnownNotStarted } from './service.js';
+export { isPluginActionHandlerInvocationNotStartedAdvisory } from './service.js';
 export { isSameActionInputOptionValue } from './inputHints.js';
 export { normalizeActionInputByFieldHints } from './inputHints.js';
 export { readActionInputOptionValue } from './inputHints.js';

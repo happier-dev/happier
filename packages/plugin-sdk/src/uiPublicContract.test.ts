@@ -9,6 +9,7 @@ import type {
     AgentUiBehaviorDeclarationV1 as CanonicalAgentUiBehaviorDeclarationV1,
     AgentUiComponentsDeclarationV1 as CanonicalAgentUiComponentsDeclarationV1,
     AgentUiMessageDeclarationV1 as CanonicalAgentUiMessageDeclarationV1,
+    AgentUiSessionDeclarationV1 as CanonicalAgentUiSessionDeclarationV1,
     PluginDeclarativeNodeV2 as CanonicalPluginDeclarativeNodeV2,
 } from '@happier-dev/protocol/plugins/manifest';
 import type {
@@ -146,6 +147,7 @@ import type {
     AgentUiBehaviorDeclarationV1,
     AgentUiComponentsDeclarationV1,
     AgentUiMessageDeclarationV1,
+    AgentUiSessionDeclarationV1,
     PluginCollectionProjectedScalarFieldRefV1,
     PluginCollectionRowCommandV1,
     PluginContributionReference,
@@ -356,6 +358,8 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<CanonicalAgentUiBehaviorDeclarationV1>();
         expectTypeOf<AgentUiMessageDeclarationV1>()
             .toEqualTypeOf<CanonicalAgentUiMessageDeclarationV1>();
+        expectTypeOf<CanonicalAgentUiSessionDeclarationV1>()
+            .toMatchTypeOf<AgentUiSessionDeclarationV1>();
         expectTypeOf<AgentUiComponentsDeclarationV1>()
             .toEqualTypeOf<CanonicalAgentUiComponentsDeclarationV1>();
     });

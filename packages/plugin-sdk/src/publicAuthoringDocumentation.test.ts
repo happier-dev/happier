@@ -307,7 +307,7 @@ describe('Plugin SDK public authoring documentation', () => {
         const testingGuide = readFileSync(pluginTestingGuidePath, 'utf8');
 
         expect(testingGuide).toContain(
-            'happier plugins test ./target --packed --with-plugin ./contributor',
+            'hdev plugins test ./target --packed --with-plugin ./contributor',
         );
         expect(testingGuide).toContain('--sdk-registry <origin>');
     });
@@ -329,6 +329,10 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(diagnosticsGuide).toContain('`remediation`');
         expect(diagnosticsGuide).toContain('`diagnostics`');
         expect(diagnosticsGuide).toContain('`actionHandlerInvocation`');
+        expect(diagnosticsGuide).toContain('host-reported');
+        expect(diagnosticsGuide).toContain('advisory');
+        expect(diagnosticsGuide).toContain('canonical host-mediated Action');
+        expect(diagnosticsGuide).not.toContain('proves the handler was not started');
         expect(actionsGuide).toContain('[Diagnostics](/plugins/testing/diagnostics)');
     });
 
@@ -338,10 +342,10 @@ describe('Plugin SDK public authoring documentation', () => {
 
         for (const guide of [agentModeGuide, agentRuntimeGuide]) {
             expect(guide).toContain('advanced-package-root');
-            expect(guide).toContain('happier plugins dev typecheck .');
-            expect(guide).toContain('happier plugins dev build .');
-            expect(guide).toContain('happier plugins test .');
-            expect(guide).not.toContain('happier plugins test . --packed');
+            expect(guide).toContain('hdev plugins dev typecheck .');
+            expect(guide).toContain('hdev plugins dev build .');
+            expect(guide).toContain('hdev plugins test .');
+            expect(guide).not.toContain('hdev plugins test . --packed');
         }
     });
 
@@ -353,20 +357,20 @@ describe('Plugin SDK public authoring documentation', () => {
 
         expect(navigation.pages).toContain('authoring-cli');
         for (const command of [
-            'happier plugins install',
-            'happier plugins create',
-            'happier plugins dev',
-            'happier plugins test',
-            'happier plugins dev install',
-            'happier plugins dev typecheck',
-            'happier plugins dev build',
-            'happier plugins dev test',
-            'happier plugins pack',
-            'happier plugins doctor',
-            'happier plugins reload',
-            'happier plugins change status',
-            'happier plugins change approve',
-            'happier plugins change reject',
+            'hdev plugins install',
+            'hdev plugins create',
+            'hdev plugins dev',
+            'hdev plugins test',
+            'hdev plugins dev install',
+            'hdev plugins dev typecheck',
+            'hdev plugins dev build',
+            'hdev plugins dev test',
+            'hdev plugins pack',
+            'hdev plugins doctor',
+            'hdev plugins reload',
+            'hdev plugins change status',
+            'hdev plugins change approve',
+            'hdev plugins change reject',
         ]) {
             expect(guide).toContain(command);
         }

@@ -103,7 +103,7 @@ describe('Agent runner-factory registration transaction', () => {
     expect(capturedProviderCliAttach?.buildHealthUrl({})).toBeNull();
   });
 
-  it('captures a focused Agent CLI session-command declaration in the one Agent registration', () => {
+  it('captures a focused Agent CLI session-command declaration in the one Agent registration', async () => {
     const scope = scopeFor(['factory']);
     const declaration = {
       sessionRuntimeId: 'assistant',
@@ -127,10 +127,11 @@ describe('Agent runner-factory registration transaction', () => {
     expect(Object.isFrozen(capturedCliSessionCommand)).toBe(true);
     expect(capturedCliSessionCommand?.sessionRuntimeId).toBe('assistant');
     expect(capturedCliSessionCommand?.directoryFlags).toEqual(['--directory']);
-    expect(capturedCliSessionCommand?.buildSessionOptions?.({
+    expect(await capturedCliSessionCommand?.buildSessionOptions?.({
       isExplicitCliSubcommand: true,
       parsed: { agentArgs: [] },
       settings: {},
+      pluginSettings: {},
       environment: {},
       startOrigin: 'terminal',
     })).toEqual({

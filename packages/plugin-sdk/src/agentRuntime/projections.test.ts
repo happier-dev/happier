@@ -22,6 +22,7 @@ import type {
   AgentSessionProviderBinding as CanonicalAgentSessionProviderBinding,
   ConnectedServicesProviderStateSharingPolicyV1 as CanonicalConnectedServicesProviderStateSharingPolicyV1,
   RuntimeDescriptorV1,
+  ConnectedServiceLimitCategoryV1 as CanonicalConnectedServiceLimitCategoryV1,
 } from '@happier-dev/protocol';
 import type {
   AgentSessionRuntimeEvent as CanonicalAgentSessionRuntimeEvent,
@@ -30,6 +31,7 @@ import type {
 import * as agentRuntimeProjection from './projections.js';
 import type {
   AgentSessionRuntimeEvent,
+  AgentConnectedAccountRuntimeLimitCategoryV1,
   AgentSessionProviderBinding,
   AgentSessionProviderBindingUpstream,
   ConnectedServicesProviderStateSharingPolicyV1,
@@ -415,6 +417,11 @@ describe('Agent runtime package-local publication projection', () => {
     expectTypeOf<CanonicalAgentSessionRuntimeEvent>()
       .toMatchTypeOf<AgentSessionRuntimeEvent>();
   }, 120_000);
+
+  it('projects the Agent connected-account limit category from the canonical Protocol owner', () => {
+    expectTypeOf<AgentConnectedAccountRuntimeLimitCategoryV1>()
+      .toEqualTypeOf<CanonicalConnectedServiceLimitCategoryV1>();
+  });
 
   it('refines helper-only signatures without changing canonical runtime values or public shapes', () => {
     expect(agentRuntimeProjection.createAcpToolNameInferencePreset)

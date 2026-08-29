@@ -72,8 +72,8 @@ describe('Plugin invocation context', () => {
         >();
         expectTypeOf<PluginInvocationContext['caller']>()
             .toEqualTypeOf<PluginInvocationCaller | undefined>();
-        expectTypeOf<PluginAutomationRunCause>()
-            .toEqualTypeOf<ProtocolAutomationRunCause>();
+        expectTypeOf<ProtocolAutomationRunCause>()
+            .toMatchTypeOf<PluginAutomationRunCause>();
         expectTypeOf<PluginInvocationContext['ui']>()
             .toEqualTypeOf<import('./interactions.js').PresentationService | undefined>();
         expectTypeOf<MessageActionAvailableSnapshotV1>()

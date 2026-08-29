@@ -110,6 +110,7 @@ export type { UiSurfaceReactNativeBuild } from './ui/surface.js';
 export type { UiSurfaceReactNativeDefinition } from './ui/surface.js';
 export type { UiSurfaceReactNativeRendererDefinition } from './ui/surface.js';
 export type { UiSurfaceRendererDefinition } from './ui/surface.js';
+export type { UiSurfaceRendererOnlyDefinition } from './ui/surface.js';
 export type { UiSurfaceSettingsPageDefinition } from './ui/surface.js';
 export { arePluginMachineExecutionOriginsEqual } from './executionOrigin.js';
 export { arePluginMachineMaterializationRefsEqual } from './executionOrigin.js';

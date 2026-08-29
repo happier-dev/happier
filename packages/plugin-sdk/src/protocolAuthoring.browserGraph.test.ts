@@ -27,6 +27,11 @@ const protocolJsonSchemaTransitiveModules = [
     resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/publicTypes.ts'),
     resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/strictJsonValue.ts'),
 ].sort();
+const protocolComposerReferenceResolutionTransitiveModules = [
+    resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/composerReferenceCandidateIdV1.ts'),
+    resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/composerReferenceProviders.ts'),
+    resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/ui/tokens.ts'),
+];
 const protocolUiTargetedContributions = resolve(
     import.meta.dirname,
     '../../protocol/src/plugins/ui/targetedContributions.ts',
@@ -35,12 +40,23 @@ const protocolUiComposerRef = resolve(
     import.meta.dirname,
     '../../protocol/src/plugins/ui/composerRef.ts',
 );
+const protocolDataCollectionOpaqueCursor = resolve(
+    import.meta.dirname,
+    '../../protocol/src/plugins/data/collectionOpaqueCursorV1.ts',
+);
+const protocolComposerReferenceProviders = resolve(
+    import.meta.dirname,
+    '../../protocol/src/plugins/contributions/composerReferenceProviders.ts',
+);
 
 const expectedProtocolExports = [
     'ProtocolArrayOptions',
+    'ProtocolCollectionOpaqueCursorV1',
+    'ProtocolCollectionOpaqueCursorV1Schema',
     'ProtocolComposableSchema',
     'ProtocolComposerRefV1',
     'ProtocolComposerRefV1Schema',
+    'ProtocolComposerReferenceResolutionV1Schema',
     'ProtocolJsonValue',
     'ProtocolJsonValueOptions',
     'ProtocolNumberOptions',
@@ -130,6 +146,10 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
         resolve: {
             alias: [
                 {
+                    find: '@happier-dev/protocol/plugins/contributions/composer-reference-providers',
+                    replacement: protocolComposerReferenceProviders,
+                },
+                {
                     find: '@happier-dev/protocol/plugins/actions/json-schema-validation',
                     replacement: protocolJsonSchemaValidation,
                 },
@@ -140,6 +160,10 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
                 {
                     find: '@happier-dev/protocol/plugins/ui/composerRef',
                     replacement: protocolUiComposerRef,
+                },
+                {
+                    find: '@happier-dev/protocol/plugins/data/collectionOpaqueCursorV1',
+                    replacement: protocolDataCollectionOpaqueCursor,
                 },
                 {
                     // The graph is a source-level browser check; never let a stale
@@ -157,7 +181,7 @@ async function bundleProtocolAuthoring(): Promise<Readonly<{
             load(id) {
                 if (id !== '\0virtual:protocol-authoring-browser-realm-entry') return null;
                 return [
-                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
+                    `export { defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, defineProtocolUtf8String, defineProtocolUniqueArray, pluginJsonValuesEqual, ProtocolComposerRefV1Schema, ProtocolComposerReferenceResolutionV1Schema } from ${JSON.stringify(protocolBrowserEntry)};`,
                     `export { defineContributionPoint, defineContributionProtocol, PluginTargetedContributionSelectionV1Schema } from ${JSON.stringify(contributionsBrowserEntry)};`,
                 ].join('\n');
             },
@@ -263,11 +287,20 @@ describe('protocol-authoring public browser entrypoint', () => {
         // session-creation and voice graph into every feature-protocol bundle,
         // which the pinned list below is what catches.
         expect(moduleIds).toContain(protocolUiComposerRef);
+        // The Collection cursor grammar reaches the browser-safe author
+        // surface through its own narrow leaf. Publishing it from
+        // `plugins/data/collectionUiQueryWireV1.ts` instead would pull Zod and
+        // the contribution graph into every feature-protocol bundle, which the
+        // pinned filters below are what catches.
+        expect(moduleIds).toContain(protocolDataCollectionOpaqueCursor);
         const manifestOrContributionsModules = moduleIds
             .filter((id) => id.includes('/protocol/src/plugins/manifest/')
                 || id.includes('/protocol/src/plugins/contributions/'))
             .sort();
-        expect(manifestOrContributionsModules).toEqual(protocolJsonSchemaTransitiveModules);
+        expect(manifestOrContributionsModules).toEqual([
+            ...protocolJsonSchemaTransitiveModules,
+            ...protocolComposerReferenceResolutionTransitiveModules,
+        ].sort());
         expect(moduleIds.filter((id) => (
             id.includes('/plugin-sdk/src/services/')
             || id.includes('/plugin-sdk/src/runtime/')

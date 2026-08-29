@@ -2,9 +2,7 @@
 import {
     PluginMachineMaterializationRefV1Schema as canonicalPluginMachineMaterializationRefV1Schema,
 } from '@happier-dev/protocol';
-import type {
-    AutomationRunCause as ProtocolAutomationRunCause,
-} from '@happier-dev/protocol';
+import type { PluginAutomationRunCause } from './automations.js';
 import type { PluginServices } from './services/index.js';
 import type { PresentationService } from './interactions.js';
 import type {
@@ -65,10 +63,11 @@ export type PluginInvocationOriginSurface = Exclude<PluginInvocationSurface, 'pl
 
 /**
  * Portable SDK projection of immutable Automation admission provenance. The
- * canonical Protocol run-cause union is the sole cause owner; this inline
- * alias is the public SDK projection owned by this invocation boundary.
+ * canonical Protocol run-cause union is the sole cause owner; the public SDK
+ * projection is re-exported from the Automations owner so this declaration
+ * stays closed over SDK-local types.
  */
-export type PluginAutomationRunCause = ProtocolAutomationRunCause;
+export type { PluginAutomationRunCause } from './automations.js';
 
 /**
  * Host-stamped provenance for an invocation. Plugins receive this data but do

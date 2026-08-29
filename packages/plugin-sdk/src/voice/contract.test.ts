@@ -176,6 +176,15 @@ describe('Voice author source contract', () => {
     }
   });
 
+  it('keeps the React Native Voice client declaration independent of browser ambient types', () => {
+    const clientSource = readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
+
+    expect(clientSource).not.toMatch(/\bgetStream\(\):\s*MediaStream\b/u);
+    expect(clientSource).not.toMatch(/\bgetAudioContext\?\(\):\s*AudioContext\b/u);
+    expect(clientSource).toMatch(/\bVoiceMediaStreamHandle\b/u);
+    expect(clientSource).toMatch(/\bVoiceAudioContextHandle\b/u);
+  });
+
   it('keeps realm-specific author declarations in their public barrels', () => {
     const rootPublicSource = readFileSync(new URL('./index.public.ts', import.meta.url), 'utf8');
     const clientPublicSource = readFileSync(new URL('./client/index.public.ts', import.meta.url), 'utf8');
@@ -199,6 +208,7 @@ describe('Voice author source contract', () => {
       expect(rootPublicSource, rootOnlyType).not.toMatch(new RegExp(`\\b${rootOnlyType}\\b`, 'u'));
     }
     expect(rootPublicSource).toMatch(/\bVoiceProvidersRegistrationApi\b/u);
+    expect(rootPublicSource).toMatch(/\bVOICE_SPEECH_OUTPUT_MAX_BYTES\b/u);
 
     for (const clientType of [
       'VoiceConversationCapabilities',

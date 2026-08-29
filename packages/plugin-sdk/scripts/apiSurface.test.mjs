@@ -99,6 +99,13 @@ const HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL = Object.freeze({
   sourceExport: 'readPluginActionInputParser',
 });
 
+const HOST_REGISTRATION_ACTION_RESULT_PARSER_SYMBOL = Object.freeze({
+  ...HOST_REGISTRATION_SYMBOL,
+  exportName: 'readPluginActionResultParser',
+  sourceModule: 'src/host/registration/actionInputParser.ts',
+  sourceExport: 'readPluginActionResultParser',
+});
+
 const HOST_REGISTRATION_EXECUTION_RUN_SYMBOL = Object.freeze({
   ...HOST_REGISTRATION_SYMBOL,
   exportName: 'createExecutionRunHostBackendFromSessionRuntime',
@@ -137,6 +144,8 @@ const HOST_FILE_LOCK_SYMBOL = Object.freeze({
 
 const HOST_UI_SYMBOLS = Object.freeze([
   ['decodePluginUiClipboardReadResult', 'value'],
+  ['decodePluginUiConfirmResult', 'value'],
+  ['encodePluginUiDiagnostic', 'value'],
   ['decodePluginUiResourceContent', 'value'],
   ['PluginUiHostApiDecodeResult', 'type'],
 ].map(([exportName, kind]) => Object.freeze({
@@ -152,6 +161,7 @@ const HOST_SYMBOLS = Object.freeze([
   HOST_REGISTRATION_EXECUTION_RUN_SYMBOL,
   HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
   HOST_REGISTRATION_ACTION_INPUT_PARSER_SYMBOL,
+  HOST_REGISTRATION_ACTION_RESULT_PARSER_SYMBOL,
   HOST_REGISTRATION_SYMBOL,
   ...HOST_REGISTRATION_TYPE_SYMBOLS,
   HOST_FILE_LOCK_RECLAIM_SYMBOL,

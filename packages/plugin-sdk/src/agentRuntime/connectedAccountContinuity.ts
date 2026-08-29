@@ -16,6 +16,9 @@ import type {
 /** Opaque host-owned credential revision carried through Agent continuity checks. */
 export type AgentConnectedAccountCredentialRevisionV1 = string;
 
+/** Canonical Connected Account limit category reported by an Agent runtime. */
+export type AgentConnectedAccountRuntimeLimitCategoryV1 = ConnectedServiceLimitCategoryV1;
+
 export const AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS = [
   'usage_limit',
   'rate_limit',
@@ -37,7 +40,7 @@ export type AgentConnectedAccountRuntimeAuthFailureKind =
 
 export type AgentConnectedAccountRuntimeFailureClassificationV1 = Readonly<{
   kind: AgentConnectedAccountRuntimeAuthFailureKind;
-  limitCategory?: ConnectedServiceLimitCategoryV1;
+  limitCategory?: AgentConnectedAccountRuntimeLimitCategoryV1;
   /** Canonical qualified Plugin contribution key of the failing service. */
   serviceId: ConnectedAccountServiceKey;
   profileId: string | null;

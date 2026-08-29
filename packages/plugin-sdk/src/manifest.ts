@@ -20,25 +20,30 @@ import type {
   PluginUiViewV2Input,
 } from './ui/publicContract.js';
 /**
- * Protocol owns the Agent UI grammar and its strict parser. As with the
- * declarative node grammar further down, the SDK declares a structurally exact
- * projection of it here instead of aliasing Protocol's type: an alias resolves
- * to the aliased symbol, so a downstream author's emitted `.d.ts` would name
- * Protocol's manifest authoring entrypoint, which reaches them only as a
- * `bundledDependencies` copy nested under this package and is therefore
- * unreachable from their own package.
- *
- * `uiPublicContract.test.ts` pins all three declarations to Protocol's
- * `AgentUi*DeclarationV1` with `toEqualTypeOf`, so a grammar change fails this
- * package's typecheck instead of silently diverging. Protocol infers these from
- * Zod, so the projection is deliberately mutable and spells every leaf inline.
+ * Protocol owns the Agent UI grammar and its strict parser. The SDK publishes
+ * the same setting-reference structure and keeps the surrounding declaration
+ * projection pinned to Protocol's `AgentUi*DeclarationV1` contracts in
+ * `uiPublicContract.test.ts`, so a grammar change fails this package's
+ * typecheck instead of silently diverging.
  */
 export type AgentUiConditionV1 =
   | { kind: 'experimentsEnabled' }
-  | { kind: 'settingEquals'; settingKey: string; value: string; aliases?: Record<string, string> }
-  | { kind: 'settingTrue'; settingKey: string }
+  | { kind: 'settingEquals'; settingKey: AgentUiSettingReferenceV1; value: string; aliases?: Record<string, string> }
+  | { kind: 'settingTrue'; settingKey: AgentUiSettingReferenceV1 }
   | { all: AgentUiConditionV1[] }
   | { any: AgentUiConditionV1[] };
+
+/** Scope-qualified Agent UI setting reference; bare local IDs are not public. */
+export type AgentUiSettingReferenceV1 = {
+  scope: 'host' | 'account' | 'daemon';
+  localId: string;
+};
+
+/** Setting mutations are limited to the declaring plugin's writable scopes. */
+export type AgentUiMutablePluginSettingReferenceV1 = {
+  scope: 'account' | 'daemon';
+  localId: string;
+};
 
 export type AgentUiTranscriptStorageModeV1 = 'persisted' | 'direct';
 
@@ -100,7 +105,7 @@ export type AgentUiBehaviorDeclarationV1 = {
   resume?: {
     experimentSwitches?: {
       id: string;
-      settingKey?: string;
+      settingKey?: AgentUiSettingReferenceV1;
       when?: AgentUiConditionV1;
     }[];
   };
@@ -144,14 +149,14 @@ export type AgentUiBehaviorDeclarationV1 = {
     sessionExtras?: {
       outputKey: string;
       values: string[];
-      settingKey?: string;
+      settingKey?: AgentUiSettingReferenceV1;
       aliases?: Record<string, string>;
       defaultValue?: string;
     };
     environmentVariables?: {
       backendMode: {
         envKey: string;
-        settingKey: string;
+        settingKey: AgentUiSettingReferenceV1;
         legacyMetadataKey: string;
         runtimeDescriptorField: string;
         defaultValue: string;
@@ -160,8 +165,8 @@ export type AgentUiBehaviorDeclarationV1 = {
       serverBaseUrl?: {
         envKey: string;
         explicitEnvKey: string;
-        settingKey: string;
-        byServerIdSettingKey: string;
+        settingKey: AgentUiSettingReferenceV1;
+        byServerIdSettingKey: AgentUiSettingReferenceV1;
         legacyMetadataKey: string;
         legacyExplicitMetadataKey: string;
         runtimeDescriptorField: string;
@@ -186,7 +191,7 @@ export type AgentUiBehaviorDeclarationV1 = {
     dialogs: {
       dialogId: string;
       settingMutation?: {
-        settingId: string;
+        settingId: AgentUiMutablePluginSettingReferenceV1;
         allowedValues: string[];
       };
       terminalNotice?: {
@@ -218,7 +223,7 @@ export type AgentUiBehaviorDeclarationV1 = {
         serviceIdField: string;
         profileIdField: string;
         labelParams?: Record<string, string>;
-        detailSettingsKey?: string;
+        detailSettingsKey?: AgentUiSettingReferenceV1;
       }[];
       lockedConnectedServiceSource?: {
         serviceId: string;
@@ -249,6 +254,51 @@ export type AgentUiMessageDeclarationV1 = {
     };
     normalize?: 'trimLowercase';
   }[];
+};
+
+/** Public structural projection of Protocol's data-only Agent Session UI grammar. */
+export type AgentUiSessionAgentTeamBehaviorV1 = {
+  kind: 'session.agentTeamBehavior.v1';
+  snapshotKey: string;
+  providerLabel: string;
+  flavorAliases: string[];
+  tools: {
+    teamCreate: string[];
+    teamDelete: string[];
+    teamSendMessage: string[];
+    subagentSpawn: string[];
+    activeTeamFallbackSubagentSpawn?: string[];
+    configMutation?: string[];
+  };
+  configTeamPath?: { rootDirectory: string; teamsDirectory: string; filename: string };
+  lifecycleEvents?: { ignoreActivityPreview?: string[]; shutdownApproved?: string };
+};
+
+export type AgentUiSessionProviderBehaviorV1 = {
+  kind: 'session.providerBehavior.v1';
+  agentTeam?: AgentUiSessionAgentTeamBehaviorV1;
+  participants?: {
+    sidechainIds?: { kind: 'toolCallInputString'; toolNames: string[]; inputKey: string };
+  };
+  subagents?: {
+    ignoreActivityPreviewText?: {
+      kind: 'jsonEventType';
+      recipientKinds: string[];
+      eventTypes: string[];
+    };
+  };
+};
+
+export type AgentUiSessionVisibleMessagesV1 = {
+  kind: 'session.visibleMessages.v1';
+  subagentKinds: string[];
+  fallbackToolNames?: string[];
+  excludeJsonEventTypes: string[];
+};
+
+export type AgentUiSessionDeclarationV1 = {
+  providerBehavior?: AgentUiSessionProviderBehaviorV1;
+  visibleMessages?: AgentUiSessionVisibleMessagesV1;
 };
 
 /**
@@ -302,6 +352,7 @@ export type AgentUiComponentsDeclarationV1 = {
 export type PluginAgentUiContribution = Readonly<{
   behavior?: AgentUiBehaviorDeclarationV1;
   message?: AgentUiMessageDeclarationV1;
+  session?: AgentUiSessionDeclarationV1;
   components?: AgentUiComponentsDeclarationV1;
 }>;
 
@@ -772,7 +823,9 @@ export type PluginManifestDiagnostic = Readonly<{
     | 'plugin_manifest_duplicate_contribution_id'
     | 'plugin_manifest_invalid_contribution_id'
     | 'plugin_manifest_dangling_reference'
-    | 'plugin_manifest_wrong_family_reference';
+    | 'plugin_manifest_wrong_family_reference'
+    | 'plugin_manifest_missing_agent_setting_reference'
+    | 'plugin_manifest_wrong_scope_agent_setting_reference';
   path?: readonly (string | number)[];
   message: string;
 }>;

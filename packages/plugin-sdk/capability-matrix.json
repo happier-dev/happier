@@ -225,11 +225,11 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#composerAttachments",
-      "provingConsumer": "packages/plugins/triage/src/manifest.ts",
+      "provingConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
       "specialistOwner": "packages/protocol/src/plugins/contributions/catalog.ts#composerAttachments",
       "predecessorRemoval": "catalog-disposition:reshaped",
       "sourceApiAvailability": "present",
-      "sourceConsumer": "packages/plugins/triage/src/manifest.ts",
+      "sourceConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
       "loadedPlatformProof": "not-recorded",
       "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
@@ -254,11 +254,11 @@
       ],
       "catalogDisposition": "reshaped",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#composerControls",
-      "provingConsumer": "packages/plugins/triage/src/manifest.ts",
+      "provingConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
       "specialistOwner": "packages/protocol/src/plugins/contributions/catalog.ts#composerControls",
       "predecessorRemoval": "catalog-disposition:reshaped",
       "sourceApiAvailability": "present",
-      "sourceConsumer": "packages/plugins/triage/src/manifest.ts",
+      "sourceConsumer": "packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs",
       "loadedPlatformProof": "not-recorded",
       "releaseAvailability": "not-published",
       "availabilityDisposition": "available"
@@ -1324,7 +1324,7 @@
         "./actions"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/actions/service.ts",
       "lifecycle": "invocation-scoped",
@@ -1345,7 +1345,7 @@
         "."
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/services/composerContent.ts",
       "lifecycle": "invocation-scoped",
@@ -1366,7 +1366,7 @@
         "./connected-accounts"
       ],
       "realms": [
-        "daemon"
+        "any"
       ],
       "producer": "src/connectedAccounts.ts",
       "lifecycle": "invocation-scoped",
@@ -1409,7 +1409,7 @@
         "./exec"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/exec.ts",
       "lifecycle": "invocation-scoped",
@@ -1452,7 +1452,7 @@
         "./http"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/http.ts",
       "lifecycle": "invocation-scoped",
@@ -1494,7 +1494,7 @@
         "."
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/services/core.ts",
       "lifecycle": "invocation-scoped",
@@ -1540,14 +1540,15 @@
       ],
       "producer": "src/mcp/projections.ts",
       "lifecycle": "invocation-scoped",
-      "provingConsumer": "packages/plugins/antigravity/src/agent/runtime/nativeSession.ts",
+      "provingConsumer": "no current positive consumer",
       "specialistOwner": "packages/plugin-sdk/src/services/index.ts#PluginServices.mcp",
       "predecessorRemoval": "none",
       "sourceApiAvailability": "present",
-      "sourceConsumer": "packages/plugins/antigravity/src/agent/runtime/nativeSession.ts",
+      "sourceConsumer": null,
       "loadedPlatformProof": "not-recorded",
       "releaseAvailability": "not-published",
-      "availabilityDisposition": "available"
+      "availabilityDisposition": "deferred",
+      "unblockCondition": "A maintained external development-source plugin proves the root MCP service through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness."
     },
     {
       "serviceId": "notifications",
@@ -1557,7 +1558,7 @@
         "./notifications"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/notifications.ts",
       "lifecycle": "invocation-scoped",
@@ -1579,7 +1580,7 @@
         "./providers"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/providers/projections.ts",
       "lifecycle": "invocation-scoped",
@@ -1601,7 +1602,7 @@
         "./resources"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/resources.ts",
       "lifecycle": "invocation-scoped",
@@ -1623,7 +1624,7 @@
         "./secrets"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/secrets.ts",
       "lifecycle": "invocation-scoped",
@@ -1666,7 +1667,7 @@
         "./settings"
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/settings/projections.ts",
       "lifecycle": "invocation-scoped",
@@ -1708,7 +1709,7 @@
         "."
       ],
       "realms": [
-        "any"
+        "daemon"
       ],
       "producer": "src/services/targetedContributions.ts",
       "lifecycle": "invocation-scoped",
@@ -2117,6 +2118,21 @@
       "predecessorRemoval": "none",
       "sourceApiAvailability": "present",
       "sourceConsumer": "packages/plugins/antigravity/src/agent/localharness/client/handshake.ts",
+      "loadedPlatformProof": "not-recorded",
+      "releaseAvailability": "not-published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "sourceModule": "src/first-party/connected-accounts/index.ts",
+      "realm": "any",
+      "producer": "src/first-party/connected-accounts/index.ts",
+      "lifecycle": "published",
+      "provingConsumer": "packages/plugins/codex/src/connectedAccounts/openAiCodexProfile.ts",
+      "specialistOwner": "src/first-party/connected-accounts/index.ts",
+      "predecessorRemoval": "none",
+      "sourceApiAvailability": "present",
+      "sourceConsumer": "packages/plugins/codex/src/connectedAccounts/openAiCodexProfile.ts",
       "loadedPlatformProof": "not-recorded",
       "releaseAvailability": "not-published",
       "availabilityDisposition": "available"

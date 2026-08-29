@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    PluginHostedWebCollectionUiQueryBridgeOperationV1,
+    PluginHostedWebAccountDataBridgeOperationV1,
     PluginUiHostApiWireEnvelopeV1,
     PluginUiHostApiWireIdentityV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -9,7 +9,7 @@ import type {
 import {
     awaitHostedWebPluginUiHostApiClientBootstrap,
     installHostedWebPluginUiHostApiClientBootstrap,
-    readHostedWebCollectionUiQueryTransport,
+    readHostedWebAccountDataTransport,
     type HostedWebPluginUiClientRealm,
 } from './hostedWebClientBootstrap.js';
 
@@ -83,7 +83,7 @@ function bootstrapMessage(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 function readyAcknowledgementMessage(input: Readonly<{
-    collectionUiQuery?: boolean;
+    accountData?: boolean;
 }> = {}) {
     return {
         version: 1,
@@ -97,9 +97,9 @@ function readyAcknowledgementMessage(input: Readonly<{
         kind: 'ack',
         payload: {
             accepted: true,
-            ...(input.collectionUiQuery === undefined
+            ...(input.accountData === undefined
                 ? {}
-                : { capabilities: { collectionUiQuery: input.collectionUiQuery } }),
+                : { capabilities: { accountData: input.accountData } }),
         },
     };
 }
@@ -169,7 +169,7 @@ describe('hosted-web UI client bootstrap', () => {
         harness.dispatch({
             source: harness.parent,
             origin: 'https://host.test',
-            data: readyAcknowledgementMessage({ collectionUiQuery: true }),
+            data: readyAcknowledgementMessage({ accountData: true }),
         });
         const bootstrap = await readiness;
         expect(bootstrap.identity).toEqual(identity);
@@ -321,17 +321,17 @@ describe('hosted-web UI client bootstrap', () => {
         harness.dispatch({
             source: harness.parent,
             origin: 'https://host.test',
-            data: readyAcknowledgementMessage({ collectionUiQuery: true }),
+            data: readyAcknowledgementMessage({ accountData: true }),
         });
         const bootstrap = await readiness;
-        const transport = readHostedWebCollectionUiQueryTransport(bootstrap);
+        const transport = readHostedWebAccountDataTransport(bootstrap);
         expect(transport).toBeDefined();
         if (!transport) throw new Error('Hosted Collection UI-query transport was not installed.');
         expect(harness.listenerCount()).toBe(1);
 
         const receivedChanges = vi.fn();
         const changes = transport.subscribe(receivedChanges);
-        const operation: PluginHostedWebCollectionUiQueryBridgeOperationV1 = {
+        const operation: PluginHostedWebAccountDataBridgeOperationV1 = {
             kind: 'open',
             collectionId: 'tasks',
             uiQueryId: 'open',
@@ -344,7 +344,7 @@ describe('hosted-web UI client bootstrap', () => {
             payload: unknown;
         }>;
         expect(requestEnvelope).toMatchObject({
-            kind: 'collectionUiQuery',
+            kind: 'accountData',
             payload: { kind: 'request', operation },
         });
 
@@ -386,7 +386,7 @@ describe('hosted-web UI client bootstrap', () => {
                 sessionId: 'session-1',
                 nonce: 'nonce-1',
                 sequence: 3,
-                kind: 'collectionUiQuery',
+                kind: 'accountData',
                 payload: { kind: 'change', queryId: 'query_1' },
             },
         });
@@ -399,7 +399,7 @@ describe('hosted-web UI client bootstrap', () => {
         const cancelledRequest = harness.posted.at(-1)?.message as Readonly<{ sequence: number }>;
         cancellation.abort();
         expect(harness.posted.at(-1)?.message).toMatchObject({
-            kind: 'collectionUiQuery',
+            kind: 'accountData',
             payload: { kind: 'cancel', requestSequence: cancelledRequest.sequence },
         });
         await expect(cancelled).rejects.toMatchObject({ code: 'ui_host_bridge_aborted' });
@@ -427,7 +427,7 @@ describe('hosted-web UI client bootstrap', () => {
             data: readyAcknowledgementMessage(),
         });
 
-        expect(readHostedWebCollectionUiQueryTransport(bootstrap)).toBeUndefined();
+        expect(readHostedWebAccountDataTransport(bootstrap)).toBeUndefined();
         expect(harness.listenerCount()).toBe(1);
     });
 

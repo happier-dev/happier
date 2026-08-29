@@ -10,7 +10,7 @@ import type { HttpMethod } from '../http.js';
 import type {
   AdmittedTargetedOperationExecutionHandle,
 } from '../actions/service.js';
-import { isPluginActionHandlerInvocationKnownNotStarted } from '../actions/index.js';
+import { isPluginActionHandlerInvocationNotStartedAdvisory } from '../actions/index.js';
 import { definePlugin } from '../definePlugin.js';
 import type { PresentationService } from '../interactions.js';
 import type {
@@ -1142,7 +1142,7 @@ describe('createPluginTestkit', () => {
               return {
                 ok: false,
                 code: isPluginError(error) ? error.code : 'not_a_plugin_error',
-                notStarted: isPluginActionHandlerInvocationKnownNotStarted(error),
+                notStarted: isPluginActionHandlerInvocationNotStartedAdvisory(error),
               };
             }
           });
@@ -1326,7 +1326,7 @@ describe('createPluginTestkit', () => {
                 },
               } as never, null);
             } catch (error) {
-              return { targetHandlerNotStarted: isPluginActionHandlerInvocationKnownNotStarted(error) };
+              return { targetHandlerNotStarted: isPluginActionHandlerInvocationNotStartedAdvisory(error) };
             }
             return { targetHandlerNotStarted: false };
           });
@@ -1377,7 +1377,7 @@ describe('createPluginTestkit', () => {
                 },
               );
             } catch (error) {
-              return { targetHandlerNotStarted: isPluginActionHandlerInvocationKnownNotStarted(error) };
+              return { targetHandlerNotStarted: isPluginActionHandlerInvocationNotStartedAdvisory(error) };
             }
             return { targetHandlerNotStarted: false };
           });
@@ -1556,7 +1556,7 @@ describe('createPluginTestkit', () => {
                 null,
               );
             } catch (error) {
-              return { targetHandlerNotStarted: isPluginActionHandlerInvocationKnownNotStarted(error) };
+              return { targetHandlerNotStarted: isPluginActionHandlerInvocationNotStartedAdvisory(error) };
             }
             return { targetHandlerNotStarted: false };
           });

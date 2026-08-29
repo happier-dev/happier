@@ -955,7 +955,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         }
     });
 
-    it('keeps the beginner cross-plugin example operation-only and external-author-supported', async () => {
+    it('keeps the beginner cross-plugin example operation-only and maintained as a public reference', async () => {
         const sourcePath = join(
             examplesRoot,
             'operation-only-channel-provider',
@@ -989,7 +989,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         const support = JSON.parse(readFileSync(join(examplesRoot, 'authoring-support.json'), 'utf8')) as {
             assets?: Record<string, string>;
         };
-        expect(support.assets?.['examples/operation-only-channel-provider']).toBe('external-author-supported');
+        expect(support.assets?.['examples/operation-only-channel-provider']).toBe('maintained-public-reference');
     });
 
     it('does not synthesize a host engine constraint into code-defined authoring examples', async () => {
@@ -2168,6 +2168,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         ]) {
             expect(readme).toContain(selector);
         }
+        expect(readme).toContain("replace the scaffold's generated");
+        expect(readme).toContain('`test/index.test.mjs` with this package\'s `test/index.test.mjs`');
+        expect(readme).toContain("retired `save-note` Action");
     });
 
     it('declares each production reference\'s packed Action and packaged Resource contract', async () => {
@@ -3884,11 +3887,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
     it('typechecks every complete definePlugin documentation example against the public SDK', async () => {
         const excludedExamples = new Map<string, string>([
             [
-                'agent-runtimes/agent-runtime.mdx#0',
-                'shape-only runtime excerpt; its factory is defined in the linked package reference',
-            ],
-            [
-                'examples/agent-runtime-plugin.mdx#0',
+                'examples/agent-runtime-plugin.mdx#1',
                 'shape-only runtime excerpt; its factory is defined in the linked package reference',
             ],
             [

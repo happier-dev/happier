@@ -37,7 +37,7 @@ import type {
 } from './admittedTargetedOperation.js';
 
 export {
-  isPluginActionHandlerInvocationKnownNotStarted,
+  isPluginActionHandlerInvocationNotStartedAdvisory,
 } from '../errors.js';
 export type { PluginActionHandlerInvocation } from '../errors.js';
 

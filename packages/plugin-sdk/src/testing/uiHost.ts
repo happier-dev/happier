@@ -54,6 +54,7 @@ import {
     readDaemonPluginUiTargetedSurfaceMountV1,
     pluginJsonValuesEqual,
 } from '@happier-dev/protocol';
+import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     derivePluginUiTargetedSurfaceMountInstanceKeyV1,
     PluginUiTargetedContributionSurfaceV1Schema,
@@ -66,8 +67,6 @@ import type { JsonValue, PluginReference } from '../identity.js';
 import type { InteractionSeverity } from '../interactions.js';
 import type { Disposable } from '../lifecycle.js';
 import {
-    compilePluginJsonSchema,
-    isValidPluginJsonSchemaValue,
     parsePluginManifest,
 } from '../manifest.js';
 import { PluginUiHostApiClientError, createPluginUiHostApiClientFromTransport } from '../ui/clientTransport.js';
@@ -118,7 +117,10 @@ const PLUGIN_UI_SEMANTIC_ROLES = [
     'alert',
     'button',
     'checkbox',
+    'columnheader',
     'form',
+    'grid',
+    'gridcell',
     'group',
     'heading',
     'image',
@@ -129,6 +131,7 @@ const PLUGIN_UI_SEMANTIC_ROLES = [
     'progressbar',
     'radio',
     'radiogroup',
+    'row',
     'separator',
     'status',
     'switch',
@@ -369,14 +372,10 @@ export function readPluginUiTestkitTargetedSurfaceAdmission(input: Readonly<{
         kind: 'declarativeText' as const,
         text: Reflect.get(root, 'text') as string,
     });
-    let validatesInput = false;
-    try {
-        const validator = compilePluginJsonSchema(mount.inputSchema);
-        validatesInput = isValidPluginJsonSchemaValue(validator, launchInput.data);
-    } catch {
-        return null;
-    }
-    if (!validatesInput) return null;
+    const inputSchema = rehydrateCanonicalProtocolComposableSchema(mount.inputSchema);
+    if (inputSchema === null) return null;
+    const parsedInput = inputSchema.safeParse(launchInput.data);
+    if (!parsedInput.success) return null;
 
     const instanceKey = derivePluginUiTargetedSurfaceMountInstanceKeyV1({
         targetPluginId: mount.target.pluginId,
@@ -414,7 +413,7 @@ export function readPluginUiTestkitTargetedSurfaceAdmission(input: Readonly<{
         role: mount.role,
         presentation: mount.presentation,
         content,
-        input: launchInput.data,
+        input: parsedInput.data,
         instanceKey,
     });
 }
@@ -817,18 +816,24 @@ function encodeBase64(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString('base64');
 }
 
+function copyUint8ArrayAcrossRealm(value: unknown): Uint8Array | null {
+    if (!ArrayBuffer.isView(value) || Object.prototype.toString.call(value) !== '[object Uint8Array]') return null;
+    return Uint8Array.from(value as Uint8Array);
+}
+
 function encodeResource(resource: ResourceContent): JsonValue {
     if (typeof resource.contentType !== 'string' || resource.contentType.trim() === '') {
         throw fixtureError('invalid_payload', 'Resource contentType must be non-empty.');
     }
     const digest = PluginUiArtifactDigestV1Schema.safeParse(resource.digest);
-    if (!digest.success || !(resource.bytes instanceof Uint8Array)) {
+    const bytes = copyUint8ArrayAcrossRealm(resource.bytes);
+    if (!digest.success || !bytes) {
         throw fixtureError('invalid_payload', 'Resource content must carry canonical bytes and digest.');
     }
     return {
         contentType: resource.contentType,
         digest: digest.data,
-        bytesBase64: encodeBase64(resource.bytes),
+        bytesBase64: encodeBase64(bytes),
     };
 }
 
@@ -1420,12 +1425,13 @@ async function createPluginUiTestkitInternal<TSurface>(
                     request: payload.data.request,
                     signal,
                 });
-                if (!(result.bytes instanceof Uint8Array)) {
+                const bytes = copyUint8ArrayAcrossRealm(result.bytes);
+                if (!bytes) {
                     throw fixtureError('invalid_payload', 'inspectComposerContent result must contain bytes.');
                 }
                 const wireResult = PluginUiInspectComposerContentResultV1Schema.safeParse({
                     offset: result.offset,
-                    bytesBase64: encodeBase64(result.bytes),
+                    bytesBase64: encodeBase64(bytes),
                     eof: result.eof,
                 });
                 if (!wireResult.success) {

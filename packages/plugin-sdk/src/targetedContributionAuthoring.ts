@@ -1,9 +1,18 @@
 import {
+    PluginActionDangerLevelV2Schema,
+    PluginActionSurfaceV2Schema,
+    type PluginActionDangerLevelV2,
+    type PluginActionSurfaceV2,
+} from '@happier-dev/protocol/plugins/actions/vocabulary';
+import {
     PluginContributionLocalIdSchema,
     PluginContributionOperationRoleV1Schema,
     PluginContributionProtocolIdV1Schema,
 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { PluginContributionPointProtocolV1Schema } from '@happier-dev/protocol/plugins/contributions/targeted';
+import {
+    PluginContributionPointProtocolV1Schema,
+    type PluginTargetedContributionSurfacePresentationV1,
+} from '@happier-dev/protocol/plugins/contributions/targeted';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1,
@@ -160,21 +169,19 @@ export type DescriptorFields<TDescriptorSchema> =
 
 /**
  * The Action presentation surface accepted by one cross-plugin operation role.
- * SDK targeted authoring exposes the runtime-supported surfaces; the broader
- * manifest Action vocabulary (including `voice`) remains Protocol-owned.
+ * SDK targeted authoring consumes the same Protocol-owned Action surface
+ * vocabulary as the manifest/runtime contribution operation contract.
  */
-export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin';
+export type ContributionActionSurface =
+    PluginActionSurfaceV2;
 
 /** The side-effect level accepted by one cross-plugin operation role. */
 export type ContributionActionDangerLevel =
-    | 'safe'
-    | 'writesLocal'
-    | 'writesRemote'
-    | 'externalSideEffect'
-    | 'destructive';
+    PluginActionDangerLevelV2;
 
 /** A protocol-owned non-navigable surface presentation. */
-export type ContributionSurfacePresentation = 'content' | 'fill';
+export type ContributionSurfacePresentation =
+    PluginTargetedContributionSurfacePresentationV1;
 
 /** Public plain-data wording accepted by the symbolic fallback state. */
 export type ContributionSurfaceLocalizedString = string | Readonly<{
@@ -747,21 +754,11 @@ function readRuntimeProtocolIdentity(value: unknown): Readonly<{
 }
 
 function isContributionActionSurface(value: unknown): value is ContributionActionSurface {
-    // Runtime-supported targeted-authoring surfaces only; `voice` remains part
-    // of the Protocol-owned manifest Action vocabulary.
-    return value === 'cli'
-        || value === 'mcp'
-        || value === 'agent'
-        || value === 'ui'
-        || value === 'plugin';
+    return PluginActionSurfaceV2Schema.safeParse(value).success;
 }
 
 function isContributionActionDangerLevel(value: unknown): value is ContributionActionDangerLevel {
-    return value === 'safe'
-        || value === 'writesLocal'
-        || value === 'writesRemote'
-        || value === 'externalSideEffect'
-        || value === 'destructive';
+    return PluginActionDangerLevelV2Schema.safeParse(value).success;
 }
 
 function readStructuralContributionOperation(

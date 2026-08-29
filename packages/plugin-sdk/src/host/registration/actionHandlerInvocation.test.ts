@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    isPluginActionHandlerInvocationKnownNotStarted,
+    isPluginActionHandlerInvocationNotStartedAdvisory,
     PluginError,
 } from '../../errors.js';
 import { createPluginActionHandlerNotStartedError } from './index.js';
 
 describe('createPluginActionHandlerNotStartedError', () => {
-    it('stamps the host-proven pre-handler outcome through the host registration boundary', () => {
+    it('stamps the host-reported pre-handler outcome used as an Action retry advisory', () => {
         const error = createPluginActionHandlerNotStartedError({
             code: 'plugin_action_unavailable',
             message: 'Plugin Action is unavailable to this caller',
@@ -26,6 +26,6 @@ describe('createPluginActionHandlerNotStartedError', () => {
             },
         });
         expect(Object.isFrozen(error.data)).toBe(true);
-        expect(isPluginActionHandlerInvocationKnownNotStarted(error)).toBe(true);
+        expect(isPluginActionHandlerInvocationNotStartedAdvisory(error)).toBe(true);
     });
 });

@@ -4,8 +4,12 @@ This is the smallest executable public-SDK reference for a custom persistent
 Session Agent. Start with the normal scaffold, then copy this package's
 `index.ts` to the scaffold's `src/index.ts` and
 `agent/deterministicSessionAgent.ts` to
-`src/agent/deterministicSessionAgent.ts`. Replace the example id, title, and
-deterministic behavior:
+`src/agent/deterministicSessionAgent.ts`, and replace the scaffold's generated
+`test/index.test.mjs` with this package's `test/index.test.mjs`. The scaffold
+test invokes its retired `save-note` Action; the replacement instead checks the
+compiled manifest's one Session Agent and runner locator, so the documented
+`happier plugins test .` step remains executable after the copy. Then replace
+the example id, title, and deterministic behavior:
 
 ```bash
 happier plugins create my-session-agent

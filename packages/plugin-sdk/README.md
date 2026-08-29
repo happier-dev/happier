@@ -36,8 +36,10 @@ claiming false success. New union members are safe only for explicitly skippable
 bounded presentation lists—not identity, authority, presence, permission,
 pagination, retry, or mutation-outcome unions.
 
-Independently published business protocols use
-`@happier-dev/<feature>-protocol` with explicit `/v1` and `/testing/v1` exports.
+Independently published business protocols use any valid scoped or unscoped npm
+package name ending in `-protocol`, with explicit `/v1` and `/testing/v1`
+exports. The npm scope identifies the package author; it does not grant
+additional protocol authority.
 They contain schemas, types, helpers, and conformance fixtures, but no host
 runtime, persistence, provider implementation, credential materialization,
 polling, private `@happier-dev/protocol` dependency, or floating
@@ -86,8 +88,8 @@ public-but-not-feature-protocol classifications are:
 
 - `pluginJsonValuesEqual`: `feature-or-host-implementation`; it is the
   canonical structural JSON comparison primitive for implementation code, not
-  an ordinary feature-protocol declaration dependency. A public
-  `@happier-dev/<feature>-protocol/testing/v1` conformance fixture may use it
+  an ordinary feature-protocol declaration dependency. A public conformance
+  fixture exported from `<feature>-protocol/testing/v1` may use it
   only to compare an emitted declaration with its canonical schema; root and
   `/v1` production sources remain denied.
 - `ContributionSurfaceNodeInput`: `target-authoring`; it types a target's
@@ -473,21 +475,25 @@ preserve their own answer semantics behind this boundary.
 ## Agent runtimes
 
 Register native `AgentRuntime` implementations from
-`@happier-dev/plugin-sdk/agents/runtime`. A runtime supplies a `sessions` factory,
-an `executionRuns` factory, or both. Happier owns shared session and turn
-lifecycle, input custody, transcript persistence, activity, and process-terminal
-state; the plugin supplies Agent-native commands, codecs, correlation, and
-authoritative evidence.
+`@happier-dev/plugin-sdk/agents/runtime`. A runtime registers exactly one
+factory: a `sessions` factory **or** an `executionRuns` factory — the public
+type is an exclusive union, so a runtime can never supply both. Happier owns
+shared session and turn lifecycle, input custody, transcript persistence,
+activity, and process-terminal state; the plugin supplies Agent-native commands,
+codecs, correlation, and authoritative evidence.
 
 Choose the task before writing a factory:
 
 - declarative ACP uses `runtime.kind: 'acp'` and cold transport data only—no
   factory, registration, or locator;
+- custom persistent Session Agents register a `sessions` factory and require a
+  distinct named `sessionRunnerFactory` leaf that exports that same factory;
+  for Session-capable Agents the host derives the finite Execution Run
+  projection from the registered Session factory, and the plugin never
+  registers or owns a second Run lifecycle; and
 - custom execution-run-only Agents register an `executionRuns` factory and have
-  no Session runner locator;
-- custom persistent Session Agents register a factory and require a distinct
-  named `sessionRunnerFactory` leaf that exports that same factory; and
-- composite Agents expose both facets, but still use the Session runner leaf.
+  no Session runner locator. The public finite-run seam exists only for
+  genuinely execution-only Agents.
 
 The daemon activation entry calls `activate`; the Session runner imports only
 the named leaf. They can run in different realms, so neither relies on a

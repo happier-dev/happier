@@ -5,3 +5,4 @@ export { createExecutionRunHostBackendFromSessionRuntime } from '../../agentRunt
 export { createPluginActionHandlerNotStartedError } from './actionHandlerInvocation.js';
 export { createPluginRegistrationScope } from './scope.js';
 export { readPluginActionInputParser } from './actionInputParser.js';
+export { readPluginActionResultParser } from './actionInputParser.js';

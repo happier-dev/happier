@@ -5,8 +5,9 @@ import type { PluginDiagnosticData } from './diagnostics.js';
 import type { JsonValue } from './identity.js';
 
 /**
- * Set only by the canonical Actions host when it proves that the target
- * handler did not begin. Absence deliberately means the outcome is unknown.
+ * A host-reported Action invocation marker. This is advisory outside the
+ * canonical Action transport; absence deliberately means the outcome is
+ * unknown.
  */
 export type PluginActionHandlerInvocation = 'notStarted';
 
@@ -38,10 +39,10 @@ export class PluginError extends Error {
         options?: ErrorOptions,
     ) {
         super(data.message ?? data.code, options);
-        // The recognizer proves the contract from this name, so a subclass that
-        // reassigns it would silently stop being a PluginError everywhere. A
-        // non-writable own property turns that mistake into a loud TypeError
-        // while keeping the enumerability a plain assignment produced.
+        // The recognizer uses this name as part of the structural contract. A
+        // subclass that reassigns it would silently stop being a PluginError
+        // everywhere; a non-writable own property turns that mistake into a loud
+        // TypeError while keeping the enumerability a plain assignment produced.
         Object.defineProperty(this, 'name', {
             value: 'PluginError',
             enumerable: true,
@@ -81,14 +82,16 @@ export function isPluginError(value: unknown): value is PluginError {
 
 /**
  * Accepts the closed public PluginError shape rather than requiring one SDK
- * module instance, so an external plugin can consume the host's proof too.
+ * module instance, so an external plugin can consume the host-reported
+ * advisory marker carried by the canonical Action transport.
  *
- * Recognition delegates to the canonical contract first. A false "the handler
- * never started" answer is not a cosmetic misread: callers use it to retry or
- * compensate, so an ordinary object that merely calls itself `PluginError`
- * must not be able to make an effect that did run look like one that did not.
+ * Recognition delegates to the canonical contract first. Presence of the
+ * marker is advisory when reconstructed from a structural error carrier.
+ * Callers must use it for retry/compensation only alongside the canonical
+ * Action transport result; arbitrary thrown values cannot establish effect
+ * provenance.
  */
-export function isPluginActionHandlerInvocationKnownNotStarted(error: unknown): boolean {
+export function isPluginActionHandlerInvocationNotStartedAdvisory(error: unknown): boolean {
     if (!isPluginError(error)) return false;
     const candidate = error as unknown as Readonly<Record<string, unknown>>;
     if (candidate.actionHandlerInvocation === 'notStarted') return true;

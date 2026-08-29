@@ -16,6 +16,7 @@ export type { DaemonDatabaseService } from './database.js';
 export type { DaemonDatabaseStorageScope } from './database.js';
 export type { DaemonDatabaseTransaction } from './database.js';
 export type { DaemonDatabaseValue } from './database.js';
+export { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '../storage.js';
 export type { PluginAccountStorageConsumerContext } from '../storage.js';
 export type { PluginAccountStorageScope } from '../storage.js';
 export type { StorageConsistency } from '../storage.js';

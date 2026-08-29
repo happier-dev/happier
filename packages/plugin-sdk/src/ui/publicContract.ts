@@ -29,6 +29,9 @@ import type {
     PluginUiTargetedContributionsV1 as ProtocolPluginUiTargetedContributionsV1,
     PluginUiHostMethodV1 as ProtocolPluginUiHostMethodV1,
     PluginUiPreparedReviewWorkspaceResultV1 as ProtocolPluginUiPreparedReviewWorkspaceResultV1,
+    PluginHostedWebAccountDataBridgeOperationV1 as ProtocolPluginHostedWebAccountDataBridgeOperationV1,
+    PluginHostedWebAccountDataBridgeResponseV1 as ProtocolPluginHostedWebAccountDataBridgeResponseV1,
+    PluginHostedWebAccountDataBridgeChangeV1 as ProtocolPluginHostedWebAccountDataBridgeChangeV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginUiViewInlineBindingInputV2 as ProtocolPluginUiViewInlineBindingInputV2,
@@ -364,7 +367,9 @@ export type PluginUiNewSessionSeedV1 = {
      * any persisted checkout draft.
      */
     checkoutIntent?: PluginUiSessionCheckoutIntentV1;
-    placement?: { serverId?: string; machineId?: string; directory?: string };
+    placement?:
+        | { kind: 'exactTarget'; serverId: string; machineId: string; directory?: string }
+        | { kind: 'currentTarget'; directory: string };
     /**
      * Exact placement candidates in the same grammar as the existing
      * `serverStartDraft` projection. This is deliberately not a singular
@@ -669,52 +674,18 @@ export type PluginHostedWebBridgeEnvelopeV1 = {
     sessionId?: string;
     nonce: string;
     sequence: number;
-    kind: 'ready' | 'error' | 'heightChanged' | 'hostApi' | 'collectionUiQuery';
+    kind: 'ready' | 'error' | 'heightChanged' | 'hostApi' | 'accountData';
     payload: PluginUiJsonValueV1;
 };
 
-export type PluginHostedWebCollectionUiQueryBridgeOperationV1 =
-    | {
-        kind: 'open';
-        collectionId: string;
-        uiQueryId: string;
-        parameters: Record<string, string | number | boolean>;
-    }
-    | { kind: 'page'; queryId: string }
-    | { kind: 'close'; queryId: string };
-
-export type PluginHostedWebCollectionUiQueryBridgeResponseV1 =
-    | {
-        kind: 'snapshot';
-        queryId: string;
-        snapshot: {
-            status: 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
-            rows: Array<{
-                context: {
-                    collection: { pluginId: string; collectionId: string };
-                    rowId: string;
-                    revision: number;
-                };
-                fields: Record<string, string | number | boolean | null>;
-            }>;
-            hasMore: boolean;
-            error?: {
-                error:
-                    | 'collection_query_invalid'
-                    | 'collection_cursor_invalid'
-                    | 'collection_unavailable'
-                    | 'collection_index_not_ready'
-                    | 'collection_content_mode_mismatch'
-                    | 'collection_contract_inconsistent';
-            };
-        };
-    }
-    | { kind: 'closed'; queryId: string };
-
-export type PluginHostedWebCollectionUiQueryBridgeChangeV1 = {
-    kind: 'change';
-    queryId: string;
-};
+/**
+ * The Protocol Data bridge grammar is the sole request/result authority. The
+ * SDK only re-exports its exact structural types for authors; it does not
+ * maintain a looser parallel JSON-value union.
+ */
+export type PluginHostedWebAccountDataBridgeOperationV1 = ProtocolPluginHostedWebAccountDataBridgeOperationV1;
+export type PluginHostedWebAccountDataBridgeResponseV1 = ProtocolPluginHostedWebAccountDataBridgeResponseV1;
+export type PluginHostedWebAccountDataBridgeChangeV1 = ProtocolPluginHostedWebAccountDataBridgeChangeV1;
 
 export type PluginHostedWebContributionV1 = {
     id: string;
@@ -727,7 +698,7 @@ export type PluginHostedWebContributionV1 = {
         routeMode: 'hostOrigin' | 'pathFallback';
     };
     bridge: {
-        allowedMessages: Array<'ready' | 'error' | 'heightChanged' | 'hostApi' | 'collectionUiQuery'>;
+        allowedMessages: Array<'ready' | 'error' | 'heightChanged' | 'hostApi' | 'accountData'>;
     };
     display: {
         titleKey: string;

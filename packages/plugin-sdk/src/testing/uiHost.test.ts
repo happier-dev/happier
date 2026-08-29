@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { createContext, Script } from 'node:vm';
 
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import ts from 'typescript';
@@ -81,6 +82,7 @@ function targetedSurfaceAdmissionFixture(input: Readonly<{
             role: 'detail',
             presentation: 'content',
             inputSchema: {
+                $schema: 'http://json-schema.org/draft-07/schema#',
                 type: 'object',
                 properties: { entryId: { type: 'string', minLength: 1 } },
                 required: ['entryId'],
@@ -311,6 +313,25 @@ describe('readPluginUiTestkitTargetedSurfaceAdmission', () => {
         expect(bundled).not.toBeNull();
         expect(external).not.toBeNull();
         expect(Object.keys(bundled ?? {}).sort()).toEqual(Object.keys(external ?? {}).sort());
+    });
+
+    it('returns the canonical Protocol parser output rather than the raw AJV input', () => {
+        const fixture = targetedSurfaceAdmissionFixture();
+        const admission = readPluginUiTestkitTargetedSurfaceAdmission({
+            mounts: [{
+                ...fixture.mount,
+                inputSchema: {
+                    ...fixture.mount.inputSchema,
+                    additionalProperties: true,
+                },
+            }],
+            target: fixture.target,
+            surface: fixture.surface,
+            launchInput: { entryId: 'review-42', unknown: 'drop-me' },
+            contributorManifest: targetedSurfaceContributorManifest(fixture.surface.contributor.pluginId),
+        });
+
+        expect(admission?.input).toEqual({ entryId: 'review-42' });
     });
 });
 
@@ -1004,7 +1025,11 @@ describe('createPluginUiTestkit', () => {
     it('does not advertise semantic roles that no public producer can emit', () => {
         expect(PluginUiSemanticRoleSchema.safeParse('option').success).toBe(true);
         expect(PluginUiSemanticRoleSchema.safeParse('form').success).toBe(true);
+        expect(PluginUiSemanticRoleSchema.safeParse('grid').success).toBe(true);
+        expect(PluginUiSemanticRoleSchema.safeParse('gridcell').success).toBe(true);
         expect(PluginUiSemanticRoleSchema.safeParse('radiogroup').success).toBe(true);
+        expect(PluginUiSemanticRoleSchema.safeParse('row').success).toBe(true);
+        expect(PluginUiSemanticRoleSchema.safeParse('columnheader').success).toBe(true);
         expect(PluginUiSemanticRoleSchema.safeParse('separator').success).toBe(true);
         expect(PluginUiSemanticRoleSchema.safeParse('tabpanel').success).toBe(true);
         expect(PluginUiSemanticRoleSchema.safeParse('combobox').success).toBe(false);
@@ -1224,6 +1249,36 @@ describe('createPluginUiTestkit', () => {
             'clipboard:review link',
             'external:https://example.test/reviews/7',
         ]));
+    });
+
+    it('accepts cross-realm Uint8Array resource bytes and still rejects other typed arrays', async () => {
+        const realmBytes = new Script('new Uint8Array([7, 8, 9])').runInContext(createContext({})) as Uint8Array;
+        expect(realmBytes).not.toBeInstanceOf(Uint8Array);
+        const resource = {
+            contentType: 'application/octet-stream',
+            digest: firstDigest,
+            bytes: realmBytes,
+        };
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: {
+                readResource: async ({ resource: requested }) => {
+                    if (requested !== 'cross-realm') throw new Error('unexpected resource');
+                    return resource;
+                },
+            },
+        });
+
+        await expect(fixture.context.hostApi.readResource('cross-realm'))
+            .resolves.toMatchObject({ bytes: new Uint8Array([7, 8, 9]) });
+
+        resource.bytes = new Int8Array([7, 8, 9]) as unknown as Uint8Array;
+        await expect(fixture.context.hostApi.readResource('cross-realm'))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        await fixture.dispose();
     });
 
     it('settles a new page location and re-renders the surface with it', async () => {

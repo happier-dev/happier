@@ -103,6 +103,7 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'ConnectedAccountHttpHeadersRequest',
     'PluginVoiceProviderDefinition',
     'RegisteredVoiceProviderRuntime',
+    'VOICE_SPEECH_OUTPUT_MAX_BYTES',
     'VoiceAccountOperationService',
     'VoiceAvailabilityPlatform',
     'VoiceCredentialAccess',
@@ -154,6 +155,7 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'RealtimeVoiceProviderProtocol',
     'RealtimeVoiceProviderRuntime',
     'RealtimeVoiceProviderSettingsOperations',
+    'VoiceAudioContextHandle',
     'VoiceClientAuthArtifact',
     'VoiceClientToolAgentPromptOptions',
     'VoiceClientToolDefinition',
@@ -164,6 +166,7 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
     'VoiceConversationToolEffectCalls',
     'VoiceGuidanceAvailability',
     'VoiceHostedConversationService',
+    'VoiceMediaStreamHandle',
     'VoiceMicSession',
     'VoiceMicrophoneMode',
     'VoiceOutputFocusApplication',
@@ -295,6 +298,14 @@ const INVENTORY = Object.freeze({
     }),
     Object.freeze({
       specifier: './host/registration',
+      exportName: 'readPluginActionResultParser',
+      kind: 'value',
+      sourceModule: 'src/host/registration/actionInputParser.ts',
+      sourceExport: 'readPluginActionResultParser',
+      realm: 'any',
+    }),
+    Object.freeze({
+      specifier: './host/registration',
       exportName: 'createPluginRegistrationScope',
       kind: 'value',
       sourceModule: 'src/host/registration/scope.ts',
@@ -323,6 +334,8 @@ const INVENTORY = Object.freeze({
     }),
     ...[
       ['decodePluginUiClipboardReadResult', 'value'],
+      ['decodePluginUiConfirmResult', 'value'],
+      ['encodePluginUiDiagnostic', 'value'],
       ['decodePluginUiResourceContent', 'value'],
       ['PluginUiHostApiDecodeResult', 'type'],
     ].map(([exportName, kind]) => Object.freeze({
@@ -409,7 +422,7 @@ async function createPackageFixture(root = undefined) {
     "export { createExecutionRunHostBackendFromSessionRuntime } from '../../agentRuntime/executionRun.js';",
     "export { createPluginActionHandlerNotStartedError } from './actionHandlerInvocation.js';",
     "export { createPluginRegistrationScope } from './scope.js';",
-    "export { readPluginActionInputParser } from './actionInputParser.js';",
+    "export { readPluginActionInputParser, readPluginActionResultParser } from './actionInputParser.js';",
     '',
   ].join('\n'));
   await writeFixtureFile(
@@ -420,7 +433,7 @@ async function createPackageFixture(root = undefined) {
   await writeFixtureFile(
     root,
     'src/host/registration/actionInputParser.ts',
-    'export function readPluginActionInputParser() {}\n',
+    'export function readPluginActionInputParser() {}\nexport function readPluginActionResultParser() {}\n',
   );
   await writeFixtureFile(
     root,
@@ -457,12 +470,16 @@ async function createPackageFixture(root = undefined) {
     "export type { PluginUiHostApiDecodeResult } from './hostApiCodecs.js';",
     "export { decodePluginUiClipboardReadResult } from './hostApiCodecs.js';",
     "export { decodePluginUiResourceContent } from './hostApiCodecs.js';",
+    "export { decodePluginUiConfirmResult } from './hostApiCodecs.js';",
+    "export { encodePluginUiDiagnostic } from './hostApiCodecs.js';",
     '',
   ].join('\n'));
   await writeFixtureFile(root, 'src/host/ui/hostApiCodecs.ts', [
     'export type PluginUiHostApiDecodeResult<T> = Readonly<{ ok: true; value: T }>;',
     'export function decodePluginUiClipboardReadResult(): PluginUiHostApiDecodeResult<string> { return { ok: true, value: "" }; }',
     'export function decodePluginUiResourceContent(): PluginUiHostApiDecodeResult<string> { return { ok: true, value: "" }; }',
+    'export function decodePluginUiConfirmResult(): PluginUiHostApiDecodeResult<boolean> { return { ok: true, value: true }; }',
+    'export function encodePluginUiDiagnostic(): string { return ""; }',
     '',
   ].join('\n'));
   await seedFixturePublicationSpecs(root);

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
     decodePluginUiClipboardReadResult,
+    decodePluginUiConfirmResult,
     decodePluginUiResourceContent,
+    encodePluginUiDiagnostic,
 } from './hostApiCodecs.js';
 
 describe('Plugin UI host API codecs', () => {
@@ -52,5 +54,20 @@ describe('Plugin UI host API codecs', () => {
             .toEqual({ ok: true, value: 'copied' });
         expect(decodePluginUiClipboardReadResult('legacy bare string'))
             .toMatchObject({ ok: false });
+    });
+
+    it('accepts only the exact confirmation result and projects diagnostics canonically', () => {
+        expect(decodePluginUiConfirmResult({ confirmed: true })).toEqual({ ok: true, value: true });
+        expect(decodePluginUiConfirmResult({ confirmed: true, extra: 'drift' })).toEqual({
+            ok: false,
+            diagnostic: 'confirm_response_invalid',
+        });
+        expect(encodePluginUiDiagnostic({
+            code: 'example', severity: 'warning', message: 'Check this', details: { attempt: 1 },
+            remediation: { kind: 'retry' },
+        })).toEqual({
+            code: 'example', severity: 'warning', message: 'Check this', details: { attempt: 1 },
+            remediation: { kind: 'retry' },
+        });
     });
 });

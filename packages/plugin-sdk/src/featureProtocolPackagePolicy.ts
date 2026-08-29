@@ -1,4 +1,9 @@
-export const FEATURE_PROTOCOL_PACKAGE_NAME = /^@happier-dev\/[a-z0-9]+(?:-[a-z0-9]+)*-protocol$/u;
+/**
+ * A feature-protocol uses an ordinary canonical npm package name whose
+ * package segment ends in `-protocol`. The optional npm scope belongs to the
+ * package author; Happier's scope carries no additional authority.
+ */
+export const FEATURE_PROTOCOL_PACKAGE_NAME = /^(?=.{1,214}$)(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*-protocol$/u;
 export const FEATURE_PROTOCOL_EXPORTS = ['.', './testing/v1', './v1'] as const;
 
 export type PublicFeatureProtocolPackageManifest = Readonly<{
@@ -12,7 +17,9 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 export function isFeatureProtocolPackageName(value: unknown): value is string {
-    return typeof value === 'string' && FEATURE_PROTOCOL_PACKAGE_NAME.test(value);
+    return typeof value === 'string'
+        && value.length <= 214
+        && FEATURE_PROTOCOL_PACKAGE_NAME.test(value);
 }
 
 export function hasFeatureProtocolPackageExports(value: unknown): value is Readonly<Record<string, unknown>> {

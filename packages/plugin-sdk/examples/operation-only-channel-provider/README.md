@@ -1,6 +1,6 @@
 # Operation-Only Channels Provider
 
-This is the minimal external-author-supported cross-plugin example. It consumes
+This is the minimal maintained public cross-plugin reference. It consumes
 the maintained `@happier-dev/channels-protocol/v1` provider contract and binds
 the required roles to Actions owned by this plugin.
 

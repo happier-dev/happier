@@ -85,4 +85,36 @@ describe('declarative document author projection', () => {
             },
         } as unknown as PluginDeclarativeDocumentV1)).toThrow(/unrecognized key/iu);
     });
+
+    it('applies the iterative Protocol preflight before recursive parsing', () => {
+        const nestedInput = (depth: number): unknown => {
+            let value: unknown = null;
+            for (let current = 3; current < depth; current += 1) value = { value };
+            return value;
+        };
+        const document = {
+            version: 1,
+            root: {
+                kind: 'action',
+                action: 'refresh',
+                label: 'Bounded',
+                input: nestedInput(10_000),
+            },
+        } as unknown as PluginDeclarativeDocumentV1;
+
+        expect(() => definePluginDeclarativeDocumentV1(document)).toThrow(
+            /plain-data depth limit|depth limit/iu,
+        );
+        expect(() => definePluginDeclarativeDocumentV1(document)).not.toThrow(RangeError);
+    });
+
+    it('rejects oversized values before the author schema walks them', () => {
+        const document = {
+            version: 1,
+            root: { kind: 'text', text: 'x'.repeat(600_000) },
+        } as unknown as PluginDeclarativeDocumentV1;
+
+        expect(() => definePluginDeclarativeDocumentV1(document)).toThrow(/byte limit/iu);
+        expect(() => definePluginDeclarativeDocumentV1(document)).not.toThrow(RangeError);
+    });
 });

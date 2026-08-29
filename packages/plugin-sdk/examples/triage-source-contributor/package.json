@@ -17,7 +17,7 @@
       "default": "./dist/index.js"
     }
   },
-  "description": "Advanced public Developer Preview fixture for a descriptor and embedded-renderer protocol contributor contract.",
+  "description": "Advanced public Developer Preview fixture for a canonical Triage source descriptor and embedded-renderer contributor contract.",
   "files": [
     "dist"
   ],
@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

@@ -197,14 +197,11 @@ const publicationEntry = defineProtocolObject({
     snapshot: publicationSnapshot,
     body: nonEmptyPublicationString,
 }, { policy: 'closed' });
-const publicationVerdict = defineProtocolObject({
-    kind: defineProtocolUnion([
-        defineProtocolLiteral('approve'),
-        defineProtocolLiteral('requestChanges'),
-        defineProtocolLiteral('comment'),
-    ]),
-    body: nonEmptyPublicationString,
-}, { policy: 'closed' });
+const publicationVerdictKind = defineProtocolUnion([
+    defineProtocolLiteral('approve'),
+    defineProtocolLiteral('requestChanges'),
+    defineProtocolLiteral('comment'),
+]);
 const publicationPlanTarget = {
     target: publicationTarget,
 } as const;
@@ -216,12 +213,22 @@ const publicationUnversionedPlan = {
 
 /**
  * Builds the shared PR-review plan around a provider's exact revision syntax.
- * Providers narrow only revision identity; Reviews remains the sole owner of
- * target, entry, verdict, and at-least-one-effect structure.
+ * Reviews remains the sole owner of target, entry, verdict, and
+ * at-least-one-effect structure. A provider may additionally narrow the verdict
+ * vocabulary to the subset its remote contract can publish honestly; omitting
+ * that argument preserves the complete canonical vocabulary.
  */
-export function defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(
+export function defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema<
+    TVerdictKindSchema extends ProtocolComposableSchema<string, string> = typeof publicationVerdictKind,
+>(
     revisionSchema: ProtocolComposableSchema<string, string>,
+    verdictKindSchema?: TVerdictKindSchema,
 ) {
+    const admittedVerdictKindSchema = (verdictKindSchema ?? publicationVerdictKind) as TVerdictKindSchema;
+    const admittedPublicationVerdict = defineProtocolObject({
+        kind: admittedVerdictKindSchema,
+        body: nonEmptyPublicationString,
+    }, { policy: 'closed' });
     const revisionedPlan = {
         ...publicationPlanTarget,
         baseRevision: revisionSchema,
@@ -231,12 +238,12 @@ export function defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(
         defineProtocolObject({
             ...revisionedPlan,
             entries: defineProtocolArray(publicationEntry, { minItems: 1 }),
-            verdict: defineProtocolUnion([defineProtocolLiteral(null), publicationVerdict]),
+            verdict: defineProtocolUnion([defineProtocolLiteral(null), admittedPublicationVerdict]),
         }, { policy: 'closed' }),
         defineProtocolObject({
             ...revisionedPlan,
             entries: defineProtocolArray(publicationEntry),
-            verdict: publicationVerdict,
+            verdict: admittedPublicationVerdict,
         }, { policy: 'closed' }),
     ]);
 }

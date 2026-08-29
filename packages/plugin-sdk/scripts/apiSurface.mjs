@@ -34,6 +34,7 @@ const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
     ['createPluginActionHandlerNotStartedError', 'value'],
     ['createPluginRegistrationScope', 'value'],
     ['readPluginActionInputParser', 'value'],
+    ['readPluginActionResultParser', 'value'],
     ['PluginRegistrationRight', 'type'],
     ['PluginAgentRuntimeRegistration', 'type'],
     ['PluginRuntimeRegistration', 'type'],
@@ -44,7 +45,9 @@ const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
   ])],
   ['./host/ui', new Map([
     ['decodePluginUiClipboardReadResult', 'value'],
+    ['decodePluginUiConfirmResult', 'value'],
     ['decodePluginUiResourceContent', 'value'],
+    ['encodePluginUiDiagnostic', 'value'],
     ['PluginUiHostApiDecodeResult', 'type'],
   ])],
 ]);

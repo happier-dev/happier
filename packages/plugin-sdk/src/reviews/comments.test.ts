@@ -12,7 +12,11 @@ import {
     ReviewCommentPublicationResultV1ProtocolSchema,
     ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
 } from './comments.js';
-import { defineProtocolString } from '../protocol/index.js';
+import {
+    defineProtocolLiteral,
+    defineProtocolString,
+    defineProtocolUnion,
+} from '../protocol/index.js';
 
 const publicationPlan = {
     target: {
@@ -85,6 +89,25 @@ describe('review comment helpers', () => {
             ...publicationPlan,
             baseRevision: null,
             headRevision: null,
+        }).success).toBe(false);
+        expect(githubRevisioned.safeParse({
+            ...publicationPlan,
+            baseRevision: 'abcdef1',
+            headRevision: '1234567',
+            verdict: { kind: 'requestChanges', body: 'Please revise.' },
+        }).success).toBe(true);
+        const providerNarrowed = defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(
+            defineProtocolString({ pattern: '^[0-9a-f]{7,64}$' }),
+            defineProtocolUnion([
+                defineProtocolLiteral('approve'),
+                defineProtocolLiteral('comment'),
+            ]),
+        );
+        expect(providerNarrowed.safeParse({
+            ...publicationPlan,
+            baseRevision: 'abcdef1',
+            headRevision: '1234567',
+            verdict: { kind: 'requestChanges', body: 'Please revise.' },
         }).success).toBe(false);
         const githubSingleComment = defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(
             defineProtocolString({ pattern: '^[0-9a-f]{7,64}$' }),

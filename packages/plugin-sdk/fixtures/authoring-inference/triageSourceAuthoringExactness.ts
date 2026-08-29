@@ -1,51 +1,136 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
-  triageSourceInspectionInputSchema,
-  triageSourceInspectionResultSchema,
-  triageSourcesV1,
-} from '@happier-dev/triage-sources-protocol/v1';
+  TriageListInstancesInputV1Schema,
+  TriageListInstancesResultV1Schema,
+  TriageSourcesContributionProtocolV1,
+} from '@happier-dev/triage-protocol/v1';
 
 /**
  * Compile-only regressions for the public authoring envelope. The actual
  * target and contributor examples remain ordinary copyable plugin source.
  */
 if (false) {
-  triageSourcesV1.contribute({
-    // @ts-expect-error A contributor descriptor must retain the protocol schema's string label.
-    descriptor: { kind: 'issue', label: 1 },
+  const sources = TriageSourcesContributionProtocolV1;
+
+  sources.contribute({
+    descriptor: {
+      v: 1,
+      purpose: 'project-issues',
+      displayName: 'Project issues',
+      kinds: [{
+        id: 'issue',
+        workflowSubject: 'issue',
+        displayName: 'Issue',
+        pluralDisplayName: 'Issues',
+      }],
+    },
     operations: {
-      inspect: triageSourcesV1.operations.inspect.bind('inspect-triage-source'),
+      listInstances: sources.operations.listInstances.bind('list-project-issue-instances'),
+      scan: sources.operations.scan.bind('scan-project-issues'),
+      get: sources.operations.get.bind('get-project-issue'),
     },
     surfaces: {
       detail: { renderer: 'triage-detail-card' },
     },
   });
 
-  triageSourcesV1.contribute({
-    descriptor: { kind: 'issue', label: 'Project issues' },
+  sources.contribute({
+    descriptor: {
+      v: 1,
+      // @ts-expect-error A contributor descriptor field must retain the protocol schema's declared type.
+      purpose: 1,
+      displayName: 'Project issues',
+      kinds: [{
+        id: 'issue',
+        workflowSubject: 'issue',
+        displayName: 'Issue',
+        pluralDisplayName: 'Issues',
+      }],
+    },
     operations: {
-      inspect: triageSourcesV1.operations.inspect.bind('inspect-triage-source'),
+      listInstances: sources.operations.listInstances.bind('list-project-issue-instances'),
+      scan: sources.operations.scan.bind('scan-project-issues'),
+      get: sources.operations.get.bind('get-project-issue'),
+    },
+    surfaces: {
+      detail: { renderer: 'triage-detail-card' },
+    },
+  });
+
+  sources.contribute({
+    descriptor: {
+      v: 1,
+      purpose: 'project-issues',
+      displayName: 'Project issues',
+      kinds: [{
+        id: 'issue',
+        workflowSubject: 'issue',
+        displayName: 'Issue',
+        pluralDisplayName: 'Issues',
+      }],
+    },
+    // @ts-expect-error Every required protocol operation role must be bound.
+    operations: {
+      listInstances: sources.operations.listInstances.bind('list-project-issue-instances'),
+      get: sources.operations.get.bind('get-project-issue'),
+    },
+    surfaces: {
+      detail: { renderer: 'triage-detail-card' },
+    },
+  });
+
+  sources.contribute({
+    descriptor: {
+      v: 1,
+      purpose: 'project-issues',
+      displayName: 'Project issues',
+      kinds: [{
+        id: 'issue',
+        workflowSubject: 'issue',
+        displayName: 'Issue',
+        pluralDisplayName: 'Issues',
+      }],
+    },
+    operations: {
+      listInstances: sources.operations.listInstances.bind('list-project-issue-instances'),
+      scan: sources.operations.scan.bind('scan-project-issues'),
+      get: sources.operations.get.bind('get-project-issue'),
     },
     // @ts-expect-error The target's required detail role cannot be omitted.
     surfaces: {},
   });
 
   // @ts-expect-error A protocol that declares a descriptor schema requires one.
-  triageSourcesV1.contribute({
+  sources.contribute({
     operations: {
-      inspect: triageSourcesV1.operations.inspect.bind('inspect-triage-source'),
+      listInstances: sources.operations.listInstances.bind('list-project-issue-instances'),
+      scan: sources.operations.scan.bind('scan-project-issues'),
+      get: sources.operations.get.bind('get-project-issue'),
     },
     surfaces: {
       detail: { renderer: 'triage-detail-card' },
     },
   });
 
-  triageSourcesV1.contribute({
-    descriptor: { kind: 'issue', label: 'Project issues' },
+  sources.contribute({
+    descriptor: {
+      v: 1,
+      purpose: 'project-issues',
+      displayName: 'Project issues',
+      kinds: [{
+        id: 'issue',
+        workflowSubject: 'issue',
+        displayName: 'Issue',
+        pluralDisplayName: 'Issues',
+      }],
+    },
     operations: {
-      inspect: triageSourcesV1.operations.inspect.bind('inspect-triage-source'),
+      listInstances: sources.operations.listInstances.bind('list-project-issue-instances'),
+      scan: sources.operations.scan.bind('scan-project-issues'),
+      get: sources.operations.get.bind('get-project-issue'),
     },
     surfaces: {
+      detail: { renderer: 'triage-detail-card' },
       // @ts-expect-error An author cannot bind a surface role absent from the target protocol.
       unexpected: { renderer: 'triage-detail-card' },
     },
@@ -59,11 +144,15 @@ if (false) {
         title: 'Declared action',
         execution: { target: 'daemon' },
         surfaces: ['plugin'],
-        inputSchema: triageSourceInspectionInputSchema,
-        resultSchema: triageSourceInspectionResultSchema,
+        inputSchema: TriageListInstancesInputV1Schema,
+        resultSchema: TriageListInstancesResultV1Schema,
         run: async (input) => ({
-          inspected: true,
-          entryId: input.entryId,
+          kind: 'failed' as const,
+          failure: {
+            class: 'unknown' as const,
+            code: 'example-not-connected',
+            detail: `unsupported protocol v${input.v}`,
+          },
         }),
       },
     },
@@ -71,10 +160,22 @@ if (false) {
       'examples.triage-source-target': {
         sources: {
           // @ts-expect-error A contribution operation must bind one of this contributor's declared actions.
-          'invalid-triage-source': triageSourcesV1.contribute({
-            descriptor: { kind: 'issue', label: 'Project issues' },
+          'invalid-triage-source': sources.contribute({
+            descriptor: {
+              v: 1,
+              purpose: 'project-issues',
+              displayName: 'Project issues',
+              kinds: [{
+                id: 'issue',
+                workflowSubject: 'issue',
+                displayName: 'Issue',
+                pluralDisplayName: 'Issues',
+              }],
+            },
             operations: {
-              inspect: triageSourcesV1.operations.inspect.bind('undeclared-action'),
+              listInstances: sources.operations.listInstances.bind('undeclared-action'),
+              scan: sources.operations.scan.bind('declared-action'),
+              get: sources.operations.get.bind('declared-action'),
             },
             surfaces: {
               detail: { renderer: 'triage-detail-card' },

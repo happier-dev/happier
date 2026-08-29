@@ -433,6 +433,8 @@ export function projectCapabilityMatrix({
     : [];
   if (definePluginSymbols.length !== 1) {
     diagnostics.push('apiInventory must publish exactly one root definePlugin value');
+  } else if (definePluginEntrypoint && definePluginSymbols[0].realm !== definePluginEntrypoint.realm) {
+    diagnostics.push('apiInventory root definePlugin symbol realm must match its entrypoint realm');
   }
 
   const metadataManifestFamilies = metadata?.manifestFamilies;
@@ -495,7 +497,7 @@ export function projectCapabilityMatrix({
       definePluginInputShape: policy.inputShape,
       definePluginClassification: policy.classification,
       authorEntrypoint: definePluginEntrypoint.specifier,
-      realm: definePluginEntrypoint.realm,
+      realm: definePluginSymbols[0]?.realm ?? definePluginEntrypoint.realm,
       lifecycle: Object.freeze([...catalogEntry.lifecycleStages]),
       catalogDisposition: catalogEntry.disposition,
       ...rowMetadata,
@@ -531,12 +533,13 @@ export function projectCapabilityMatrix({
       continue;
     }
     const entrypoints = [...new Set(publicSymbols.map((symbol) => symbol.specifier))].sort(compareCodePoints);
+    const realms = [...new Set(publicSymbols.map((symbol) => symbol.realm))].sort(compareCodePoints);
     normalizedServices.push(Object.freeze({
       serviceId,
       property: service.property,
       publicType: service.publicType,
       authorEntrypoints: Object.freeze(entrypoints),
-      realms: Object.freeze(entrypoints.map((specifier) => authorEntrypointBySpecifier.get(specifier).realm)),
+      realms: Object.freeze(realms),
       ...rowMetadata,
     }));
   }
@@ -626,44 +629,360 @@ function hasModuleReference(file, specifier) {
   ));
 }
 
-function hasPropertyAccess(file, owner, property) {
+function sdkModuleReference(file) {
   return astContains(file, (node) => (
-    ts.isPropertyAccessExpression(node)
-    && node.name.text === property
-    && ts.isPropertyAccessExpression(node.expression)
-    && node.expression.name.text === owner
+    (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+    && node.moduleSpecifier
+    && ts.isStringLiteral(node.moduleSpecifier)
+    && (
+      node.moduleSpecifier.text === PUBLIC_SDK_PACKAGE_NAME
+      || node.moduleSpecifier.text.startsWith(`${PUBLIC_SDK_PACKAGE_NAME}/`)
+    )
   ));
 }
 
-function hasPropertyBelow(node, property) {
-  return astContains(node, (child) => (
-    (ts.isPropertyAssignment(child) || ts.isShorthandPropertyAssignment(child))
-    && propertyNameText(child.name) === property
+function propertyAccessSegments(expression) {
+  const segments = [];
+  let current = expression;
+  while (ts.isPropertyAccessExpression(current)) {
+    segments.unshift(current.name.text);
+    current = current.expression;
+  }
+  if (ts.isIdentifier(current)) segments.unshift(current.text);
+  return segments;
+}
+
+function importedSdkTypeNames(file) {
+  const names = new Set();
+  for (const statement of file.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || !(
+        statement.moduleSpecifier.text === PUBLIC_SDK_PACKAGE_NAME
+        || statement.moduleSpecifier.text.startsWith(`${PUBLIC_SDK_PACKAGE_NAME}/`)
+      )
+    ) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) names.add(element.name.text);
+  }
+  return names;
+}
+
+function localTypeDeclaration(file, name) {
+  return file.statements.find((statement) => (
+    (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement))
+    && statement.name.text === name
+  )) ?? null;
+}
+
+function typeNodeIsSdkOwnedAtPath(file, typeNode, path, importedNames, visited = new Set()) {
+  if (!typeNode) return false;
+  if (ts.isParenthesizedTypeNode(typeNode)) {
+    return typeNodeIsSdkOwnedAtPath(file, typeNode.type, path, importedNames, visited);
+  }
+  if (ts.isUnionTypeNode(typeNode) || ts.isIntersectionTypeNode(typeNode)) {
+    return typeNode.types.some((member) => (
+      typeNodeIsSdkOwnedAtPath(file, member, path, importedNames, visited)
+    ));
+  }
+  if (ts.isImportTypeNode(typeNode)) {
+    const argument = typeNode.argument;
+    return ts.isLiteralTypeNode(argument)
+      && ts.isStringLiteral(argument.literal)
+      && (
+        argument.literal.text === PUBLIC_SDK_PACKAGE_NAME
+        || argument.literal.text.startsWith(`${PUBLIC_SDK_PACKAGE_NAME}/`)
+      );
+  }
+  if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+    const name = typeNode.typeName.text;
+    if (importedNames.has(name)) return true;
+    if ((name === 'Readonly' || name === 'Partial' || name === 'Required' || name === 'Pick' || name === 'Omit') && typeNode.typeArguments?.[0]) {
+      return typeNodeIsSdkOwnedAtPath(file, typeNode.typeArguments[0], path, importedNames, visited);
+    }
+    if (visited.has(name)) return false;
+    const declaration = localTypeDeclaration(file, name);
+    if (!declaration) return false;
+    const nextVisited = new Set(visited);
+    nextVisited.add(name);
+    return ts.isTypeAliasDeclaration(declaration)
+      ? typeNodeIsSdkOwnedAtPath(file, declaration.type, path, importedNames, nextVisited)
+      : typeMembersReachSdk(file, declaration.members, path, importedNames, nextVisited);
+  }
+  if (ts.isTypeLiteralNode(typeNode)) {
+    return typeMembersReachSdk(file, typeNode.members, path, importedNames, visited);
+  }
+  return false;
+}
+
+function typeMembersReachSdk(file, members, path, importedNames, visited) {
+  if (path.length === 0) {
+    return members.some((member) => (
+      ts.isPropertySignature(member)
+      && typeNodeIsSdkOwnedAtPath(file, member.type, [], importedNames, visited)
+    ));
+  }
+  const [head, ...tail] = path;
+  return members.some((member) => (
+    ts.isPropertySignature(member)
+    && propertyNameText(member.name) === head
+    && typeNodeIsSdkOwnedAtPath(file, member.type, tail, importedNames, visited)
   ));
+}
+
+function nearestNamedDeclaration(file, name, before) {
+  let nearest = null;
+  const visit = (node) => {
+    if (node.getStart(file) >= before || node === file) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    if (
+      (ts.isParameter(node) || ts.isVariableDeclaration(node))
+      && ts.isIdentifier(node.name)
+      && node.name.text === name
+      && (!nearest || node.getStart(file) > nearest.getStart(file))
+    ) nearest = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return nearest;
+}
+
+function enclosingSdkTypedObject(file, node, importedNames) {
+  let current = node.parent;
+  while (current && current !== file) {
+    if (ts.isObjectLiteralExpression(current)) {
+      const declaration = current.parent;
+      if (
+        ts.isVariableDeclaration(declaration)
+        && declaration.initializer === current
+        && typeNodeIsSdkOwnedAtPath(
+          file,
+          declaration.type ?? ts.getJSDocType(declaration),
+          [],
+          importedNames,
+        )
+      ) return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function expressionIsSdkOwned(file, expression, before, importedNames, visited = new Set()) {
+  const segments = propertyAccessSegments(expression);
+  if (segments.length === 0) return false;
+  const [root, ...path] = segments;
+  if (visited.has(root)) return false;
+  const declaration = nearestNamedDeclaration(file, root, before);
+  if (!declaration) return false;
+  const declarationType = declaration.type ?? ts.getJSDocType(declaration);
+  if (typeNodeIsSdkOwnedAtPath(file, declarationType, path, importedNames)) return true;
+  if (ts.isParameter(declaration) && path.length === 0) {
+    return enclosingSdkTypedObject(file, declaration, importedNames);
+  }
+  if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+    const nextVisited = new Set(visited);
+    nextVisited.add(root);
+    return expressionIsSdkOwned(file, declaration.initializer, declaration.getStart(file), importedNames, nextVisited);
+  }
+  return false;
+}
+
+function hasSdkServiceAccess(file, serviceId) {
+  if (!sdkModuleReference(file)) return false;
+  const importedNames = importedSdkTypeNames(file);
+  return astContains(file, (node) => (
+    ts.isPropertyAccessExpression(node)
+    && node.name.text === serviceId
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === 'services'
+    && expressionIsSdkOwned(
+      file,
+      node.expression.expression,
+      node.getStart(file),
+      importedNames,
+    )
+  ));
+}
+
+function typeOwnsSdkService(checker, contextExpression, serviceId) {
+  const contextType = checker.getTypeAtLocation(contextExpression);
+  const servicesSymbol = contextType.getProperty('services');
+  if (!servicesSymbol) return false;
+  const servicesType = checker.getTypeOfSymbolAtLocation(servicesSymbol, contextExpression);
+  const serviceSymbol = servicesType.getProperty(serviceId);
+  if (!serviceSymbol) return false;
+  const declarations = serviceSymbol.getDeclarations() ?? [];
+  return declarations.some((declaration) => {
+    const source = declaration.getSourceFile().fileName.replaceAll('\\', '/');
+    return source.includes('/packages/plugin-sdk/src/services/');
+  });
+}
+
+function hasSdkServiceAccessInProgram(program, file, serviceId) {
+  if (!sdkModuleReference(file)) return false;
+  const checker = program.getTypeChecker();
+  return astContains(file, (node) => (
+    ts.isPropertyAccessExpression(node)
+    && node.name.text === serviceId
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === 'services'
+    && typeOwnsSdkService(checker, node.expression.expression, serviceId)
+  ));
+}
+
+function importedDefinePluginLocalNames(file) {
+  const names = new Set();
+  for (const statement of file.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || statement.moduleSpecifier.text !== PUBLIC_SDK_PACKAGE_NAME
+      || statement.importClause?.isTypeOnly === true
+    ) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      const imported = element.propertyName?.text ?? element.name.text;
+      if (imported === 'definePlugin') names.add(element.name.text);
+    }
+  }
+  return names;
+}
+
+function importedDefinePluginInputTypeNames(file) {
+  const names = new Set();
+  for (const statement of file.statements) {
+    if (
+      !ts.isImportDeclaration(statement)
+      || !ts.isStringLiteral(statement.moduleSpecifier)
+      || statement.moduleSpecifier.text !== PUBLIC_SDK_PACKAGE_NAME
+    ) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      const imported = element.propertyName?.text ?? element.name.text;
+      if (imported === 'DefinePluginInput') names.add(element.name.text);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const statement of file.statements) {
+      if (!ts.isTypeAliasDeclaration(statement) || names.has(statement.name.text)) continue;
+      if (astContains(statement.type, (node) => ts.isTypeReferenceNode(node)
+        && ts.isIdentifier(node.typeName)
+        && names.has(node.typeName.text))) {
+        names.add(statement.name.text);
+        changed = true;
+      }
+    }
+  }
+  return names;
+}
+
+function pluginDefinitionInputObjects(file) {
+  const definePluginNames = importedDefinePluginLocalNames(file);
+  const inputs = [];
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && definePluginNames.has(node.expression.text)
+      && node.arguments.length > 0
+    ) {
+      const input = unwrapExpression(node.arguments[0]);
+      if (input && ts.isObjectLiteralExpression(input)) inputs.push(input);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  const definitionTypeNames = importedDefinePluginInputTypeNames(file);
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!declaration.type || !declaration.initializer) continue;
+      const hasDefinitionType = astContains(declaration.type, (node) => (
+        ts.isTypeReferenceNode(node)
+        && ts.isIdentifier(node.typeName)
+        && definitionTypeNames.has(node.typeName.text)
+      ));
+      const input = unwrapExpression(declaration.initializer);
+      if (hasDefinitionType && ts.isObjectLiteralExpression(input)) inputs.push(input);
+    }
+  }
+  return inputs;
 }
 
 function hasHostAccessDeclaration(file, capability) {
-  return astContains(file, (node) => {
-    if (!ts.isPropertyAssignment(node) || propertyNameText(node.name) !== 'hostAccess') return false;
-    return astContains(node.initializer, (child) => ts.isStringLiteral(child) && child.text === capability);
+  return pluginDefinitionInputObjects(file).some((input) => {
+    const hostAccess = objectProperty(input, 'hostAccess');
+    return hostAccess !== null && astContains(
+      hostAccess,
+      (child) => ts.isStringLiteral(child) && child.text === capability,
+    );
   });
 }
 
-function hasDefinePluginContribution(file, authorKey, leaf) {
-  const declaresAuthorKey = astContains(file, (node) => {
+function localVariableInitializer(file, name) {
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+        return declaration.initializer ?? null;
+      }
+    }
+  }
+  return null;
+}
+
+function hasPropertyInLocalValue(file, value, property, visited = new Set()) {
+  const input = unwrapExpression(value);
+  if (ts.isIdentifier(input)) {
+    if (visited.has(input.text)) return false;
+    const initializer = localVariableInitializer(file, input.text);
+    if (!initializer) return false;
+    const nextVisited = new Set(visited);
+    nextVisited.add(input.text);
+    return hasPropertyInLocalValue(file, initializer, property, nextVisited);
+  }
+  if (!ts.isObjectLiteralExpression(input) && !ts.isArrayLiteralExpression(input)) return false;
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
     if (
-      !ts.isCallExpression(node)
-      || !ts.isIdentifier(node.expression)
-      || node.expression.text !== 'definePlugin'
-      || node.arguments.length === 0
-    ) return false;
-    const input = unwrapExpression(node.arguments[0]);
-    if (!input || !ts.isObjectLiteralExpression(input)) return false;
+      (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
+      && propertyNameText(node.name) === property
+    ) {
+      found = true;
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      const initializer = localVariableInitializer(file, node.text);
+      if (initializer && !visited.has(node.text)) {
+        const nextVisited = new Set(visited);
+        nextVisited.add(node.text);
+        if (hasPropertyInLocalValue(file, initializer, property, nextVisited)) found = true;
+      }
+    }
+    if (!found) ts.forEachChild(node, visit);
+  };
+  visit(input);
+  return found;
+}
+
+function hasDefinePluginContribution(file, authorKey, leaf) {
+  return pluginDefinitionInputObjects(file).some((input) => {
     const author = objectProperty(input, authorKey);
-    if (!author) return false;
-    return author !== null;
+    if (author === null) return false;
+    if (leaf === null) return true;
+    return hasPropertyInLocalValue(file, author, leaf);
   });
-  return declaresAuthorKey && (leaf === null || hasPropertyBelow(file, leaf));
 }
 
 function containsNamedImportedCall(source, moduleSpecifier, importedName) {
@@ -733,7 +1052,7 @@ export function capabilityMatrixProvingConsumerExerciseFailure(row, source) {
     ) {
       return null;
     }
-    return hasPropertyAccess(file, 'services', row.serviceId)
+    return hasSdkServiceAccess(file, row.serviceId)
       ? null
       : `does not invoke services.${row.serviceId}`;
   }
@@ -756,6 +1075,25 @@ export function capabilityMatrixProvingConsumerExerciseFailure(row, source) {
     return null;
   }
   return 'does not belong to a known capability matrix dimension';
+}
+
+export function capabilityMatrixProvingConsumerExerciseFailureInProgram(row, program, file) {
+  if (typeof row?.serviceId === 'string') {
+    if (
+      row.serviceId === 'storage'
+      && containsNamedImportedCall(
+        file.getFullText(),
+        `${PUBLIC_SDK_PACKAGE_NAME}/storage`,
+        'requireAccountStorage',
+      )
+    ) {
+      return null;
+    }
+    return hasSdkServiceAccessInProgram(program, file, row.serviceId)
+      ? null
+      : `does not invoke services.${row.serviceId}`;
+  }
+  return capabilityMatrixProvingConsumerExerciseFailure(row, file.getFullText());
 }
 
 export function renderCapabilityMatrix(matrix) {

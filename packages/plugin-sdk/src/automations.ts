@@ -20,8 +20,56 @@ import type {
     AutomationResultDeliveryResultV1,
     AutomationResultDeliverySourceV1,
 } from '@happier-dev/protocol/automations/result-delivery';
-
 import type { PluginJsonSchema } from './identity.js';
+
+/**
+ * Declaration-neutral projection of the canonical immutable automation
+ * provenance.  Protocol owns parsing and persistence; the SDK owns this
+ * author-facing structural name so an external author's emitted declaration
+ * does not name the host-private Protocol package.  Keep the union in lockstep
+ * with `AutomationRunCauseSchema` through the invocation contract test.
+ */
+export type PluginAutomationRunCause =
+    | Readonly<{
+        kind: 'trigger';
+        triggerId: string;
+        triggerRevision: number;
+        triggerKind: 'schedule';
+        occurrenceKey: string;
+        occurredAt: number;
+        evidence: Readonly<{ scheduledFor: number }>;
+    }>
+    | Readonly<{
+        kind: 'trigger';
+        triggerId: string;
+        triggerRevision: number;
+        triggerKind: 'pluginEvent';
+        occurrenceKey: string;
+        occurredAt: number;
+        evidence: Readonly<{
+            eventRef: Readonly<{ pluginId: string; localId: string }>;
+            sourceSelectorId: string;
+        }>;
+    }>
+    | Readonly<{
+        kind: 'trigger';
+        triggerId: string;
+        triggerRevision: number;
+        triggerKind: 'sessionLifecycle';
+        occurrenceKey: string;
+        occurredAt: number;
+        evidence: Readonly<{
+            event: 'parentTurnCompleted';
+            sourceSessionId: string;
+            sourceTurnId: string;
+        }>;
+    }>
+    | Readonly<{ kind: 'manual'; invokedAt: number }>
+    | Readonly<{
+        kind: 'conversation';
+        occurrenceKey: string;
+        occurredAt: number;
+    }>;
 export {
     AutomationIdV1Schema,
 } from '@happier-dev/protocol/automations/result-delivery';

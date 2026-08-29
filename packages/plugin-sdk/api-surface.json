@@ -144,6 +144,16 @@
       }
     },
     {
+      "specifier": "./first-party/connected-accounts",
+      "sourceModule": "src/first-party/connected-accounts/index.ts",
+      "visibility": "author",
+      "realm": "any",
+      "conditions": {
+        "types": "./dist/first-party/connected-accounts/index.d.ts",
+        "default": "./dist/first-party/connected-accounts/index.js"
+      }
+    },
+    {
       "specifier": "./fs",
       "sourceModule": "src/fs/index.ts",
       "visibility": "author",
@@ -1391,6 +1401,14 @@
     },
     {
       "specifier": ".",
+      "exportName": "UiSurfaceRendererOnlyDefinition",
+      "kind": "type",
+      "sourceModule": "src/ui/surface.ts",
+      "sourceExport": "UiSurfaceRendererOnlyDefinition",
+      "realm": "any"
+    },
+    {
+      "specifier": ".",
       "exportName": "UiSurfaceSettingsPageDefinition",
       "kind": "type",
       "sourceModule": "src/ui/surface.ts",
@@ -1595,6 +1613,22 @@
       "kind": "type",
       "sourceModule": "src/actions/service.ts",
       "sourceExport": "ActionExecuteResult",
+      "realm": "any"
+    },
+    {
+      "specifier": "./actions",
+      "exportName": "ActionFormFieldHint",
+      "kind": "type",
+      "sourceModule": "src/actions/inputHints.ts",
+      "sourceExport": "ActionFormFieldHint",
+      "realm": "any"
+    },
+    {
+      "specifier": "./actions",
+      "exportName": "ActionFormHints",
+      "kind": "type",
+      "sourceModule": "src/actions/inputHints.ts",
+      "sourceExport": "ActionFormHints",
       "realm": "any"
     },
     {
@@ -1991,10 +2025,10 @@
     },
     {
       "specifier": "./actions",
-      "exportName": "isPluginActionHandlerInvocationKnownNotStarted",
+      "exportName": "isPluginActionHandlerInvocationNotStartedAdvisory",
       "kind": "value",
       "sourceModule": "src/actions/service.ts",
-      "sourceExport": "isPluginActionHandlerInvocationKnownNotStarted",
+      "sourceExport": "isPluginActionHandlerInvocationNotStartedAdvisory",
       "realm": "any"
     },
     {
@@ -2807,6 +2841,14 @@
     },
     {
       "specifier": "./agents/runtime",
+      "exportName": "AgentCliSessionCommandPluginSettingsV1",
+      "kind": "type",
+      "sourceModule": "src/agentRuntime/projections.ts",
+      "sourceExport": "AgentCliSessionCommandPluginSettingsV1",
+      "realm": "daemon"
+    },
+    {
+      "specifier": "./agents/runtime",
       "exportName": "AgentConfigurationScalar",
       "kind": "type",
       "sourceModule": "src/agentRuntime/projections.ts",
@@ -3035,6 +3077,14 @@
       "kind": "type",
       "sourceModule": "src/agentRuntime/projections.ts",
       "sourceExport": "AgentConnectedAccountRuntimeFailureInputV1",
+      "realm": "daemon"
+    },
+    {
+      "specifier": "./agents/runtime",
+      "exportName": "AgentConnectedAccountRuntimeLimitCategoryV1",
+      "kind": "type",
+      "sourceModule": "src/agentRuntime/projections.ts",
+      "sourceExport": "AgentConnectedAccountRuntimeLimitCategoryV1",
       "realm": "daemon"
     },
     {
@@ -6231,50 +6281,10 @@
     },
     {
       "specifier": "./connected-accounts",
-      "exportName": "CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1",
-      "kind": "value",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "CLAUDE_SUBSCRIPTION_OAUTH_PROFILE",
-      "kind": "value",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "CLAUDE_SUBSCRIPTION_OAUTH_PROFILE",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1",
-      "kind": "value",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
       "exportName": "CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV",
       "kind": "value",
       "sourceModule": "src/connected-accounts/requestAuth.ts",
       "sourceExport": "CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ClaudeSubscriptionMaterializationContractV1",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ClaudeSubscriptionMaterializationContractV1",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ClaudeSubscriptionSetupTokenEnvironmentRequestV1",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ClaudeSubscriptionSetupTokenEnvironmentRequestV1",
       "realm": "any"
     },
     {
@@ -6363,6 +6373,14 @@
       "kind": "type",
       "sourceModule": "src/services/connectedAccounts.ts",
       "sourceExport": "PluginConnectedAccountDevicePollResult",
+      "realm": "daemon"
+    },
+    {
+      "specifier": "./connected-accounts",
+      "exportName": "ConnectedAccountFailureRetryEvidence",
+      "kind": "type",
+      "sourceModule": "src/services/connectedAccounts.ts",
+      "sourceExport": "PluginConnectedAccountFailureRetryEvidence",
       "realm": "daemon"
     },
     {
@@ -6623,14 +6641,6 @@
     },
     {
       "specifier": "./connected-accounts",
-      "exportName": "OPENAI_CODEX_OAUTH_PROFILE",
-      "kind": "value",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "OPENAI_CODEX_OAUTH_PROFILE",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
       "exportName": "OauthAuthEntry",
       "kind": "type",
       "sourceModule": "src/connectedAccounts.ts",
@@ -6652,14 +6662,6 @@
       "sourceModule": "src/connectedAccounts.ts",
       "sourceExport": "OauthCredentialRecordWithExpiry",
       "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1",
-      "kind": "value",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1",
-      "realm": "daemon"
     },
     {
       "specifier": "./connected-accounts",
@@ -6723,46 +6725,6 @@
       "kind": "type",
       "sourceModule": "src/connectedAccounts.ts",
       "sourceExport": "ProviderAccountUsageQuotaScopeV1",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ProviderLimitCategory",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ProviderLimitCategory",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ProviderLimitEvidenceClassification",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ProviderLimitEvidenceClassification",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ProviderLimitEvidenceConfidence",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ProviderLimitEvidenceConfidence",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ProviderLimitEvidenceContext",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ProviderLimitEvidenceContext",
-      "realm": "any"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "ProviderLimitEvidenceProvenance",
-      "kind": "type",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "ProviderLimitEvidenceProvenance",
       "realm": "any"
     },
     {
@@ -6843,14 +6805,6 @@
       "kind": "value",
       "sourceModule": "src/connectedAccounts.ts",
       "sourceExport": "buildOauthAuthEntry",
-      "realm": "daemon"
-    },
-    {
-      "specifier": "./connected-accounts",
-      "exportName": "classifyProviderLimitEvidence",
-      "kind": "value",
-      "sourceModule": "src/connectedAccounts.ts",
-      "sourceExport": "classifyProviderLimitEvidence",
       "realm": "daemon"
     },
     {
@@ -7199,22 +7153,6 @@
     },
     {
       "specifier": "./events",
-      "exportName": "CheckpointedPluginEventDispositionV1",
-      "kind": "type",
-      "sourceModule": "src/checkpointedEventAutomation.ts",
-      "sourceExport": "CheckpointedPluginEventDispositionV1",
-      "realm": "any"
-    },
-    {
-      "specifier": "./events",
-      "exportName": "CheckpointedPluginEventObservationV1",
-      "kind": "type",
-      "sourceModule": "src/checkpointedEventAutomation.ts",
-      "sourceExport": "CheckpointedPluginEventObservationV1",
-      "realm": "any"
-    },
-    {
-      "specifier": "./events",
       "exportName": "EventContribution",
       "kind": "type",
       "sourceModule": "src/events.ts",
@@ -7359,6 +7297,14 @@
     },
     {
       "specifier": "./events",
+      "exportName": "PluginEventDispositionV1",
+      "kind": "type",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "PluginEventDispositionV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
       "exportName": "PluginEventEmitResult",
       "kind": "type",
       "sourceModule": "src/events.ts",
@@ -7383,6 +7329,14 @@
     },
     {
       "specifier": "./events",
+      "exportName": "PluginEventObservationV1",
+      "kind": "type",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "PluginEventObservationV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
       "exportName": "PluginEvents",
       "kind": "type",
       "sourceModule": "src/events.ts",
@@ -7393,8 +7347,16 @@
       "specifier": "./events",
       "exportName": "admitCheckpointedPluginEventObservationV1",
       "kind": "value",
-      "sourceModule": "src/checkpointedEventAutomation.ts",
+      "sourceModule": "src/eventAutomation.ts",
       "sourceExport": "admitCheckpointedPluginEventObservationV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
+      "exportName": "admitSessionSocketPluginEventObservationV1",
+      "kind": "value",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "admitSessionSocketPluginEventObservationV1",
       "realm": "any"
     },
     {
@@ -7643,6 +7605,110 @@
       "kind": "type",
       "sourceModule": "src/exec/protocol-clients.ts",
       "sourceExport": "ProtocolClientsService",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1",
+      "kind": "value",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "CLAUDE_SUBSCRIPTION_OAUTH_PROFILE",
+      "kind": "value",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "CLAUDE_SUBSCRIPTION_OAUTH_PROFILE",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1",
+      "kind": "value",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ClaudeSubscriptionMaterializationContractV1",
+      "kind": "type",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "ClaudeSubscriptionMaterializationContractV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ClaudeSubscriptionSetupTokenEnvironmentRequestV1",
+      "kind": "type",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "ClaudeSubscriptionSetupTokenEnvironmentRequestV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "OPENAI_CODEX_OAUTH_PROFILE",
+      "kind": "value",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "OPENAI_CODEX_OAUTH_PROFILE",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1",
+      "kind": "value",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ProviderLimitCategory",
+      "kind": "type",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "ProviderLimitCategory",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ProviderLimitEvidenceClassification",
+      "kind": "type",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "ProviderLimitEvidenceClassification",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ProviderLimitEvidenceConfidence",
+      "kind": "type",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "ProviderLimitEvidenceConfidence",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ProviderLimitEvidenceContext",
+      "kind": "type",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "ProviderLimitEvidenceContext",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "ProviderLimitEvidenceProvenance",
+      "kind": "type",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "ProviderLimitEvidenceProvenance",
+      "realm": "any"
+    },
+    {
+      "specifier": "./first-party/connected-accounts",
+      "exportName": "classifyProviderLimitEvidence",
+      "kind": "value",
+      "sourceModule": "src/cloud/providerLimitEvidence.ts",
+      "sourceExport": "classifyProviderLimitEvidence",
       "realm": "any"
     },
     {
@@ -8118,6 +8184,14 @@
       "realm": "any"
     },
     {
+      "specifier": "./host/registration",
+      "exportName": "readPluginActionResultParser",
+      "kind": "value",
+      "sourceModule": "src/host/registration/actionInputParser.ts",
+      "sourceExport": "readPluginActionResultParser",
+      "realm": "any"
+    },
+    {
       "specifier": "./host/ui",
       "exportName": "PluginUiHostApiDecodeResult",
       "kind": "type",
@@ -8135,10 +8209,26 @@
     },
     {
       "specifier": "./host/ui",
+      "exportName": "decodePluginUiConfirmResult",
+      "kind": "value",
+      "sourceModule": "src/host/ui/hostApiCodecs.ts",
+      "sourceExport": "decodePluginUiConfirmResult",
+      "realm": "any"
+    },
+    {
+      "specifier": "./host/ui",
       "exportName": "decodePluginUiResourceContent",
       "kind": "value",
       "sourceModule": "src/host/ui/hostApiCodecs.ts",
       "sourceExport": "decodePluginUiResourceContent",
+      "realm": "any"
+    },
+    {
+      "specifier": "./host/ui",
+      "exportName": "encodePluginUiDiagnostic",
+      "kind": "value",
+      "sourceModule": "src/host/ui/hostApiCodecs.ts",
+      "sourceExport": "encodePluginUiDiagnostic",
       "realm": "any"
     },
     {
@@ -8703,6 +8793,14 @@
     },
     {
       "specifier": "./manifest",
+      "exportName": "AgentUiMutablePluginSettingReferenceV1",
+      "kind": "type",
+      "sourceModule": "src/manifest.ts",
+      "sourceExport": "AgentUiMutablePluginSettingReferenceV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./manifest",
       "exportName": "AgentUiRuntimeDescriptorAgentExtraIdentityV1",
       "kind": "type",
       "sourceModule": "src/manifest.ts",
@@ -8723,6 +8821,46 @@
       "kind": "type",
       "sourceModule": "src/manifest.ts",
       "sourceExport": "AgentUiRuntimeDescriptorLinkExtrasV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./manifest",
+      "exportName": "AgentUiSessionAgentTeamBehaviorV1",
+      "kind": "type",
+      "sourceModule": "src/manifest.ts",
+      "sourceExport": "AgentUiSessionAgentTeamBehaviorV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./manifest",
+      "exportName": "AgentUiSessionDeclarationV1",
+      "kind": "type",
+      "sourceModule": "src/manifest.ts",
+      "sourceExport": "AgentUiSessionDeclarationV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./manifest",
+      "exportName": "AgentUiSessionProviderBehaviorV1",
+      "kind": "type",
+      "sourceModule": "src/manifest.ts",
+      "sourceExport": "AgentUiSessionProviderBehaviorV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./manifest",
+      "exportName": "AgentUiSessionVisibleMessagesV1",
+      "kind": "type",
+      "sourceModule": "src/manifest.ts",
+      "sourceExport": "AgentUiSessionVisibleMessagesV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./manifest",
+      "exportName": "AgentUiSettingReferenceV1",
+      "kind": "type",
+      "sourceModule": "src/manifest.ts",
+      "sourceExport": "AgentUiSettingReferenceV1",
       "realm": "any"
     },
     {
@@ -9615,6 +9753,22 @@
     },
     {
       "specifier": "./protocol",
+      "exportName": "ProtocolCollectionOpaqueCursorV1",
+      "kind": "type",
+      "sourceModule": "src/protocol/collectionCursor.ts",
+      "sourceExport": "ProtocolCollectionOpaqueCursorV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./protocol",
+      "exportName": "ProtocolCollectionOpaqueCursorV1Schema",
+      "kind": "value",
+      "sourceModule": "src/protocol/collectionCursor.ts",
+      "sourceExport": "ProtocolCollectionOpaqueCursorV1Schema",
+      "realm": "any"
+    },
+    {
+      "specifier": "./protocol",
       "exportName": "ProtocolComposableSchema",
       "kind": "type",
       "sourceModule": "src/protocol/protocolFacade.ts",
@@ -9635,6 +9789,14 @@
       "kind": "value",
       "sourceModule": "src/protocol/composerRef.ts",
       "sourceExport": "ProtocolComposerRefV1Schema",
+      "realm": "any"
+    },
+    {
+      "specifier": "./protocol",
+      "exportName": "ProtocolComposerReferenceResolutionV1Schema",
+      "kind": "value",
+      "sourceModule": "src/protocol/composerReferenceResolution.ts",
+      "sourceExport": "ProtocolComposerReferenceResolutionV1Schema",
       "realm": "any"
     },
     {
@@ -16359,6 +16521,14 @@
     },
     {
       "specifier": "./storage",
+      "exportName": "PLUGIN_ACCOUNT_STORAGE_LIMITS_V1",
+      "kind": "value",
+      "sourceModule": "src/storage.ts",
+      "sourceExport": "PLUGIN_ACCOUNT_STORAGE_LIMITS_V1",
+      "realm": "daemon"
+    },
+    {
+      "specifier": "./storage",
       "exportName": "PluginAccountStorageConsumerContext",
       "kind": "type",
       "sourceModule": "src/storage.ts",
@@ -17455,42 +17625,42 @@
     },
     {
       "specifier": "./ui",
-      "exportName": "PluginHostedWebCollectionUiQueryBridgeChangeV1",
+      "exportName": "PluginHostedWebAccountDataBridgeChangeV1",
       "kind": "type",
       "sourceModule": "src/ui/hostedWeb.ts",
-      "sourceExport": "PluginHostedWebCollectionUiQueryBridgeChangeV1",
+      "sourceExport": "PluginHostedWebAccountDataBridgeChangeV1",
       "realm": "any"
     },
     {
       "specifier": "./ui",
-      "exportName": "PluginHostedWebCollectionUiQueryBridgeOperationV1",
+      "exportName": "PluginHostedWebAccountDataBridgeOperationV1",
       "kind": "type",
       "sourceModule": "src/ui/hostedWeb.ts",
-      "sourceExport": "PluginHostedWebCollectionUiQueryBridgeOperationV1",
+      "sourceExport": "PluginHostedWebAccountDataBridgeOperationV1",
       "realm": "any"
     },
     {
       "specifier": "./ui",
-      "exportName": "PluginHostedWebCollectionUiQueryBridgeOperationV1Schema",
+      "exportName": "PluginHostedWebAccountDataBridgeOperationV1Schema",
       "kind": "value",
       "sourceModule": "src/ui/hostedWeb.ts",
-      "sourceExport": "PluginHostedWebCollectionUiQueryBridgeOperationV1Schema",
+      "sourceExport": "PluginHostedWebAccountDataBridgeOperationV1Schema",
       "realm": "any"
     },
     {
       "specifier": "./ui",
-      "exportName": "PluginHostedWebCollectionUiQueryBridgeResponseV1",
+      "exportName": "PluginHostedWebAccountDataBridgeResponseV1",
       "kind": "type",
       "sourceModule": "src/ui/hostedWeb.ts",
-      "sourceExport": "PluginHostedWebCollectionUiQueryBridgeResponseV1",
+      "sourceExport": "PluginHostedWebAccountDataBridgeResponseV1",
       "realm": "any"
     },
     {
       "specifier": "./ui",
-      "exportName": "PluginHostedWebCollectionUiQueryBridgeResponseV1Schema",
+      "exportName": "PluginHostedWebAccountDataBridgeResponseV1Schema",
       "kind": "value",
       "sourceModule": "src/ui/hostedWeb.ts",
-      "sourceExport": "PluginHostedWebCollectionUiQueryBridgeResponseV1Schema",
+      "sourceExport": "PluginHostedWebAccountDataBridgeResponseV1Schema",
       "realm": "any"
     },
     {
@@ -18351,6 +18521,14 @@
     },
     {
       "specifier": "./voice",
+      "exportName": "VOICE_SPEECH_OUTPUT_MAX_BYTES",
+      "kind": "value",
+      "sourceModule": "src/voice/projections.ts",
+      "sourceExport": "VOICE_SPEECH_OUTPUT_MAX_BYTES",
+      "realm": "any"
+    },
+    {
+      "specifier": "./voice",
       "exportName": "VoiceAccountOperationService",
       "kind": "type",
       "sourceModule": "src/voice/projections.ts",
@@ -18623,6 +18801,30 @@
     },
     {
       "specifier": "./voice",
+      "exportName": "VoiceProviderSettingsPresentation",
+      "kind": "type",
+      "sourceModule": "src/voice/projections.ts",
+      "sourceExport": "VoiceProviderSettingsPresentation",
+      "realm": "any"
+    },
+    {
+      "specifier": "./voice",
+      "exportName": "VoiceProviderSettingsPresentationField",
+      "kind": "type",
+      "sourceModule": "src/voice/projections.ts",
+      "sourceExport": "VoiceProviderSettingsPresentationField",
+      "realm": "any"
+    },
+    {
+      "specifier": "./voice",
+      "exportName": "VoiceProviderSettingsPresentationSchema",
+      "kind": "value",
+      "sourceModule": "src/voice/projections.ts",
+      "sourceExport": "VoiceProviderSettingsPresentationSchema",
+      "realm": "any"
+    },
+    {
+      "specifier": "./voice",
       "exportName": "VoiceProvidersRegistrationApi",
       "kind": "type",
       "sourceModule": "src/voice/projections.ts",
@@ -18743,6 +18945,14 @@
     },
     {
       "specifier": "./voice/client",
+      "exportName": "VoiceAudioContextHandle",
+      "kind": "type",
+      "sourceModule": "src/voice/client.ts",
+      "sourceExport": "VoiceAudioContextHandle",
+      "realm": "client"
+    },
+    {
+      "specifier": "./voice/client",
       "exportName": "VoiceClientAuthArtifact",
       "kind": "type",
       "sourceModule": "src/voice/client.ts",
@@ -18819,6 +19029,14 @@
       "kind": "type",
       "sourceModule": "src/voice/client.ts",
       "sourceExport": "VoiceHostedConversationService",
+      "realm": "client"
+    },
+    {
+      "specifier": "./voice/client",
+      "exportName": "VoiceMediaStreamHandle",
+      "kind": "type",
+      "sourceModule": "src/voice/client.ts",
+      "sourceExport": "VoiceMediaStreamHandle",
       "realm": "client"
     },
     {

@@ -1,9 +1,9 @@
 import { PluginError, type PluginErrorData } from '../../errors.js';
 
 /**
- * Constructs the one Action outcome a host can prove before target handler
- * entry. Author-facing `PluginError` construction deliberately cannot mint
- * this lifecycle fact.
+ * Creates the host-reported Action outcome marker used by the canonical
+ * transport before target handler entry. Consumers may use the marker as an
+ * advisory retry signal only when it arrives through that transport.
  */
 export function createPluginActionHandlerNotStartedError(
     data: Omit<PluginErrorData, 'name' | 'actionHandlerInvocation'>,

@@ -25,6 +25,22 @@ export type {
   EffectiveActionInputField,
 };
 
+/**
+ * The normalized, author-visible Action form contract consumed by UI
+ * presenters. Host option-source instructions are intentionally excluded;
+ * hosts resolve those into ordinary options before crossing this boundary.
+ * UI presenters may add their own rendering-only option metadata, but do not
+ * create another Action-form vocabulary.
+ */
+export type ActionFormFieldHint = Omit<
+  ActionInputFieldHint,
+  'optionsSourceId' | 'connectedAccountOptions' | 'resolvedEmptyConnectedAccountOptions'
+>;
+
+export type ActionFormHints = Omit<ActionInputHints, 'fields'> & Readonly<{
+  fields: readonly ActionFormFieldHint[];
+}>;
+
 /** Resolves visibility, required, and disabled state through the Protocol-owned Action form owner. */
 export const resolveEffectiveActionInputFields: (
   spec: Pick<ActionSpec, 'inputHints'>,

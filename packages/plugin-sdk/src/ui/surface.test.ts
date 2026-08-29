@@ -179,6 +179,53 @@ describe('defineUiSurfaceDefinition', () => {
         });
     });
 
+    it('projects a placement-free renderer-only surface without synthesizing a view', () => {
+        const composerRenderer = defineUiSurfaceDefinition({
+            id: 'composer-picker',
+            placement: 'rendererOnly',
+            renderer: {
+                kind: 'reactNative',
+                requiredHostMethods: ['context', 'readComposer', 'applyComposer'],
+            },
+            build: {
+                entry: 'ui/ComposerPicker.tsx',
+                platforms: ['web', 'ios', 'android'],
+                module: {
+                    containerName: 'acme_composer_picker',
+                    modulePath: './ComposerPicker',
+                    exportName: 'renderSurface',
+                },
+            },
+        });
+
+        expect(buildUiSurfaceTargets(composerRenderer)).toEqual([{
+            kind: 'reactNative',
+            rendererId: 'composer-picker-renderer',
+            entry: 'ui/ComposerPicker.tsx',
+            platforms: ['web', 'ios', 'android'],
+            module: {
+                containerName: 'acme_composer_picker',
+                modulePath: './ComposerPicker',
+                exportName: 'renderSurface',
+            },
+        }]);
+
+        const plugin = definePlugin({
+            id: 'com.acme.composer-renderer',
+            version: '1.0.0',
+            ui: { surfaces: [composerRenderer] },
+        });
+        expect(plugin.manifest.contributes.ui).toMatchObject({
+            renderers: [{
+                id: 'composer-picker-renderer',
+                kind: 'reactNative',
+                artifact: 'composer-picker-renderer',
+            }],
+        });
+        expect(plugin.manifest.contributes.ui?.views).toBeUndefined();
+        expect(plugin.manifest.contributes.ui?.settingsPages).toBeUndefined();
+    });
+
     it('fails closed instead of synthesizing a build target for an undeclared executable surface build', () => {
         expect(() => buildUiSurfaceTargets({
             id: 'missing-build',

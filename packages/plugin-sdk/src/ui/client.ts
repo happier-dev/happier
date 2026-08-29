@@ -2,8 +2,8 @@
 import { createPluginUiHostApiClientFromTransport } from './clientTransport.js';
 import {
     awaitHostedWebPluginUiHostApiClientBootstrapFromCurrentRealm,
-    isHostedWebCollectionUiQueryCapabilityKnown,
-    readHostedWebCollectionUiQueryTransport,
+    isHostedWebAccountDataCapabilityKnown,
+    readHostedWebAccountDataTransport,
 } from './hostedWebClientBootstrap.js';
 import type { PluginUiHostApi, RenderContext } from './hostApi.js';
 
@@ -14,7 +14,7 @@ type CreatePluginUiHostApiClientOptions = Readonly<{ signal?: AbortSignal }>;
 // before author code runs, so hosted Data capability cannot become a second
 // author-visible bootstrap contract.
 const PLUGIN_UI_PRIVATE_HOSTED_WEB_COLLECTION_UI_QUERY_TRANSPORT_KEY = Symbol.for(
-    'happier.pluginUi.privateHostedWebCollectionUiQueryTransport.v1',
+    'happier.pluginUi.privateHostedWebAccountDataTransport.v1',
 );
 const PLUGIN_UI_PRIVATE_MOUNTED_COMPOSER_REF_KEY = Symbol.for(
     'happier.pluginUi.privateMountedComposerRef.v1',
@@ -89,16 +89,16 @@ export const createPluginUiRenderContext = async (
         ...(bootstrap.launchInput === undefined ? {} : { launchInput: bootstrap.launchInput }),
         ...(bootstrap.subPath === undefined ? {} : { subPath: bootstrap.subPath }),
     };
-    const collectionUiQueryTransport = readHostedWebCollectionUiQueryTransport(bootstrap);
-    if (isHostedWebCollectionUiQueryCapabilityKnown(bootstrap)) {
+    const accountDataTransport = readHostedWebAccountDataTransport(bootstrap);
+    if (isHostedWebAccountDataCapabilityKnown(bootstrap)) {
         Object.defineProperty(context, PLUGIN_UI_PRIVATE_HOSTED_WEB_COLLECTION_UI_QUERY_TRANSPORT_KEY, {
             configurable: false,
             enumerable: false,
             writable: false,
-            value: collectionUiQueryTransport
+            value: accountDataTransport
                 ? Object.freeze({
                     kind: 'available' as const,
-                    acquireTransport: async () => collectionUiQueryTransport,
+                    acquireTransport: async () => accountDataTransport,
                 })
                 : Object.freeze({ kind: 'unavailable' as const }),
         });

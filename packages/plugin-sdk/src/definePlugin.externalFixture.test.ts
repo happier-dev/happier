@@ -728,11 +728,11 @@ describe('external definePlugin authoring inference fixture', { timeout: 90_000 
         expect(surfaceDeclaration).toContain('ContributionSurfaceNodeInput');
     });
 
-    it('compiles real independent triage target and contributor entrypoints through one source-only feature protocol', async () => {
+    it('compiles real independent triage target and contributor entrypoints through the canonical source-only protocol', async () => {
         const { triageSourceDeclarationsDirectory } = requireFixtureBuild();
         for (const declarationPath of [
-            join(triageSourceDeclarationsDirectory, 'examples', 'triage-source-target', 'src', 'index.d.ts'),
-            join(triageSourceDeclarationsDirectory, 'examples', 'triage-source-contributor', 'src', 'index.d.ts'),
+            join(triageSourceDeclarationsDirectory, 'packages', 'plugin-sdk', 'examples', 'triage-source-target', 'src', 'index.d.ts'),
+            join(triageSourceDeclarationsDirectory, 'packages', 'plugin-sdk', 'examples', 'triage-source-contributor', 'src', 'index.d.ts'),
         ]) {
             expectPortableExternalDeclaration(await readFile(declarationPath, 'utf8'));
         }

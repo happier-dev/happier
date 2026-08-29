@@ -34,6 +34,7 @@ const compiledConnectedAccountsDeclaration = fileURLToPath(
 const sourceAuthoringDeclarationSources = [
     fileURLToPath(new URL('./protocol/protocolFacade.ts', import.meta.url)),
     fileURLToPath(new URL('./protocol/composerRef.ts', import.meta.url)),
+    fileURLToPath(new URL('./protocol/collectionCursor.ts', import.meta.url)),
     fileURLToPath(new URL('./protocol/index.ts', import.meta.url)),
     fileURLToPath(new URL('./targetedContributionAuthoring.ts', import.meta.url)),
     fileURLToPath(new URL('./connectedAccounts.ts', import.meta.url)),

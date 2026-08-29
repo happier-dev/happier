@@ -1564,7 +1564,7 @@ describe('normal SDK declaration closure identities', () => {
         const sourceFile = parseSource('services/sessions.ts', sourceText);
 
         expect(exportedTypeAlias(sourceFile, 'SessionServerStartSpawnDraftV1')?.type.getText(sourceFile))
-            .toContain("'creationKey' | 'initialInput' | 'environmentVariables'");
+            .toContain("'creationKey' | 'initialInput'");
         expect(exportedCallableTypeText(sourceFile, 'SessionServerStartSpawnDraftV1Schema'))
             .toContain('SessionSchema<SessionServerStartSpawnDraftV1>');
         expect(importedName(

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import ts from 'typescript';
@@ -81,6 +81,26 @@ test('rejects comments and unrelated literals as capability exercise evidence', 
     [{ serviceId: 'events' }, "const note = 'context.services.events';"],
     [{ capability: 'network.client' }, "const note = 'network.client';"],
     [{ manifestFamily: 'actions', definePluginAuthorKey: 'actions' }, "// definePlugin({ actions: [] });"],
+    [{ serviceId: 'events' }, [
+      "import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';",
+      'const unrelated = { services: { events: {} } };',
+      'unrelated.services.events;',
+    ].join('\n')],
+    [{ serviceId: 'events' }, [
+      "import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';",
+      'const context = { services: { events: {} } };',
+      'context.services.events;',
+    ].join('\n')],
+    [{ capability: 'network.client' }, [
+      "import { definePlugin } from '@happier-dev/plugin-sdk';",
+      "const unrelated = { hostAccess: [{ capability: 'network.client' }] };",
+      "definePlugin({ id: 'example' });",
+    ].join('\n')],
+    [{ manifestFamily: 'mcp.discoverySources', definePluginAuthorKey: 'mcp' }, [
+      "import { definePlugin } from '@happier-dev/plugin-sdk';",
+      'const unrelated = { discoverySources: {} };',
+      'definePlugin({ mcp: { servers: {} } });',
+    ].join('\n')],
   ];
 
   for (const [row, source] of cases) {
@@ -91,9 +111,18 @@ test('rejects comments and unrelated literals as capability exercise evidence', 
 test('accepts syntax-owned imports, service access, HostAccess, and definePlugin declarations', () => {
   const cases = [
     [{ specifier: './events' }, "import type { EventsService } from '@happier-dev/plugin-sdk/events';"],
-    [{ serviceId: 'events' }, 'export const run = (context) => context.services.events.plugin.emit(\'ready\');'],
-    [{ capability: 'network.client' }, "definePlugin({ hostAccess: { required: [{ capability: 'network.client' }] } });"],
-    [{ manifestFamily: 'mcp.discoverySources', definePluginAuthorKey: 'mcp' }, 'definePlugin({ mcp: { discoverySources: {} } });'],
+    [{ serviceId: 'events' }, [
+      "import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';",
+      "export const run = (context: PluginInvocationContext) => context.services.events.plugin.emit('ready');",
+    ].join("\n")],
+    [{ capability: 'network.client' }, [
+      "import { definePlugin as define } from '@happier-dev/plugin-sdk';",
+      "define({ hostAccess: { required: [{ capability: 'network.client' }] } });",
+    ].join("\n")],
+    [{ manifestFamily: 'mcp.discoverySources', definePluginAuthorKey: 'mcp' }, [
+      "import { definePlugin as define } from '@happier-dev/plugin-sdk';",
+      "define({ mcp: { discoverySources: {} } });",
+    ].join("\n")],
   ];
 
   for (const [row, source] of cases) {
@@ -831,6 +860,47 @@ test('rejects an available capability whose declared consumer never exercises th
   );
 });
 
+test('fails closed when an available proving consumer is not admitted into the TypeScript proof program', async () => {
+  const packageRoot = resolve(import.meta.dirname, '..');
+  const apiInventory = await readCurrentApiInventory(packageRoot);
+  // A real regular leaf under a maintained public consumer prefix whose
+  // extension the TypeScript proof program does not admit. Its text is a
+  // syntactically plausible SDK consumer, so syntax-only matching awards
+  // evidence the program never verified; the canonical path must fail closed
+  // on the missing proof-program admission instead.
+  const unadmittedConsumerRelative = 'packages/plugin-sdk/fixtures/external-targeted-packages/capability-proof-admission.tmp.md';
+  const unadmittedConsumer = resolve(packageRoot, 'fixtures/external-targeted-packages/capability-proof-admission.tmp.md');
+  await writeFile(
+    unadmittedConsumer,
+    [
+      'import { definePlugin } from \'@happier-dev/plugin-sdk/mcp\';',
+      'export default definePlugin({ id: \'capability-proof-admission-probe\' });',
+      '',
+    ].join('\n'),
+  );
+  try {
+    await assert.rejects(
+      createCapabilityMatrixOutput({
+        packageRoot,
+        apiInventory,
+        declarations: Object.freeze({
+          ...CAPABILITY_MATRIX_DECLARATIONS_V1,
+          subpaths: Object.freeze({
+            ...CAPABILITY_MATRIX_DECLARATIONS_V1.subpaths,
+            './mcp': Object.freeze({
+              availabilityDisposition: 'available',
+              provingConsumer: unadmittedConsumerRelative,
+            }),
+          }),
+        }),
+      }),
+      /subpaths\.\.[/]mcp provingConsumer packages\/plugin-sdk\/fixtures\/external-targeted-packages\/capability-proof-admission\.tmp\.md was not admitted into the TypeScript proof program/u,
+    );
+  } finally {
+    await rm(unadmittedConsumer, { force: true });
+  }
+});
+
 test('rejects an available manifest family whose declared consumer has no matching definePlugin author key', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
   const apiInventory = await readCurrentApiInventory(packageRoot);
@@ -913,7 +983,7 @@ test('plans the current author-source matrix through the sole publisher output',
     property: 'targetedContributions',
     publicType: 'TargetedContributionsService',
     authorEntrypoints: ['.'],
-    realms: ['any'],
+    realms: ['daemon'],
     producer: 'src/services/targetedContributions.ts',
     lifecycle: 'invocation-scoped',
     provingConsumer: 'packages/plugins/channels/src/ingress.ts',

@@ -168,6 +168,41 @@ describe('createExecutionRunHostBackendFromSessionRuntime', () => {
     expect(harness.sessionDisposeCalls).toBe(1);
   });
 
+  it('settles terminal disposal without awaiting a never-settling Session cleanup', async () => {
+    let publish!: (event: AgentSessionRuntimeEvent) => void;
+    let disposeCalls = 0;
+    const session: AgentSessionRuntime = {
+      async send() {
+        return { status: 'admitted' };
+      },
+      watch(listener) {
+        publish = listener;
+        return { dispose() {} };
+      },
+      async dispose() {
+        disposeCalls += 1;
+        await new Promise<never>(() => undefined);
+      },
+    };
+    const execution = await createExecutionRunHostBackendFromSessionRuntime({
+      request: createResumeRequest('run-never-settling-cleanup'),
+      openSession: async () => session,
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    execution.watch((event) => events.push(event));
+
+    await expect(execution.send({ text: 'finish' })).resolves.toMatchObject({
+      status: 'admitted',
+    });
+    publish(completeEvent('run-never-settling-cleanup-turn-1'));
+    await expect(execution.dispose()).resolves.toBeUndefined();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(disposeCalls).toBe(1);
+
+    await expect(execution.dispose()).resolves.toBeUndefined();
+    expect(disposeCalls).toBe(1);
+  });
+
   it('publishes run-start before a synchronously replayed Session checkpoint', async () => {
     const session: AgentSessionRuntime = {
       async send() {

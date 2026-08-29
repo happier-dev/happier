@@ -49,6 +49,7 @@ export type {
     UiSurfaceReactNativeDefinition,
     UiSurfaceReactNativeRendererDefinition,
     UiSurfaceRendererDefinition,
+    UiSurfaceRendererOnlyDefinition,
     UiSurfaceSettingsPageDefinition,
 } from './ui/surface.js';
 export type {

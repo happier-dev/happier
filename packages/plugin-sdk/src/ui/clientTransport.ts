@@ -48,10 +48,11 @@ import {
 import { PluginError } from '../errors.js';
 import {
     decodePluginUiClipboardReadResult,
+    decodePluginUiConfirmResult,
     decodePluginUiResourceContent,
+    encodePluginUiDiagnostic,
 } from '../host/ui/hostApiCodecs.js';
 import type { PluginErrorData } from '../errors.js';
-import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginReference } from '../identity.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type {
@@ -264,15 +265,6 @@ function normalizePluginSurfaceDestination(
     }
     return { pluginId: reference.pluginId, localId: reference.localId };
 }
-function diagnosticToJson(data: PluginDiagnosticData): JsonValue {
-    return {
-        code: data.code,
-        severity: data.severity,
-        ...(data.message === undefined ? {} : { message: data.message }),
-        ...(data.details === undefined ? {} : { details: data.details }),
-        ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
-    };
-}
 function isJsonRecord(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
     return value !== undefined && value !== null && !Array.isArray(value) && typeof value === 'object';
 }
@@ -286,12 +278,6 @@ function requireTransportJsonObject(value: unknown, label: string): JsonValue {
         throw new PluginUiHostApiClientError('invalid_payload', `${label} must be transport-safe JSON.`);
     }
     return parsed.data;
-}
-function requireExactKeys(record: Readonly<Record<string, JsonValue>>, keys: readonly string[], label: string): void {
-    const allowed = new Set(keys);
-    if (Object.keys(record).some((key) => !allowed.has(key))) {
-        throw new PluginUiHostApiClientError('invalid_payload', `Host returned unknown ${label} fields.`);
-    }
 }
 function readSurface(value: JsonValue): SurfaceContext {
     const parsed = PluginUiHostApiSurfaceContextV1Schema.safeParse(value);
@@ -773,7 +759,7 @@ export async function createPluginUiHostApiClientFromTransport(
         } catch (error) {
             const code = error instanceof PluginUiHostApiClientError ? error.code : 'listener_failed';
             if (error instanceof PluginUiHostApiClientError) retireSubscription(subscriptionId, record);
-            void request('diagnostic', diagnosticToJson({
+            void request('diagnostic', encodePluginUiDiagnostic({
                 code: `plugin_ui_subscription_${code}`,
                 severity: 'error',
                 message: `Plugin UI ${record.method} subscription event was not delivered.`,
@@ -1217,12 +1203,11 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         notify: async (message, notifyOptions) => { await request('notify', { message, ...(notifyOptions?.severity === undefined ? {} : { severity: notifyOptions.severity }) }, notifyOptions?.signal); },
         confirm: async (message, confirmOptions) => {
-            const result = requireRecord(await request('confirm', { message, ...(confirmOptions?.title === undefined ? {} : { title: confirmOptions.title }) }, confirmOptions?.signal), 'confirm result');
-            requireExactKeys(result, ['confirmed'], 'confirm result');
-            if (typeof result.confirmed !== 'boolean') throw new PluginUiHostApiClientError('invalid_payload');
-            return result.confirmed;
+            const decoded = decodePluginUiConfirmResult(await request('confirm', { message, ...(confirmOptions?.title === undefined ? {} : { title: confirmOptions.title }) }, confirmOptions?.signal));
+            if (!decoded.ok) throw new PluginUiHostApiClientError('invalid_payload', decoded.diagnostic);
+            return decoded.value;
         },
-        diagnostic: (data) => { void request('diagnostic', diagnosticToJson(data)).catch(() => undefined); },
+        diagnostic: (data) => { void request('diagnostic', encodePluginUiDiagnostic(data)).catch(() => undefined); },
         readClipboard: async (requestOptions) => {
             const decoded = decodePluginUiClipboardReadResult(
                 await request('readClipboard', undefined, requestOptions?.signal),

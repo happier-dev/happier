@@ -12,6 +12,18 @@ const protocolAutomationEventSetupResult = resolve(
     import.meta.dirname,
     '../../protocol/src/automations/automationEventSetupResultV1.ts',
 );
+const protocolAutomationEvent = resolve(
+    import.meta.dirname,
+    '../../protocol/src/automations/automationEventV1.ts',
+);
+const protocolPluginReleaseRef = resolve(
+    import.meta.dirname,
+    '../../protocol/src/plugins/availability/releaseRefV1.ts',
+);
+const protocolPluginCollections = resolve(
+    import.meta.dirname,
+    '../../protocol/src/plugins/data/collectionsV1.ts',
+);
 const protocolSessionSpawnNewInput = resolve(
     import.meta.dirname,
     '../../protocol/src/sessions/creation/sessionSpawnNewInputV2.ts',
@@ -75,6 +87,7 @@ const sourceAliases = [
     ['@happier-dev/protocol/automations/result-delivery', '../../protocol/src/automations/automationResultDeliveryV1.ts'],
     ['@happier-dev/protocol/automations/event-setup-result', '../../protocol/src/automations/automationEventSetupResultV1.ts'],
     ['@happier-dev/protocol/automations/event-history-gap-reset-action', '../../protocol/src/automations/automationEventHistoryGapResetActionV1.ts'],
+    ['@happier-dev/protocol/automations/event', '../../protocol/src/automations/automationEventV1.ts'],
     ['@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2', '../../protocol/src/sessions/creation/sessionSpawnNewInputV2.ts'],
     ['@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1', '../../protocol/src/machines/administration/pluginMachineExecutionOriginV1.ts'],
     ['@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring', '../../protocol/src/plugins/contributions/ui/declarativeDocumentAuthoringV1.ts'],
@@ -170,7 +183,7 @@ const bundleCases = [
     {
         name: 'Events publication projection',
         entry: resolve(import.meta.dirname, './events/index.ts'),
-        source: 'export { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationSetupResultV1Schema } from ENTRY;',
+        source: 'export { admitCheckpointedPluginEventObservationV1, admitSessionSocketPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationSetupResultV1Schema } from ENTRY;',
     },
     {
         name: 'Action author projection',
@@ -293,6 +306,9 @@ describe('Plugin SDK publication realm closure', () => {
             }
             if (bundleCase.name === 'Events publication projection') {
                 expect(bundle.moduleIds).toContain(protocolAutomationEventSetupResult);
+                expect(bundle.moduleIds).toContain(protocolAutomationEvent);
+                expect(bundle.moduleIds).toContain(protocolPluginReleaseRef);
+                expect(bundle.moduleIds).not.toContain(protocolPluginCollections);
                 expect(bundle.moduleIds).not.toContain(protocolRoot);
             }
             if (bundleCase.name === 'Connected Accounts projection') {

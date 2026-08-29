@@ -171,7 +171,7 @@ describe('hosted-web plugin UI public client factory', () => {
         const context = await createPluginUiRenderContext();
         expect(Reflect.get(
             context,
-            Symbol.for('happier.pluginUi.privateHostedWebCollectionUiQueryTransport.v1'),
+            Symbol.for('happier.pluginUi.privateHostedWebAccountDataTransport.v1'),
         )).toEqual({ kind: 'unavailable' });
     });
 

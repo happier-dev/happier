@@ -229,10 +229,19 @@ function createExecutionRunLifecycle(
     },
     async dispose() {
       if (disposePromise) return await disposePromise;
+      // Establish the exactly-once fence before terminal publication: a Run
+      // subscriber may synchronously re-enter dispose while receiving the
+      // cancellation event.
+      disposePromise = Promise.resolve();
       disposed = true;
-      disposePromise = Promise.resolve().then(async () => await options.dispose());
       emit({ kind: 'run-cancelled' });
       listeners.clear();
+      // Terminal truth and controller retirement are host-owned settlement.
+      // Provider cleanup is exactly-once, detached, and best effort: a plugin
+      // promise that never settles must not retain a completed Run forever.
+      void Promise.resolve()
+        .then(async () => await options.dispose())
+        .catch(() => undefined);
       return await disposePromise;
     },
   };

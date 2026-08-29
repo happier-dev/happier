@@ -82,6 +82,7 @@ test('plugin-sdk declaration preparation publishes the exact workspace graph con
     pluginSdkDir,
     env,
     publicationMode: 'live',
+    pruneStale: true,
     consumePreparedWorkspace,
   }]);
   assert.deepEqual(result, {
@@ -175,12 +176,20 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
   assert.equal(packageJson.scripts['pretypecheck:tests'], undefined);
   assert.equal(packageJson.scripts['test:source'], 'vitest run --config vitest.source.config.ts');
   assert.equal(packageJson.scripts['test:local'], 'yarn -s test:source && yarn -s test:local:adjacent');
-  assert.doesNotMatch(packageJson.scripts['test:local:adjacent'], /bundleWorkspaceDeps|prepare:declarations/u);
-  assert.match(
-    packageJson.scripts['test:local:adjacent'],
-    /^yarn --cwd examples\/automation-event-source build && yarn --cwd examples\/action-contract-producer build && yarn --cwd examples\/public-authoring build && node --test .*examples\/public-authoring\/test\/index\.test\.mjs/u,
+  const adjacentScript = packageJson.scripts['test:local:adjacent'];
+  assert.doesNotMatch(adjacentScript, /bundleWorkspaceDeps|prepare:declarations/u);
+  assert.ok(
+    adjacentScript.startsWith('yarn --cwd examples/automation-event-source build && yarn --cwd examples/action-contract-producer build && yarn --cwd examples/triage-source-target build && yarn --cwd examples/triage-source-contributor build && yarn --cwd examples/public-authoring build && node --test '),
     'the managed build for every dist-importing example must immediately precede the SDK unit lane test batch',
   );
+  const adjacentNodeTests = adjacentScript.slice(adjacentScript.indexOf('node --test '));
+  for (const testPath of [
+    'examples/triage-source-target/test/index.test.mjs',
+    'examples/triage-source-contributor/test/index.test.mjs',
+    'examples/public-authoring/test/index.test.mjs',
+  ]) {
+    assert.ok(adjacentNodeTests.includes(testPath), 'expected node test batch to include ' + testPath);
+  }
   assert.equal(
     packageJson.scripts['typecheck:source'],
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
@@ -303,6 +312,7 @@ test('plugin-sdk artifact bundling rebuilds newer stale workspace output from cu
 
 test('plugin-sdk live bundling keeps workspace admission incremental', async () => {
   const admissionCalls = [];
+  const publications = [];
 
   await bundleWorkspaceDeps({
     repoRoot: '/repo',
@@ -322,7 +332,9 @@ test('plugin-sdk live bundling keeps workspace admission incremental', async () 
       await ensureWorkspacePackagesBuiltByName(root, ['@happier-dev/cli-common'], options);
       return {
         resolveWorkspaceBundlesFromPackageJson: () => [{ packageName: '@happier-dev/protocol' }],
-        bundleWorkspacePackagesWithRuntimeDependencies: () => {},
+        bundleWorkspacePackagesWithRuntimeDependencies: (options) => {
+          publications.push(options);
+        },
       };
     },
   });
@@ -331,4 +343,9 @@ test('plugin-sdk live bundling keeps workspace admission incremental', async () 
     { packageNames: ['@happier-dev/cli-common'], force: false },
     { packageNames: ['@happier-dev/protocol'], force: undefined },
   ]);
+  assert.deepEqual(publications, [{
+    bundles: [{ packageName: '@happier-dev/protocol' }],
+    publicationMode: 'live',
+    pruneStale: undefined,
+  }]);
 });

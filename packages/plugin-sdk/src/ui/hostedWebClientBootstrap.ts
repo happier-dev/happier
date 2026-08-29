@@ -1,18 +1,18 @@
 import {
-    PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+    PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     PluginHostedWebBridgeBootstrapEnvelopeV1Schema,
     PluginHostedWebBridgeEnvelopeV1Schema,
     PluginHostedWebBridgeHostMessageEnvelopeV1Schema,
     PluginHostedWebBridgeResponseEnvelopeV1Schema,
-    PluginHostedWebCollectionUiQueryBridgeOperationV1Schema,
-    PluginHostedWebCollectionUiQueryBridgeResponseV1Schema,
+    PluginHostedWebAccountDataBridgeOperationV1Schema,
+    PluginHostedWebAccountDataBridgeResponseV1Schema,
     PluginUiHostApiWireEnvelopeV1Schema,
     pluginUiHostApiWireIdentitiesEqual,
     readPluginHostedWebBridgeFrameOriginV1,
-    type PluginHostedWebCollectionUiQueryBridgeChangeV1,
-    type PluginHostedWebCollectionUiQueryBridgeOperationV1,
-    type PluginHostedWebCollectionUiQueryBridgeResponseV1,
+    type PluginHostedWebAccountDataBridgeChangeV1,
+    type PluginHostedWebAccountDataBridgeOperationV1,
+    type PluginHostedWebAccountDataBridgeResponseV1,
     type PluginHostedWebBridgeBootstrapPayloadV1,
     type PluginHostedWebBridgeEnvelopeV1,
     type PluginUiHostApiWireEnvelopeV1,
@@ -71,12 +71,12 @@ const controllers = new WeakMap<object, HostedWebBootstrapController>();
  * package entry point: the hosted bootstrap owns its identity, readiness,
  * cancellation, currentness, and disconnection.
  */
-export type HostedWebCollectionUiQueryTransport = Readonly<{
+export type HostedWebAccountDataTransport = Readonly<{
     request(
-        operation: PluginHostedWebCollectionUiQueryBridgeOperationV1,
+        operation: PluginHostedWebAccountDataBridgeOperationV1,
         options?: Readonly<{ signal?: AbortSignal }>,
-    ): Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>;
-    subscribe(listener: (change: PluginHostedWebCollectionUiQueryBridgeChangeV1) => void): Readonly<{
+    ): Promise<PluginHostedWebAccountDataBridgeResponseV1>;
+    subscribe(listener: (change: PluginHostedWebAccountDataBridgeChangeV1) => void): Readonly<{
         dispose(): void;
     }>;
     subscribeDisconnect(listener: () => void): Readonly<{
@@ -84,32 +84,32 @@ export type HostedWebCollectionUiQueryTransport = Readonly<{
     }>;
 }>;
 
-type PendingCollectionUiQueryRequest = Readonly<{
-    resolve(value: PluginHostedWebCollectionUiQueryBridgeResponseV1): void;
+type PendingAccountDataRequest = Readonly<{
+    resolve(value: PluginHostedWebAccountDataBridgeResponseV1): void;
     reject(error: PluginUiHostApiClientError): void;
 }>;
 
-const collectionUiQueryTransports = new WeakMap<object, HostedWebCollectionUiQueryTransport>();
-const hostedWebCollectionUiQueryCapabilityKnown = new WeakSet<object>();
+const accountDataTransports = new WeakMap<object, HostedWebAccountDataTransport>();
+const hostedWebAccountDataCapabilityKnown = new WeakSet<object>();
 
 /**
  * Internal carrier for `createPluginUiRenderContext`; it is not part of the
  * author-facing `@happier-dev/plugin-sdk/ui/client` export surface.
  */
-export function readHostedWebCollectionUiQueryTransport(
+export function readHostedWebAccountDataTransport(
     bootstrap: PluginUiHostApiClientBootstrap,
-): HostedWebCollectionUiQueryTransport | undefined {
-    return collectionUiQueryTransports.get(bootstrap);
+): HostedWebAccountDataTransport | undefined {
+    return accountDataTransports.get(bootstrap);
 }
 
 /**
  * Distinguishes a hosted bootstrap that explicitly has no mounted Data bridge
  * from a non-hosted bootstrap, which must remain available for host injection.
  */
-export function isHostedWebCollectionUiQueryCapabilityKnown(
+export function isHostedWebAccountDataCapabilityKnown(
     bootstrap: PluginUiHostApiClientBootstrap,
 ): boolean {
-    return hostedWebCollectionUiQueryCapabilityKnown.has(bootstrap);
+    return hostedWebAccountDataCapabilityKnown.has(bootstrap);
 }
 
 function readRequiredQueryValue(url: URL, key: string): string | null {
@@ -197,13 +197,13 @@ function asBootstrap(
     });
 }
 
-function readCollectionUiQueryCapability(payload: unknown): boolean {
+function readAccountDataCapability(payload: unknown): boolean {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
     const capabilities = Reflect.get(payload, 'capabilities');
     return capabilities !== null
         && typeof capabilities === 'object'
         && !Array.isArray(capabilities)
-        && Reflect.get(capabilities, 'collectionUiQuery') === true;
+        && Reflect.get(capabilities, 'accountData') === true;
 }
 
 function awaitWithAbort(
@@ -255,16 +255,16 @@ function createHostedWebBootstrapController(
     let sequence = 0;
     let readySequence: number | null = null;
     let readyAcknowledged = false;
-    let collectionUiQueryCapability = false;
-    let createCollectionUiQueryTransport: (() => HostedWebCollectionUiQueryTransport) | null = null;
+    let accountDataCapability = false;
+    let createAccountDataTransport: (() => HostedWebAccountDataTransport) | null = null;
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const sentSequences = new Set<number>();
     const listeners = new Set<(message: unknown) => void>();
-    const collectionUiQueryListeners = new Set<(
-        change: PluginHostedWebCollectionUiQueryBridgeChangeV1,
+    const accountDataListeners = new Set<(
+        change: PluginHostedWebAccountDataBridgeChangeV1,
     ) => void>();
-    const collectionUiQueryDisconnectListeners = new Set<() => void>();
-    const collectionUiQueryPending = new Map<number, PendingCollectionUiQueryRequest>();
+    const accountDataDisconnectListeners = new Set<() => void>();
+    const accountDataPending = new Map<number, PendingAccountDataRequest>();
     let resolveReadiness!: (value: PluginUiHostApiClientBootstrap) => void;
     let rejectReadiness!: (error: PluginUiHostApiClientError) => void;
     const readiness = new Promise<PluginUiHostApiClientBootstrap>((resolve, reject) => {
@@ -291,12 +291,12 @@ function createHostedWebBootstrapController(
         if (!expected || !pluginUiHostApiWireIdentitiesEqual(expected, wire.identity)) return;
         for (const listener of listeners) listener(wire);
     };
-    const disconnectCollectionUiQuery = (error: PluginUiHostApiClientError): void => {
-        for (const pending of [...collectionUiQueryPending.values()]) pending.reject(error);
-        collectionUiQueryPending.clear();
-        for (const listener of collectionUiQueryDisconnectListeners) listener();
-        collectionUiQueryListeners.clear();
-        collectionUiQueryDisconnectListeners.clear();
+    const disconnectAccountData = (error: PluginUiHostApiClientError): void => {
+        for (const pending of [...accountDataPending.values()]) pending.reject(error);
+        accountDataPending.clear();
+        for (const listener of accountDataDisconnectListeners) listener();
+        accountDataListeners.clear();
+        accountDataDisconnectListeners.clear();
     };
     const fail = (code: string, message: string): void => {
         if (state === 'disconnected') return;
@@ -315,7 +315,7 @@ function createHostedWebBootstrapController(
             });
         }
         rejectReadiness(error);
-        disconnectCollectionUiQuery(error);
+        disconnectAccountData(error);
     };
     const disconnectFromHost = (reason: string): void => {
         if (state === 'disconnected') return;
@@ -328,18 +328,18 @@ function createHostedWebBootstrapController(
         );
         terminalError = error;
         rejectReadiness(error);
-        disconnectCollectionUiQuery(error);
+        disconnectAccountData(error);
     };
-    const installCollectionUiQueryTransport = (): void => {
+    const installAccountDataTransport = (): void => {
         const currentBootstrap = bootstrap;
-        const createTransport = createCollectionUiQueryTransport;
+        const createTransport = createAccountDataTransport;
         if (state !== 'bootstrapped'
             || !readyAcknowledged
-            || !collectionUiQueryCapability
+            || !accountDataCapability
             || !currentBootstrap
             || !createTransport
-            || collectionUiQueryTransports.has(currentBootstrap)) return;
-        collectionUiQueryTransports.set(currentBootstrap, createTransport());
+            || accountDataTransports.has(currentBootstrap)) return;
+        accountDataTransports.set(currentBootstrap, createTransport());
     };
     const acceptBootstrap = (payload: PluginHostedWebBridgeBootstrapPayloadV1): void => {
         if (state !== 'readySent') {
@@ -390,41 +390,41 @@ function createHostedWebBootstrapController(
                 });
             },
         });
-        createCollectionUiQueryTransport = () => Object.freeze({
+        createAccountDataTransport = () => Object.freeze({
             request(operation, options) {
                 if (state !== 'bootstrapped' || !identity) {
                     return Promise.reject(new PluginUiHostApiClientError(
                         'ui_host_bridge_disconnected',
-                        'The hosted Collection UI-query transport is no longer current.',
+                        'The hosted Account Data transport is no longer current.',
                     ));
                 }
-                const parsed = PluginHostedWebCollectionUiQueryBridgeOperationV1Schema.safeParse(operation);
+                const parsed = PluginHostedWebAccountDataBridgeOperationV1Schema.safeParse(operation);
                 if (!parsed.success) {
                     return Promise.reject(new PluginUiHostApiClientError(
                         'ui_host_bridge_invalid_request',
-                        'The hosted Collection UI-query request was invalid.',
+                        'The hosted Account Data request was invalid.',
                     ));
                 }
                 if (options?.signal?.aborted) {
                     return Promise.reject(new PluginUiHostApiClientError(
                         'ui_host_bridge_aborted',
-                        'The hosted Collection UI-query request was cancelled before dispatch.',
+                        'The hosted Account Data request was cancelled before dispatch.',
                     ));
                 }
                 sequence += 1;
                 const requestSequence = sequence;
-                return new Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>((resolve, reject) => {
+                return new Promise<PluginHostedWebAccountDataBridgeResponseV1>((resolve, reject) => {
                     let abortCleanup: (() => void) | undefined;
-                    const pending: PendingCollectionUiQueryRequest = {
+                    const pending: PendingAccountDataRequest = {
                         resolve(value) {
-                            if (collectionUiQueryPending.get(requestSequence) !== pending) return;
-                            collectionUiQueryPending.delete(requestSequence);
+                            if (accountDataPending.get(requestSequence) !== pending) return;
+                            accountDataPending.delete(requestSequence);
                             abortCleanup?.();
                             resolve(value);
                         },
                         reject(error) {
-                            if (collectionUiQueryPending.get(requestSequence) !== pending) return;
-                            collectionUiQueryPending.delete(requestSequence);
+                            if (accountDataPending.get(requestSequence) !== pending) return;
+                            accountDataPending.delete(requestSequence);
                             abortCleanup?.();
                             reject(error);
                         },
@@ -440,25 +440,25 @@ function createHostedWebBootstrapController(
                             ...(boundSessionId === undefined ? {} : { sessionId: boundSessionId }),
                             nonce: config.nonce,
                             sequence,
-                            kind: PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+                            kind: PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
                             payload: { kind: 'cancel', requestSequence },
                         }));
                     };
                     const onAbort = () => {
-                        if (collectionUiQueryPending.get(requestSequence) !== pending) return;
-                        collectionUiQueryPending.delete(requestSequence);
+                        if (accountDataPending.get(requestSequence) !== pending) return;
+                        accountDataPending.delete(requestSequence);
                         abortCleanup?.();
                         sendCancellation();
                         reject(new PluginUiHostApiClientError(
                             'ui_host_bridge_aborted',
-                            'The hosted Collection UI-query request was cancelled.',
+                            'The hosted Account Data request was cancelled.',
                         ));
                     };
                     if (options?.signal) {
                         options.signal.addEventListener('abort', onAbort, { once: true });
                         abortCleanup = () => options.signal?.removeEventListener('abort', onAbort);
                     }
-                    collectionUiQueryPending.set(requestSequence, pending);
+                    accountDataPending.set(requestSequence, pending);
                     sendEnvelope(PluginHostedWebBridgeEnvelopeV1Schema.parse({
                         version: 1,
                         pluginId: config.pluginId,
@@ -467,20 +467,20 @@ function createHostedWebBootstrapController(
                         ...(boundSessionId === undefined ? {} : { sessionId: boundSessionId }),
                         nonce: config.nonce,
                         sequence: requestSequence,
-                        kind: PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+                        kind: PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
                         payload: { kind: 'request', operation: parsed.data },
                     }));
                 });
             },
             subscribe(listener) {
                 if (state !== 'bootstrapped') return Object.freeze({ dispose() {} });
-                collectionUiQueryListeners.add(listener);
+                accountDataListeners.add(listener);
                 let disposed = false;
                 return Object.freeze({
                     dispose() {
                         if (disposed) return;
                         disposed = true;
-                        collectionUiQueryListeners.delete(listener);
+                        accountDataListeners.delete(listener);
                     },
                 });
             },
@@ -489,13 +489,13 @@ function createHostedWebBootstrapController(
                     listener();
                     return Object.freeze({ dispose() {} });
                 }
-                collectionUiQueryDisconnectListeners.add(listener);
+                accountDataDisconnectListeners.add(listener);
                 let disposed = false;
                 return Object.freeze({
                     dispose() {
                         if (disposed) return;
                         disposed = true;
-                        collectionUiQueryDisconnectListeners.delete(listener);
+                        accountDataDisconnectListeners.delete(listener);
                     },
                 });
             },
@@ -514,8 +514,8 @@ function createHostedWebBootstrapController(
             fail('ui_host_bootstrap_invalid', 'The hosted plugin UI bootstrap could not be installed.');
             return;
         }
-        hostedWebCollectionUiQueryCapabilityKnown.add(acceptedBootstrap);
-        installCollectionUiQueryTransport();
+        hostedWebAccountDataCapabilityKnown.add(acceptedBootstrap);
+        installAccountDataTransport();
         resolveReadiness(acceptedBootstrap);
     };
     const handleMessage = (rawEvent: unknown): void => {
@@ -539,9 +539,9 @@ function createHostedWebBootstrapController(
             && readySequence !== null
             && response.data.requestSequence === readySequence) {
             readyAcknowledged = true;
-            collectionUiQueryCapability = response.data.kind === 'ack'
-                && readCollectionUiQueryCapability(response.data.payload);
-            installCollectionUiQueryTransport();
+            accountDataCapability = response.data.kind === 'ack'
+                && readAccountDataCapability(response.data.payload);
+            installAccountDataTransport();
             return;
         }
         if (state !== 'bootstrapped') return;
@@ -553,26 +553,26 @@ function createHostedWebBootstrapController(
             }
             return;
         }
-        if (hostMessage.success && hostMessage.data.kind === PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1) {
+        if (hostMessage.success && hostMessage.data.kind === PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1) {
             if (!addressesThisSurface(config, hostMessage.data, boundSessionId)) return;
-            for (const listener of collectionUiQueryListeners) listener(hostMessage.data.payload);
+            for (const listener of accountDataListeners) listener(hostMessage.data.payload);
             return;
         }
         if (!response.success || !addressesThisSurface(config, response.data, boundSessionId)) return;
-        const collectionPending = collectionUiQueryPending.get(response.data.requestSequence);
+        const collectionPending = accountDataPending.get(response.data.requestSequence);
         if (collectionPending) {
             if (response.data.kind !== 'result') {
                 collectionPending.reject(new PluginUiHostApiClientError(
                     'ui_host_bridge_request_failed',
-                    'The host rejected the Collection UI-query request.',
+                    'The host rejected the Account Data request.',
                 ));
                 return;
             }
-            const payload = PluginHostedWebCollectionUiQueryBridgeResponseV1Schema.safeParse(response.data.payload);
+            const payload = PluginHostedWebAccountDataBridgeResponseV1Schema.safeParse(response.data.payload);
             if (!payload.success) {
                 collectionPending.reject(new PluginUiHostApiClientError(
                     'ui_host_bridge_invalid_response',
-                    'The host returned an invalid Collection UI-query response.',
+                    'The host returned an invalid Account Data response.',
                 ));
                 return;
             }

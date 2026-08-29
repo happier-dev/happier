@@ -41,3 +41,16 @@ export {
  */
 export type { ProtocolComposerRefV1 } from './composerRef.js';
 export { ProtocolComposerRefV1Schema } from './composerRef.js';
+/**
+ * The canonical executable parser for a complete Composer reference
+ * resolution, including Protocol's whole-value 16KiB boundary.
+ */
+export { ProtocolComposerReferenceResolutionV1Schema } from './composerReferenceResolution.js';
+/**
+ * The composable projection of the Account Data Collection's opaque
+ * continuation cursor, for feature protocols declaring their own Action wire
+ * shapes. It is the one canonical Protocol value; the 4096-character base64url
+ * grammar is owned and bounded by the Protocol parser alone.
+ */
+export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
+export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';

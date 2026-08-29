@@ -21,6 +21,7 @@ import {
     hasFeatureProtocolPackageExports,
     isFeatureProtocolPackageName,
     isPublicFeatureProtocolPackageManifest,
+    publicFeatureProtocolPackageSpecifiers,
 } from './featureProtocolPackagePolicy.js';
 
 type DependencySection = 'dependencies' | 'peerDependencies' | 'devDependencies';
@@ -104,9 +105,12 @@ type FeatureProtocolProtocolAuthoringImportAudience =
 const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     PluginJsonSchema: 'feature-protocol',
     ProtocolArrayOptions: 'feature-protocol',
+    ProtocolCollectionOpaqueCursorV1: 'feature-protocol',
+    ProtocolCollectionOpaqueCursorV1Schema: 'feature-protocol',
     ProtocolComposableSchema: 'feature-protocol',
     ProtocolComposerRefV1: 'feature-protocol',
     ProtocolComposerRefV1Schema: 'feature-protocol',
+    ProtocolComposerReferenceResolutionV1Schema: 'feature-protocol',
     ProtocolJsonValue: 'feature-protocol',
     ProtocolJsonValueOptions: 'feature-protocol',
     ProtocolNumberOptions: 'feature-protocol',
@@ -213,6 +217,7 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'PluginContributionIdentity',
         'PluginContributionIdentityV1JsonSchema',
         'PluginContributionIdentityV1Schema',
+        'PluginIdSchema',
         'parsePluginManifest',
     ]),
     [`${SDK_PACKAGE_NAME}/webhooks`]: new Set([
@@ -847,7 +852,7 @@ function assertFeatureProtocolSourceBoundary(
 function assertFeatureProtocolPackageBoundary(fixture: FeatureProtocolPackageFixture): void {
     const { packageJson, sources } = fixture;
     if (!isFeatureProtocolPackageName(packageJson.name)) {
-        throw new Error(`${packageJson.name} is not an @happier-dev/<feature>-protocol package`);
+        throw new Error(`${packageJson.name} is not a public <feature>-protocol npm package`);
     }
 
     if (packageJson.private !== false) {
@@ -1141,6 +1146,52 @@ afterAll(async () => {
 });
 
 describe('feature-protocol package policy', () => {
+    it('classifies valid third-party scoped and unscoped protocol packages without reserving Happier\'s scope', () => {
+        for (const name of [
+            '@happier-dev/example-protocol',
+            '@acme/issues-protocol',
+            '@team.tools/review-workflow-protocol',
+            '@team~tools/review_workflow-protocol',
+            'issues-protocol',
+            'company.tools-protocol',
+            'company_tools-protocol',
+            `${'a'.repeat(205)}-protocol`,
+        ]) {
+            expect(isFeatureProtocolPackageName(name), name).toBe(true);
+            expect(() => assertFeatureProtocolPackageBoundary({
+                ...featureProtocolFixture,
+                packageJson: {
+                    ...featureProtocolFixture.packageJson,
+                    name,
+                },
+            }), name).not.toThrow();
+            expect(publicFeatureProtocolPackageSpecifiers({
+                ...featureProtocolFixture.packageJson,
+                name,
+            })).toEqual([
+                name,
+                `${name}/testing/v1`,
+                `${name}/v1`,
+            ]);
+        }
+
+        for (const name of [
+            '@happier-dev/plugin-sdk',
+            '@acme/issues-contract',
+            'node_modules',
+            'favicon.ico',
+            '@acme/-protocol',
+            '-protocol',
+            '@acme/Issues-protocol',
+            '@acme/issues-protocol/extra',
+            '@acme//issues-protocol',
+            '@acme/issues protocol',
+            `${'a'.repeat(206)}-protocol`,
+        ]) {
+            expect(isFeatureProtocolPackageName(name), name).toBe(false);
+        }
+    });
+
     it('keeps positive feature-protocol fixtures on the direct composable authoring contract', () => {
         const positiveFixtureSources = [
             ...Object.values(featureProtocolFixture.sources),
@@ -1544,9 +1595,15 @@ describe('feature-protocol package policy', () => {
     });
 
     it('rejects generic hosts that import a feature protocol instead of consuming the generic SDK seam', async () => {
-        expect(() => assertGenericHostDoesNotImportFeatureProtocol({
-            'src/catalog.ts': "import { ExampleProtocolV1 } from '@happier-dev/example-protocol/v1';\nvoid ExampleProtocolV1;\n",
-        })).toThrow('generic host imports feature protocol @happier-dev/example-protocol');
+        for (const specifier of [
+            '@happier-dev/example-protocol/v1',
+            '@acme/issues-protocol/v1',
+            'issues-protocol/v1',
+        ]) {
+            expect(() => assertGenericHostDoesNotImportFeatureProtocol({
+                'src/catalog.ts': `import { ExampleProtocolV1 } from '${specifier}';\nvoid ExampleProtocolV1;\n`,
+            }), specifier).toThrow('generic host imports feature protocol');
+        }
         expect(() => assertGenericHostDoesNotImportFeatureProtocol({
             'src/catalog.ts': "import { defineContributionPoint } from '@happier-dev/plugin-sdk/contributions';\nvoid defineContributionPoint;\n",
         })).not.toThrow();

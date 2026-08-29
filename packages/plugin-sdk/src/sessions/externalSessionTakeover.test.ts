@@ -224,6 +224,31 @@ describe('External Session takeover public contract', () => {
             runtimeDescriptorV1: accessorDescriptor,
         }));
         expect(nestedAccessorReads).toBe(0);
+        const cyclicRuntimeDescriptor: Record<string, unknown> = {
+            v: 1,
+            agentId: 'fixture.agent',
+            agent: {},
+        };
+        cyclicRuntimeDescriptor.self = cyclicRuntimeDescriptor;
+        const sparseValues = [, 'hole'];
+        const sparseRuntimeDescriptor = {
+            v: 1,
+            agentId: 'fixture.agent',
+            agent: { values: sparseValues },
+        };
+        for (const runtimeDescriptorV1 of [
+            { v: 1, agentId: 'fixture.agent', agent: { value: undefined } },
+            { v: 1, agentId: 'fixture.agent', agent: { value: Number.NaN } },
+            { v: 1, agentId: 'fixture.agent', agent: { value: Number.POSITIVE_INFINITY } },
+            { v: 1, agentId: 'fixture.agent', agent: Object.create({ inherited: true }) },
+            sparseRuntimeDescriptor,
+            cyclicRuntimeDescriptor,
+        ]) {
+            rejects(() => validateAgentExternalSessionTakeoverLaunchPlan({
+                directory: '/work/project',
+                runtimeDescriptorV1,
+            }));
+        }
         expect(validateAgentExternalSessionTakeoverLaunchPlan({
             directory: 'd'.repeat(AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits),
             backendModeHint: 'm'.repeat(

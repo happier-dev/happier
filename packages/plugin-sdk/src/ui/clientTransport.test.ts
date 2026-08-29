@@ -104,6 +104,31 @@ describe('plugin UI domain client transport adapter', () => {
             .rejects.toMatchObject({ code: 'invalid_payload' });
     });
 
+    it('uses the shared exact confirmation decoder used by the direct-native carrier', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const api = await createPluginUiHostApiClientFromTransport({
+            identity,
+            createRequestId: () => 'confirm-response-request',
+            transport: {
+                subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
+                send(message) {
+                    if (message.kind === 'negotiate') receive?.({
+                        wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                        methods: ['confirm'], surface,
+                    });
+                    if (message.kind === 'request' && message.method === 'confirm') receive?.({
+                        wireVersion: 1, kind: 'result', identity, requestId: message.requestId,
+                        method: message.method, result: { confirmed: true, extra: 'drift' },
+                    });
+                },
+            },
+        });
+
+        await expect(api.confirm('Delete the preview?')).rejects.toMatchObject({
+            code: 'invalid_payload', message: 'confirm_response_invalid',
+        });
+    });
+
     it('terminally carries the exact prepared-workspace selection and rejects incomplete requests', async () => {
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         let receive: ((message: unknown) => void) | undefined;

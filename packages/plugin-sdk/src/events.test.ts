@@ -34,12 +34,14 @@ import type {
     HostEventTarget as ProtocolHostEventTarget,
 } from '@happier-dev/protocol';
 import type {
-    CheckpointedPluginEventDispositionV1,
-    CheckpointedPluginEventObservationV1,
     PluginEventAutomationHistoryGapResetActionInputV1,
     PluginEventAutomationHistoryGapResetActionResultV1,
     PluginEventAutomationSetupResultV1,
+    PluginEventDispositionV1,
+    PluginEventObservationV1,
+    PluginEventSourceConnectionStatusV1,
 } from './events/index.js';
+import type { PluginInvocationContext } from './invocation.js';
 
 describe('EventsService contract', () => {
     it('keeps typed plugin and Host Event namespaces distinct', () => {
@@ -87,11 +89,213 @@ describe('EventsService contract', () => {
     it('exposes one provider-neutral checkpointed Event admission bridge', () => {
         expect(publicEvents.admitCheckpointedPluginEventObservationV1).toBeTypeOf('function');
         expectTypeOf<Parameters<typeof publicEvents.admitCheckpointedPluginEventObservationV1>[0]>()
-            .toEqualTypeOf<CheckpointedPluginEventObservationV1>();
+            .toEqualTypeOf<PluginEventObservationV1>();
         expectTypeOf<Awaited<ReturnType<typeof publicEvents.admitCheckpointedPluginEventObservationV1>>>()
-            .toEqualTypeOf<CheckpointedPluginEventDispositionV1>();
+            .toEqualTypeOf<PluginEventDispositionV1>();
     });
 
+    it('exposes the truthful session-socket Event admission bridge with the same observation contract', () => {
+        expect(publicEvents.admitSessionSocketPluginEventObservationV1).toBeTypeOf('function');
+        expectTypeOf<Parameters<typeof publicEvents.admitSessionSocketPluginEventObservationV1>[0]>()
+            .toEqualTypeOf<PluginEventObservationV1>();
+        expectTypeOf<Awaited<ReturnType<typeof publicEvents.admitSessionSocketPluginEventObservationV1>>>()
+            .toEqualTypeOf<PluginEventDispositionV1>();
+    });
+
+    it('projects idle connection readiness and history gaps through the same complete source scan and status owner', async () => {
+        const reports: unknown[] = [];
+        const context = {
+            signal: new AbortController().signal,
+            services: {
+                actions: {
+                    execute: async (actionId: string, input: unknown) => {
+                        if (actionId === 'automation.event.sources.list') {
+                            return {
+                                kind: 'page',
+                                revision: '7',
+                                definitions: [
+                                    {
+                                        automationId: '11111111-1111-4111-8111-111111111111',
+                                        triggerId: 'trigger-1',
+                                        triggerRevision: 2,
+                                        eventRef: { pluginId: 'com.example.channels', localId: 'message' },
+                                        sourceInstanceId: 'provider:connection:one:source:one',
+                                        sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+                                        sourceContractVersion: 1,
+                                        sourceConfig: { v: 1 },
+                                        observationTransport: {
+                                            kind: 'socket',
+                                            watcherMaterializationRef: {
+                                                pluginId: 'com.example.channels',
+                                                machineId: 'machine-1',
+                                                materializationId: 'materialization-1',
+                                            },
+                                        },
+                                        filter: null,
+                                        maximumObservationAgeMs: null,
+                                    },
+                                    {
+                                        automationId: '33333333-3333-4333-8333-333333333333',
+                                        triggerId: 'trigger-2',
+                                        triggerRevision: 3,
+                                        eventRef: { pluginId: 'com.example.channels', localId: 'message' },
+                                        sourceInstanceId: 'provider:connection:two:source:two',
+                                        sourceSelectorId: '44444444-4444-4444-8444-444444444444',
+                                        sourceContractVersion: 1,
+                                        sourceConfig: { v: 1 },
+                                        observationTransport: {
+                                            kind: 'socket',
+                                            watcherMaterializationRef: {
+                                                pluginId: 'com.example.channels',
+                                                machineId: 'machine-1',
+                                                materializationId: 'materialization-1',
+                                            },
+                                        },
+                                        filter: null,
+                                        maximumObservationAgeMs: null,
+                                    },
+                                ],
+                                nextCursor: null,
+                            };
+                        }
+                        if (actionId === 'automation.event.source.status.report') {
+                            reports.push(input);
+                            return {};
+                        }
+                        throw new Error(`unexpected Action ${actionId}`);
+                    },
+                },
+            },
+        } as unknown as PluginInvocationContext;
+
+        const input = {
+            eventRef: { pluginId: 'com.example.channels', localId: 'message' },
+            sourceContractVersion: 1,
+            sourceInstanceIdPrefix: 'provider:connection:one:',
+            scope: { kind: 'socket' as const },
+        };
+
+        await publicEvents.projectPluginEventSourceConnectionStatusV1({
+            ...input,
+            status: 'ready',
+        }, context);
+        await publicEvents.projectPluginEventSourceConnectionStatusV1({
+            ...input,
+            status: 'historyGap',
+        }, context);
+
+        expectTypeOf<PluginEventSourceConnectionStatusV1>()
+            .toEqualTypeOf<'ready' | 'reconnecting' | 'historyGap'>();
+        expect(reports).toEqual([
+            {
+                kind: 'catalogReconciliation',
+                scope: { kind: 'socket' },
+                observedRevision: '7',
+                adoptedRevision: '7',
+                state: 'current',
+                scanStartedAt: null,
+                nextRetryAt: null,
+            },
+            expect.objectContaining({
+                kind: 'source',
+                triggerId: 'trigger-1',
+                state: 'observing',
+                code: 'none',
+                observedDelta: 0,
+                admittedDelta: 0,
+                skippedDelta: 0,
+            }),
+            {
+                kind: 'catalogReconciliation',
+                scope: { kind: 'socket' },
+                observedRevision: '7',
+                adoptedRevision: '7',
+                state: 'current',
+                scanStartedAt: null,
+                nextRetryAt: null,
+            },
+            expect.objectContaining({
+                kind: 'source',
+                triggerId: 'trigger-1',
+                state: 'attention',
+                code: 'historyGap',
+                observedDelta: 0,
+                admittedDelta: 0,
+                skippedDelta: 0,
+            }),
+        ]);
+    });
+
+    it('rejects an empty source-list continuation before following its cursor', async () => {
+        const actionIds: string[] = [];
+        const context = {
+            signal: new AbortController().signal,
+            services: {
+                actions: {
+                    execute: async (actionId: string) => {
+                        actionIds.push(actionId);
+                        if (actionId === 'automation.event.sources.list') {
+                            return {
+                                kind: 'page',
+                                revision: '7',
+                                definitions: [],
+                                nextCursor: 'page-2',
+                            };
+                        }
+                        throw new Error(`unexpected Action ${actionId}`);
+                    },
+                },
+            },
+        } as unknown as PluginInvocationContext;
+
+        await expect(publicEvents.admitCheckpointedPluginEventObservationV1({
+            eventRef: { pluginId: 'com.example.events', localId: 'message-received' },
+            sourceInstanceId: 'source-1',
+            sourceContractVersion: 1,
+            occurrenceId: 'occurrence-1',
+            occurredAt: 1,
+            observationReceivedAt: 1,
+            observedDelta: 1,
+            payload: {},
+        }, context)).resolves.toEqual({ kind: 'unsettled' });
+        expect(actionIds).toEqual(['automation.event.sources.list']);
+    });
+
+    it('admits the source list through the canonical Protocol result schema before catalog side effects', async () => {
+        const actionIds: string[] = [];
+        const context = {
+            signal: new AbortController().signal,
+            services: {
+                actions: {
+                    execute: async (actionId: string) => {
+                        actionIds.push(actionId);
+                        if (actionId === 'automation.event.sources.list') {
+                            return {
+                                kind: 'page',
+                                revision: '7',
+                                definitions: [],
+                                nextCursor: null,
+                                unexpected: true,
+                            };
+                        }
+                        throw new Error(`unexpected Action ${actionId}`);
+                    },
+                },
+            },
+        } as unknown as PluginInvocationContext;
+
+        await expect(publicEvents.admitCheckpointedPluginEventObservationV1({
+            eventRef: { pluginId: 'com.example.events', localId: 'message-received' },
+            sourceInstanceId: 'source-1',
+            sourceContractVersion: 1,
+            occurrenceId: 'occurrence-1',
+            occurredAt: 1,
+            observationReceivedAt: 1,
+            observedDelta: 1,
+            payload: {},
+        }, context)).resolves.toEqual({ kind: 'unsettled' });
+        expect(actionIds).toEqual(['automation.event.sources.list']);
+    });
     it('projects the canonical host-filled history-gap recovery Action contract through the public Event surface', () => {
         expect(publicEvents.PluginEventAutomationHistoryGapResetActionInputV1JsonSchema)
             .toBe(canonicalPluginEventAutomationHistoryGapResetActionInputV1JsonSchema);

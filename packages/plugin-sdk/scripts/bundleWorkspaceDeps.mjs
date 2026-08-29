@@ -69,6 +69,7 @@ export async function preparePluginSdkWorkspaceDeclarations(opts = {}) {
     pluginSdkDir,
     env: opts.env ?? process.env,
     publicationMode: 'live',
+    pruneStale: true,
     consumePreparedWorkspace: opts.consumePreparedWorkspace,
   });
 }

@@ -19,6 +19,7 @@ import {
 import type {
   AgentCliAuthContributionV1,
   AgentCliSessionCommandBuildInputV1,
+  AgentCliSessionCommandPluginSettingsV1,
   AgentCliSessionCommandBuildOptionsResultV1,
   AgentCliSessionCommandDeclarationV1,
   AgentCliSessionCommandOptionsV1,
@@ -147,11 +148,19 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     >();
     expectTypeOf<Parameters<NonNullable<AgentCliSessionCommandDeclarationV1['buildSessionOptions']>>[0]>()
       .toEqualTypeOf<AgentCliSessionCommandBuildInputV1>();
-    expectTypeOf<ReturnType<NonNullable<AgentCliSessionCommandDeclarationV1['buildSessionOptions']>>>()
+    expectTypeOf<Awaited<ReturnType<NonNullable<AgentCliSessionCommandDeclarationV1['buildSessionOptions']>>>>()
       .toEqualTypeOf<AgentCliSessionCommandBuildOptionsResultV1>();
     expectTypeOf<AgentCliSessionCommandBuildInputV1>().not.toHaveProperty('rawArgv');
     expectTypeOf<AgentCliSessionCommandBuildInputV1>().not.toHaveProperty('process');
     expectTypeOf<AgentCliSessionCommandBuildInputV1>().toHaveProperty('settings');
+    expectTypeOf<AgentCliSessionCommandBuildInputV1>().toHaveProperty('pluginSettings');
+    expectTypeOf<AgentCliSessionCommandBuildInputV1['pluginSettings']>()
+      .toEqualTypeOf<AgentCliSessionCommandPluginSettingsV1>();
+    expectTypeOf<AgentCliSessionCommandBuildInputV1['pluginSettings']>()
+      .toEqualTypeOf<Readonly<Partial<Record<
+        'account' | 'daemon',
+        Readonly<Record<string, unknown>>
+      >>>>();
     expectTypeOf<AgentCliSessionCommandBuildInputV1>().toHaveProperty('environment');
     expectTypeOf<AgentCliSessionCommandBuildInputV1>().toHaveProperty('startOrigin');
     expectTypeOf<AgentCliSessionCommandBuildInputV1>().not.toHaveProperty('processEnv');

@@ -98,15 +98,68 @@ export const SessionAuthoringCheckoutCreationDraftV1Schema:
 
 export type SessionServerStartSpawnDraftV1 = Omit<
     SessionSpawnNewInputV2,
-    'creationKey' | 'initialInput' | 'environmentVariables'
+    'creationKey' | 'initialInput'
 >;
 /** Browser-safe server-start draft projected at the SDK author boundary. */
 export const SessionServerStartSpawnDraftV1Schema: SessionSchema<SessionServerStartSpawnDraftV1> = protocolSessionServerStartSpawnDraftV1Schema;
 
-export type SessionMessageProvenanceV1 = Readonly<{
-    v: 1;
-    kind: string;
-}>;
+/**
+ * Declaration-neutral projection of the Protocol provenance union. The
+ * runtime schema below remains the Protocol authority; spelling the public
+ * shape here keeps external author declarations closed over the SDK instead
+ * of naming a private Protocol package.
+ */
+export type SessionMessageProvenanceV1 = Readonly<{ v: 1; kind: string }> & (
+    | Readonly<{
+        v: 1;
+        kind: 'happierApp';
+        actor: Readonly<{ kind: 'owner' }> | Readonly<{ kind: 'sharedCollaborator' }>;
+    }>
+    | Readonly<{ v: 1; kind: 'cli' }>
+    | Readonly<{ v: 1; kind: 'voice' }>
+    | Readonly<{
+        v: 1;
+        kind: 'happierSession';
+        sourceSessionId: string;
+        via: 'action' | 'mcp';
+    }>
+    | Readonly<{
+        v: 1;
+        kind: 'pluginSession';
+        pluginId: string;
+        contributionLocalId: string;
+        surface: 'cli' | 'mcp' | 'agent' | 'ui' | 'background' | 'unspecified';
+        sourceRef?: string;
+        sourceRevisionOrEpoch?: string;
+        externalActor?: Readonly<{ kind: 'human' | 'bot'; displayNameSnapshot?: string }>;
+        contentProvenance?: 'original' | 'forwarded' | 'viaBot';
+    }>
+    | Readonly<{
+        v: 1;
+        kind: 'automation';
+        automationId: string;
+        runId: string;
+    }>
+    | Readonly<{ v: 1; kind: 'agentTerminal'; agentId: string }>
+    | Readonly<{
+        v: 1;
+        kind: 'host';
+        producer:
+            | 'happierApp'
+            | 'cli'
+            | 'daemonInitialPrompt'
+            | 'sessionAction'
+            | 'happierMcp'
+            | 'pluginSession'
+            | 'connectedService'
+            | 'automation'
+            | 'voiceInput'
+            | 'agentTerminal'
+            | 'externalSessionHistory'
+            | 'runtimeTranscript'
+            | 'executionRunVoice'
+            | 'agentRuntimeFirstInput';
+    }>);
 /** Canonical runtime validator with an SDK-local author declaration. */
 export const SessionMessageProvenanceV1Schema: SessionSchema<SessionMessageProvenanceV1> = protocolSessionMessageProvenanceV1Schema;
 

@@ -1,14 +1,27 @@
 {
   "purpose": "Example and fixture support guidance only; this does not define SDK capability availability.",
   "assets": {
-    "examples/action-contract-producer": "external-author-supported",
-    "examples/action-contract-consumer": "external-author-supported",
-    "examples/automation-event-source": "external-author-supported",
-    "examples/operation-only-channel-provider": "external-author-supported",
-    "examples/triage-source-target": "external-author-supported",
-    "examples/triage-source-contributor": "external-author-supported",
-    "fixtures/authoring-inference": "SDK-inference-fixture",
-    "fixtures/external-targeted-packages": "SDK-inference-fixture",
-    "fixtures/feature-protocols/triage-sources-protocol": "future-protocol-fixture"
+    "examples/action-contract-producer": "advanced-public-preview",
+    "examples/action-contract-consumer": "advanced-public-preview",
+    "examples/automation-event-source": "maintained-public-reference",
+    "examples/advanced-package-root": "advanced-public-preview",
+    "examples/background-indexer": "advanced-public-preview",
+    "examples/code-defined": "advanced-public-preview",
+    "examples/descriptor-only": "advanced-public-preview",
+    "examples/hosted-web": "advanced-public-preview",
+    "examples/multi-mode-fallback": "advanced-public-preview",
+    "examples/operation-only-channel-provider": "maintained-public-reference",
+    "examples/production-hosted-reference": "advanced-public-preview",
+    "examples/projects-tasks": "advanced-public-preview",
+    "examples/public-authoring": "maintained-public-reference",
+    "examples/react-native-dev-hot-reload": "advanced-public-preview",
+    "examples/react-native-installed": "advanced-public-preview",
+    "examples/session-agent": "maintained-public-reference",
+    "examples/tracked-action": "advanced-public-preview",
+    "examples/triage-source-target": "advanced-public-preview",
+    "examples/triage-source-contributor": "advanced-public-preview",
+    "fixtures/action-contract-composition": "conformance-reference",
+    "fixtures/authoring-inference": "inference-fixture",
+    "fixtures/external-targeted-packages": "conformance-reference"
   }
 }

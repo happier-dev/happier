@@ -67,6 +67,18 @@ export type PluginConnectedAccountAuthenticationContext = Omit<PluginInvocationC
     configuration: PluginConnectedAccountRuntimeConfiguration;
     attemptCredentials: PluginConnectedAccountCredentialStore;
 }>;
+export type PluginConnectedAccountFailureRetryEvidence =
+    | Readonly<{
+        failureClass?: never;
+        retryNotBeforeMs?: never;
+    }>
+    | Readonly<{
+        /** Closed provider evidence; currently only an explicit rate limit. */
+        failureClass: 'rateLimit';
+        /** Absolute epoch milliseconds derived from provider response evidence. */
+        retryNotBeforeMs?: number;
+    }>;
+
 export type PluginConnectedAccountAuthCompletionResult =
     | Readonly<{
         status: 'connected';
@@ -84,10 +96,14 @@ export type PluginConnectedAccountAuthCompletionResult =
         displayName: string;
         scopes: readonly string[];
     }>
-    | Readonly<{
-        status: 'rejected' | 'unavailable';
+    | (Readonly<{
+        status: 'rejected';
         diagnostic: PluginDiagnosticData;
-    }>
+    }> & PluginConnectedAccountFailureRetryEvidence)
+    | (Readonly<{
+        status: 'unavailable';
+        diagnostic: PluginDiagnosticData;
+    }> & PluginConnectedAccountFailureRetryEvidence)
     | Readonly<{
         status: 'outcomeUnknown';
         diagnostic: PluginDiagnosticData;

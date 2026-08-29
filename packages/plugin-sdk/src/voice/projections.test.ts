@@ -117,6 +117,8 @@ import {
     type VoiceModelPackTransducerArtifactsV1,
     type VoiceProviderContribution,
     type VoiceProviderSettings,
+    type VoiceProviderSettingsPresentation,
+    type VoiceProviderSettingsPresentationField,
     type VoiceProvidersRegistrationApi,
     type RegisteredVoiceProviderRuntime,
     type VoiceRawCredentialAccess,
@@ -137,6 +139,7 @@ type CurrentVoiceProvidersRegistrationApi = VoiceProvidersRegistrationApi;
 
 const APPROVED_ROOT_VOICE_PROJECTION_EXPORTS = [
     'ConnectedAccountHttpHeadersRequest',
+    'VOICE_SPEECH_OUTPUT_MAX_BYTES',
     'VoiceAccountOperationService',
     'VoiceAvailabilityPlatform',
     'VoiceCredentialAccess',
@@ -171,6 +174,9 @@ const APPROVED_ROOT_VOICE_PROJECTION_EXPORTS = [
     'VoiceProviderContribution',
     'VoiceProviderContributionSchema',
     'VoiceProviderSettings',
+    'VoiceProviderSettingsPresentation',
+    'VoiceProviderSettingsPresentationField',
+    'VoiceProviderSettingsPresentationSchema',
     'VoiceProvidersRegistrationApi',
     'RegisteredVoiceProviderRuntime',
     'VoiceRawCredentialAccess',
@@ -204,6 +210,8 @@ const PROTOCOL_OWNED_VOICE_DTO_PROJECTIONS = [
         'VoiceCredentialSlotId',
         'VoiceProviderContribution',
         'VoiceProviderSettings',
+        'VoiceProviderSettingsPresentation',
+        'VoiceProviderSettingsPresentationField',
         'VoiceRawCredentialGrantDeclaration',
         'VoiceSettingReadinessDeclaration',
         'VoiceSpeechCatalogDeclaration',
@@ -449,6 +457,9 @@ describe('Voice package-local publication projection', () => {
         expect(source).toContain('export function withVoiceSchemaField');
         expect(publicIndexSource).toContain(
             "export { createVoiceRecordSchema, withVoiceSchemaField } from './projections.js';",
+        );
+        expect(publicIndexSource).toContain(
+            "export { VOICE_SPEECH_OUTPUT_MAX_BYTES } from './projections.js';",
         );
         expect(source).not.toContain('@happier-dev/plugin-sdk/protocol');
         expect(source).toContain(

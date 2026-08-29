@@ -102,6 +102,10 @@ import type {
 } from './storage/database.js';
 import type { AgentExternalSessionsContribution } from './externalSessions.js';
 import type { ManagedProviderRuntime } from './providers/index.js';
+import {
+    readPluginActionInputParser,
+    readPluginActionResultParser,
+} from './host/registration/actionInputParser.js';
 import { createPluginRegistrationScope } from './host/registration/index.js';
 import type { VoiceProvidersRegistrationApi } from './voice/projections.js';
 import type { SpeechProviderRuntime, VoiceSpeechSynthesizeRequest } from './voice/speech.js';
@@ -436,6 +440,51 @@ describe('definePlugin', () => {
                 },
             },
         } as never)).toThrow(/client action.*handler/i);
+    });
+
+    it('wraps author Action handlers before attaching parser carriers so repeated activation never mutates the source handler', async () => {
+        const inputSchema = defineComposableProtocolObject({
+            entryId: defineComposableProtocolString({ minLength: 1 }),
+        }, { policy: 'additive-open/drop' });
+        const resultSchema = defineComposableProtocolObject({
+            accepted: defineComposableProtocolLiteral(true),
+        }, { policy: 'additive-open/drop' });
+        const run = vi.fn(async () => ({ accepted: true as const }));
+        const plugin = definePlugin({
+            id: 'acme.repeated-action-activation',
+            version: '1.0.0',
+            actions: {
+                inspect: {
+                    title: 'Inspect',
+                    execution: { target: 'daemon' },
+                    surfaces: ['plugin'],
+                    inputSchema,
+                    resultSchema,
+                    run,
+                },
+            },
+        });
+
+        const firstRegister = vi.fn();
+        const secondRegister = vi.fn();
+        await plugin.activate({ actions: { register: firstRegister } } as never);
+        await plugin.activate({ actions: { register: secondRegister } } as never);
+
+        const firstHandler = firstRegister.mock.calls[0]?.[1];
+        const secondHandler = secondRegister.mock.calls[0]?.[1];
+        expect(firstHandler).toEqual(expect.any(Function));
+        expect(secondHandler).toEqual(expect.any(Function));
+        expect(firstHandler).not.toBe(run);
+        expect(secondHandler).not.toBe(run);
+        expect(firstHandler).not.toBe(secondHandler);
+        expect(Object.isFrozen(firstHandler)).toBe(true);
+        expect(Object.isFrozen(secondHandler)).toBe(true);
+        expect(readPluginActionInputParser(run)).toBeUndefined();
+        expect(readPluginActionResultParser(run)).toBeUndefined();
+        expect(readPluginActionInputParser(firstHandler)).toEqual(expect.any(Function));
+        expect(readPluginActionResultParser(firstHandler)).toEqual(expect.any(Function));
+        expect(readPluginActionInputParser(secondHandler)).toEqual(expect.any(Function));
+        expect(readPluginActionResultParser(secondHandler)).toEqual(expect.any(Function));
     });
 
     it('emits request-policy declarations without adding a HostAccess parser', () => {

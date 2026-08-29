@@ -1,8 +1,14 @@
 export type { AgentUiBehaviorDeclarationV1 } from '../manifest.js';
 export type { AgentUiConditionV1 } from '../manifest.js';
+export type { AgentUiSettingReferenceV1 } from '../manifest.js';
+export type { AgentUiMutablePluginSettingReferenceV1 } from '../manifest.js';
 export type { AgentUiComponentsDeclarationV1 } from '../manifest.js';
 export type { AgentUiExternalSessionsSourceV1 } from '../manifest.js';
 export type { AgentUiMessageDeclarationV1 } from '../manifest.js';
+export type { AgentUiSessionAgentTeamBehaviorV1 } from '../manifest.js';
+export type { AgentUiSessionProviderBehaviorV1 } from '../manifest.js';
+export type { AgentUiSessionVisibleMessagesV1 } from '../manifest.js';
+export type { AgentUiSessionDeclarationV1 } from '../manifest.js';
 export type { AgentUiRuntimeDescriptorAgentExtraIdentityV1 } from '../manifest.js';
 export type { AgentUiRuntimeDescriptorAgentExtraV1 } from '../manifest.js';
 export type { AgentUiRuntimeDescriptorLinkExtrasV1 } from '../manifest.js';

@@ -37,7 +37,17 @@ const CHANNELS_RESOURCE_PUBLIC_TYPE_IMPORTS = [
   },
 ] as const;
 
-const CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS = [
+const FIRST_PARTY_CONNECTED_ACCOUNT_FACT_IMPORTS = [
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'claude',
+      'src',
+      'connectedAccounts',
+      'claudeSubscriptionProfile.ts',
+    ),
+    symbols: ['CLAUDE_SUBSCRIPTION_OAUTH_PROFILE'],
+  },
   {
     sourcePath: join(pluginSourceRoot, 'claude', 'src', 'manifest.ts'),
     symbols: ['CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1'],
@@ -107,9 +117,98 @@ const CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS = [
     ),
     symbols: ['CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1'],
   },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'codex',
+      'src',
+      'connectedAccounts',
+      'openAiCodexProfile.ts',
+    ),
+    symbols: ['OPENAI_CODEX_OAUTH_PROFILE'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'codex',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'runtime',
+      'auth',
+      'failure.ts',
+    ),
+    symbols: ['classifyProviderLimitEvidence'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'codex',
+      'src',
+      'agent',
+      'runtime',
+      'appServer',
+      'turns',
+      'failure.ts',
+    ),
+    symbols: ['classifyProviderLimitEvidence'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'pi',
+      'src',
+      'agent',
+      'auth',
+      'services',
+      'requestAuth',
+      'source.ts',
+    ),
+    symbols: ['PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'pi',
+      'src',
+      'agent',
+      'connectedServices',
+      'runtimeAuthAdapter.ts',
+    ),
+    symbols: ['classifyProviderLimitEvidence'],
+  },
+  {
+    sourcePath: join(
+      pluginSourceRoot,
+      'pi',
+      'src',
+      'agent',
+      'runtime',
+      'rpc',
+      'providerFailureDiagnostic.ts',
+    ),
+    symbols: ['classifyProviderLimitEvidence'],
+  },
+  {
+    sourcePath: join(
+      workspaceRoot,
+      'apps',
+      'cli',
+      'src',
+      'daemon',
+      'connectedServices',
+      'quotas',
+      'normalization',
+      'classifyProviderLimitEvidence.ts',
+    ),
+    symbols: ['classifyProviderLimitEvidence'],
+  },
 ] as const;
 
-const CPX_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS = [
+const FIRST_PARTY_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS = [
+  'claude',
+  'codex',
   'pi',
   'opencode',
   'ohmypi',
@@ -284,6 +383,38 @@ async function readNamedImports(path: string, moduleSpecifier: string): Promise<
     )));
   }
   return importedSymbols;
+}
+
+async function readNamedImportsOrExports(
+  path: string,
+  moduleSpecifier: string,
+): Promise<readonly string[]> {
+  const source = await readFile(path, 'utf8');
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const names: string[] = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      if (statement.moduleSpecifier.text !== moduleSpecifier) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings) || statement.importClause?.name) {
+        names.push('<non-named-import>');
+        continue;
+      }
+      names.push(...bindings.elements.map((element) => element.propertyName?.text ?? element.name.text));
+      continue;
+    }
+    if (ts.isExportDeclaration(statement)
+      && statement.moduleSpecifier
+      && ts.isStringLiteral(statement.moduleSpecifier)) {
+      if (statement.moduleSpecifier.text !== moduleSpecifier) continue;
+      if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) {
+        names.push('<non-named-export>');
+        continue;
+      }
+      names.push(...statement.exportClause.elements.map((element) => element.propertyName?.text ?? element.name.text));
+    }
+  }
+  return names;
 }
 
 async function readNamedExports(path: string): Promise<readonly string[]> {
@@ -497,29 +628,37 @@ describe('first-party plugin public SDK import fence', () => {
     }
   });
 
-  it('projects Claude materialization facts through the narrow public Connected Accounts owner', async () => {
+  it('projects Happier provider facts through the focused first-party Connected Accounts owner', async () => {
     const symbols = [
       'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
+      'CLAUDE_SUBSCRIPTION_OAUTH_PROFILE',
       'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+      'OPENAI_CODEX_OAUTH_PROFILE',
+      'ProviderLimitCategory',
+      'classifyProviderLimitEvidence',
     ];
     const connectedAccountExports = await readNamedExports(join(
       workspaceRoot,
-      'packages/plugin-sdk/src/connected-accounts/index.public.ts',
+      'packages/plugin-sdk/src/first-party/connected-accounts/index.public.ts',
     ));
     expect(connectedAccountExports).toEqual(expect.arrayContaining(symbols));
 
-    for (const { sourcePath, symbols } of CLAUDE_SUBSCRIPTION_MATERIALIZATION_PUBLIC_VALUE_IMPORTS) {
-      expect(await readNamedImports(
+    for (const { sourcePath, symbols } of FIRST_PARTY_CONNECTED_ACCOUNT_FACT_IMPORTS) {
+      expect(await readNamedImportsOrExports(
+        sourcePath,
+        '@happier-dev/plugin-sdk/first-party/connected-accounts',
+      )).toEqual(expect.arrayContaining([...symbols]));
+      expect(await readNamedImportsOrExports(
         sourcePath,
         '@happier-dev/plugin-sdk/connected-accounts',
-      )).toEqual(expect.arrayContaining([...symbols]));
+      )).toEqual(expect.not.arrayContaining([...symbols]));
       expect(await readNamedImports(
         sourcePath,
         '@happier-dev/protocol/connect/claude-subscription-materialization',
       )).toEqual([]);
     }
 
-    for (const pluginId of CPX_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS) {
+    for (const pluginId of FIRST_PARTY_CONNECTED_ACCOUNT_CONSUMER_PLUGIN_IDS) {
       const manifest = JSON.parse(await readFile(
         join(pluginSourceRoot, pluginId, 'package.json'),
         'utf8',

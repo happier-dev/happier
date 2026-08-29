@@ -1,8 +1,11 @@
 export type { PluginJsonSchema } from './protocolFacade.js';
 export type { ProtocolArrayOptions } from './protocolFacade.js';
+export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
+export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';
 export type { ProtocolComposableSchema } from './protocolFacade.js';
 export type { ProtocolComposerRefV1 } from './composerRef.js';
 export { ProtocolComposerRefV1Schema } from './composerRef.js';
+export { ProtocolComposerReferenceResolutionV1Schema } from './composerReferenceResolution.js';
 export type { ProtocolJsonValue } from './protocolFacade.js';
 export type { ProtocolJsonValueOptions } from './protocolFacade.js';
 export type { ProtocolNumberOptions } from './protocolFacade.js';

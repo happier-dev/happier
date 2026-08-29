@@ -82,6 +82,17 @@ export type UiSurfacePlacement<TRenderer extends UiSurfaceRendererDefinition> =
     | UiSurfaceDetailedDefinition<TRenderer>
     | UiSurfaceSettingsPageDefinition<TRenderer>;
 
+/**
+ * A renderer-only surface has no destination, view, or settings-page
+ * placement. It exists for host-owned composition slots such as Composer
+ * pickers, attachment display/preview, and Composer regions.
+ */
+export type UiSurfaceRendererOnlyDefinition<TRenderer extends UiSurfaceRendererDefinition> = Readonly<{
+    id: string;
+    placement: 'rendererOnly';
+    renderer: TRenderer;
+}>;
+
 export type UiSurfaceReactNativeBuild = Omit<
     Extract<PluginUiBuildTarget, Readonly<{ kind: 'reactNative' }>>,
     'kind' | 'rendererId'
@@ -97,17 +108,25 @@ export type UiSurfaceHostedWebBuild = Omit<
  * remain the advanced route for shared renderers, fallback chains, and custom
  * artifact identities.
  */
-export type UiSurface = UiSurfacePlacement<UiSurfaceRendererDefinition>;
+export type UiSurface =
+    | UiSurfacePlacement<UiSurfaceRendererDefinition>
+    | UiSurfaceRendererOnlyDefinition<UiSurfaceRendererDefinition>;
 
 /**
  * One high-level surface declaration with its matching author build input.
  * Executable surfaces require exactly one build descriptor; declarative
  * surfaces intentionally emit no artifact target.
  */
-export type UiSurfaceReactNativeDefinition = UiSurfacePlacement<UiSurfaceReactNativeRendererDefinition> & Readonly<{
+export type UiSurfaceReactNativeDefinition = (
+    | UiSurfacePlacement<UiSurfaceReactNativeRendererDefinition>
+    | UiSurfaceRendererOnlyDefinition<UiSurfaceReactNativeRendererDefinition>
+) & Readonly<{
     build: UiSurfaceReactNativeBuild;
 }>;
-export type UiSurfaceHostedWebDefinition = UiSurfacePlacement<UiSurfaceHostedWebRendererDefinition> & Readonly<{
+export type UiSurfaceHostedWebDefinition = (
+    | UiSurfacePlacement<UiSurfaceHostedWebRendererDefinition>
+    | UiSurfaceRendererOnlyDefinition<UiSurfaceHostedWebRendererDefinition>
+) & Readonly<{
     build: UiSurfaceHostedWebBuild;
 }>;
 export type UiSurfaceDeclarativeDefinition = UiSurfacePlacement<UiSurfaceDeclarativeRendererDefinition>;
@@ -277,6 +296,8 @@ export function projectUiSurfaceDefinitions(
         const renderer = projectUiSurfaceRenderer(surface.id, surface.renderer);
         const rendererId = uiSurfaceRendererId(surface.id);
         renderers.push(renderer);
+
+        if (surface.placement === 'rendererOnly') continue;
 
         if (surface.placement === 'settingsPage') {
             if (Object.hasOwn(surface, 'target')) {

@@ -95,7 +95,10 @@ const inventoryIt = process.env.HAPPIER_PLUGIN_SDK_SOURCE_ONLY === '1' ? it.skip
 const protocolExports = [
     'PluginJsonSchema',
     'ProtocolArrayOptions',
+    'ProtocolCollectionOpaqueCursorV1',
+    'ProtocolCollectionOpaqueCursorV1Schema',
     'ProtocolComposableSchema',
+    'ProtocolComposerReferenceResolutionV1Schema',
     'ProtocolJsonValue',
     'ProtocolJsonValueOptions',
     'ProtocolNumberOptions',
@@ -364,6 +367,7 @@ describe('CORE-A curated package exports', () => {
             'createPluginActionHandlerNotStartedError',
             'createPluginRegistrationScope',
             'readPluginActionInputParser',
+            'readPluginActionResultParser',
         ]);
         expectTypeOf<PackagePluginRuntimeRegistration>()
             .toEqualTypeOf<SourcePluginRuntimeRegistration>();

@@ -52,6 +52,7 @@ import type {
 import * as accountUsage from './accountUsage.js';
 import * as auth from './cloud/auth.js';
 import * as publicConnectedAccounts from './connected-accounts/index.js';
+import * as firstPartyConnectedAccounts from './first-party/connected-accounts/index.js';
 import * as requestAuth from './connected-accounts/requestAuth.js';
 import * as providerLimitEvidence from './cloud/providerLimitEvidence.js';
 import * as connectedAccounts from './connectedAccounts.js';
@@ -445,21 +446,21 @@ describe('Connected Accounts final package-local projection', () => {
         }]);
     });
 
-    it('projects the exact reusable Claude and Codex Connected Account facts', () => {
-        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
+    it('projects exact reusable Claude and Codex facts from the focused first-party entrypoint', () => {
+        expect(firstPartyConnectedAccounts.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1)
             .toBe(protocol.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1);
-        expect(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
+        expect(firstPartyConnectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
             .toBe(protocol.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
-        expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_OAUTH_PROFILE)
+        expect(firstPartyConnectedAccounts.CLAUDE_SUBSCRIPTION_OAUTH_PROFILE)
             .toEqual({
                 authorizeUrl: protocol.CLAUDE_OAUTH_AUTHORIZE_URL,
                 callbackUrl: protocol.CLAUDE_OAUTH_CALLBACK_URL,
                 clientId: protocol.CLAUDE_OAUTH_CLIENT_ID,
                 tokenUrl: protocol.CLAUDE_OAUTH_TOKEN_URL,
             });
-        expect(publicConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.clientId)
+        expect(firstPartyConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.clientId)
             .toBe(protocol.OPENAI_CODEX_CLIENT_ID);
-        expect(publicConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.device.verificationUrl)
+        expect(firstPartyConnectedAccounts.OPENAI_CODEX_OAUTH_PROFILE.device.verificationUrl)
             .toBe(protocol.OPENAI_CODEX_DEVICE_VERIFICATION_URL);
     });
 

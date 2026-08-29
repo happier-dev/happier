@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Copyable external Automation Event declaration and optional custom setup UI.",
+  "description": "Copyable external Automation Event source with setup UI and checkpoint-safe observation.",
   "happier": {
     "manifest": ".happier-plugin/plugin.json"
   },

@@ -276,6 +276,18 @@ export interface PluginAccountCollection<
         revision: number;
         deleted: true;
     }>>;
+    /**
+     * Physically reclaim one exact logical-delete tombstone. Callers must own
+     * the row's retention/replay proof; the host obtains and checks the
+     * Collection absence currentness internally before issuing this CAS.
+     */
+    forget(
+        rowId: string,
+        options: Readonly<{
+            expectedRevision: number;
+            signal?: AbortSignal;
+        }>,
+    ): Promise<Readonly<{ rowId: string; forgotten: true }>>;
     query<TIndexId extends PluginCollectionIndexId<TIndexes>>(
         request: PluginCollectionQuery<TIndexId>,
         options?: PluginCancellationOptions,

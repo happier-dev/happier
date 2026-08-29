@@ -2,7 +2,10 @@ import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type { ActionContract, ActionHandler } from './actions/contracts.js';
-import { attachPluginActionInputParser } from './host/registration/actionInputParser.js';
+import {
+    attachPluginActionInputParser,
+    attachPluginActionResultParser,
+} from './host/registration/actionInputParser.js';
 import type {
     HookHandler,
     PluginEventHandler,
@@ -1172,14 +1175,15 @@ function normalizeActionHandler(definition: DaemonPluginActionDefinition): Actio
     const inputSchema = readProtocolComposableSchema<JsonValue, JsonValue>(definition.inputSchema);
     const resultSchema = readProtocolComposableSchema<JsonValue, JsonValue>(definition.resultSchema);
     if (inputSchema === undefined && resultSchema === undefined) return definition.run;
-
-    const handler: ActionHandler = async (input, context) => {
-        const result = await definition.run(input, context);
-        return resultSchema === undefined ? result : resultSchema.parse(result);
-    };
-    return inputSchema === undefined
-        ? handler
-        : attachPluginActionInputParser(handler, inputSchema);
+    const authorHandler = definition.run;
+    let handler: ActionHandler = (input, context) => authorHandler(input, context);
+    if (resultSchema !== undefined) {
+        handler = attachPluginActionResultParser(handler, resultSchema);
+    }
+    if (inputSchema !== undefined) {
+        handler = attachPluginActionInputParser(handler, inputSchema);
+    }
+    return Object.freeze(handler);
 }
 
 /**

@@ -19,6 +19,7 @@ export type {
     ConnectedAccountAuthFailure,
 } from './projections.js';
 export type { PluginConnectedAccountAuthCompletionResult as ConnectedAccountAuthCompletionResult } from '../services/connectedAccounts.js';
+export type { PluginConnectedAccountFailureRetryEvidence as ConnectedAccountFailureRetryEvidence } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationAttempt as ConnectedAccountAuthenticationAttempt } from '../services/connectedAccounts.js';
 export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts.js';
 export type { ConnectedAccountAuthenticationModeRuntime } from '../connectedAccounts.js';
@@ -26,15 +27,6 @@ export type { PluginConnectedAccountBindingEvent as ConnectedAccountBindingEvent
 export type { ConnectedAccountBindingSummary } from '../connectedAccounts.js';
 export type { ConnectedAccountServiceKey } from '../connectedAccounts.js';
 export type { ConnectedAccountCredentialStore } from '../connectedAccounts.js';
-export { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '../connectedAccounts.js';
-export {
-    CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
-    CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
-} from '../connectedAccounts.js';
-export type {
-    ClaudeSubscriptionMaterializationContractV1,
-    ClaudeSubscriptionSetupTokenEnvironmentRequestV1,
-} from '../connectedAccounts.js';
 export type { PluginConnectedAccountDeviceBeginResult as ConnectedAccountDeviceBeginResult } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountDevicePollResult as ConnectedAccountDevicePollResult } from '../services/connectedAccounts.js';
 export type { ConnectedAccountHealthResult } from '../connectedAccounts.js';
@@ -72,13 +64,13 @@ export {
     buildConnectedAccountRequestAuthClientSource,
 } from './requestAuth.js';
 export type { ConnectedAccountRequestAuthClientSourceParams } from './requestAuth.js';
-export { HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV } from '../connectedAccounts.js';
-export { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '../connectedAccounts.js';
+export {
+    HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
+    HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
+} from '../connectedAccounts.js';
 export type { OauthAuthEntry } from '../connectedAccounts.js';
 export type { OauthCredentialRecord } from '../connectedAccounts.js';
 export type { OauthCredentialRecordWithExpiry } from '../connectedAccounts.js';
-export { OPENAI_CODEX_OAUTH_PROFILE } from '../connectedAccounts.js';
-export { PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationModeV2 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationV2 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountConfigurationFieldV2 } from '../connectedAccounts.js';
@@ -87,11 +79,6 @@ export type { PluginConnectedAccountDescriptorContributionV2 } from '../connecte
 export type { PluginConnectedAccountMaterializationKind } from '../connectedAccounts.js';
 export type { PluginConnectedAccountRegistrationApi } from '../services/connectedAccounts.js';
 export type { ProviderAccountUsageQuotaScopeV1 } from '../connectedAccounts.js';
-export type { ProviderLimitCategory } from '../connectedAccounts.js';
-export type { ProviderLimitEvidenceClassification } from '../connectedAccounts.js';
-export type { ProviderLimitEvidenceConfidence } from '../connectedAccounts.js';
-export type { ProviderLimitEvidenceContext } from '../connectedAccounts.js';
-export type { ProviderLimitEvidenceProvenance } from '../connectedAccounts.js';
 export type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 export { QualifiedConnectedAccountRefJsonSchema } from '../connectedAccounts.js';
 export { QualifiedConnectedAccountRefSchema } from '../connectedAccounts.js';
@@ -101,7 +88,6 @@ export type { QuotaFetchErrorCode } from '../connectedAccounts.js';
 export type { TokenCredentialRecord } from '../connectedAccounts.js';
 export type { UnsupportedAccountUsage } from '../connectedAccounts.js';
 export { buildOauthAuthEntry } from '../connectedAccounts.js';
-export { classifyProviderLimitEvidence } from '../connectedAccounts.js';
 export { defineAuthMaterialization } from '../connectedAccounts.js';
 export { parseCredentialRecord } from '../connectedAccounts.js';
 export { requireOauthCredentialRecordWithExpiry } from '../connectedAccounts.js';

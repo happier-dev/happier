@@ -115,7 +115,7 @@ describe('targeted contribution point semantics', () => {
                     required: true,
                     input: { kind: 'protocolDefined', schema: input },
                     resultSchema: result,
-                    action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin', 'ui', 'voice'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -133,11 +133,11 @@ describe('targeted contribution point semantics', () => {
             operations: {
                 inspect: {
                     required: true,
-                    action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin', 'ui', 'voice'], dangerLevel: 'safe' },
                 },
             },
         }]);
-        expect(builtInProtocol.operations.inspect.declaration.surfaces).toEqual(['plugin', 'ui']);
+        expect(builtInProtocol.operations.inspect.declaration.surfaces).toEqual(['plugin', 'ui', 'voice']);
     });
 
     it('projects parser-equivalent byte and safe-integer bounds into targeted descriptor schemas', () => {

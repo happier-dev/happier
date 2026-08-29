@@ -6,6 +6,10 @@ import type {
 import { PluginError } from './errors.js';
 import type { JsonValue } from './identity.js';
 import type { DaemonDatabaseStorageScope } from './storage/database.js';
+import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 as CANONICAL_PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/protocol';
+
+/** Public projection of Protocol's one Account KV limits decision. */
+export const PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 = CANONICAL_PLUGIN_ACCOUNT_STORAGE_LIMITS_V1;
 
 /** Every generic KV scope is host-authoritative; no replica merge model exists. */
 export type StorageConsistency = Readonly<{ kind: 'authoritativeSerializable' }>;

@@ -2,8 +2,10 @@ import {
     classifyVoiceProviderHttpFailure as canonicalClassifyVoiceProviderHttpFailure,
 } from '@happier-dev/protocol/voice/providerOperations';
 import {
+    VOICE_SPEECH_OUTPUT_MAX_BYTES as canonicalVoiceSpeechOutputMaxBytes,
     VoiceCredentialSlotIdSchema as canonicalVoiceCredentialSlotIdSchema,
     VoiceProviderContributionSchema as canonicalVoiceProviderContributionSchema,
+    VoiceProviderSettingsPresentationSchema as canonicalVoiceProviderSettingsPresentationSchema,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
     VoiceAvailabilityPlatform,
@@ -13,6 +15,8 @@ import type {
     VoiceCredentialSlotId,
     VoiceProviderContribution,
     VoiceProviderSettings,
+    VoiceProviderSettingsPresentation,
+    VoiceProviderSettingsPresentationField,
     VoiceRawCredentialGrantDeclaration,
     VoiceSettingReadinessDeclaration,
 } from '@happier-dev/protocol/plugins/contributions/voice';
@@ -158,6 +162,8 @@ export type {
     VoiceCredentialSlotId,
     VoiceProviderContribution,
     VoiceProviderSettings,
+    VoiceProviderSettingsPresentation,
+    VoiceProviderSettingsPresentationField,
     VoiceRawCredentialGrantDeclaration,
     VoiceSettingReadinessDeclaration,
 } from '@happier-dev/protocol/plugins/contributions/voice';
@@ -178,8 +184,10 @@ export type {
 export const classifyVoiceProviderHttpFailure: (
     status: number,
 ) => 'credential_unavailable' | 'provider_response_invalid' | null = canonicalClassifyVoiceProviderHttpFailure;
+export const VOICE_SPEECH_OUTPUT_MAX_BYTES: number = canonicalVoiceSpeechOutputMaxBytes;
 export const VoiceCredentialSlotIdSchema: VoiceSchema<VoiceCredentialSlotId> = canonicalVoiceCredentialSlotIdSchema;
 export const VoiceProviderContributionSchema: VoiceSchema<VoiceProviderContribution> = canonicalVoiceProviderContributionSchema;
+export const VoiceProviderSettingsPresentationSchema: VoiceSchema<VoiceProviderSettingsPresentation> = canonicalVoiceProviderSettingsPresentationSchema;
 export const VoiceModelPackContributionV1Schema: VoiceSchema<VoiceModelPackContributionV1> = canonicalVoiceModelPackContributionV1Schema;
 export const VoiceModelPackDirectoryArtifactV1Schema: VoiceSchema<VoiceModelPackDirectoryArtifactV1> = canonicalVoiceModelPackDirectoryArtifactV1Schema;
 export const VoiceModelPackExecutionHostV1Schema: VoiceSchema<VoiceModelPackExecutionHostV1> = canonicalVoiceModelPackExecutionHostV1Schema;

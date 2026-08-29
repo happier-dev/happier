@@ -1,5 +1,6 @@
 import {
     PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1 as canonicalContentType,
+    preflightPluginDeclarativeDocumentV1,
     PluginDeclarativeDocumentV1Schema as canonicalDocumentSchema,
 } from '@happier-dev/protocol/plugins/contributions/ui/declarative-document-authoring';
 import type {
@@ -28,5 +29,11 @@ export const PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1: PluginDeclarativeDocum
 export function definePluginDeclarativeDocumentV1(
     document: PluginDeclarativeDocumentV1,
 ): PluginDeclarativeDocumentV1 {
-    return canonicalDocumentSchema.parse(document);
+    const preflight = preflightPluginDeclarativeDocumentV1(document);
+    if (!preflight.ok) {
+        throw new TypeError(preflight.message);
+    }
+    const parsed = canonicalDocumentSchema.safeParse(preflight.document);
+    if (!parsed.success) throw parsed.error;
+    return parsed.data;
 }

@@ -184,5 +184,3 @@ export interface NotificationsService {
     preferences(categoryId: string, options?: { signal?: AbortSignal }): Promise<PluginNotificationPreferences>;
     watchPreferences(categoryId: string, listener: (preferences: PluginNotificationPreferences) => void): Disposable;
 }
-
-export const PLUGIN_NOTIFICATION_IDEMPOTENCY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;

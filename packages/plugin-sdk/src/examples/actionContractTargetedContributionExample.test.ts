@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -24,23 +24,31 @@ vi.mock(
     '@happier-dev/plugin-sdk/protocol',
     async () => await import('../protocol/index.js'),
 );
-// The shared triage protocol is deliberately source-only in this fixture. Its
-// public-like import is resolved by Vitest's source module runner; package
-// publication is proved at the publisher boundary. Keep the fixture outside
-// this package's TypeScript program: its authoring contract is checked by the
-// dedicated feature-protocol fixture project.
+// The canonical Triage source protocol is deliberately source-only in this
+// fixture. Its public import is resolved by Vitest's source module runner;
+// package publication is proved at the publisher boundary. Keep the protocol
+// outside this package's TypeScript program: its authoring contract is checked
+// by the dedicated Triage source authoring fixture project.
 vi.mock(
     '@happier-dev/triage-protocol/v1',
     async () => await vi.importActual('../../../triage-protocol/src/v1/index.ts'),
-);
-vi.mock(
-    '@happier-dev/triage-sources-protocol/v1',
-    async () => await vi.importActual('../../fixtures/feature-protocols/triage-sources-protocol/src/v1.ts'),
 );
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
 const examplesRoot = join(packageRoot, 'examples');
 const authoringSupportMetadataPath = join(examplesRoot, 'authoring-support.json');
+
+function shippedExampleAssetPaths(): readonly string[] {
+    const packageJson = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+        files?: unknown;
+    };
+    const paths = Array.isArray(packageJson.files) ? packageJson.files : [];
+    return [...new Set(paths.flatMap((path) => {
+        if (typeof path !== 'string') return [];
+        const match = /^examples\/([^/]+)\//u.exec(path);
+        return match ? [`examples/${match[1]}`] : [];
+    }))].sort();
+}
 
 type ExampleActivationEntry = Readonly<{
     manifest: PluginManifest;
@@ -68,7 +76,7 @@ function expectTriageSourcePointSemantics(
     manifest: PluginManifest,
     pointId: string,
     descriptor: Readonly<Record<string, unknown>>,
-    protocolId = 'triage-sources',
+    protocolId = 'happier.triage/sources',
 ): void {
     const parsed = parsePluginManifest(manifest);
     if (!parsed.ok) throw new Error(`targeted_contribution_${pointId}_manifest_invalid`);
@@ -87,7 +95,11 @@ function expectTriageSourcePointSemantics(
     }
 
     expect(semantics.descriptor.safeParse(descriptor).success).toBe(true);
-    expect(semantics.descriptor.safeParse({ kind: 'issue' }).success).toBe(false);
+    expect(semantics.descriptor.safeParse({
+        v: 1,
+        purpose: 'project-issues',
+        displayName: 'Project issues',
+    }).success).toBe(false);
     expect(semantics.operations.map(({ role }) => role)).toEqual(Object.keys(protocol.operations).sort());
     expect(semantics.surfaces.map(({ role, presentation }) => ({ role, presentation })))
         .toEqual([{ role: 'detail', presentation: 'content' }]);
@@ -96,21 +108,32 @@ function expectTriageSourcePointSemantics(
 }
 
 describe('cross-plugin contribution public authoring example', () => {
-    it('classifies external-author examples and advanced inference fixtures without promoting SDK capabilities', () => {
-        expect(JSON.parse(readFileSync(authoringSupportMetadataPath, 'utf8'))).toEqual({
-            purpose: 'Example and fixture support guidance only; this does not define SDK capability availability.',
-            assets: {
-                'examples/action-contract-producer': 'external-author-supported',
-                'examples/action-contract-consumer': 'external-author-supported',
-                'examples/automation-event-source': 'external-author-supported',
-                'examples/operation-only-channel-provider': 'external-author-supported',
-                'examples/triage-source-target': 'external-author-supported',
-                'examples/triage-source-contributor': 'external-author-supported',
-                'fixtures/authoring-inference': 'SDK-inference-fixture',
-                'fixtures/external-targeted-packages': 'SDK-inference-fixture',
-                'fixtures/feature-protocols/triage-sources-protocol': 'future-protocol-fixture',
-            },
-        });
+    it('keeps shipped examples and designated fixtures exhaustively classified without promoting SDK capabilities', () => {
+        const support = JSON.parse(readFileSync(authoringSupportMetadataPath, 'utf8')) as {
+            purpose?: unknown;
+            assets?: Record<string, unknown>;
+        };
+        expect(support.purpose).toBe(
+            'Example and fixture support guidance only; this does not define SDK capability availability.',
+        );
+        const assets = support.assets ?? {};
+        const shippedExamples = shippedExampleAssetPaths();
+        const designatedFixtures = Object.keys(assets)
+            .filter((asset) => asset.startsWith('fixtures/'))
+            .sort();
+        expect(Object.keys(assets).sort()).toEqual([
+            ...shippedExamples,
+            ...designatedFixtures,
+        ].sort());
+        expect(Object.values(assets).every((classification) => [
+            'maintained-public-reference',
+            'advanced-public-preview',
+            'conformance-reference',
+            'inference-fixture',
+        ].includes(String(classification)))).toBe(true);
+        for (const fixture of designatedFixtures) {
+            expect(existsSync(join(packageRoot, fixture)), fixture).toBe(true);
+        }
 
         const operationTargetSource = readFileSync(
             join(examplesRoot, 'action-contract-producer', 'src', 'index.ts'),
@@ -135,7 +158,9 @@ describe('cross-plugin contribution public authoring example', () => {
         expect(operationTargetSource).not.toContain("capability: 'network.intercept'");
         expect(operationTargetSource).toContain("capability: 'filesystem'");
         expect(operationContributorSource).toMatch(/\.contribute\(\{[\s\S]*?\bsurfaces\s*:/u);
-        expect(triageContributorSource).toContain("descriptor: { kind: 'issue', label: 'Project issues' }");
+        expect(triageContributorSource).toMatch(/sources\.operations\.listInstances\.bind\(/u);
+        expect(triageContributorSource).toMatch(/sources\.operations\.scan\.bind\(/u);
+        expect(triageContributorSource).toMatch(/sources\.operations\.get\.bind\(/u);
         expect(triageContributorSource).toMatch(/\.contribute\(\{[\s\S]*?\bsurfaces\s*:/u);
     });
 
@@ -462,7 +487,7 @@ describe('cross-plugin contribution public authoring example', () => {
         expect(stored.size).toBe(0);
     });
 
-    it('declares Triage-shaped source detail through a target-owned descriptor and contributor-owned renderer chain', async () => {
+    it('declares Triage-shaped source detail through the canonical protocol point and contributor-owned renderer chain', async () => {
         for (const name of ['triage-source-target', 'triage-source-contributor'] as const) {
             const source = readFileSync(join(examplesRoot, name, 'src', 'index.ts'), 'utf8');
             const imports = [...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu)]
@@ -471,8 +496,9 @@ describe('cross-plugin contribution public authoring example', () => {
             expect(imports).toEqual([
                 '@happier-dev/plugin-sdk',
                 '@happier-dev/plugin-sdk/browser',
-                '@happier-dev/triage-sources-protocol/v1',
+                '@happier-dev/triage-protocol/v1',
             ]);
+            expect(source).not.toContain('triage-sources-protocol');
         }
 
         const [target, contributor] = await Promise.all([
@@ -486,28 +512,20 @@ describe('cross-plugin contribution public authoring example', () => {
                 pluginContributionPoints: [{
                     id: 'sources',
                     protocols: [{
-                        id: 'triage-sources',
+                        id: 'happier.triage/sources',
                         version: 1,
-                        descriptor: {
-                            type: 'object',
-                            properties: {
-                                kind: {
-                                    anyOf: [{ const: 'issue' }, { const: 'pull-request' }],
-                                },
-                                label: { type: 'string' },
+                        operations: {
+                            listInstances: {
+                                required: true,
+                                input: { kind: 'protocolDefined' },
+                                action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                             },
-                            required: ['kind', 'label'],
-                            additionalProperties: false,
+                            scan: { required: true },
+                            get: { required: true },
                         },
                         surfaces: {
                             detail: {
                                 required: true,
-                                inputSchema: {
-                                    type: 'object',
-                                    properties: { entryId: { type: 'string' } },
-                                    required: ['entryId'],
-                                    additionalProperties: false,
-                                },
                                 presentation: 'content',
                             },
                         },
@@ -524,8 +542,23 @@ describe('cross-plugin contribution public authoring example', () => {
                         pluginId: 'examples.triage-source-target',
                         pointId: 'sources',
                     },
-                    protocol: { id: 'triage-sources', version: 1 },
-                    descriptor: { kind: 'issue', label: 'Project issues' },
+                    protocol: { id: 'happier.triage/sources', version: 1 },
+                    descriptor: {
+                        v: 1,
+                        purpose: 'project-issues',
+                        displayName: 'Project issues',
+                        kinds: [{
+                            id: 'issue',
+                            workflowSubject: 'issue',
+                            displayName: 'Issue',
+                            pluralDisplayName: 'Issues',
+                        }],
+                    },
+                    operations: {
+                        listInstances: 'list-project-issue-instances',
+                        scan: 'scan-project-issues',
+                        get: 'get-project-issue',
+                    },
                     surfaces: {
                         detail: {
                             renderer: 'triage-detail-card',
@@ -544,7 +577,17 @@ describe('cross-plugin contribution public authoring example', () => {
         expectTriageSourcePointSemantics(
             target.manifest,
             'sources',
-            { kind: 'issue', label: 'Project issues' },
+            {
+                v: 1,
+                purpose: 'project-issues',
+                displayName: 'Project issues',
+                kinds: [{
+                    id: 'issue',
+                    workflowSubject: 'issue',
+                    displayName: 'Issue',
+                    pluralDisplayName: 'Issues',
+                }],
+            },
         );
 
         const contributorTestkit = await createPluginTestkit({
@@ -552,11 +595,15 @@ describe('cross-plugin contribution public authoring example', () => {
             module: { activate: contributor.activate },
         });
         try {
-            await expect(contributorTestkit.invokeAction('inspect-triage-source', {
-                entryId: 'issue-42',
+            await expect(contributorTestkit.invokeAction('list-project-issue-instances', {
+                v: 1,
             }, { surface: 'plugin' })).resolves.toEqual({
-                inspected: true,
-                entryId: 'issue-42',
+                kind: 'failed',
+                failure: {
+                    class: 'unknown',
+                    code: 'example-not-connected',
+                    detail: 'This example has no provider connection.',
+                },
             });
         } finally {
             await contributorTestkit.dispose();

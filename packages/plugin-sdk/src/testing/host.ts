@@ -47,6 +47,7 @@ import type { PluginCancellationOptions } from '../lifecycle.js';
 import {
     createPluginActionHandlerNotStartedError,
     createPluginRegistrationScope,
+    readPluginActionResultParser,
     type PluginRuntimeRegistration,
 } from '../host/registration/index.js';
 import type { PluginServiceId, PluginServices } from '../services/index.js';
@@ -535,12 +536,14 @@ export async function createPluginTestkit(
                 const definition = actionDefinitions.get(registration.localId);
                 if (!definition) return [];
                 const inputParser = readPluginActionInputParser(registration.value);
+                const resultParser = readPluginActionResultParser(registration.value);
                 return [[registration.localId, createPluginActionInvocation({
                     pluginId: manifest.id,
                     localId: registration.localId,
                     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
                     ...(inputParser === undefined ? {} : { inputParser }),
                     ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
+                    ...(resultParser === undefined ? {} : { resultParser }),
                     generationSignal: invocationLifetime.signal,
                     isCurrent: () => state === 'active',
                 })] as const];

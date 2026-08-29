@@ -1,4 +1,5 @@
 import type { JsonValue } from '../../identity.js';
+import type { PluginDiagnosticData } from '../../diagnostics.js';
 import type { ResourceContent } from '../../ui/hostApi.js';
 
 export type PluginUiHostApiDecodeResult<T> =
@@ -61,4 +62,25 @@ export function decodePluginUiClipboardReadResult(
         return { ok: false, diagnostic: 'clipboard_read_response_invalid' };
     }
     return { ok: true, value: value.value };
+}
+
+/** The exact confirmation result accepted by every physical Host API carrier. */
+export function decodePluginUiConfirmResult(
+    value: JsonValue | undefined,
+): PluginUiHostApiDecodeResult<boolean> {
+    if (!isJsonRecord(value) || Object.keys(value).length !== 1 || typeof value.confirmed !== 'boolean') {
+        return { ok: false, diagnostic: 'confirm_response_invalid' };
+    }
+    return { ok: true, value: value.confirmed };
+}
+
+/** Canonical author diagnostic projection shared by hosted and direct carriers. */
+export function encodePluginUiDiagnostic(data: PluginDiagnosticData): JsonValue {
+    return {
+        code: data.code,
+        severity: data.severity,
+        ...(data.message === undefined ? {} : { message: data.message }),
+        ...(data.details === undefined ? {} : { details: data.details }),
+        ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
+    };
 }

@@ -245,13 +245,29 @@ export type VoiceConnectionMediaHost = Readonly<{
     }>;
 }>;
 
+/**
+ * Opaque host-owned microphone stream identity.
+ *
+ * The client contract is shared by web and React Native providers, so it must
+ * not require browser DOM declarations. Providers hand capture to
+ * {@link VoiceConnectionMediaHost}; they do not own or mutate the underlying
+ * platform stream through this handle.
+ */
+export type VoiceMediaStreamHandle = object;
+
+/**
+ * Opaque host-owned audio-context identity. Browser implementations may retain
+ * a native `AudioContext`, while native implementations normally return null.
+ */
+export type VoiceAudioContextHandle = object;
+
 export type VoiceMicSession = Readonly<{
     ensureActive(): Promise<void>;
     setMuted(muted: boolean): void;
     isMuted(): boolean;
     teardown(): Promise<void>;
-    getStream(): MediaStream | null;
-    getAudioContext?(): AudioContext | null;
+    getStream(): VoiceMediaStreamHandle | null;
+    getAudioContext?(): VoiceAudioContextHandle | null;
 }>;
 
 /**

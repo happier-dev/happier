@@ -61,6 +61,7 @@ export type { AgentCliSessionCommandBuildOptionsResultV1 } from '../../agentRunt
 export type { AgentCliSessionCommandDeclarationV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandOptionsV1 } from '../../agentRuntime/projections.js';
 export type { AgentCliSessionCommandParsedArgsV1 } from '../../agentRuntime/projections.js';
+export type { AgentCliSessionCommandPluginSettingsV1 } from '../../agentRuntime/projections.js';
 export type { AgentConfigurationScalar } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountContinuityV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountCredentialRevisionV1 } from '../../agentRuntime/projections.js';
@@ -90,6 +91,7 @@ export type { AgentConnectedAccountRuntimeAuthUsageInputV1 } from '../../agentRu
 export type { AgentConnectedAccountRuntimeAuthVerificationInputV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountRuntimeFailureClassificationV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountRuntimeFailureInputV1 } from '../../agentRuntime/projections.js';
+export type { AgentConnectedAccountRuntimeLimitCategoryV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountStateSharingDescriptorEntryV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountStateSharingDescriptorTransformV1 } from '../../agentRuntime/projections.js';
 export type { AgentConnectedAccountStateSharingDescriptorV1 } from '../../agentRuntime/projections.js';

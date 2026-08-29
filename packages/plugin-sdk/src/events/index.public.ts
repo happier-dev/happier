@@ -22,7 +22,13 @@ export type { PluginEventEnvelope } from '../events.js';
 export type { PluginEventHandler } from '../activation.js';
 export type { PluginEvents } from '../events.js';
 export type {
-    CheckpointedPluginEventDispositionV1,
-    CheckpointedPluginEventObservationV1,
-} from '../checkpointedEventAutomation.js';
-export { admitCheckpointedPluginEventObservationV1 } from '../checkpointedEventAutomation.js';
+    PluginEventDispositionV1,
+    PluginEventObservationV1,
+    PluginEventSourceConnectionStatusProjectionV1,
+    PluginEventSourceConnectionStatusV1,
+} from '../eventAutomation.js';
+export {
+    admitCheckpointedPluginEventObservationV1,
+    admitSessionSocketPluginEventObservationV1,
+    projectPluginEventSourceConnectionStatusV1,
+} from '../eventAutomation.js';
