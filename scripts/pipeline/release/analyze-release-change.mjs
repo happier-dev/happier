@@ -16,7 +16,6 @@ const FAST_SUITE_IDS = new Set(['artifact-verify', 'binary-smoke']);
  * @param {{
  *   base: string;
  *   head: string;
- *   releaseChannel: 'dev' | 'preview' | 'stable';
  *   paths: readonly string[];
  *   profileId: string;
  *   hasCliCandidate: boolean;
@@ -48,16 +47,12 @@ export function buildReleaseChangeAnalysis(input) {
     kind: 'happier.release-change-analysis.v1',
     base: input.base,
     head: input.head,
-    releaseChannel: input.releaseChannel,
     changedPaths: [...new Set(input.paths)].sort(),
     compatibilityAnalysisRequired: risks.compatibilityAnalysisRequired,
-    publicApiHumanReviewRequired: false,
-    publicSdkReleaseApprovalRequired: false,
     risks,
     requiredFastSuites,
     requiredHeavySuites: [...new Set(requiredHeavySuites)],
     skippedHeavySuites: [...new Set(skippedHeavySuites)],
-    publicApiComparisons: [],
     deepCertification: 'manual',
   };
 }
@@ -91,12 +86,6 @@ function boolean(value, label) {
   throw new Error(`${label} must be true or false`);
 }
 
-/** @param {unknown} value */
-function releaseChannel(value) {
-  if (value === 'dev' || value === 'preview' || value === 'stable') return value;
-  throw new Error('--channel must be dev, preview, or stable');
-}
-
 /** @param {string[]} [argv] */
 export async function main(argv = process.argv.slice(2)) {
   const { values } = parseArgs({
@@ -104,7 +93,6 @@ export async function main(argv = process.argv.slice(2)) {
     options: {
       base: { type: 'string' },
       head: { type: 'string' },
-      channel: { type: 'string' },
       profile: { type: 'string', default: 'integrated' },
       'has-cli-candidate': { type: 'string', default: 'false' },
       'has-server-candidate': { type: 'string', default: 'false' },
@@ -117,7 +105,6 @@ export async function main(argv = process.argv.slice(2)) {
   const base = String(values.base ?? '').trim();
   const head = String(values.head ?? '').trim();
   if (!base || !head) throw new Error('--base and --head are required');
-  const normalizedReleaseChannel = releaseChannel(values.channel);
   const repositoryRoot = String(values['repository-root'] ?? '').trim() || undefined;
   const paths = git(['diff', '--name-only', `${base}..${head}`], repositoryRoot)
     .split('\n')
@@ -126,7 +113,6 @@ export async function main(argv = process.argv.slice(2)) {
   const result = buildReleaseChangeAnalysis({
     base,
     head,
-    releaseChannel: normalizedReleaseChannel,
     paths,
     profileId: String(values.profile ?? ''),
     hasCliCandidate: boolean(values['has-cli-candidate'], '--has-cli-candidate'),

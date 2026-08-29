@@ -14,12 +14,12 @@
 export const COMMAND_HELP_ORCHESTRATORS = {
   'release-analyze': {
     summary: 'Classify changed release seams before notes/version materialization.',
-    usage: 'node scripts/pipeline/run.mjs release-analyze --base <ref> --head <ref> --channel <dev|preview|stable> --profile <integrated|stable> --has-cli-candidate <bool> --has-server-candidate <bool> --has-published-relay-predecessor <bool>',
+    usage: 'node scripts/pipeline/run.mjs release-analyze --base <ref> --head <ref> --profile <integrated|stable> --has-cli-candidate <bool> --has-server-candidate <bool> --has-published-relay-predecessor <bool>',
     bullets: [
       'Returns deterministic risk triggers and required fast/heavy evidence; the release agent owns the semantic compatibility verdict.',
       'Run while inspecting the release diff, before committing release notes or versions.',
     ],
-    examples: ['node scripts/pipeline/run.mjs release-analyze --base cli-v1.2.3 --head HEAD --channel preview --profile integrated --has-cli-candidate true --has-server-candidate false --has-published-relay-predecessor false'],
+    examples: ['node scripts/pipeline/run.mjs release-analyze --base cli-v1.2.3 --head HEAD --profile integrated --has-cli-candidate true --has-server-candidate false --has-published-relay-predecessor false'],
   },
   'release-local-candidates': {
     summary: 'Execute immutable publication, verification, and rolling promotion locally through the canonical release scripts.',
@@ -33,7 +33,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
   release: {
     summary: 'Orchestrate a full dev/preview/production release (recommended entrypoint).',
     usage:
-      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--waive-ci <bool>] [--approve-public-sdk-release <bool>] [--include-validation-suites <csv>] [--waive-validation-suites <csv>] [--override-reason <text>] [--dry-run] [--json]',
+      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--waive-ci <bool>] [--include-validation-suites <csv>] [--waive-validation-suites <csv>] [--override-reason <text>] [--dry-run] [--json]',
     options: [
       '--confirm <action>                Required safety confirmation.',
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
@@ -41,7 +41,6 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--deploy-targets <csv>            ui,server,website,docs,cli,stack,server_runner (default: ui,server,website,docs).',
       '--force-deploy <bool>             true|false (default: false).',
       '--waive-ci <bool>                Explicit maintainer waiver for exact-SHA CI evidence (default: false).',
-      '--approve-public-sdk-release <bool>  Unsupported on 0.2; accepted as false for conductor compatibility.',
       '--include-validation-suites <csv> Add heavy validation beyond the risk-selected defaults.',
       '--waive-validation-suites <csv>  Explicitly waive waivable risk-selected suites.',
       '--override-reason <text>         Required single-line reason for a waiver.',

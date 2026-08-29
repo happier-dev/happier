@@ -33,8 +33,6 @@ test('release dry-run JSON resolves the actual promotion source independently of
         '2026-08-09.1',
         '--qualified-v4-activation-approval',
         'false',
-        '--approve-public-sdk-release',
-        'false',
       ],
       {
         cwd: repoRoot,
@@ -57,7 +55,6 @@ test('release dry-run JSON resolves the actual promotion source independently of
       approvals: { qualifiedV4Activation: false },
       overrides: {
         waiveCi: false,
-        approvePublicSdkRelease: false,
         includeValidationSuiteIds: [],
         waiveValidationSuiteIds: [],
         reason: '',
@@ -140,11 +137,9 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /authorized_promotion_source_sha:\s*\n\s*description: "Safety — exact source branch SHA approved for promotion"/);
   assert.match(raw, /hmaint_operation_id:\s*\n\s*description: "Safety — conductor operation ID; leave empty only for emergency direct manual dispatch"/);
   assert.match(raw, /release_notes_id:\s*\n\s*description: "Release notes — Exact approved project release ID"/);
-  assert.match(raw, /approve_public_sdk_release:\s*\n\s*description: "Public SDK — unsupported on this release line; must remain false"/);
   assert.match(raw, /AUTHORIZED_PROMOTION_SOURCE_SHA:\s*\$\{\{ inputs\.authorized_promotion_source_sha \}\}/);
   assert.match(raw, /HMAINT_OPERATION_ID:\s*\$\{\{ inputs\.hmaint_operation_id \}\}/);
   assert.match(raw, /RELEASE_NOTES_ID:\s*\$\{\{ inputs\.release_notes_id \}\}/);
-  assert.match(raw, /APPROVE_PUBLIC_SDK_RELEASE:\s*\$\{\{ inputs\.approve_public_sdk_release \}\}/);
   assert.match(raw, /scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
   assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}, \{1\}\)', inputs\.hmaint_operation_id, inputs\.hmaint_attempt_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
   assert.match(
