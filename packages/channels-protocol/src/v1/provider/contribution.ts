@@ -49,7 +49,7 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             required: true,
             input: { kind: 'contributorDefined' },
             resultSchema: ConversationProviderSetupOutcomeV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
         },
         /**
          * Optional, provider-owned remote remediation for a safe setup result
@@ -62,31 +62,31 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             required: false,
             input: { kind: 'contributorDefined' },
             resultSchema: ConversationProviderSetupRemediationResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'writesRemote' },
         },
         connectionTest: {
             required: true,
             input: { kind: 'protocolDefined', schema: ConversationConnectionTestInputV1Schema },
             resultSchema: ConversationConnectionTestResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
         },
         endpointResolve: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationEndpointResolveInputV1Schema },
             resultSchema: ConversationEndpointResolveResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
         },
         principalResolve: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationPrincipalResolveInputV1Schema },
             resultSchema: ConversationPrincipalResolveResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
         },
         observationsPoll: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationPollInputV1Schema },
             resultSchema: ConversationPollResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
         /**
          * Optional stateless bridge from one durable Channels Event obligation
@@ -97,25 +97,25 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationProviderAutomationEventAdmitInputV1Schema },
             resultSchema: ConversationProviderAutomationEventAdmitResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+            action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
         },
         messageDeliver: {
             required: true,
             input: { kind: 'protocolDefined', schema: ConversationDeliveryInputV1Schema },
             resultSchema: ConversationDeliveryResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+            action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
         },
         deliveryReconcile: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationDeliveryReconcileInputV1Schema },
             resultSchema: ConversationDeliveryResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
         connectionStop: {
             required: false,
             input: { kind: 'protocolDefined', schema: ConversationProviderConnectionStopInputV1Schema },
             resultSchema: ConversationProviderConnectionStopResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+            action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
         },
     },
 });

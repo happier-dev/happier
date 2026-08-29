@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -11,7 +11,28 @@ const sensitivePayload = 'encrypted-transcript-payload'.repeat(1_000);
 const BASIC_EXAMPLE_CHILD_TIMEOUT_MS = 60_000;
 const BASIC_EXAMPLE_TEST_TIMEOUT_MS = BASIC_EXAMPLE_CHILD_TIMEOUT_MS + 5_000;
 
-function actionResponse(actionId: string): unknown {
+/**
+ * Generic request-body parser for the fake HTTP server. It never inspects
+ * Action-specific fields; the requestId echo below relies only on the outer
+ * public envelope so real request-correlation behavior is exercised.
+ */
+async function readJsonObjectBody(request: IncomingMessage): Promise<Readonly<Record<string, unknown>>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.from(chunk));
+  }
+  if (chunks.length === 0) return {};
+  try {
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Readonly<Record<string, unknown>>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function actionResponse(actionId: string): Readonly<Record<string, unknown>> {
   if (actionId === 'agents.backends.list') {
     return {
       v: 1,
@@ -63,7 +84,7 @@ function actionResponse(actionId: string): unknown {
   throw new Error(`Unexpected Action request: ${actionId}`);
 }
 
-function successfulActionResponse(actionId: string): unknown {
+function successfulActionResponse(actionId: string): Readonly<Record<string, unknown>> {
   if (actionId === 'agents.backends.list') {
     return {
       v: 1,
@@ -168,7 +189,7 @@ function successfulActionResponse(actionId: string): unknown {
 }
 
 async function runBasicExample(
-  respond: (actionId: string) => unknown,
+  respond: (actionId: string) => Readonly<Record<string, unknown>>,
   options: Readonly<{
     endpointMode?: 'daemon' | 'server';
     machineId?: string;
@@ -193,8 +214,17 @@ async function runBasicExample(
       pathname.split('/').at(-1) ?? '',
     );
     actionIds.push(actionId);
+    // Echo the exact requestId the caller sent on the outer envelope. Mutating
+    // Actions always carry one, so the client's response-correlation check is
+    // now proven over a real HTTP round-trip instead of a fetch mock.
+    const requestBody = await readJsonObjectBody(request);
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify(respond(actionId)));
+    response.end(JSON.stringify({
+      ...respond(actionId),
+      ...(typeof requestBody.requestId === 'string'
+        ? { requestId: requestBody.requestId }
+        : {}),
+    }));
   });
   let child: ReturnType<typeof spawn> | undefined;
   let childClose: ReturnType<typeof once> | undefined;

@@ -114,7 +114,7 @@ export interface ContributionProtocol<
     readonly surfaces: TSurfaces;
     readonly descriptor?: TDescriptorSchema;
 }
-export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin';
+export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice';
 export type ContributionActionDangerLevel =
     | 'safe'
     | 'writesLocal'

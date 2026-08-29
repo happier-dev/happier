@@ -1,5 +1,6 @@
 import {
   ExternalActionHttpErrorV1Schema,
+  ExternalActionRequestIdV1Schema,
   parseExternalActionResponseEnvelopeV1,
   parseQualifiedPluginActionId,
 } from '@happier-dev/protocol/actions';
@@ -40,6 +41,20 @@ function requireNonEmpty(value: string, name: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) throw new TypeError(`${name} must be non-empty`);
   return normalized;
+}
+
+/**
+ * Request identities consume the one Protocol-owned external Action request-id
+ * schema exactly: the original value is sent unchanged, 1-128 code units are
+ * admitted, Unicode is allowed, and outer whitespace is rejected — never
+ * trimmed into a different correlation identity.
+ */
+function requireExternalActionRequestId(value: string): string {
+  const parsed = ExternalActionRequestIdV1Schema.safeParse(value);
+  if (!parsed.success) {
+    throw new TypeError('requestId must be 1-128 code units with no outer whitespace');
+  }
+  return parsed.data;
 }
 
 function normalizeEndpoint(endpoint: string | URL): URL {
@@ -388,7 +403,7 @@ function createClient(
   ): Promise<PublicActionResultById[K]> => {
     const requestId = options.requestId === undefined
       ? (MUTATING_PUBLIC_ACTION_IDS.has(actionId) ? globalThis.crypto.randomUUID() : undefined)
-      : requireNonEmpty(options.requestId, 'requestId');
+      : requireExternalActionRequestId(options.requestId);
     const requestBody = {
       v: 1 as const,
       ...(requestId === undefined ? {} : { requestId }),

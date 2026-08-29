@@ -42,6 +42,40 @@ function writePackage(
   }
 }
 
+function readPackageJson(packageDir: string): Readonly<Record<string, unknown>> {
+  return JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as Readonly<Record<string, unknown>>;
+}
+
+function createPrepublicationBundleWriter(params: Readonly<{ sourceRoot: string; destinationRoot: string }>) {
+  return (packageName: string, directoryName: string, manifest: Readonly<Record<string, unknown>> = {}):
+    Parameters<typeof materializePrepublicationWorkspacePackageRoots>[0]['bundles'][number] => {
+      const packageRoot = join(params.sourceRoot, directoryName);
+      writePackage(packageRoot, {
+        name: packageName,
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        types: './dist/index.d.ts',
+        files: ['dist', 'package.json'],
+        happier: {
+          publicSdkRelease: {
+            posture: 'developer_preview',
+            externalPublicationRequiresApproval: true,
+          },
+        },
+        ...manifest,
+      }, {
+        'dist/index.js': 'export const packageMarker = true;\n',
+        'dist/index.d.ts': 'export declare const packageMarker: true;\n',
+      });
+      return {
+        packageName,
+        srcDir: packageRoot,
+        destDir: join(params.destinationRoot, 'node_modules', ...packageName.split('/')),
+      };
+    };
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -173,33 +207,10 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
 describe('materializePrepublicationWorkspacePackageRoots', () => {
   it('materializes only requested packages carrying the canonical public author classification', () => {
     const root = createTempRoot('cli-common-public-author-roots-');
-    const sourceRoot = join(root, 'source');
-    const destinationRoot = join(root, 'destination');
-    const writePublicPackage = (packageName: string, directoryName: string) => {
-      const packageRoot = join(sourceRoot, directoryName);
-      writePackage(packageRoot, {
-        name: packageName,
-        version: '0.0.0',
-        type: 'module',
-        main: './dist/index.js',
-        types: './dist/index.d.ts',
-        files: ['dist', 'package.json'],
-        happier: {
-          publicSdkRelease: {
-            posture: 'developer_preview',
-            externalPublicationRequiresApproval: true,
-          },
-        },
-      }, {
-        'dist/index.js': 'export const packageMarker = true;\n',
-        'dist/index.d.ts': 'export declare const packageMarker: true;\n',
-      });
-      return {
-        packageName,
-        srcDir: packageRoot,
-        destDir: join(destinationRoot, 'node_modules', ...packageName.split('/')),
-      };
-    };
+    const writePublicPackage = createPrepublicationBundleWriter({
+      sourceRoot: join(root, 'source'),
+      destinationRoot: join(root, 'destination'),
+    });
     const sdk = writePublicPackage('@happier-dev/plugin-sdk', 'plugin-sdk');
     const channels = writePublicPackage('@happier-dev/channels-protocol', 'channels-protocol');
 
@@ -214,6 +225,61 @@ describe('materializePrepublicationWorkspacePackageRoots', () => {
       bundles: [sdk, channels],
       rootPackageNames: ['@happier-dev/protocol'],
     })).toThrow(/not classified for public author use/u);
+  });
+
+  it('rejects a requested closure that names the same root package twice', () => {
+    const root = createTempRoot('cli-common-public-author-duplicate-roots-');
+    const writePublicPackage = createPrepublicationBundleWriter({
+      sourceRoot: join(root, 'source'),
+      destinationRoot: join(root, 'destination'),
+    });
+    const sdk = writePublicPackage('@happier-dev/plugin-sdk', 'plugin-sdk');
+
+    expect(() => materializePrepublicationWorkspacePackageRoots({
+      bundles: [sdk],
+      rootPackageNames: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-sdk'],
+    })).toThrow(/duplicate root package names/u);
+    expect(existsSync(sdk.destDir)).toBe(false);
+  });
+
+  it('materializes the declared bundled closure beneath each requested root instead of the whole classified set', () => {
+    const root = createTempRoot('cli-common-public-author-closure-');
+    const destinationRoot = join(root, 'destination');
+    const writePublicPackage = createPrepublicationBundleWriter({
+      sourceRoot: join(root, 'source'),
+      destinationRoot,
+    });
+    // The requested root declares the feature protocol as its bundled runtime
+    // closure. The protocol carries the same public author classification but
+    // is NOT requested as a root, so the only honest materialization is
+    // physically nested beneath the requested root — never as a sibling root
+    // and never skipped.
+    const sdk = writePublicPackage('@happier-dev/plugin-sdk', 'plugin-sdk', {
+      bundledDependencies: ['@happier-dev/channels-protocol'],
+    });
+    const channels = writePublicPackage('@happier-dev/channels-protocol', 'channels-protocol');
+
+    materializePrepublicationWorkspacePackageRoots({
+      bundles: [sdk, channels],
+      rootPackageNames: ['@happier-dev/plugin-sdk'],
+    });
+
+    expect(existsSync(join(sdk.destDir, 'dist', 'index.js'))).toBe(true);
+    // Not a root: the request named only the SDK.
+    expect(existsSync(channels.destDir)).toBe(false);
+    // Physically nested inside the requested root, with its own dist bytes.
+    const nestedChannelsDir = join(
+      sdk.destDir,
+      'node_modules',
+      '@happier-dev',
+      'channels-protocol',
+    );
+    expect(existsSync(join(nestedChannelsDir, 'dist', 'index.js'))).toBe(true);
+    // The materialized manifest declares exactly that closure.
+    const materializedSdkManifest = readPackageJson(sdk.destDir);
+    expect(materializedSdkManifest.bundledDependencies).toEqual(['@happier-dev/channels-protocol']);
+    const dependencies = materializedSdkManifest.dependencies as Readonly<Record<string, string>>;
+    expect(dependencies['@happier-dev/channels-protocol']).toBe('0.0.0');
   });
 });
 

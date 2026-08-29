@@ -699,6 +699,8 @@ test('iOS Ghostty accessibility summary reads visible viewport text when native 
   assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: copySelectionActionLabel/);
   assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: selectAllActionLabel/);
   assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: openLinkActionLabel/);
+  assert.match(surfaceViewSource, /override var accessibilityCustomActions: \[UIAccessibilityCustomAction\]\?/);
+  assert.match(accessibilitySource, /surfaceView\.setTerminalAccessibilityCustomActions\(actions\)/);
   assert.doesNotMatch(accessibilitySource, /"Terminal"|"Focus terminal"|"Copy selection"|"Native terminal renderer unavailable/);
   for (const propName of [
     'accessibilityTerminalLabel',

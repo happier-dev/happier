@@ -216,13 +216,6 @@ export type AgentCore = Readonly<{
     connectedServices?: Readonly<{
       supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
       providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
-      /**
-       * Optional credential-kind compatibility per connected service id.
-       *
-       * When provided, consumers should only offer connected-service profiles whose `kind`
-       * is in the allowed list for the target agent/backend.
-       */
-      supportedKindsByServiceId?: Readonly<Partial<Record<ConnectedServiceId, ReadonlyArray<ConnectedServiceKind>>>>;
     }> | null;
     runtimeKinds?: AnyAgentRuntimeKindsManifest | null;
 }> & AgentCoreRuntimeControlSurface;

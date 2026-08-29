@@ -91,6 +91,23 @@ the target daemon's current inventory. If it is not installed, disabled, or
 does not expose a Session-capable identity, `sessions.spawn()` rejects with
 `HappierAgentUnavailableError` and its typed `reason`.
 
+Discover that inventory instead of guessing an id. `sessions.spawn()` resolves
+your `agent` value against the same read-only catalog Action, and that Action
+is also available as a typed method on the client you will spawn with (the root
+client at a daemon-local endpoint, or the machine-bound client for an exact
+machine):
+
+```ts
+const inventory = await serverClient.actions.agents.backends.list({ includeDisabled: true });
+const usableAgentIds = inventory.items
+  .filter((item) => item.enabled)
+  .map((item) => item.agentId);
+```
+
+Then pass one of the listed `agentId`s to `sessions.spawn({ agent, ... })`.
+Missing, disabled, or identity-less Agents fail typed at spawn time even when
+this discovery step is skipped.
+
 At a daemon-local endpoint, root `happier.sessions.spawn()` deliberately omits
 the routing target, so the daemon uses its current Machine. It does not perform
 Machine discovery or choose a server-side default. At a server endpoint, that

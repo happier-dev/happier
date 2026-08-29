@@ -5,4 +5,5 @@ export * from './cliRuntimeSidecars.js';
 export * from './buildCliBinaryArtifactPayload.js';
 export * from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 export * from './stageCliProxyApiManagedRuntime.js';
+export * from './stageProcessCustodyRuntime.js';
 export * from './buildServerBinaryArtifactPayload.js';

@@ -10,6 +10,7 @@ final class GhosttySurfaceView: ExpoView, UITextInput, UITextInputTraits {
 
   private(set) var diagnostic = makeGhosttyRuntimeDiagnostic()
   private let accessibilityModel = GhosttyAccessibilityModel()
+  private var terminalAccessibilityCustomActions: [UIAccessibilityCustomAction]?
   private var bridge: GhosttySurfaceBridge?
   private var eventEmitter: EventEmitter?
   private var applicationLifecycleObservers: [NSObjectProtocol] = []
@@ -81,6 +82,15 @@ final class GhosttySurfaceView: ExpoView, UITextInput, UITextInputTraits {
 
   var accessibilityOpenLinkActionLabel: String = "" {
     didSet { refreshAccessibility() }
+  }
+
+  override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+    get { terminalAccessibilityCustomActions ?? super.accessibilityCustomActions }
+    set { super.accessibilityCustomActions = newValue }
+  }
+
+  func setTerminalAccessibilityCustomActions(_ actions: [UIAccessibilityCustomAction]?) {
+    terminalAccessibilityCustomActions = actions
   }
 
   required init(appContext: AppContext? = nil) {

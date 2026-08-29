@@ -47,7 +47,7 @@ final class GhosttyAccessibilityModel {
       surfaceView.isAccessibilityElement = false
       surfaceView.accessibilityLabel = nil
       surfaceView.accessibilityValue = nil
-      surfaceView.accessibilityCustomActions = nil
+      surfaceView.setTerminalAccessibilityCustomActions(nil)
       return
     }
 
@@ -85,6 +85,6 @@ final class GhosttyAccessibilityModel {
         selector: #selector(GhosttySurfaceView.accessibilityOpenLinkAction)
       ))
     }
-    surfaceView.accessibilityCustomActions = actions
+    surfaceView.setTerminalAccessibilityCustomActions(actions)
   }
 }

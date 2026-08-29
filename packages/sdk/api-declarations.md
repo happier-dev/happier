@@ -86,7 +86,8 @@ Declared by `dist/errors.d.ts` as `HappierActionError`.
 class HappierActionError extends Error {
     readonly code: string;
     readonly details?: unknown;
-    constructor(code: string, message: string, details?: unknown);
+    readonly requestId?: string;
+    constructor(code: string, message: string, details?: unknown, requestId?: string);
 }
 ```
 
@@ -151,7 +152,7 @@ Declared by `dist/errors.d.ts` as `HappierClientClosedError`.
 
 ```ts
 class HappierClientClosedError extends HappierTransportError {
-    constructor();
+    constructor(requestId?: string);
 }
 ```
 
@@ -387,10 +388,12 @@ class HappierTransportError extends Error {
     readonly code?: string;
     readonly status?: number;
     readonly details?: unknown;
+    readonly requestId?: string;
     constructor(message: string, options?: Readonly<{
         code?: string;
         status?: number;
         details?: unknown;
+        requestId?: string;
         cause?: unknown;
     }>);
 }
@@ -785,6 +788,9 @@ type GeneratedActions = Readonly<{
         }>;
         readonly uninstall: (input: PublicActionInputById["plugins.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.uninstall"]>;
     }>;
+    readonly projects: Readonly<{
+        readonly list: (input: PublicActionInputById["projects.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["projects.list"]>;
+    }>;
     readonly promptAsset: Readonly<{
         readonly export: (input: PublicActionInputById["prompt_asset.export"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_asset.export"]>;
     }>;
@@ -796,6 +802,14 @@ type GeneratedActions = Readonly<{
     }>;
     readonly promptRegistry: Readonly<{
         readonly install: (input: PublicActionInputById["prompt_registry.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_registry.install"]>;
+    }>;
+    readonly prompts: Readonly<{
+        readonly invocation: Readonly<{
+            readonly resolve: (input: PublicActionInputById["prompts.invocation.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocation.resolve"]>;
+        }>;
+        readonly invocations: Readonly<{
+            readonly list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocations.list"]>;
+        }>;
     }>;
     readonly review: Readonly<{
         readonly engines: Readonly<{
@@ -840,6 +854,9 @@ type GeneratedActions = Readonly<{
             readonly init: (input: PublicActionInputById["scm.repository.init"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.init"]>;
             readonly removeIndexLock: (input: PublicActionInputById["scm.repository.removeIndexLock"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.removeIndexLock"]>;
         }>;
+    }>;
+    readonly servers: Readonly<{
+        readonly list: (input: PublicActionInputById["servers.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["servers.list"]>;
     }>;
     readonly session: Readonly<{
         readonly activity: Readonly<{
@@ -911,6 +928,14 @@ type GeneratedActions = Readonly<{
             readonly get: (input: PublicActionInputById["session.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.status.get"]>;
         }>;
         readonly stop: (input: PublicActionInputById["session.stop"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.stop"]>;
+        readonly target: Readonly<{
+            readonly primary: Readonly<{
+                readonly set: (input: PublicActionInputById["session.target.primary.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.target.primary.set"]>;
+            }>;
+            readonly tracked: Readonly<{
+                readonly set: (input: PublicActionInputById["session.target.tracked.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.target.tracked.set"]>;
+            }>;
+        }>;
         readonly terminalComposer: Readonly<{
             readonly clear: (input: PublicActionInputById["session.terminalComposer.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.terminalComposer.clear"]>;
         }>;
@@ -998,6 +1023,23 @@ type GeneratedActions = Readonly<{
         readonly readAfter: (input: PublicActionInputById["transcript.readAfter"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.readAfter"]>;
         readonly search: (input: PublicActionInputById["transcript.search"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.search"]>;
         readonly unfollow: (input: PublicActionInputById["transcript.unfollow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.unfollow"]>;
+    }>;
+    readonly ui: Readonly<{
+        readonly currentContext: Readonly<{
+            readonly command: Readonly<{
+                readonly invoke: (input: PublicActionInputById["ui.current_context.command.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.current_context.command.invoke"]>;
+            }>;
+            readonly read: (input: PublicActionInputById["ui.current_context.read"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.current_context.read"]>;
+        }>;
+        readonly pet: Readonly<{
+            readonly choose: (input: PublicActionInputById["ui.pet.choose"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.pet.choose"]>;
+        }>;
+        readonly voiceAgent: Readonly<{
+            readonly teleport: (input: PublicActionInputById["ui.voice_agent.teleport"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.voice_agent.teleport"]>;
+        }>;
+        readonly voiceGlobal: Readonly<{
+            readonly reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.voice_global.reset"]>;
+        }>;
     }>;
     readonly voiceAgent: Readonly<{
         readonly start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["voice_agent.start"]>;
@@ -10516,7 +10558,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             "session_info"
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.start';
+            readonly rpcMethod: "daemon.sessionHandoff.start.v3";
+            readonly rpcMethodAliases: [
+                "daemon.sessionHandoff.start"
+            ];
             readonly sdkMethod: 'session.handoff.start';
         };
         readonly examples: {
@@ -10585,7 +10630,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly placements: readonly [
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.prepareTarget';
+            readonly rpcMethod: "daemon.sessionHandoff.prepareTarget.v3";
+            readonly rpcMethodAliases: [
+                "daemon.sessionHandoff.prepareTarget"
+            ];
             readonly sdkMethod: 'session.handoff.prepareTarget.start';
         };
         readonly surfaces: {
@@ -10802,7 +10850,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly placements: readonly [
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.prepareTargetResult.get';
+            readonly rpcMethod: "daemon.sessionHandoff.prepareTargetResult.get.v3";
+            readonly rpcMethodAliases: [
+                "daemon.sessionHandoff.prepareTargetResult.get"
+            ];
         };
         readonly surfaces: {
             readonly ui: false;
@@ -11005,7 +11056,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly placements: readonly [
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.prepareTarget.resume';
+            readonly rpcMethod: "daemon.sessionHandoff.prepareTarget.resume.v3";
         };
         readonly surfaces: {
             readonly ui: false;
@@ -11179,7 +11230,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly placements: readonly [
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.commit';
+            readonly rpcMethod: "daemon.sessionHandoff.commit.v3";
+            readonly rpcMethodAliases: [
+                "daemon.sessionHandoff.commit"
+            ];
         };
         readonly surfaces: {
             readonly ui: false;
@@ -11221,7 +11275,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly placements: readonly [
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.abort';
+            readonly rpcMethod: "daemon.sessionHandoff.abort.v3";
+            readonly rpcMethodAliases: [
+                "daemon.sessionHandoff.abort"
+            ];
         };
         readonly surfaces: {
             readonly ui: false;
@@ -11263,7 +11320,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly placements: readonly [
         ];
         readonly bindings: {
-            readonly rpcMethod: 'daemon.sessionHandoff.status.get';
+            readonly rpcMethod: "daemon.sessionHandoff.status.get.v3";
+            readonly rpcMethodAliases: [
+                "daemon.sessionHandoff.status.get"
+            ];
         };
         readonly surfaces: {
             readonly ui: false;
@@ -11482,6 +11542,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                                         add: "add";
                                         back: "back";
                                         browser: "browser";
+                                        "change-complete": "change-complete";
+                                        "change-open": "change-open";
                                         check: "check";
                                         close: "close";
                                         copy: "copy";
@@ -11746,6 +11808,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                                         add: "add";
                                         back: "back";
                                         browser: "browser";
+                                        "change-complete": "change-complete";
+                                        "change-open": "change-open";
                                         check: "check";
                                         close: "close";
                                         copy: "copy";
@@ -12180,6 +12244,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                                 add: "add";
                                 back: "back";
                                 browser: "browser";
+                                "change-complete": "change-complete";
+                                "change-open": "change-open";
                                 check: "check";
                                 close: "close";
                                 copy: "copy";
@@ -12599,6 +12665,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         readonly inputSchema: z.ZodObject<{
             includeDisabled: z.ZodOptional<z.ZodBoolean>;
             limit: z.ZodOptional<z.ZodNumber>;
+            machineId: z.ZodOptional<z.ZodString>;
         }, z.core.$loose>;
     },
     {
@@ -12649,6 +12716,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     readonly widget: 'text';
                 },
                 {
+                    readonly path: 'serverId';
+                    readonly title: 'Server id (optional)';
+                    readonly widget: 'text';
+                },
+                {
                     readonly path: 'limit';
                     readonly title: 'Max results';
                     readonly widget: 'text';
@@ -12665,6 +12737,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 z.ZodString
             ]>>;
             machineId: z.ZodOptional<z.ZodString>;
+            serverId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
         }, z.core.$loose>;
     },
@@ -12721,6 +12794,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     readonly widget: 'text';
                 },
                 {
+                    readonly path: 'serverId';
+                    readonly title: 'Server id (optional)';
+                    readonly widget: 'text';
+                },
+                {
                     readonly path: 'limit';
                     readonly title: 'Max results';
                     readonly widget: 'text';
@@ -12739,6 +12817,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
             modelId: z.ZodOptional<z.ZodString>;
+            serverId: z.ZodOptional<z.ZodString>;
         }, z.core.$loose>;
     },
     {
@@ -12789,6 +12868,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     readonly widget: 'text';
                 },
                 {
+                    readonly path: 'serverId';
+                    readonly title: 'Server id (optional)';
+                    readonly widget: 'text';
+                },
+                {
                     readonly path: 'limit';
                     readonly title: 'Max results';
                     readonly widget: 'text';
@@ -12806,6 +12890,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             ]>>;
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
+            serverId: z.ZodOptional<z.ZodString>;
         }, z.core.$loose>;
     },
     {
@@ -12913,6 +12998,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     readonly widget: 'text';
                 },
                 {
+                    readonly path: 'machineId';
+                    readonly title: 'Machine id (optional)';
+                    readonly widget: 'text';
+                },
+                {
+                    readonly path: 'serverId';
+                    readonly title: 'Server id (optional)';
+                    readonly widget: 'text';
+                },
+                {
                     readonly path: 'includeUnavailable';
                     readonly title: 'Include unavailable';
                     readonly widget: 'boolean';
@@ -12931,6 +13026,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
             includeUnavailable: z.ZodOptional<z.ZodBoolean>;
+            serverId: z.ZodOptional<z.ZodString>;
         }, z.core.$loose>;
     },
     {
@@ -13155,6 +13251,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                             add: "add";
                             back: "back";
                             browser: "browser";
+                            "change-complete": "change-complete";
+                            "change-open": "change-open";
                             check: "check";
                             close: "close";
                             copy: "copy";
@@ -13233,6 +13331,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                                         add: "add";
                                         back: "back";
                                         browser: "browser";
+                                        "change-complete": "change-complete";
+                                        "change-open": "change-open";
                                         check: "check";
                                         close: "close";
                                         copy: "copy";
@@ -23917,28 +24017,6 @@ type ActionSurfaceBindingTransform = (value: unknown, context: ActionSurfaceBind
 ```
 
 
-### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `CLIENT_EXECUTION_PLACEMENT_ACTION_IDS`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS: readonly [
-    "servers.list",
-    "projects.list",
-    "prompts.invocations.list",
-    "prompts.invocation.resolve",
-    "session.target.primary.set",
-    "session.target.tracked.set",
-    "devices.simulator.input.orientation",
-    "ui.voice_global.reset",
-    "ui.voice_agent.teleport",
-    "ui.current_context.read",
-    "ui.current_context.command.invoke",
-    "ui.pet.choose"
-];
-```
-
-
 ### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `CanonicalActionSchemaDefinition`
 
 Reached from a published signature; not itself a published export.
@@ -23959,15 +24037,6 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type CanonicalActionSpecDefinition = NonRuntimeDirectActionSpecDefinition | RuntimeActionSpecDefinition | PluginDevLoopActionSpecDefinition | PluginSettingsAdministrationActionSpecDefinition | PluginPermissionGrantActionSpecDefinition | PluginReviewCommentActionSpecDefinition | PluginWebhookActionSpecDefinition | PluginAutomationEventActionSpecDefinition | PluginAutomationConversationActionSpecDefinition;
-```
-
-
-### `node_modules/@happier-dev/protocol/dist/actions/actionSpecs.d.ts` — `ClientExecutionPlacementActionId`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type ClientExecutionPlacementActionId = (typeof CLIENT_EXECUTION_PLACEMENT_ACTION_IDS)[number];
 ```
 
 
@@ -24437,7 +24506,7 @@ type PreNormalizedActionSurfaces = Omit<ActionSurfaces, 'api' | 'plugin'> & Read
 Reached from a published signature; not itself a published export.
 
 ```ts
-type PublicActionId = Exclude<ActionId, InternalActionId | PluginProvenanceOnlyActionId | ClientExecutionPlacementActionId>;
+type PublicActionId = Exclude<ActionId, InternalActionId | PluginProvenanceOnlyActionId>;
 ```
 
 
@@ -82699,8 +82768,6642 @@ type SessionUsageLimitConsumeResetCreditRequestV1Input = z.input<typeof SessionU
 ```
 
 
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/errors.d.cts` — `ZodError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodError<T = unknown> extends $ZodError<T> {
+    format(): core.$ZodFormattedError<T>;
+    format<U>(mapper: (issue: core.$ZodIssue) => U): core.$ZodFormattedError<T, U>;
+    flatten(): core.$ZodFlattenedError<T>;
+    flatten<U>(mapper: (issue: core.$ZodIssue) => U): core.$ZodFlattenedError<T, U>;
+    addIssue(issue: core.$ZodIssue): void;
+    addIssues(issues: core.$ZodIssue[]): void;
+    isEmpty: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/errors.d.cts` — `ZodError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodError: core.$constructor<ZodError>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/parse.d.cts` — `ZodSafeParseError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ZodSafeParseError<T> = {
+    success: false;
+    data?: never;
+    error: ZodError<T>;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/parse.d.cts` — `ZodSafeParseResult`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ZodSafeParseResult<T> = ZodSafeParseSuccess<T> | ZodSafeParseError<T>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/parse.d.cts` — `ZodSafeParseSuccess`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ZodSafeParseSuccess<T> = {
+    success: true;
+    data: T;
+    error?: never;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `SafeExtendShape`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type SafeExtendShape<Base extends core.$ZodShape, Ext extends core.$ZodLooseShape> = {
+    [K in keyof Ext]: K extends keyof Base ? core.output<Ext[K]> extends core.output<Base[K]> ? core.input<Ext[K]> extends core.input<Base[K]> ? Ext[K] : never : never : Ext[K];
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodArray`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodArray<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodArrayInternals<T>>, core.$ZodArray<T> {
+    element: T;
+    min(minLength: number, params?: string | core.$ZodCheckMinLengthParams): this;
+    nonempty(params?: string | core.$ZodCheckMinLengthParams): this;
+    max(maxLength: number, params?: string | core.$ZodCheckMaxLengthParams): this;
+    length(len: number, params?: string | core.$ZodCheckLengthEqualsParams): this;
+    unwrap(): T;
+    "~standard": ZodStandardSchemaWithJSON<this>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodArray`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodArray: core.$constructor<ZodArray>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodBoolean`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodBoolean extends _ZodBoolean<core.$ZodBooleanInternals<boolean>> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodBoolean`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodBoolean: core.$constructor<ZodBoolean>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodCatch`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodCatch<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodCatchInternals<T>>, core.$ZodCatch<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+    removeCatch(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodCatch`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodCatch: core.$constructor<ZodCatch>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodCustom`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodCustom<O = unknown, I = unknown> extends _ZodType<core.$ZodCustomInternals<O, I>>, core.$ZodCustom<O, I> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodCustom`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodCustom: core.$constructor<ZodCustom>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodDefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodDefault<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodDefaultInternals<T>>, core.$ZodDefault<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+    removeDefault(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodDefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodDefault: core.$constructor<ZodDefault>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodDiscriminatedUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodDiscriminatedUnion<Options extends readonly core.SomeType[] = readonly core.$ZodType[], Disc extends string = string> extends ZodUnion<Options>, core.$ZodDiscriminatedUnion<Options, Disc> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    _zod: core.$ZodDiscriminatedUnionInternals<Options, Disc>;
+    def: core.$ZodDiscriminatedUnionDef<Options, Disc>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodDiscriminatedUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodDiscriminatedUnion: core.$constructor<ZodDiscriminatedUnion>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodEnum`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodEnum<out T extends util.EnumLike = util.EnumLike> extends _ZodType<core.$ZodEnumInternals<T>>, core.$ZodEnum<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    enum: T;
+    options: Array<T[keyof T]>;
+    extract<const U extends readonly (keyof T)[]>(values: U, params?: string | core.$ZodEnumParams): ZodEnum<util.Flatten<Pick<T, U[number]>>>;
+    exclude<const U extends readonly (keyof T)[]>(values: U, params?: string | core.$ZodEnumParams): ZodEnum<util.Flatten<Omit<T, U[number]>>>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodEnum`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodEnum: core.$constructor<ZodEnum>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodExactOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodExactOptional<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodExactOptionalInternals<T>>, core.$ZodExactOptional<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodExactOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodExactOptional: core.$constructor<ZodExactOptional>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodIntersection`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodIntersection<A extends core.SomeType = core.$ZodType, B extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodIntersectionInternals<A, B>>, core.$ZodIntersection<A, B> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodIntersection`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodIntersection: core.$constructor<ZodIntersection>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodJSONSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodJSONSchema extends _ZodJSONSchema {
+    _zod: ZodJSONSchemaInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodJSONSchemaInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodJSONSchemaInternals extends _ZodJSONSchemaInternals {
+    output: util.JSONType;
+    input: util.JSONType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodLazy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodLazy<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodLazyInternals<T>>, core.$ZodLazy<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodLazy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodLazy: core.$constructor<ZodLazy>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodLiteral`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodLiteral<T extends util.Literal = util.Literal> extends _ZodType<core.$ZodLiteralInternals<T>>, core.$ZodLiteral<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    values: Set<T>;
+    value: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodLiteral`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodLiteral: core.$constructor<ZodLiteral>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNever`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodNever extends _ZodType<core.$ZodNeverInternals> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNever`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodNever: core.$constructor<ZodNever>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNonOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodNonOptional<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodNonOptionalInternals<T>>, core.$ZodNonOptional<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNonOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodNonOptional: core.$constructor<ZodNonOptional>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNull`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodNull extends _ZodType<core.$ZodNullInternals> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNull`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodNull: core.$constructor<ZodNull>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNullable`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodNullable<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodNullableInternals<T>>, core.$ZodNullable<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNullable`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodNullable: core.$constructor<ZodNullable>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNumber`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodNumber extends _ZodNumber<core.$ZodNumberInternals<number>> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodNumber`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodNumber: core.$constructor<ZodNumber>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodObject`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodObject<out Shape extends core.$ZodShape = core.$ZodLooseShape, out Config extends core.$ZodObjectConfig = core.$strip> extends _ZodType<core.$ZodObjectInternals<Shape, Config>>, core.$ZodObject<Shape, Config> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    shape: Shape;
+    keyof(): ZodEnum<util.ToEnum<keyof Shape & string>>;
+    catchall<T extends core.SomeType>(schema: T): ZodObject<Shape, core.$catchall<T>>;
+    passthrough(): ZodObject<Shape, core.$loose>;
+    loose(): ZodObject<Shape, core.$loose>;
+    strict(): ZodObject<Shape, core.$strict>;
+    strip(): ZodObject<Shape, core.$strip>;
+    extend<U extends core.$ZodLooseShape>(shape: U): ZodObject<util.Extend<Shape, U>, Config>;
+    safeExtend<U extends core.$ZodLooseShape>(shape: SafeExtendShape<Shape, U> & Partial<Record<keyof Shape, core.SomeType>>): ZodObject<util.Extend<Shape, U>, Config>;
+    merge<U extends ZodObject>(other: U): ZodObject<util.Extend<Shape, U["shape"]>, U["_zod"]["config"]>;
+    pick<M extends util.Mask<keyof Shape>>(mask: M & Record<Exclude<keyof M, keyof Shape>, never>): ZodObject<util.Flatten<Pick<Shape, Extract<keyof Shape, keyof M>>>, Config>;
+    omit<M extends util.Mask<keyof Shape>>(mask: M & Record<Exclude<keyof M, keyof Shape>, never>): ZodObject<util.Flatten<Omit<Shape, Extract<keyof Shape, keyof M>>>, Config>;
+    partial(): ZodObject<{
+        [k in keyof Shape]: ZodOptional<Shape[k]>;
+    }, Config>;
+    partial<M extends util.Mask<keyof Shape>>(mask: M & Record<Exclude<keyof M, keyof Shape>, never>): ZodObject<{
+        [k in keyof Shape]: k extends keyof M ? ZodOptional<Shape[k]> : Shape[k];
+    }, Config>;
+    required(): ZodObject<{
+        [k in keyof Shape]: ZodNonOptional<Shape[k]>;
+    }, Config>;
+    required<M extends util.Mask<keyof Shape>>(mask: M & Record<Exclude<keyof M, keyof Shape>, never>): ZodObject<{
+        [k in keyof Shape]: k extends keyof M ? ZodNonOptional<Shape[k]> : Shape[k];
+    }, Config>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodObject`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodObject: core.$constructor<ZodObject>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodOptional<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodOptionalInternals<T>>, core.$ZodOptional<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodOptional: core.$constructor<ZodOptional>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodPipe`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodPipe<A extends core.SomeType = core.$ZodType, B extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodPipeInternals<A, B>>, core.$ZodPipe<A, B> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    in: A;
+    out: B;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodPipe`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodPipe: core.$constructor<ZodPipe>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodPrefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodPrefault<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodPrefaultInternals<T>>, core.$ZodPrefault<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodPrefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodPrefault: core.$constructor<ZodPrefault>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodReadonly`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodReadonly<T extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodReadonlyInternals<T>>, core.$ZodReadonly<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    unwrap(): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodReadonly`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodReadonly: core.$constructor<ZodReadonly>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodRecord`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodRecord<Key extends core.$ZodRecordKey = core.$ZodRecordKey, Value extends core.SomeType = core.$ZodType> extends _ZodType<core.$ZodRecordInternals<Key, Value>>, core.$ZodRecord<Key, Value> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    keyType: Key;
+    valueType: Value;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodRecord`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodRecord: core.$constructor<ZodRecord>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodStandardSchemaWithJSON`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ZodStandardSchemaWithJSON<T> = StandardSchemaWithJSONProps<core.input<T>, core.output<T>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodString`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodString extends _ZodString<core.$ZodStringInternals<string>> {
+    email(params?: string | core.$ZodCheckEmailParams): this;
+    url(params?: string | core.$ZodCheckURLParams): this;
+    jwt(params?: string | core.$ZodCheckJWTParams): this;
+    emoji(params?: string | core.$ZodCheckEmojiParams): this;
+    guid(params?: string | core.$ZodCheckGUIDParams): this;
+    uuid(params?: string | core.$ZodCheckUUIDParams): this;
+    uuidv4(params?: string | core.$ZodCheckUUIDParams): this;
+    uuidv6(params?: string | core.$ZodCheckUUIDParams): this;
+    uuidv7(params?: string | core.$ZodCheckUUIDParams): this;
+    nanoid(params?: string | core.$ZodCheckNanoIDParams): this;
+    guid(params?: string | core.$ZodCheckGUIDParams): this;
+    cuid(params?: string | core.$ZodCheckCUIDParams): this;
+    cuid2(params?: string | core.$ZodCheckCUID2Params): this;
+    ulid(params?: string | core.$ZodCheckULIDParams): this;
+    base64(params?: string | core.$ZodCheckBase64Params): this;
+    base64url(params?: string | core.$ZodCheckBase64URLParams): this;
+    xid(params?: string | core.$ZodCheckXIDParams): this;
+    ksuid(params?: string | core.$ZodCheckKSUIDParams): this;
+    ipv4(params?: string | core.$ZodCheckIPv4Params): this;
+    ipv6(params?: string | core.$ZodCheckIPv6Params): this;
+    cidrv4(params?: string | core.$ZodCheckCIDRv4Params): this;
+    cidrv6(params?: string | core.$ZodCheckCIDRv6Params): this;
+    e164(params?: string | core.$ZodCheckE164Params): this;
+    datetime(params?: string | core.$ZodCheckISODateTimeParams): this;
+    date(params?: string | core.$ZodCheckISODateParams): this;
+    time(params?: string | core.$ZodCheckISOTimeParams): this;
+    duration(params?: string | core.$ZodCheckISODurationParams): this;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodString`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodString: core.$constructor<ZodString>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodTransform`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodTransform<O = unknown, I = unknown> extends _ZodType<core.$ZodTransformInternals<O, I>>, core.$ZodTransform<O, I> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodTransform`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodTransform: core.$constructor<ZodTransform>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodTuple`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodTuple<T extends util.TupleItems = readonly core.$ZodType[], Rest extends core.SomeType | null = core.$ZodType | null> extends _ZodType<core.$ZodTupleInternals<T, Rest>>, core.$ZodTuple<T, Rest> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    rest<Rest extends core.SomeType = core.$ZodType>(rest: Rest): ZodTuple<T, Rest>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodTuple`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodTuple: core.$constructor<ZodTuple>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodType<out Output = unknown, out Input = unknown, out Internals extends core.$ZodTypeInternals<Output, Input> = core.$ZodTypeInternals<Output, Input>> extends core.$ZodType<Output, Input, Internals> {
+    def: Internals["def"];
+    type: Internals["def"]["type"];
+    _def: Internals["def"];
+    _output: Internals["output"];
+    _input: Internals["input"];
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    toJSONSchema(params?: core.ToJSONSchemaParams): core.ZodStandardJSONSchemaPayload<this>;
+    check(...checks: (core.CheckFn<core.output<this>> | core.$ZodCheck<core.output<this>>)[]): this;
+    with(...checks: (core.CheckFn<core.output<this>> | core.$ZodCheck<core.output<this>>)[]): this;
+    clone(def?: Internals["def"], params?: {
+        parent: boolean;
+    }): this;
+    register<R extends core.$ZodRegistry>(registry: R, ...meta: this extends R["_schema"] ? undefined extends R["_meta"] ? [
+        core.$replace<R["_meta"], this>?
+    ] : [
+        core.$replace<R["_meta"], this>
+    ] : [
+        "Incompatible schema"
+    ]): this;
+    brand<T extends PropertyKey = PropertyKey, Dir extends "in" | "out" | "inout" = "out">(value?: T): PropertyKey extends T ? this : core.$ZodBranded<this, T, Dir>;
+    parse(data: unknown, params?: core.ParseContext<core.$ZodIssue>): core.output<this>;
+    safeParse(data: unknown, params?: core.ParseContext<core.$ZodIssue>): parse.ZodSafeParseResult<core.output<this>>;
+    parseAsync(data: unknown, params?: core.ParseContext<core.$ZodIssue>): Promise<core.output<this>>;
+    safeParseAsync(data: unknown, params?: core.ParseContext<core.$ZodIssue>): Promise<parse.ZodSafeParseResult<core.output<this>>>;
+    spa: (data: unknown, params?: core.ParseContext<core.$ZodIssue>) => Promise<parse.ZodSafeParseResult<core.output<this>>>;
+    encode(data: core.output<this>, params?: core.ParseContext<core.$ZodIssue>): core.input<this>;
+    decode(data: core.input<this>, params?: core.ParseContext<core.$ZodIssue>): core.output<this>;
+    encodeAsync(data: core.output<this>, params?: core.ParseContext<core.$ZodIssue>): Promise<core.input<this>>;
+    decodeAsync(data: core.input<this>, params?: core.ParseContext<core.$ZodIssue>): Promise<core.output<this>>;
+    safeEncode(data: core.output<this>, params?: core.ParseContext<core.$ZodIssue>): parse.ZodSafeParseResult<core.input<this>>;
+    safeDecode(data: core.input<this>, params?: core.ParseContext<core.$ZodIssue>): parse.ZodSafeParseResult<core.output<this>>;
+    safeEncodeAsync(data: core.output<this>, params?: core.ParseContext<core.$ZodIssue>): Promise<parse.ZodSafeParseResult<core.input<this>>>;
+    safeDecodeAsync(data: core.input<this>, params?: core.ParseContext<core.$ZodIssue>): Promise<parse.ZodSafeParseResult<core.output<this>>>;
+    refine<Ch extends (arg: core.output<this>) => unknown | Promise<unknown>>(check: Ch, params?: string | core.$ZodCustomParams): Ch extends (arg: any) => arg is infer R ? this & ZodType<R, core.input<this>> : this;
+    superRefine(refinement: (arg: core.output<this>, ctx: core.$RefinementCtx<core.output<this>>) => void | Promise<void>): this;
+    overwrite(fn: (x: core.output<this>) => core.output<this>): this;
+    optional(): ZodOptional<this>;
+    exactOptional(): ZodExactOptional<this>;
+    nonoptional(params?: string | core.$ZodNonOptionalParams): ZodNonOptional<this>;
+    nullable(): ZodNullable<this>;
+    nullish(): ZodOptional<ZodNullable<this>>;
+    default(def: util.NoUndefined<core.output<this>>): ZodDefault<this>;
+    default(def: () => util.NoUndefined<core.output<this>>): ZodDefault<this>;
+    prefault(def: () => core.input<this>): ZodPrefault<this>;
+    prefault(def: core.input<this>): ZodPrefault<this>;
+    array(): ZodArray<this>;
+    or<T extends core.SomeType>(option: T): ZodUnion<[
+        this,
+        T
+    ]>;
+    and<T extends core.SomeType>(incoming: T): ZodIntersection<this, T>;
+    transform<NewOut>(transform: (arg: core.output<this>, ctx: core.$RefinementCtx<core.output<this>>) => NewOut | Promise<NewOut>): ZodPipe<this, ZodTransform<Awaited<NewOut>, core.output<this>>>;
+    catch(def: core.output<this>): ZodCatch<this>;
+    catch(def: (ctx: core.$ZodCatchCtx) => core.output<this>): ZodCatch<this>;
+    pipe<T extends core.$ZodType<any, core.output<this>>>(target: T | core.$ZodType<any, core.output<this>>): ZodPipe<this, T>;
+    readonly(): ZodReadonly<this>;
+    describe(description: string): this;
+    description?: string;
+    meta(): core.$replace<core.GlobalMeta, this> | undefined;
+    meta(data: core.$replace<core.GlobalMeta, this>): this;
+    isOptional(): boolean;
+    isNullable(): boolean;
+    apply<T>(fn: (schema: this) => T): T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodType: core.$constructor<ZodType>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodUnion<T extends readonly core.SomeType[] = readonly core.$ZodType[]> extends _ZodType<core.$ZodUnionInternals<T>>, core.$ZodUnion<T> {
+    "~standard": ZodStandardSchemaWithJSON<this>;
+    options: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodUnion: core.$constructor<ZodUnion>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodUnknown`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodUnknown extends _ZodType<core.$ZodUnknownInternals> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `ZodUnknown`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ZodUnknown: core.$constructor<ZodUnknown>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodBoolean`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface _ZodBoolean<T extends core.$ZodBooleanInternals = core.$ZodBooleanInternals> extends _ZodType<T> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodJSONSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type _ZodJSONSchema = ZodUnion<[
+    ZodString,
+    ZodNumber,
+    ZodBoolean,
+    ZodNull,
+    ZodArray<ZodJSONSchema>,
+    ZodRecord<ZodString, ZodJSONSchema>
+]>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodJSONSchemaInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type _ZodJSONSchemaInternals = _ZodJSONSchema["_zod"];
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodNumber`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface _ZodNumber<Internals extends core.$ZodNumberInternals = core.$ZodNumberInternals> extends _ZodType<Internals> {
+    gt(value: number, params?: string | core.$ZodCheckGreaterThanParams): this;
+    gte(value: number, params?: string | core.$ZodCheckGreaterThanParams): this;
+    min(value: number, params?: string | core.$ZodCheckGreaterThanParams): this;
+    lt(value: number, params?: string | core.$ZodCheckLessThanParams): this;
+    lte(value: number, params?: string | core.$ZodCheckLessThanParams): this;
+    max(value: number, params?: string | core.$ZodCheckLessThanParams): this;
+    int(params?: string | core.$ZodCheckNumberFormatParams): this;
+    safe(params?: string | core.$ZodCheckNumberFormatParams): this;
+    positive(params?: string | core.$ZodCheckGreaterThanParams): this;
+    nonnegative(params?: string | core.$ZodCheckGreaterThanParams): this;
+    negative(params?: string | core.$ZodCheckLessThanParams): this;
+    nonpositive(params?: string | core.$ZodCheckLessThanParams): this;
+    multipleOf(value: number, params?: string | core.$ZodCheckMultipleOfParams): this;
+    step(value: number, params?: string | core.$ZodCheckMultipleOfParams): this;
+    finite(params?: unknown): this;
+    minValue: number | null;
+    maxValue: number | null;
+    isInt: boolean;
+    isFinite: boolean;
+    format: string | null;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodString`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface _ZodString<T extends core.$ZodStringInternals<unknown> = core.$ZodStringInternals<unknown>> extends _ZodType<T> {
+    format: string | null;
+    minLength: number | null;
+    maxLength: number | null;
+    regex(regex: RegExp, params?: string | core.$ZodCheckRegexParams): this;
+    includes(value: string, params?: string | core.$ZodCheckIncludesParams): this;
+    startsWith(value: string, params?: string | core.$ZodCheckStartsWithParams): this;
+    endsWith(value: string, params?: string | core.$ZodCheckEndsWithParams): this;
+    min(minLength: number, params?: string | core.$ZodCheckMinLengthParams): this;
+    max(maxLength: number, params?: string | core.$ZodCheckMaxLengthParams): this;
+    length(len: number, params?: string | core.$ZodCheckLengthEqualsParams): this;
+    nonempty(params?: string | core.$ZodCheckMinLengthParams): this;
+    lowercase(params?: string | core.$ZodCheckLowerCaseParams): this;
+    uppercase(params?: string | core.$ZodCheckUpperCaseParams): this;
+    trim(): this;
+    normalize(form?: "NFC" | "NFD" | "NFKC" | "NFKD" | (string & {})): this;
+    toLowerCase(): this;
+    toUpperCase(): this;
+    slugify(): this;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodString`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const _ZodString: core.$constructor<_ZodString>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/classic/schemas.d.cts` — `_ZodType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface _ZodType<out Internals extends core.$ZodTypeInternals = core.$ZodTypeInternals> extends ZodType<any, any, Internals> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$RefinementCtx`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $RefinementCtx<T = unknown> extends schemas.ParsePayload<T> {
+    addIssue(arg: string | $ZodSuperRefineIssue): void;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckBase64Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckBase64Params = CheckStringFormatParams<schemas.$ZodBase64, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckBase64URLParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckBase64URLParams = CheckStringFormatParams<schemas.$ZodBase64URL, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckCIDRv4Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckCIDRv4Params = CheckStringFormatParams<schemas.$ZodCIDRv4, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckCIDRv6Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckCIDRv6Params = CheckStringFormatParams<schemas.$ZodCIDRv6, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckCUID2Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckCUID2Params = CheckStringFormatParams<schemas.$ZodCUID2, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckCUIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckCUIDParams = CheckStringFormatParams<schemas.$ZodCUID, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckE164Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckE164Params = CheckStringFormatParams<schemas.$ZodE164, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckEmailParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckEmailParams = CheckStringFormatParams<schemas.$ZodEmail, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckEmojiParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckEmojiParams = CheckStringFormatParams<schemas.$ZodEmoji, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckEndsWithParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckEndsWithParams = CheckParams<checks.$ZodCheckEndsWith, "suffix" | "format" | "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckGUIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckGUIDParams = CheckStringFormatParams<schemas.$ZodGUID, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckGreaterThanParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckGreaterThanParams = CheckParams<checks.$ZodCheckGreaterThan, "inclusive" | "value" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckIPv4Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckIPv4Params = CheckStringFormatParams<schemas.$ZodIPv4, "pattern" | "when" | "version">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckIPv6Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckIPv6Params = CheckStringFormatParams<schemas.$ZodIPv6, "pattern" | "when" | "version">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckISODateParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckISODateParams = CheckStringFormatParams<schemas.$ZodISODate, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckISODateTimeParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckISODateTimeParams = CheckStringFormatParams<schemas.$ZodISODateTime, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckISODurationParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckISODurationParams = CheckStringFormatParams<schemas.$ZodISODuration, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckISOTimeParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckISOTimeParams = CheckStringFormatParams<schemas.$ZodISOTime, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckIncludesParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckIncludesParams = CheckParams<checks.$ZodCheckIncludes, "includes" | "format" | "when" | "pattern">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckJWTParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckJWTParams = CheckStringFormatParams<schemas.$ZodJWT, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckKSUIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckKSUIDParams = CheckStringFormatParams<schemas.$ZodKSUID, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckLengthEqualsParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckLengthEqualsParams = CheckParams<checks.$ZodCheckLengthEquals, "length" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckLessThanParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckLessThanParams = CheckParams<checks.$ZodCheckLessThan, "inclusive" | "value" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckLowerCaseParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckLowerCaseParams = CheckParams<checks.$ZodCheckLowerCase, "format" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckMaxLengthParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckMaxLengthParams = CheckParams<checks.$ZodCheckMaxLength, "maximum" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckMinLengthParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckMinLengthParams = CheckParams<checks.$ZodCheckMinLength, "minimum" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckMultipleOfParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckMultipleOfParams = CheckParams<checks.$ZodCheckMultipleOf, "value" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckNanoIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckNanoIDParams = CheckStringFormatParams<schemas.$ZodNanoID, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckNumberFormatParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckNumberFormatParams = CheckParams<checks.$ZodCheckNumberFormat, "format" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckRegexParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckRegexParams = CheckParams<checks.$ZodCheckRegex, "format" | "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckStartsWithParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckStartsWithParams = CheckParams<checks.$ZodCheckStartsWith, "prefix" | "format" | "when" | "pattern">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckULIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckULIDParams = CheckStringFormatParams<schemas.$ZodULID, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckURLParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckURLParams = CheckStringFormatParams<schemas.$ZodURL, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckUUIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckUUIDParams = CheckStringFormatParams<schemas.$ZodUUID, "pattern" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckUpperCaseParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckUpperCaseParams = CheckParams<checks.$ZodCheckUpperCase, "format" | "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCheckXIDParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCheckXIDParams = CheckStringFormatParams<schemas.$ZodXID, "when">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodCustomParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodCustomParams = CheckTypeParams<schemas.$ZodCustom, "fn">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodEnumParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodEnumParams = TypeParams<schemas.$ZodEnum, "entries">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodNonOptionalParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodNonOptionalParams = TypeParams<schemas.$ZodNonOptional, "innerType">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `$ZodSuperRefineIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodSuperRefineIssue<T extends errors.$ZodIssueBase = errors.$ZodIssue> = T extends any ? RawIssue<T> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `CheckParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type CheckParams<T extends checks.$ZodCheck = checks.$ZodCheck, AlsoOmit extends Exclude<keyof T["_zod"]["def"], "check" | "error"> = never> = Params<T, NonNullable<T["_zod"]["issc"]>, "check" | "error" | AlsoOmit>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `CheckStringFormatParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type CheckStringFormatParams<T extends schemas.$ZodStringFormat = schemas.$ZodStringFormat, AlsoOmit extends Exclude<keyof T["_zod"]["def"], "type" | "coerce" | "checks" | "error" | "check" | "format"> = never> = Params<T, NonNullable<T["_zod"]["issc"]>, "type" | "coerce" | "checks" | "error" | "check" | "format" | AlsoOmit>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `CheckTypeParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type CheckTypeParams<T extends schemas.$ZodType & checks.$ZodCheck = schemas.$ZodType & checks.$ZodCheck, AlsoOmit extends Exclude<keyof T["_zod"]["def"], "type" | "checks" | "error" | "check"> = never> = Params<T, NonNullable<T["_zod"]["isst"] | T["_zod"]["issc"]>, "type" | "checks" | "error" | "check" | AlsoOmit>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `Params`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Params<T extends schemas.$ZodType | checks.$ZodCheck, IssueTypes extends errors.$ZodIssueBase, OmitKeys extends keyof T["_zod"]["def"] = never> = util.Flatten<Partial<util.EmptyToNever<Omit<T["_zod"]["def"], OmitKeys> & ([
+    IssueTypes
+] extends [
+    never
+] ? {} : {
+    error?: string | errors.$ZodErrorMap<IssueTypes> | undefined;
+    message?: string | undefined;
+})>>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `RawIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RawIssue<T extends errors.$ZodIssueBase> = T extends any ? util.Flatten<util.MakePartial<T, "message" | "path"> & {
+    readonly inst?: schemas.$ZodType | checks.$ZodCheck;
+    readonly continue?: boolean | undefined;
+} & Record<string, unknown>> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/api.d.cts` — `TypeParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type TypeParams<T extends schemas.$ZodType = schemas.$ZodType & {
+    _isst: never;
+}, AlsoOmit extends Exclude<keyof T["_zod"]["def"], "type" | "checks" | "error"> = never> = Params<T, NonNullable<T["_zod"]["isst"]>, "type" | "checks" | "error" | AlsoOmit>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheck`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheck<in T = never> {
+    _zod: $ZodCheckInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheck`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheck: core.$constructor<$ZodCheck<any>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckDef {
+    check: string;
+    error?: errors.$ZodErrorMap<never> | undefined;
+    abort?: boolean | undefined;
+    when?: ((payload: schemas.ParsePayload) => boolean) | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckEndsWith`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckEndsWith extends $ZodCheckInternals<string> {
+    _zod: $ZodCheckEndsWithInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckEndsWith`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckEndsWith: core.$constructor<$ZodCheckEndsWith>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckEndsWithDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckEndsWithDef extends $ZodCheckStringFormatDef<"ends_with"> {
+    suffix: string;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckEndsWithInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckEndsWithInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckEndsWithDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckGreaterThan`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckGreaterThan<T extends util.Numeric = util.Numeric> extends $ZodCheck<T> {
+    _zod: $ZodCheckGreaterThanInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckGreaterThan`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckGreaterThan: core.$constructor<$ZodCheckGreaterThan>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckGreaterThanDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckGreaterThanDef extends $ZodCheckDef {
+    check: "greater_than";
+    value: util.Numeric;
+    inclusive: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckGreaterThanInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckGreaterThanInternals<T extends util.Numeric = util.Numeric> extends $ZodCheckInternals<T> {
+    def: $ZodCheckGreaterThanDef;
+    issc: errors.$ZodIssueTooSmall<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckIncludes`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckIncludes extends $ZodCheck<string> {
+    _zod: $ZodCheckIncludesInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckIncludes`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckIncludes: core.$constructor<$ZodCheckIncludes>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckIncludesDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckIncludesDef extends $ZodCheckStringFormatDef<"includes"> {
+    includes: string;
+    position?: number | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckIncludesInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckIncludesInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckIncludesDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckInternals<T> {
+    def: $ZodCheckDef;
+    issc?: errors.$ZodIssueBase;
+    check(payload: schemas.ParsePayload<T>): util.MaybeAsync<void>;
+    onattach: ((schema: schemas.$ZodType) => void)[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLengthEquals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLengthEquals<T extends util.HasLength = util.HasLength> extends $ZodCheck<T> {
+    _zod: $ZodCheckLengthEqualsInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLengthEquals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckLengthEquals: core.$constructor<$ZodCheckLengthEquals>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLengthEqualsDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLengthEqualsDef extends $ZodCheckDef {
+    check: "length_equals";
+    length: number;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLengthEqualsInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLengthEqualsInternals<T extends util.HasLength = util.HasLength> extends $ZodCheckInternals<T> {
+    def: $ZodCheckLengthEqualsDef;
+    issc: errors.$ZodIssueTooBig<T> | errors.$ZodIssueTooSmall<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLessThan`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLessThan<T extends util.Numeric = util.Numeric> extends $ZodCheck<T> {
+    _zod: $ZodCheckLessThanInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLessThan`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckLessThan: core.$constructor<$ZodCheckLessThan>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLessThanDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLessThanDef extends $ZodCheckDef {
+    check: "less_than";
+    value: util.Numeric;
+    inclusive: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLessThanInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLessThanInternals<T extends util.Numeric = util.Numeric> extends $ZodCheckInternals<T> {
+    def: $ZodCheckLessThanDef;
+    issc: errors.$ZodIssueTooBig<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLowerCase`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLowerCase extends $ZodCheck<string> {
+    _zod: $ZodCheckLowerCaseInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLowerCase`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckLowerCase: core.$constructor<$ZodCheckLowerCase>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLowerCaseDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLowerCaseDef extends $ZodCheckStringFormatDef<"lowercase"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckLowerCaseInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckLowerCaseInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckLowerCaseDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMaxLength`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMaxLength<T extends util.HasLength = util.HasLength> extends $ZodCheck<T> {
+    _zod: $ZodCheckMaxLengthInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMaxLength`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckMaxLength: core.$constructor<$ZodCheckMaxLength>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMaxLengthDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMaxLengthDef extends $ZodCheckDef {
+    check: "max_length";
+    maximum: number;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMaxLengthInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMaxLengthInternals<T extends util.HasLength = util.HasLength> extends $ZodCheckInternals<T> {
+    def: $ZodCheckMaxLengthDef;
+    issc: errors.$ZodIssueTooBig<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMinLength`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMinLength<T extends util.HasLength = util.HasLength> extends $ZodCheck<T> {
+    _zod: $ZodCheckMinLengthInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMinLength`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckMinLength: core.$constructor<$ZodCheckMinLength>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMinLengthDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMinLengthDef extends $ZodCheckDef {
+    check: "min_length";
+    minimum: number;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMinLengthInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMinLengthInternals<T extends util.HasLength = util.HasLength> extends $ZodCheckInternals<T> {
+    def: $ZodCheckMinLengthDef;
+    issc: errors.$ZodIssueTooSmall<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMultipleOf`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMultipleOf<T extends number | bigint = number | bigint> extends $ZodCheck<T> {
+    _zod: $ZodCheckMultipleOfInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMultipleOf`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckMultipleOf: core.$constructor<$ZodCheckMultipleOf<number | bigint>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMultipleOfDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMultipleOfDef<T extends number | bigint = number | bigint> extends $ZodCheckDef {
+    check: "multiple_of";
+    value: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckMultipleOfInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckMultipleOfInternals<T extends number | bigint = number | bigint> extends $ZodCheckInternals<T> {
+    def: $ZodCheckMultipleOfDef<T>;
+    issc: errors.$ZodIssueNotMultipleOf;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckNumberFormat`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckNumberFormat extends $ZodCheck<number> {
+    _zod: $ZodCheckNumberFormatInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckNumberFormat`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckNumberFormat: core.$constructor<$ZodCheckNumberFormat>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckNumberFormatDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckNumberFormatDef extends $ZodCheckDef {
+    check: "number_format";
+    format: $ZodNumberFormats;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckNumberFormatInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckNumberFormatInternals extends $ZodCheckInternals<number> {
+    def: $ZodCheckNumberFormatDef;
+    issc: errors.$ZodIssueInvalidType | errors.$ZodIssueTooBig<"number"> | errors.$ZodIssueTooSmall<"number">;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckRegex`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckRegex extends $ZodCheck<string> {
+    _zod: $ZodCheckRegexInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckRegex`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckRegex: core.$constructor<$ZodCheckRegex>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckRegexDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckRegexDef extends $ZodCheckStringFormatDef {
+    format: "regex";
+    pattern: RegExp;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckRegexInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckRegexInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckRegexDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckStartsWith`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckStartsWith extends $ZodCheck<string> {
+    _zod: $ZodCheckStartsWithInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckStartsWith`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckStartsWith: core.$constructor<$ZodCheckStartsWith>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckStartsWithDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckStartsWithDef extends $ZodCheckStringFormatDef<"starts_with"> {
+    prefix: string;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckStartsWithInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckStartsWithInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckStartsWithDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckStringFormatDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckStringFormatDef<Format extends string = string> extends $ZodCheckDef {
+    check: "string_format";
+    format: Format;
+    pattern?: RegExp | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckStringFormatInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckStringFormatInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckStringFormatDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckUpperCase`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckUpperCase extends $ZodCheck<string> {
+    _zod: $ZodCheckUpperCaseInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckUpperCase`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCheckUpperCase: core.$constructor<$ZodCheckUpperCase>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckUpperCaseDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckUpperCaseDef extends $ZodCheckStringFormatDef<"uppercase"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodCheckUpperCaseInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCheckUpperCaseInternals extends $ZodCheckInternals<string> {
+    def: $ZodCheckUpperCaseDef;
+    issc: errors.$ZodIssueInvalidStringFormat;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodNumberFormats`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodNumberFormats = "int32" | "uint32" | "float32" | "float64" | "safeint";
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/checks.d.cts` — `$ZodStringFormats`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodStringFormats = "email" | "url" | "emoji" | "uuid" | "guid" | "nanoid" | "cuid" | "cuid2" | "ulid" | "xid" | "ksuid" | "datetime" | "date" | "time" | "duration" | "ipv4" | "ipv6" | "cidrv4" | "cidrv6" | "base64" | "base64url" | "json_string" | "e164" | "lowercase" | "uppercase" | "regex" | "jwt" | "starts_with" | "ends_with" | "includes";
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `$ZodBranded`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodBranded<T extends schemas.SomeType, Brand extends string | number | symbol, Dir extends "in" | "out" | "inout" = "out"> = T & (Dir extends "inout" ? {
+    _zod: {
+        input: input<T> & $brand<Brand>;
+        output: output<T> & $brand<Brand>;
+    };
+} : Dir extends "in" ? {
+    _zod: {
+        input: input<T> & $brand<Brand>;
+    };
+} : {
+    _zod: {
+        output: output<T> & $brand<Brand>;
+    };
+});
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `$brand`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $brand: unique symbol;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `$brand`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $brand<T extends string | number | symbol = string | number | symbol> = {
+    [$brand]: {
+        [k in T]: true;
+    };
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `$constructor`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $constructor<T extends ZodTrait, D = T["_zod"]["def"]> {
+    new (def: D): T;
+    init(inst: T, def: D): asserts inst is T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `$constructor`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function $constructor<T extends ZodTrait, D = T["_zod"]["def"]>(name: string, initializer: (inst: T, def: D) => void, params?: {
+    Parent?: typeof Class;
+}): $constructor<T, D>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `ZodTrait`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ZodTrait = {
+    _zod: {
+        def: any;
+        [k: string]: any;
+    };
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `input`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type input<T> = T extends {
+    _zod: {
+        input: any;
+    };
+} ? T["_zod"]["input"] : unknown;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/core.d.cts` — `output`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type output<T> = T extends {
+    _zod: {
+        output: any;
+    };
+} ? T["_zod"]["output"] : unknown;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodError<T = unknown> extends Error {
+    type: T;
+    issues: $ZodIssue[];
+    _zod: {
+        output: T;
+        def: $ZodIssue[];
+    };
+    stack?: string;
+    name: string;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodError: $constructor<$ZodError>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodErrorMap`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodErrorMap<T extends $ZodIssueBase = $ZodIssue> {
+    (issue: $ZodRawIssue<T>): {
+        message: string;
+    } | string | undefined | null;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodFlattenedError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodFlattenedError<T, U = string> = _FlattenedError<T, U>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodFormattedError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodFormattedError<T, U = string> = {
+    _errors: U[];
+} & util.Flatten<_ZodFormattedError<T, U>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodInternalIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodInternalIssue<T extends $ZodIssueBase = $ZodIssue> = T extends any ? RawIssue<T> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodInvalidTypeExpected`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodInvalidTypeExpected = "string" | "number" | "int" | "boolean" | "bigint" | "symbol" | "undefined" | "null" | "never" | "void" | "date" | "array" | "object" | "tuple" | "record" | "map" | "set" | "file" | "nonoptional" | "nan" | "function" | (string & {});
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodIssue = $ZodIssueInvalidType | $ZodIssueTooBig | $ZodIssueTooSmall | $ZodIssueInvalidStringFormat | $ZodIssueNotMultipleOf | $ZodIssueUnrecognizedKeys | $ZodIssueInvalidUnion | $ZodIssueInvalidKey | $ZodIssueInvalidElement | $ZodIssueInvalidValue | $ZodIssueCustom;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueBase`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueBase {
+    readonly code?: string;
+    readonly input?: unknown;
+    readonly path: PropertyKey[];
+    readonly message: string;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueCustom`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueCustom extends $ZodIssueBase {
+    readonly code: "custom";
+    readonly params?: Record<string, any> | undefined;
+    readonly input?: unknown;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidElement`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidElement<Input = unknown> extends $ZodIssueBase {
+    readonly code: "invalid_element";
+    readonly origin: "map" | "set";
+    readonly key: unknown;
+    readonly issues: $ZodIssue[];
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidKey`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidKey<Input = unknown> extends $ZodIssueBase {
+    readonly code: "invalid_key";
+    readonly origin: "map" | "record";
+    readonly issues: $ZodIssue[];
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidStringFormat`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidStringFormat extends $ZodIssueBase {
+    readonly code: "invalid_format";
+    readonly format: $ZodStringFormats | (string & {});
+    readonly pattern?: string;
+    readonly input?: string;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidType<Input = unknown> extends $ZodIssueBase {
+    readonly code: "invalid_type";
+    readonly expected: $ZodInvalidTypeExpected;
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodIssueInvalidUnion = $ZodIssueInvalidUnionNoMatch | $ZodIssueInvalidUnionMultipleMatch;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidUnionMultipleMatch`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidUnionMultipleMatch extends $ZodIssueBase {
+    readonly code: "invalid_union";
+    readonly errors: [
+    ];
+    readonly input?: unknown;
+    readonly discriminator?: string | undefined;
+    readonly inclusive: false;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidUnionNoMatch`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidUnionNoMatch extends $ZodIssueBase {
+    readonly code: "invalid_union";
+    readonly errors: $ZodIssue[][];
+    readonly input?: unknown;
+    readonly discriminator?: string | undefined;
+    readonly inclusive?: true;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueInvalidValue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueInvalidValue<Input = unknown> extends $ZodIssueBase {
+    readonly code: "invalid_value";
+    readonly values: util.Primitive[];
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueNotMultipleOf`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueNotMultipleOf<Input extends number | bigint = number | bigint> extends $ZodIssueBase {
+    readonly code: "not_multiple_of";
+    readonly divisor: number;
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueTooBig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueTooBig<Input = unknown> extends $ZodIssueBase {
+    readonly code: "too_big";
+    readonly origin: "number" | "int" | "bigint" | "date" | "string" | "array" | "set" | "file" | (string & {});
+    readonly maximum: number | bigint;
+    readonly inclusive?: boolean;
+    readonly exact?: boolean;
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueTooSmall`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueTooSmall<Input = unknown> extends $ZodIssueBase {
+    readonly code: "too_small";
+    readonly origin: "number" | "int" | "bigint" | "date" | "string" | "array" | "set" | "file" | (string & {});
+    readonly minimum: number | bigint;
+    readonly inclusive?: boolean;
+    readonly exact?: boolean;
+    readonly input?: Input;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodIssueUnrecognizedKeys`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIssueUnrecognizedKeys extends $ZodIssueBase {
+    readonly code: "unrecognized_keys";
+    readonly keys: string[];
+    readonly input?: Record<string, unknown>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `$ZodRawIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodRawIssue<T extends $ZodIssueBase = $ZodIssue> = $ZodInternalIssue<T>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `RawIssue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type RawIssue<T extends $ZodIssueBase> = T extends any ? util.Flatten<util.MakePartial<T, "message" | "path"> & {
+    readonly input: unknown;
+    readonly inst?: $ZodType | $ZodCheck;
+    readonly continue?: boolean | undefined;
+} & Record<string, unknown>> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `_FlattenedError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type _FlattenedError<T, U = string> = {
+    formErrors: U[];
+    fieldErrors: {
+        [P in keyof T]?: U[];
+    };
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/errors.d.cts` — `_ZodFormattedError`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type _ZodFormattedError<T, U = string> = T extends [
+    any,
+    ...any[]
+] ? {
+    [K in keyof T]?: $ZodFormattedError<T[K], U>;
+} : T extends any[] ? {
+    [k: number]: $ZodFormattedError<T[number], U>;
+} : T extends object ? util.Flatten<{
+    [K in keyof T]?: $ZodFormattedError<T[K], U>;
+}> : any;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/json-schema.d.cts` — `BaseSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type BaseSchema = JSONSchema;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/json-schema.d.cts` — `JSONSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type JSONSchema = {
+    [k: string]: unknown;
+    $schema?: "https://json-schema.org/draft/2020-12/schema" | "http://json-schema.org/draft-07/schema#" | "http://json-schema.org/draft-04/schema#";
+    $id?: string;
+    $anchor?: string;
+    $ref?: string;
+    $dynamicRef?: string;
+    $dynamicAnchor?: string;
+    $vocabulary?: Record<string, boolean>;
+    $comment?: string;
+    $defs?: Record<string, JSONSchema>;
+    type?: "object" | "array" | "string" | "number" | "boolean" | "null" | "integer";
+    additionalItems?: _JSONSchema;
+    unevaluatedItems?: _JSONSchema;
+    prefixItems?: _JSONSchema[];
+    items?: _JSONSchema | _JSONSchema[];
+    contains?: _JSONSchema;
+    additionalProperties?: _JSONSchema;
+    unevaluatedProperties?: _JSONSchema;
+    properties?: Record<string, _JSONSchema>;
+    patternProperties?: Record<string, _JSONSchema>;
+    dependentSchemas?: Record<string, _JSONSchema>;
+    propertyNames?: _JSONSchema;
+    if?: _JSONSchema;
+    then?: _JSONSchema;
+    else?: _JSONSchema;
+    allOf?: JSONSchema[];
+    anyOf?: JSONSchema[];
+    oneOf?: JSONSchema[];
+    not?: _JSONSchema;
+    multipleOf?: number;
+    maximum?: number;
+    exclusiveMaximum?: number | boolean;
+    minimum?: number;
+    exclusiveMinimum?: number | boolean;
+    maxLength?: number;
+    minLength?: number;
+    pattern?: string;
+    maxItems?: number;
+    minItems?: number;
+    uniqueItems?: boolean;
+    maxContains?: number;
+    minContains?: number;
+    maxProperties?: number;
+    minProperties?: number;
+    required?: string[];
+    dependentRequired?: Record<string, string[]>;
+    enum?: Array<string | number | boolean | null>;
+    const?: string | number | boolean | null;
+    id?: string;
+    title?: string;
+    description?: string;
+    default?: unknown;
+    deprecated?: boolean;
+    readOnly?: boolean;
+    writeOnly?: boolean;
+    nullable?: boolean;
+    examples?: unknown[];
+    format?: string;
+    contentMediaType?: string;
+    contentEncoding?: string;
+    contentSchema?: JSONSchema;
+    _prefault?: unknown;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/json-schema.d.cts` — `_JSONSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type _JSONSchema = boolean | JSONSchema;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `$ZodRegistry`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+class $ZodRegistry<Meta extends MetadataType = MetadataType, Schema extends $ZodType = $ZodType> {
+    _meta: Meta;
+    _schema: Schema;
+    _map: WeakMap<Schema, $replace<Meta, Schema>>;
+    _idmap: Map<string, Schema>;
+    add<S extends Schema>(schema: S, ..._meta: undefined extends Meta ? [
+        $replace<Meta, S>?
+    ] : [
+        $replace<Meta, S>
+    ]): this;
+    clear(): this;
+    remove(schema: Schema): this;
+    get<S extends Schema>(schema: S): $replace<Meta, S> | undefined;
+    has(schema: Schema): boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `$input`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $input: unique symbol;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `$input`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $input = typeof $input;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `$output`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $output: unique symbol;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `$output`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $output = typeof $output;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `$replace`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $replace<Meta, S extends $ZodType> = Meta extends $output ? core.output<S> : Meta extends $input ? core.input<S> : Meta extends (infer M)[] ? $replace<M, S>[] : Meta extends (...args: infer P) => infer R ? (...args: {
+    [K in keyof P]: $replace<P[K], S>;
+}) => $replace<R, S> : Meta extends object ? {
+    [K in keyof Meta]: $replace<Meta[K], S>;
+} : Meta;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `GlobalMeta`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface GlobalMeta extends JSONSchemaMeta {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `JSONSchemaMeta`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface JSONSchemaMeta {
+    id?: string | undefined;
+    title?: string | undefined;
+    description?: string | undefined;
+    deprecated?: boolean | undefined;
+    [k: string]: unknown;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/registries.d.cts` — `MetadataType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type MetadataType = object | undefined;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferEnumInput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferEnumInput<T extends util.EnumLike> = T[keyof T] & {};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferEnumOutput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferEnumOutput<T extends util.EnumLike> = T[keyof T] & {};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferInnerFunctionType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferInnerFunctionType<Args extends $ZodFunctionIn, Returns extends $ZodFunctionOut> = (...args: $ZodFunctionIn extends Args ? never[] : core.output<Args>) => core.input<Returns>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferInnerFunctionTypeAsync`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferInnerFunctionTypeAsync<Args extends $ZodFunctionIn, Returns extends $ZodFunctionOut> = (...args: $ZodFunctionIn extends Args ? never[] : core.output<Args>) => util.MaybeAsync<core.input<Returns>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferObjectInput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferObjectInput<T extends $ZodLooseShape, Extra extends Record<string, unknown>> = string extends keyof T ? util.IsAny<T[keyof T]> extends true ? Record<string, unknown> : Record<string, core.input<T[keyof T]>> : keyof (T & Extra) extends never ? Record<string, never> : util.Prettify<{
+    -readonly [k in keyof T as T[k] extends OptionalInSchema ? never : k]: T[k]["_zod"]["input"];
+} & {
+    -readonly [k in keyof T as T[k] extends OptionalInSchema ? k : never]?: T[k]["_zod"]["input"];
+} & Extra>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferObjectOutput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferObjectOutput<T extends $ZodLooseShape, Extra extends Record<string, unknown>> = string extends keyof T ? util.IsAny<T[keyof T]> extends true ? Record<string, unknown> : Record<string, core.output<T[keyof T]>> : keyof (T & Extra) extends never ? Record<string, never> : util.Prettify<{
+    -readonly [k in keyof T as T[k] extends OptionalOutSchema ? never : k]: T[k]["_zod"]["output"];
+} & {
+    -readonly [k in keyof T as T[k] extends OptionalOutSchema ? k : never]?: T[k]["_zod"]["output"];
+} & Extra>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferOuterFunctionType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferOuterFunctionType<Args extends $ZodFunctionIn, Returns extends $ZodFunctionOut> = (...args: $ZodFunctionIn extends Args ? never[] : core.input<Args>) => core.output<Returns>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferOuterFunctionTypeAsync`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferOuterFunctionTypeAsync<Args extends $ZodFunctionIn, Returns extends $ZodFunctionOut> = (...args: $ZodFunctionIn extends Args ? never[] : core.input<Args>) => Promise<core.output<Returns>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferTupleInputType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferTupleInputType<T extends util.TupleItems, Rest extends SomeType | null> = [
+    ...TupleInputTypeWithOptionals<T>,
+    ...(Rest extends SomeType ? core.input<Rest>[] : [
+    ])
+];
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferTupleOutputType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferTupleOutputType<T extends util.TupleItems, Rest extends SomeType | null> = [
+    ...TupleOutputTypeWithOptionals<T>,
+    ...(Rest extends SomeType ? core.output<Rest>[] : [
+    ])
+];
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferUnionInput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferUnionInput<T extends SomeType> = T extends any ? core.input<T> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferUnionOutput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferUnionOutput<T extends SomeType> = T extends any ? core.output<T> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferZodRecordInput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferZodRecordInput<Key extends $ZodRecordKey = $ZodRecordKey, Value extends SomeType = $ZodType> = Key extends $partial ? Partial<Record<core.input<Key> & PropertyKey, core.input<Value>>> : Record<core.input<Key> & PropertyKey, core.input<Value>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$InferZodRecordOutput`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $InferZodRecordOutput<Key extends $ZodRecordKey = $ZodRecordKey, Value extends SomeType = $ZodType> = Key extends $partial ? Partial<Record<core.output<Key>, core.output<Value>>> : Record<core.output<Key>, core.output<Value>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodAny`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodAny extends $ZodType {
+    _zod: $ZodAnyInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodAny`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodAny: core.$constructor<$ZodAny>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodAnyDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodAnyDef extends $ZodTypeDef {
+    type: "any";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodAnyInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodAnyInternals extends $ZodTypeInternals<any, any> {
+    def: $ZodAnyDef;
+    isst: never;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodArray`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodArray<T extends SomeType = $ZodType> extends $ZodType<any, any, $ZodArrayInternals<T>> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodArray`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodArray: core.$constructor<$ZodArray>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodArrayDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodArrayDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "array";
+    element: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodArrayInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodArrayInternals<T extends SomeType = $ZodType> extends _$ZodTypeInternals {
+    def: $ZodArrayDef<T>;
+    isst: errors.$ZodIssueInvalidType;
+    output: core.output<T>[];
+    input: core.input<T>[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBase64`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBase64 extends $ZodType {
+    _zod: $ZodBase64Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBase64`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodBase64: core.$constructor<$ZodBase64>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBase64Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBase64Internals extends $ZodStringFormatInternals<"base64"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBase64URL`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBase64URL extends $ZodType {
+    _zod: $ZodBase64URLInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBase64URL`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodBase64URL: core.$constructor<$ZodBase64URL>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBase64URLInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBase64URLInternals extends $ZodStringFormatInternals<"base64url"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBigInt`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBigInt<T = unknown> extends $ZodType {
+    _zod: $ZodBigIntInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBigInt`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodBigInt: core.$constructor<$ZodBigInt>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBigIntDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBigIntDef extends $ZodTypeDef {
+    type: "bigint";
+    coerce?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBigIntInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBigIntInternals<T = unknown> extends $ZodTypeInternals<bigint, T> {
+    pattern: RegExp;
+    def: $ZodBigIntDef;
+    isst: errors.$ZodIssueInvalidType;
+    bag: util.LoosePartial<{
+        minimum: bigint;
+        maximum: bigint;
+        format: string;
+    }>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBoolean`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBoolean<T = unknown> extends $ZodType {
+    _zod: $ZodBooleanInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBoolean`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodBoolean: core.$constructor<$ZodBoolean>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBooleanDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBooleanDef extends $ZodTypeDef {
+    type: "boolean";
+    coerce?: boolean;
+    checks?: checks.$ZodCheck<boolean>[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodBooleanInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodBooleanInternals<T = unknown> extends $ZodTypeInternals<boolean, T> {
+    pattern: RegExp;
+    def: $ZodBooleanDef;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv4`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCIDRv4 extends $ZodType {
+    _zod: $ZodCIDRv4Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv4`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCIDRv4: core.$constructor<$ZodCIDRv4>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv4Def`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCIDRv4Def extends $ZodStringFormatDef<"cidrv4"> {
+    version?: "v4";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv4Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCIDRv4Internals extends $ZodStringFormatInternals<"cidrv4"> {
+    def: $ZodCIDRv4Def;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv6`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCIDRv6 extends $ZodType {
+    _zod: $ZodCIDRv6Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv6`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCIDRv6: core.$constructor<$ZodCIDRv6>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv6Def`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCIDRv6Def extends $ZodStringFormatDef<"cidrv6"> {
+    version?: "v6";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCIDRv6Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCIDRv6Internals extends $ZodStringFormatInternals<"cidrv6"> {
+    def: $ZodCIDRv6Def;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCUID extends $ZodType {
+    _zod: $ZodCUIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCUID: core.$constructor<$ZodCUID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCUID2`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCUID2 extends $ZodType {
+    _zod: $ZodCUID2Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCUID2`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCUID2: core.$constructor<$ZodCUID2>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCUID2Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCUID2Internals extends $ZodStringFormatInternals<"cuid2"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCUIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCUIDInternals extends $ZodStringFormatInternals<"cuid"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCatch`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCatch<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodCatchInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCatch`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCatch: core.$constructor<$ZodCatch>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCatchCtx`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCatchCtx extends ParsePayload {
+    error: {
+        issues: errors.$ZodIssue[];
+    };
+    input: unknown;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCatchDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCatchDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "catch";
+    innerType: T;
+    catchValue: (ctx: $ZodCatchCtx) => unknown;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCatchInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCatchInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<core.output<T>, core.input<T>> {
+    def: $ZodCatchDef<T>;
+    optin: T["_zod"]["optin"];
+    optout: T["_zod"]["optout"];
+    isst: never;
+    values: T["_zod"]["values"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCustom`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCustom<O = unknown, I = unknown> extends $ZodType {
+    _zod: $ZodCustomInternals<O, I>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCustom`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodCustom: core.$constructor<$ZodCustom>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCustomDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCustomDef<O = unknown> extends $ZodTypeDef, checks.$ZodCheckDef {
+    type: "custom";
+    check: "custom";
+    path?: PropertyKey[] | undefined;
+    error?: errors.$ZodErrorMap | undefined;
+    params?: Record<string, any> | undefined;
+    fn: (arg: O) => unknown;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodCustomInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodCustomInternals<O = unknown, I = unknown> extends $ZodTypeInternals<O, I>, checks.$ZodCheckInternals<O> {
+    def: $ZodCustomDef;
+    issc: errors.$ZodIssue;
+    isst: never;
+    bag: util.LoosePartial<{
+        Class: typeof util.Class;
+    }>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDate`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDate<T = unknown> extends $ZodType {
+    _zod: $ZodDateInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDate`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodDate: core.$constructor<$ZodDate>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDateDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDateDef extends $ZodTypeDef {
+    type: "date";
+    coerce?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDateInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDateInternals<T = unknown> extends $ZodTypeInternals<Date, T> {
+    def: $ZodDateDef;
+    isst: errors.$ZodIssueInvalidType;
+    bag: util.LoosePartial<{
+        minimum: Date;
+        maximum: Date;
+        format: string;
+    }>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDefault<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodDefaultInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodDefault: core.$constructor<$ZodDefault>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDefaultDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDefaultDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "default";
+    innerType: T;
+    defaultValue: util.NoUndefined<core.output<T>>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDefaultInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDefaultInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<util.NoUndefined<core.output<T>>, core.input<T> | undefined> {
+    def: $ZodDefaultDef<T>;
+    optin: "optional";
+    optout?: "optional" | undefined;
+    isst: never;
+    values: T["_zod"]["values"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDiscriminatedUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDiscriminatedUnion<Options extends readonly SomeType[] = readonly $ZodType[], Disc extends string = string> extends $ZodType {
+    _zod: $ZodDiscriminatedUnionInternals<Options, Disc>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDiscriminatedUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodDiscriminatedUnion: core.$constructor<$ZodDiscriminatedUnion>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDiscriminatedUnionDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDiscriminatedUnionDef<Options extends readonly SomeType[] = readonly $ZodType[], Disc extends string = string> extends $ZodUnionDef<Options> {
+    discriminator: Disc;
+    unionFallback?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodDiscriminatedUnionInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodDiscriminatedUnionInternals<Options extends readonly SomeType[] = readonly $ZodType[], Disc extends string = string> extends $ZodUnionInternals<Options> {
+    def: $ZodDiscriminatedUnionDef<Options, Disc>;
+    propValues: util.PropValues;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodE164`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodE164 extends $ZodType {
+    _zod: $ZodE164Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodE164`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodE164: core.$constructor<$ZodE164>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodE164Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodE164Internals extends $ZodStringFormatInternals<"e164"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEmail`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEmail extends $ZodType {
+    _zod: $ZodEmailInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEmail`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodEmail: core.$constructor<$ZodEmail>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEmailInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEmailInternals extends $ZodStringFormatInternals<"email"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEmoji`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEmoji extends $ZodType {
+    _zod: $ZodEmojiInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEmoji`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodEmoji: core.$constructor<$ZodEmoji>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEmojiInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEmojiInternals extends $ZodStringFormatInternals<"emoji"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEnum`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEnum<T extends util.EnumLike = util.EnumLike> extends $ZodType {
+    _zod: $ZodEnumInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEnum`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodEnum: core.$constructor<$ZodEnum>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEnumDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEnumDef<T extends util.EnumLike = util.EnumLike> extends $ZodTypeDef {
+    type: "enum";
+    entries: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodEnumInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodEnumInternals<out T extends util.EnumLike = util.EnumLike> extends $ZodTypeInternals<$InferEnumOutput<T>, $InferEnumInput<T>> {
+    def: $ZodEnumDef<T>;
+    values: util.PrimitiveSet;
+    pattern: RegExp;
+    isst: errors.$ZodIssueInvalidValue;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodExactOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodExactOptional<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodExactOptionalInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodExactOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodExactOptional: core.$constructor<$ZodExactOptional>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodExactOptionalDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodExactOptionalDef<T extends SomeType = $ZodType> extends $ZodOptionalDef<T> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodExactOptionalInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodExactOptionalInternals<T extends SomeType = $ZodType> extends $ZodOptionalInternals<T> {
+    def: $ZodExactOptionalDef<T>;
+    output: core.output<T>;
+    input: core.input<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFile`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodFile extends $ZodType {
+    _zod: $ZodFileInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFile`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodFile: core.$constructor<$ZodFile>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFileDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodFileDef extends $ZodTypeDef {
+    type: "file";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFileInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodFileInternals extends $ZodTypeInternals<File, File> {
+    def: $ZodFileDef;
+    isst: errors.$ZodIssueInvalidType;
+    bag: util.LoosePartial<{
+        minimum: number;
+        maximum: number;
+        mime: util.MimeTypes[];
+    }>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunction`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodFunction<Args extends $ZodFunctionIn = $ZodFunctionIn, Returns extends $ZodFunctionOut = $ZodFunctionOut> extends $ZodType<any, any, $ZodFunctionInternals<Args, Returns>> {
+    _def: $ZodFunctionDef<Args, Returns>;
+    _input: $InferInnerFunctionType<Args, Returns>;
+    _output: $InferOuterFunctionType<Args, Returns>;
+    implement<F extends $InferInnerFunctionType<Args, Returns>>(func: F): (...args: Parameters<this["_output"]>) => ReturnType<F> extends ReturnType<this["_output"]> ? ReturnType<F> : ReturnType<this["_output"]>;
+    implementAsync<F extends $InferInnerFunctionTypeAsync<Args, Returns>>(func: F): F extends $InferOuterFunctionTypeAsync<Args, Returns> ? F : $InferOuterFunctionTypeAsync<Args, Returns>;
+    input<const Items extends util.TupleItems, const Rest extends $ZodFunctionOut = $ZodFunctionOut>(args: Items, rest?: Rest): $ZodFunction<$ZodTuple<Items, Rest>, Returns>;
+    input<NewArgs extends $ZodFunctionIn>(args: NewArgs): $ZodFunction<NewArgs, Returns>;
+    input(...args: any[]): $ZodFunction<any, Returns>;
+    output<NewReturns extends $ZodType>(output: NewReturns): $ZodFunction<Args, NewReturns>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunction`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodFunction: core.$constructor<$ZodFunction>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunctionArgs`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodFunctionArgs = $ZodType<unknown[], unknown[]>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunctionDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodFunctionDef<In extends $ZodFunctionIn = $ZodFunctionIn, Out extends $ZodFunctionOut = $ZodFunctionOut> extends $ZodTypeDef {
+    type: "function";
+    input: In;
+    output: Out;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunctionIn`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodFunctionIn = $ZodFunctionArgs;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunctionInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodFunctionInternals<Args extends $ZodFunctionIn, Returns extends $ZodFunctionOut> extends $ZodTypeInternals<$InferOuterFunctionType<Args, Returns>, $InferInnerFunctionType<Args, Returns>> {
+    def: $ZodFunctionDef<Args, Returns>;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodFunctionOut`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodFunctionOut = $ZodType;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodGUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodGUID extends $ZodType {
+    _zod: $ZodGUIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodGUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodGUID: core.$constructor<$ZodGUID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodGUIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodGUIDInternals extends $ZodStringFormatInternals<"guid"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv4`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIPv4 extends $ZodType {
+    _zod: $ZodIPv4Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv4`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodIPv4: core.$constructor<$ZodIPv4>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv4Def`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIPv4Def extends $ZodStringFormatDef<"ipv4"> {
+    version?: "v4";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv4Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIPv4Internals extends $ZodStringFormatInternals<"ipv4"> {
+    def: $ZodIPv4Def;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv6`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIPv6 extends $ZodType {
+    _zod: $ZodIPv6Internals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv6`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodIPv6: core.$constructor<$ZodIPv6>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv6Def`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIPv6Def extends $ZodStringFormatDef<"ipv6"> {
+    version?: "v6";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIPv6Internals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIPv6Internals extends $ZodStringFormatInternals<"ipv6"> {
+    def: $ZodIPv6Def;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODate`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODate extends $ZodType {
+    _zod: $ZodISODateInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODate`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodISODate: core.$constructor<$ZodISODate>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODateInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODateInternals extends $ZodStringFormatInternals<"date"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODateTime`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODateTime extends $ZodType {
+    _zod: $ZodISODateTimeInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODateTime`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodISODateTime: core.$constructor<$ZodISODateTime>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODateTimeDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODateTimeDef extends $ZodStringFormatDef<"datetime"> {
+    precision: number | null;
+    offset: boolean;
+    local: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODateTimeInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODateTimeInternals extends $ZodStringFormatInternals {
+    def: $ZodISODateTimeDef;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODuration`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODuration extends $ZodType {
+    _zod: $ZodISODurationInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODuration`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodISODuration: core.$constructor<$ZodISODuration>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISODurationInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISODurationInternals extends $ZodStringFormatInternals<"duration"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISOTime`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISOTime extends $ZodType {
+    _zod: $ZodISOTimeInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISOTime`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodISOTime: core.$constructor<$ZodISOTime>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISOTimeDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISOTimeDef extends $ZodStringFormatDef<"time"> {
+    precision?: number | null;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodISOTimeInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodISOTimeInternals extends $ZodStringFormatInternals<"time"> {
+    def: $ZodISOTimeDef;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIntersection`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIntersection<A extends SomeType = $ZodType, B extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodIntersectionInternals<A, B>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIntersection`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodIntersection: core.$constructor<$ZodIntersection>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIntersectionDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIntersectionDef<Left extends SomeType = $ZodType, Right extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "intersection";
+    left: Left;
+    right: Right;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodIntersectionInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodIntersectionInternals<A extends SomeType = $ZodType, B extends SomeType = $ZodType> extends _$ZodTypeInternals {
+    def: $ZodIntersectionDef<A, B>;
+    isst: never;
+    optin: A["_zod"]["optin"] | B["_zod"]["optin"];
+    optout: A["_zod"]["optout"] | B["_zod"]["optout"];
+    output: core.output<A> & core.output<B>;
+    input: core.input<A> & core.input<B>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodJWT`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodJWT extends $ZodType {
+    _zod: $ZodJWTInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodJWT`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodJWT: core.$constructor<$ZodJWT>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodJWTDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodJWTDef extends $ZodStringFormatDef<"jwt"> {
+    alg?: util.JWTAlgorithm | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodJWTInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodJWTInternals extends $ZodStringFormatInternals<"jwt"> {
+    def: $ZodJWTDef;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodKSUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodKSUID extends $ZodType {
+    _zod: $ZodKSUIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodKSUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodKSUID: core.$constructor<$ZodKSUID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodKSUIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodKSUIDInternals extends $ZodStringFormatInternals<"ksuid"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLazy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodLazy<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodLazyInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLazy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodLazy: core.$constructor<$ZodLazy>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLazyDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodLazyDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "lazy";
+    getter: () => T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLazyInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodLazyInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<core.output<T>, core.input<T>> {
+    def: $ZodLazyDef<T>;
+    isst: never;
+    innerType: T;
+    pattern: T["_zod"]["pattern"];
+    propValues: T["_zod"]["propValues"];
+    optin: T["_zod"]["optin"];
+    optout: T["_zod"]["optout"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLiteral`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodLiteral<T extends util.Literal = util.Literal> extends $ZodType {
+    _zod: $ZodLiteralInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLiteral`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodLiteral: core.$constructor<$ZodLiteral>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLiteralDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodLiteralDef<T extends util.Literal> extends $ZodTypeDef {
+    type: "literal";
+    values: T[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLiteralInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodLiteralInternals<T extends util.Literal = util.Literal> extends $ZodTypeInternals<T, T> {
+    def: $ZodLiteralDef<T>;
+    values: Set<T>;
+    pattern: RegExp;
+    isst: errors.$ZodIssueInvalidValue;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodLooseShape`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodLooseShape = Record<string, any>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodMap`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodMap<Key extends SomeType = $ZodType, Value extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodMapInternals<Key, Value>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodMap`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodMap: core.$constructor<$ZodMap>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodMapDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodMapDef<Key extends SomeType = $ZodType, Value extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "map";
+    keyType: Key;
+    valueType: Value;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodMapInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodMapInternals<Key extends SomeType = $ZodType, Value extends SomeType = $ZodType> extends $ZodTypeInternals<Map<core.output<Key>, core.output<Value>>, Map<core.input<Key>, core.input<Value>>> {
+    def: $ZodMapDef<Key, Value>;
+    isst: errors.$ZodIssueInvalidType | errors.$ZodIssueInvalidKey | errors.$ZodIssueInvalidElement<unknown>;
+    optin?: "optional" | undefined;
+    optout?: "optional" | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNaN`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNaN extends $ZodType {
+    _zod: $ZodNaNInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNaN`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNaN: core.$constructor<$ZodNaN>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNaNDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNaNDef extends $ZodTypeDef {
+    type: "nan";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNaNInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNaNInternals extends $ZodTypeInternals<number, number> {
+    def: $ZodNaNDef;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNanoID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNanoID extends $ZodType {
+    _zod: $ZodNanoIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNanoID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNanoID: core.$constructor<$ZodNanoID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNanoIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNanoIDInternals extends $ZodStringFormatInternals<"nanoid"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNever`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNever extends $ZodType {
+    _zod: $ZodNeverInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNever`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNever: core.$constructor<$ZodNever>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNeverDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNeverDef extends $ZodTypeDef {
+    type: "never";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNeverInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNeverInternals extends $ZodTypeInternals<never, never> {
+    def: $ZodNeverDef;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNonOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNonOptional<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodNonOptionalInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNonOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNonOptional: core.$constructor<$ZodNonOptional>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNonOptionalDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNonOptionalDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "nonoptional";
+    innerType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNonOptionalInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNonOptionalInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<util.NoUndefined<core.output<T>>, util.NoUndefined<core.input<T>>> {
+    def: $ZodNonOptionalDef<T>;
+    isst: errors.$ZodIssueInvalidType;
+    values: T["_zod"]["values"];
+    optin: "optional" | undefined;
+    optout: "optional" | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNull`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNull extends $ZodType {
+    _zod: $ZodNullInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNull`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNull: core.$constructor<$ZodNull>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNullDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNullDef extends $ZodTypeDef {
+    type: "null";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNullInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNullInternals extends $ZodTypeInternals<null, null> {
+    pattern: RegExp;
+    def: $ZodNullDef;
+    values: util.PrimitiveSet;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNullable`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNullable<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodNullableInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNullable`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNullable: core.$constructor<$ZodNullable>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNullableDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNullableDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "nullable";
+    innerType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNullableInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNullableInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<core.output<T> | null, core.input<T> | null> {
+    def: $ZodNullableDef<T>;
+    optin: T["_zod"]["optin"];
+    optout: T["_zod"]["optout"];
+    isst: never;
+    values: T["_zod"]["values"];
+    pattern: T["_zod"]["pattern"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNumber`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNumber<Input = unknown> extends $ZodType {
+    _zod: $ZodNumberInternals<Input>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNumber`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodNumber: core.$constructor<$ZodNumber>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNumberDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNumberDef extends $ZodTypeDef {
+    type: "number";
+    coerce?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodNumberInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodNumberInternals<Input = unknown> extends $ZodTypeInternals<number, Input> {
+    def: $ZodNumberDef;
+    pattern: RegExp;
+    isst: errors.$ZodIssueInvalidType;
+    bag: util.LoosePartial<{
+        minimum: number;
+        maximum: number;
+        exclusiveMinimum: number;
+        exclusiveMaximum: number;
+        format: string;
+        pattern: RegExp;
+    }>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodObject`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodObject<out Shape extends Readonly<$ZodShape> = Readonly<$ZodShape>, out Params extends $ZodObjectConfig = $ZodObjectConfig> extends $ZodType<any, any, $ZodObjectInternals<Shape, Params>> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodObject`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodObject: core.$constructor<$ZodObject>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodObjectConfig`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodObjectConfig = {
+    out: Record<string, unknown>;
+    in: Record<string, unknown>;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodObjectDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodObjectDef<Shape extends $ZodShape = $ZodShape> extends $ZodTypeDef {
+    type: "object";
+    shape: Shape;
+    catchall?: $ZodType | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodObjectInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodObjectInternals<out Shape extends $ZodShape = $ZodShape, out Config extends $ZodObjectConfig = $ZodObjectConfig> extends _$ZodTypeInternals {
+    def: $ZodObjectDef<Shape>;
+    config: Config;
+    isst: errors.$ZodIssueInvalidType | errors.$ZodIssueUnrecognizedKeys;
+    propValues: util.PropValues;
+    output: $InferObjectOutput<Shape, Config["out"]>;
+    input: $InferObjectInput<Shape, Config["in"]>;
+    optin?: "optional" | undefined;
+    optout?: "optional" | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodOptional<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodOptionalInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodOptional`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodOptional: core.$constructor<$ZodOptional>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodOptionalDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodOptionalDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "optional";
+    innerType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodOptionalInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodOptionalInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<core.output<T> | undefined, core.input<T> | undefined> {
+    def: $ZodOptionalDef<T>;
+    optin: "optional";
+    optout: "optional";
+    isst: never;
+    values: T["_zod"]["values"];
+    pattern: T["_zod"]["pattern"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPipe`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPipe<A extends SomeType = $ZodType, B extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodPipeInternals<A, B>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPipe`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodPipe: core.$constructor<$ZodPipe>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPipeDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPipeDef<A extends SomeType = $ZodType, B extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "pipe";
+    in: A;
+    out: B;
+    transform?: (value: core.output<A>, payload: ParsePayload<core.output<A>>) => util.MaybeAsync<core.input<B>>;
+    reverseTransform?: (value: core.input<B>, payload: ParsePayload<core.input<B>>) => util.MaybeAsync<core.output<A>>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPipeInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPipeInternals<A extends SomeType = $ZodType, B extends SomeType = $ZodType> extends $ZodTypeInternals<core.output<B>, core.input<A>> {
+    def: $ZodPipeDef<A, B>;
+    isst: never;
+    values: A["_zod"]["values"];
+    optin: A["_zod"]["optin"];
+    optout: B["_zod"]["optout"];
+    propValues: A["_zod"]["propValues"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPrefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPrefault<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodPrefaultInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPrefault`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodPrefault: core.$constructor<$ZodPrefault>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPrefaultDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPrefaultDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "prefault";
+    innerType: T;
+    defaultValue: core.input<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPrefaultInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPrefaultInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<util.NoUndefined<core.output<T>>, core.input<T> | undefined> {
+    def: $ZodPrefaultDef<T>;
+    optin: "optional";
+    optout?: "optional" | undefined;
+    isst: never;
+    values: T["_zod"]["values"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPromise`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPromise<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodPromiseInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPromise`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodPromise: core.$constructor<$ZodPromise>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPromiseDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPromiseDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "promise";
+    innerType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodPromiseInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodPromiseInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<Promise<core.output<T>>, util.MaybeAsync<core.input<T>>> {
+    def: $ZodPromiseDef<T>;
+    isst: never;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodReadonly`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodReadonly<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodReadonlyInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodReadonly`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodReadonly: core.$constructor<$ZodReadonly>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodReadonlyDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodReadonlyDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "readonly";
+    innerType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodReadonlyInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodReadonlyInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<util.MakeReadonly<core.output<T>>, util.MakeReadonly<core.input<T>>> {
+    def: $ZodReadonlyDef<T>;
+    optin: T["_zod"]["optin"];
+    optout: T["_zod"]["optout"];
+    isst: never;
+    propValues: T["_zod"]["propValues"];
+    values: T["_zod"]["values"];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodRecord`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodRecord<Key extends $ZodRecordKey = $ZodRecordKey, Value extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodRecordInternals<Key, Value>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodRecord`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodRecord: core.$constructor<$ZodRecord>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodRecordDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodRecordDef<Key extends $ZodRecordKey = $ZodRecordKey, Value extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "record";
+    keyType: Key;
+    valueType: Value;
+    mode?: "strict" | "loose";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodRecordInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodRecordInternals<Key extends $ZodRecordKey = $ZodRecordKey, Value extends SomeType = $ZodType> extends $ZodTypeInternals<$InferZodRecordOutput<Key, Value>, $InferZodRecordInput<Key, Value>> {
+    def: $ZodRecordDef<Key, Value>;
+    isst: errors.$ZodIssueInvalidType | errors.$ZodIssueInvalidKey<Record<PropertyKey, unknown>>;
+    optin?: "optional" | undefined;
+    optout?: "optional" | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodRecordKey`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodRecordKey = $ZodType<string | number | symbol, unknown>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSet`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSet<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodSetInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSet`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodSet: core.$constructor<$ZodSet>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSetDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSetDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "set";
+    valueType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSetInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSetInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<Set<core.output<T>>, Set<core.input<T>>> {
+    def: $ZodSetDef<T>;
+    isst: errors.$ZodIssueInvalidType;
+    optin?: "optional" | undefined;
+    optout?: "optional" | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodShape`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodShape = Readonly<{
+    [k: string]: $ZodType;
+}>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStandardSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodStandardSchema<T> = StandardSchemaV1.Props<core.input<T>, core.output<T>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodString`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodString<Input = unknown> extends _$ZodType<$ZodStringInternals<Input>> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodString`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodString: core.$constructor<$ZodString>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStringDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodStringDef extends $ZodTypeDef {
+    type: "string";
+    coerce?: boolean;
+    checks?: checks.$ZodCheck<string>[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStringFormat`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodStringFormat<Format extends string = string> extends $ZodType {
+    _zod: $ZodStringFormatInternals<Format>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStringFormat`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodStringFormat: core.$constructor<$ZodStringFormat>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStringFormatDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodStringFormatDef<Format extends string = string> extends $ZodStringDef, checks.$ZodCheckStringFormatDef<Format> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStringFormatInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodStringFormatInternals<Format extends string = string> extends $ZodStringInternals<string>, checks.$ZodCheckStringFormatInternals {
+    def: $ZodStringFormatDef<Format>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodStringInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodStringInternals<Input> extends $ZodTypeInternals<string, Input> {
+    def: $ZodStringDef;
+    pattern: RegExp;
+    isst: errors.$ZodIssueInvalidType;
+    bag: util.LoosePartial<{
+        minimum: number;
+        maximum: number;
+        patterns: Set<RegExp>;
+        format: string;
+        contentEncoding: string;
+    }>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSuccess`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSuccess<T extends SomeType = $ZodType> extends $ZodType {
+    _zod: $ZodSuccessInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSuccess`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodSuccess: core.$constructor<$ZodSuccess>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSuccessDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSuccessDef<T extends SomeType = $ZodType> extends $ZodTypeDef {
+    type: "success";
+    innerType: T;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSuccessInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSuccessInternals<T extends SomeType = $ZodType> extends $ZodTypeInternals<boolean, core.input<T>> {
+    def: $ZodSuccessDef<T>;
+    isst: never;
+    optin: T["_zod"]["optin"];
+    optout: "optional" | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSymbol`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSymbol extends $ZodType {
+    _zod: $ZodSymbolInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSymbol`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodSymbol: core.$constructor<$ZodSymbol>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSymbolDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSymbolDef extends $ZodTypeDef {
+    type: "symbol";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodSymbolInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodSymbolInternals extends $ZodTypeInternals<symbol, symbol> {
+    def: $ZodSymbolDef;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTemplateLiteral`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTemplateLiteral<Template extends string = string> extends $ZodType {
+    _zod: $ZodTemplateLiteralInternals<Template>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTemplateLiteral`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodTemplateLiteral: core.$constructor<$ZodTemplateLiteral>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTemplateLiteralDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTemplateLiteralDef extends $ZodTypeDef {
+    type: "template_literal";
+    parts: $ZodTemplateLiteralPart[];
+    format?: string | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTemplateLiteralInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTemplateLiteralInternals<Template extends string = string> extends $ZodTypeInternals<Template, Template> {
+    pattern: RegExp;
+    def: $ZodTemplateLiteralDef;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTemplateLiteralPart`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodTemplateLiteralPart = LiteralPart | SchemaPart;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTransform`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTransform<O = unknown, I = unknown> extends $ZodType {
+    _zod: $ZodTransformInternals<O, I>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTransform`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodTransform: core.$constructor<$ZodTransform>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTransformDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTransformDef extends $ZodTypeDef {
+    type: "transform";
+    transform: (input: unknown, payload: ParsePayload<unknown>) => util.MaybeAsync<unknown>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTransformInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTransformInternals<O = unknown, I = unknown> extends $ZodTypeInternals<O, I> {
+    def: $ZodTransformDef;
+    isst: never;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTuple`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTuple<T extends util.TupleItems = readonly $ZodType[], Rest extends SomeType | null = $ZodType | null> extends $ZodType {
+    _zod: $ZodTupleInternals<T, Rest>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTuple`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodTuple: core.$constructor<$ZodTuple>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTupleDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTupleDef<T extends util.TupleItems = readonly $ZodType[], Rest extends SomeType | null = $ZodType | null> extends $ZodTypeDef {
+    type: "tuple";
+    items: T;
+    rest: Rest;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTupleInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTupleInternals<T extends util.TupleItems = readonly $ZodType[], Rest extends SomeType | null = $ZodType | null> extends _$ZodTypeInternals {
+    def: $ZodTupleDef<T, Rest>;
+    isst: errors.$ZodIssueInvalidType | errors.$ZodIssueTooBig<unknown[]> | errors.$ZodIssueTooSmall<unknown[]>;
+    output: $InferTupleOutputType<T, Rest>;
+    input: $InferTupleInputType<T, Rest>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodType<O = unknown, I = unknown, Internals extends $ZodTypeInternals<O, I> = $ZodTypeInternals<O, I>> {
+    _zod: Internals;
+    "~standard": $ZodStandardSchema<this>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodType: core.$constructor<$ZodType>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTypeDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTypeDef {
+    type: "string" | "number" | "int" | "boolean" | "bigint" | "symbol" | "null" | "undefined" | "void" | "never" | "any" | "unknown" | "date" | "object" | "record" | "file" | "array" | "tuple" | "union" | "intersection" | "map" | "set" | "enum" | "literal" | "nullable" | "optional" | "nonoptional" | "success" | "transform" | "default" | "prefault" | "catch" | "nan" | "pipe" | "readonly" | "template_literal" | "promise" | "lazy" | "function" | "custom";
+    error?: errors.$ZodErrorMap<never> | undefined;
+    checks?: checks.$ZodCheck<never>[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTypeInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodTypeInternals<out O = unknown, out I = unknown> extends _$ZodTypeInternals {
+    output: O;
+    input: I;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodTypes`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $ZodTypes = $ZodString | $ZodNumber | $ZodBigInt | $ZodBoolean | $ZodDate | $ZodSymbol | $ZodUndefined | $ZodNullable | $ZodNull | $ZodAny | $ZodUnknown | $ZodNever | $ZodVoid | $ZodArray | $ZodObject | $ZodUnion | $ZodIntersection | $ZodTuple | $ZodRecord | $ZodMap | $ZodSet | $ZodLiteral | $ZodEnum | $ZodFunction | $ZodPromise | $ZodLazy | $ZodOptional | $ZodDefault | $ZodPrefault | $ZodTemplateLiteral | $ZodCustom | $ZodTransform | $ZodNonOptional | $ZodReadonly | $ZodNaN | $ZodPipe | $ZodSuccess | $ZodCatch | $ZodFile;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodULID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodULID extends $ZodType {
+    _zod: $ZodULIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodULID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodULID: core.$constructor<$ZodULID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodULIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodULIDInternals extends $ZodStringFormatInternals<"ulid"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodURL`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodURL extends $ZodType {
+    _zod: $ZodURLInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodURL`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodURL: core.$constructor<$ZodURL>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodURLDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodURLDef extends $ZodStringFormatDef<"url"> {
+    hostname?: RegExp | undefined;
+    protocol?: RegExp | undefined;
+    normalize?: boolean | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodURLInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodURLInternals extends $ZodStringFormatInternals<"url"> {
+    def: $ZodURLDef;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUUID extends $ZodType {
+    _zod: $ZodUUIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUUID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodUUID: core.$constructor<$ZodUUID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUUIDDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUUIDDef extends $ZodStringFormatDef<"uuid"> {
+    version?: "v1" | "v2" | "v3" | "v4" | "v5" | "v6" | "v7" | "v8";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUUIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUUIDInternals extends $ZodStringFormatInternals<"uuid"> {
+    def: $ZodUUIDDef;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUndefined`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUndefined extends $ZodType {
+    _zod: $ZodUndefinedInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUndefined`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodUndefined: core.$constructor<$ZodUndefined>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUndefinedDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUndefinedDef extends $ZodTypeDef {
+    type: "undefined";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUndefinedInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUndefinedInternals extends $ZodTypeInternals<undefined, undefined> {
+    pattern: RegExp;
+    def: $ZodUndefinedDef;
+    values: util.PrimitiveSet;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUnion<T extends readonly SomeType[] = readonly $ZodType[]> extends $ZodType<any, any, $ZodUnionInternals<T>> {
+    _zod: $ZodUnionInternals<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnion`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodUnion: core.$constructor<$ZodUnion>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnionDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUnionDef<Options extends readonly SomeType[] = readonly $ZodType[]> extends $ZodTypeDef {
+    type: "union";
+    options: Options;
+    inclusive?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnionInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUnionInternals<T extends readonly SomeType[] = readonly $ZodType[]> extends _$ZodTypeInternals {
+    def: $ZodUnionDef<T>;
+    isst: errors.$ZodIssueInvalidUnion;
+    pattern: T[number]["_zod"]["pattern"];
+    values: T[number]["_zod"]["values"];
+    output: $InferUnionOutput<T[number]>;
+    input: $InferUnionInput<T[number]>;
+    optin: IsOptionalIn<T[number]> extends false ? "optional" | undefined : "optional";
+    optout: IsOptionalOut<T[number]> extends false ? "optional" | undefined : "optional";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnknown`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUnknown extends $ZodType {
+    _zod: $ZodUnknownInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnknown`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodUnknown: core.$constructor<$ZodUnknown>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnknownDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUnknownDef extends $ZodTypeDef {
+    type: "unknown";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodUnknownInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodUnknownInternals extends $ZodTypeInternals<unknown, unknown> {
+    def: $ZodUnknownDef;
+    isst: never;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodVoid`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodVoid extends $ZodType {
+    _zod: $ZodVoidInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodVoid`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodVoid: core.$constructor<$ZodVoid>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodVoidDef`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodVoidDef extends $ZodTypeDef {
+    type: "void";
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodVoidInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodVoidInternals extends $ZodTypeInternals<void, void> {
+    def: $ZodVoidDef;
+    isst: errors.$ZodIssueInvalidType;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodXID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodXID extends $ZodType {
+    _zod: $ZodXIDInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodXID`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const $ZodXID: core.$constructor<$ZodXID>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$ZodXIDInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface $ZodXIDInternals extends $ZodStringFormatInternals<"xid"> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$catchall`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $catchall<T extends SomeType> = {
+    out: {
+        [k: string]: core.output<T>;
+    };
+    in: {
+        [k: string]: core.input<T>;
+    };
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$loose`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $loose = {
+    out: Record<string, unknown>;
+    in: Record<string, unknown>;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$partial`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $partial = {
+    "~~partial": true;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$strict`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $strict = {
+    out: {};
+    in: {};
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `$strip`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type $strip = {
+    out: {};
+    in: {};
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `CheckFn`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type CheckFn<T> = (input: ParsePayload<T>) => util.MaybeAsync<void>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `File`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface File extends _File {
+    readonly type: string;
+    readonly size: number;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `IsOptionalIn`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type IsOptionalIn<T extends SomeType> = T extends OptionalInSchema ? true : false;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `IsOptionalOut`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type IsOptionalOut<T extends SomeType> = T extends OptionalOutSchema ? true : false;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `LiteralPart`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type LiteralPart = Exclude<util.Literal, symbol>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `OptionalInSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type OptionalInSchema = {
+    _zod: {
+        optin: "optional";
+    };
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `OptionalOutSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type OptionalOutSchema = {
+    _zod: {
+        optout: "optional";
+    };
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `ParseContext`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ParseContext<T extends errors.$ZodIssueBase = never> {
+    readonly error?: errors.$ZodErrorMap<T>;
+    readonly reportInput?: boolean;
+    readonly jitless?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `ParseContextInternal`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ParseContextInternal<T extends errors.$ZodIssueBase = never> extends ParseContext<T> {
+    readonly async?: boolean | undefined;
+    readonly direction?: "forward" | "backward";
+    readonly skipChecks?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `ParsePayload`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ParsePayload<T = unknown> {
+    value: T;
+    issues: errors.$ZodRawIssue[];
+    aborted?: boolean;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `SchemaPart`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface SchemaPart extends $ZodType {
+    _zod: SchemaPartInternals;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `SchemaPartInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface SchemaPartInternals extends $ZodTypeInternals<LiteralPart, LiteralPart> {
+    pattern: RegExp;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `SomeType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type SomeType = {
+    _zod: _$ZodTypeInternals;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `TupleInputTypeNoOptionals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type TupleInputTypeNoOptionals<T extends util.TupleItems> = {
+    [k in keyof T]: core.input<T[k]>;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `TupleInputTypeWithOptionals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type TupleInputTypeWithOptionals<T extends util.TupleItems> = T extends readonly [
+    ...infer Prefix extends SomeType[],
+    infer Tail extends SomeType
+] ? Tail["_zod"]["optin"] extends "optional" ? [
+    ...TupleInputTypeWithOptionals<Prefix>,
+    core.input<Tail>?
+] : TupleInputTypeNoOptionals<T> : [
+];
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `TupleOutputTypeNoOptionals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type TupleOutputTypeNoOptionals<T extends util.TupleItems> = {
+    [k in keyof T]: core.output<T[k]>;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `TupleOutputTypeWithOptionals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type TupleOutputTypeWithOptionals<T extends util.TupleItems> = T extends readonly [
+    ...infer Prefix extends SomeType[],
+    infer Tail extends SomeType
+] ? Tail["_zod"]["optout"] extends "optional" ? [
+    ...TupleOutputTypeWithOptionals<Prefix>,
+    core.output<Tail>?
+] : TupleOutputTypeNoOptionals<T> : [
+];
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `_$ZodType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface _$ZodType<T extends $ZodTypeInternals = $ZodTypeInternals> extends $ZodType<T["output"], T["input"], T> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `_$ZodTypeInternals`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface _$ZodTypeInternals {
+    version: typeof version;
+    def: $ZodTypeDef;
+    deferred: util.AnyFunc[] | undefined;
+    run(payload: ParsePayload<any>, ctx: ParseContextInternal): util.MaybeAsync<ParsePayload>;
+    parse(payload: ParsePayload<any>, ctx: ParseContextInternal): util.MaybeAsync<ParsePayload>;
+    traits: Set<string>;
+    optin?: "optional" | undefined;
+    optout?: "optional" | undefined;
+    values?: util.PrimitiveSet | undefined;
+    propValues?: util.PropValues | undefined;
+    pattern: RegExp | undefined;
+    constr: new (def: any) => $ZodType;
+    bag: Record<string, unknown>;
+    isst: errors.$ZodIssueBase;
+    processJSONSchema?: ((ctx: ToJSONSchemaContext, json: JSONSchema.BaseSchema, params: ProcessParams) => void) | undefined;
+    toJSONSchema?: () => unknown;
+    parent?: $ZodType | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/schemas.d.cts` — `_File`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type _File = typeof globalThis extends {
+    File: infer F extends new (...args: any[]) => any;
+} ? InstanceType<F> : {};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Converter`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Converter {
+    readonly input: (options: StandardJSONSchemaV1.Options) => Record<string, unknown>;
+    readonly output: (options: StandardJSONSchemaV1.Options) => Record<string, unknown>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `FailureResult`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface FailureResult {
+    readonly issues: ReadonlyArray<Issue>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Issue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Issue {
+    readonly message: string;
+    readonly path?: ReadonlyArray<PropertyKey | PathSegment> | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Options`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Options {
+    readonly libraryOptions?: Record<string, unknown> | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Options`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Options {
+    readonly target: Target;
+    readonly libraryOptions?: Record<string, unknown> | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `PathSegment`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface PathSegment {
+    readonly key: PropertyKey;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Props`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Props<Input = unknown, Output = Input> {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly types?: Types<Input, Output> | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Props`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Props<Input = unknown, Output = Input> extends StandardTypedV1.Props<Input, Output> {
+    readonly validate: (value: unknown, options?: StandardSchemaV1.Options | undefined) => Result<Output> | Promise<Result<Output>>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Props`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Props<Input = unknown, Output = Input> extends StandardTypedV1.Props<Input, Output> {
+    readonly jsonSchema: Converter;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Result`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Result<Output> = SuccessResult<Output> | FailureResult;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `StandardSchemaWithJSONProps`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface StandardSchemaWithJSONProps<Input = unknown, Output = Input> extends StandardSchemaV1.Props<Input, Output>, StandardJSONSchemaV1.Props<Input, Output> {
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `SuccessResult`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface SuccessResult<Output> {
+    readonly value: Output;
+    readonly issues?: undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Target`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Target = "draft-2020-12" | "draft-07" | "openapi-3.0" | ({} & string);
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/standard-schema.d.cts` — `Types`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Types<Input = unknown, Output = Input> {
+    readonly input: Input;
+    readonly output: Output;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `JSONSchemaGeneratorParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface JSONSchemaGeneratorParams {
+    processors: Record<string, Processor>;
+    metadata?: $ZodRegistry<Record<string, any>>;
+    target?: "draft-04" | "draft-07" | "draft-2020-12" | "openapi-3.0" | ({} & string) | undefined;
+    unrepresentable?: "throw" | "any";
+    override?: (ctx: {
+        zodSchema: schemas.$ZodTypes;
+        jsonSchema: JSONSchema.BaseSchema;
+        path: (string | number)[];
+    }) => void;
+    io?: "input" | "output";
+    cycles?: "ref" | "throw";
+    reused?: "ref" | "inline";
+    external?: {
+        registry: $ZodRegistry<{
+            id?: string | undefined;
+        }>;
+        uri?: ((id: string) => string) | undefined;
+        defs: Record<string, JSONSchema.BaseSchema>;
+    } | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `ProcessParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ProcessParams {
+    schemaPath: schemas.$ZodType[];
+    path: (string | number)[];
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `Processor`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Processor<T extends schemas.$ZodType = schemas.$ZodType> = (schema: T, ctx: ToJSONSchemaContext, json: JSONSchema.BaseSchema, params: ProcessParams) => void;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `Seen`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface Seen {
+    schema: JSONSchema.BaseSchema;
+    def?: JSONSchema.BaseSchema;
+    defId?: string | undefined;
+    count: number;
+    cycle?: (string | number)[] | undefined;
+    isParent?: boolean | undefined;
+    ref?: schemas.$ZodType | null;
+    path?: (string | number)[] | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `ToJSONSchemaContext`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ToJSONSchemaContext {
+    processors: Record<string, Processor>;
+    metadataRegistry: $ZodRegistry<Record<string, any>>;
+    target: "draft-04" | "draft-07" | "draft-2020-12" | "openapi-3.0" | ({} & string);
+    unrepresentable: "throw" | "any";
+    override: (ctx: {
+        zodSchema: schemas.$ZodType;
+        jsonSchema: JSONSchema.BaseSchema;
+        path: (string | number)[];
+    }) => void;
+    io: "input" | "output";
+    counter: number;
+    seen: Map<schemas.$ZodType, Seen>;
+    cycles: "ref" | "throw";
+    reused: "ref" | "inline";
+    external?: {
+        registry: $ZodRegistry<{
+            id?: string | undefined;
+        }>;
+        uri?: ((id: string) => string) | undefined;
+        defs: Record<string, JSONSchema.BaseSchema>;
+    } | undefined;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `ToJSONSchemaParams`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ToJSONSchemaParams = Omit<JSONSchemaGeneratorParams, "processors" | "external">;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `ZodStandardJSONSchemaPayload`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+interface ZodStandardJSONSchemaPayload<T> extends JSONSchema.BaseSchema {
+    "~standard": ZodStandardSchemaWithJSON<T>;
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/to-json-schema.d.cts` — `ZodStandardSchemaWithJSON`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ZodStandardSchemaWithJSON<T> = StandardSchemaWithJSONProps<core.input<T>, core.output<T>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `AnyFunc`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type AnyFunc = (...args: any[]) => any;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `BuiltIn`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type BuiltIn = (((...args: any[]) => any) | (new (...args: any[]) => any)) | {
+    readonly [Symbol.toStringTag]: string;
+} | Date | Error | Generator | Promise<unknown> | RegExp;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Class`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+abstract class Class {
+    constructor(..._args: any[]);
+}
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `EmptyToNever`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type EmptyToNever<T> = keyof T extends never ? never : T;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `EnumLike`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type EnumLike = Readonly<Record<string, EnumValue>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `EnumValue`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type EnumValue = string | number;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Extend`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Extend<A extends SomeObject, B extends SomeObject> = Flatten<keyof A & keyof B extends never ? A & B : {
+    [K in keyof A as K extends keyof B ? never : K]: A[K];
+} & {
+    [K in keyof B]: B[K];
+}>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Flatten`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Flatten<T> = Identity<{
+    [k in keyof T]: T[k];
+}>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `HasLength`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type HasLength = {
+    length: number;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Identity`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Identity<T> = T;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `InexactPartial`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type InexactPartial<T> = {
+    [P in keyof T]?: T[P] | undefined;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `IsAny`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type IsAny<T> = 0 extends 1 & T ? true : false;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `JSONType`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type JSONType = string | number | boolean | null | JSONType[] | {
+    [key: string]: JSONType;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `JWTAlgorithm`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type JWTAlgorithm = "HS256" | "HS384" | "HS512" | "RS256" | "RS384" | "RS512" | "ES256" | "ES384" | "ES512" | "PS256" | "PS384" | "PS512" | "EdDSA" | (string & {});
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Literal`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Literal = string | number | bigint | boolean | null | undefined;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `LoosePartial`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type LoosePartial<T extends object> = InexactPartial<T> & {
+    [k: string]: unknown;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `MakePartial`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type MakePartial<T, K extends keyof T> = Omit<T, K> & InexactPartial<Pick<T, K>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `MakeReadonly`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type MakeReadonly<T> = T extends Map<infer K, infer V> ? ReadonlyMap<K, V> : T extends Set<infer V> ? ReadonlySet<V> : T extends [
+    infer Head,
+    ...infer Tail
+] ? readonly [
+    Head,
+    ...Tail
+] : T extends Array<infer V> ? ReadonlyArray<V> : T extends BuiltIn ? T : Readonly<T>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Mask`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Mask<Keys extends PropertyKey> = {
+    [K in Keys]?: true;
+};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `MaybeAsync`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type MaybeAsync<T> = T | Promise<T>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `MimeTypes`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type MimeTypes = "application/json" | "application/xml" | "application/x-www-form-urlencoded" | "application/javascript" | "application/pdf" | "application/zip" | "application/vnd.ms-excel" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "application/msword" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.ms-powerpoint" | "application/vnd.openxmlformats-officedocument.presentationml.presentation" | "application/octet-stream" | "application/graphql" | "text/html" | "text/plain" | "text/css" | "text/javascript" | "text/csv" | "image/png" | "image/jpeg" | "image/gif" | "image/svg+xml" | "image/webp" | "audio/mpeg" | "audio/ogg" | "audio/wav" | "audio/webm" | "video/mp4" | "video/webm" | "video/ogg" | "font/woff" | "font/woff2" | "font/ttf" | "font/otf" | "multipart/form-data" | (string & {});
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `NoUndefined`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type NoUndefined<T> = T extends undefined ? never : T;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Numeric`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Numeric = number | bigint | Date;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Omit`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Omit<T, K extends keyof T> = Pick<T, Exclude<keyof T, K>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Prettify`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Prettify<T> = {
+    [K in keyof T]: T[K];
+} & {};
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `Primitive`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type Primitive = string | number | symbol | bigint | boolean | null | undefined;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `PrimitiveSet`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PrimitiveSet = Set<Primitive>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `PropValues`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type PropValues = Record<string, Set<Primitive>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `SomeObject`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type SomeObject = Record<PropertyKey, any>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `ToEnum`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ToEnum<T extends EnumValue> = Flatten<{
+    [k in T]: k;
+}>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/util.d.cts` — `TupleItems`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type TupleItems = ReadonlyArray<schemas.SomeType>;
+```
+
+
+### `node_modules/@happier-dev/protocol/node_modules/zod/v4/core/versions.d.cts` — `version`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const version: {
+    readonly major: 4;
+    readonly minor: 3;
+    readonly patch: number;
+};
+```
+
+
 ## Referenced declarations owned by other packages
 
 - `@types/node#AbortSignal`
+- `@types/node#Array`
 - `@types/node#ReadonlyArray`
 - `@types/node#URL`

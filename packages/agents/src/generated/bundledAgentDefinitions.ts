@@ -94,11 +94,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "cliSubcommand": "antigravity",
     "cloudConnect": null,
     "connectedServices": {
-      "supportedKindsByServiceId": {
-        "gemini": [
-          "token"
-        ]
-      },
       "supportedServiceIds": [
         "gemini"
       ]
@@ -352,15 +347,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "sharedStatePrivacyRiskAcknowledgementRequired": true,
           "supported": true
         }
-      },
-      "supportedKindsByServiceId": {
-        "anthropic": [
-          "token"
-        ],
-        "claude-subscription": [
-          "oauth",
-          "token"
-        ]
       },
       "supportedServiceIds": [
         "claude-subscription",
@@ -963,14 +949,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "supported": true
         }
       },
-      "supportedKindsByServiceId": {
-        "openai": [
-          "token"
-        ],
-        "openai-codex": [
-          "oauth"
-        ]
-      },
       "supportedServiceIds": [
         "openai-codex",
         "openai"
@@ -1421,11 +1399,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorKey": "gemini"
     },
     "connectedServices": {
-      "supportedKindsByServiceId": {
-        "gemini": [
-          "token"
-        ]
-      },
       "supportedServiceIds": [
         "gemini"
       ]
@@ -2010,23 +1983,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "cliSubcommand": "ohMyPi",
     "cloudConnect": null,
     "connectedServices": {
-      "supportedKindsByServiceId": {
-        "anthropic": [
-          "token"
-        ],
-        "claude-subscription": [
-          "token"
-        ],
-        "gemini": [
-          "token"
-        ],
-        "openai": [
-          "token"
-        ],
-        "openai-codex": [
-          "oauth"
-        ]
-      },
       "supportedServiceIds": [
         "openai-codex",
         "openai",
@@ -2137,21 +2093,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "cliSubcommand": "opencode",
     "cloudConnect": null,
     "connectedServices": {
-      "supportedKindsByServiceId": {
-        "anthropic": [
-          "token"
-        ],
-        "claude-subscription": [
-          "oauth",
-          "token"
-        ],
-        "openai": [
-          "token"
-        ],
-        "openai-codex": [
-          "oauth"
-        ]
-      },
       "supportedServiceIds": [
         "openai-codex",
         "openai",
@@ -2368,21 +2309,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
           "sharedStatePrivacyRiskAcknowledgementRequired": true,
           "supported": true
         }
-      },
-      "supportedKindsByServiceId": {
-        "anthropic": [
-          "token"
-        ],
-        "claude-subscription": [
-          "oauth",
-          "token"
-        ],
-        "openai": [
-          "token"
-        ],
-        "openai-codex": [
-          "oauth"
-        ]
       },
       "supportedServiceIds": [
         "openai-codex",

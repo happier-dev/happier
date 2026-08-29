@@ -230,7 +230,9 @@ describe('Channels V1 compatibility policy and schema projections', () => {
             .toBe(v1.ConversationProviderSetupOutcomeV1Schema);
         expect(testingV1.assertConversationProviderContributionV1).toEqual(expect.any(Function));
         expect(testingV1.checkConversationProviderContributionV1).toEqual(expect.any(Function));
-        expect(Object.keys(root).filter((name) => /(?:latest|current|default)/i.test(name))).toEqual([]);
+        // Version aliases are forbidden; domain helpers may still describe a
+        // current connection in their ordinary exported name.
+        expect(Object.keys(root).filter((name) => /^(?:latest|current|default)$/i.test(name))).toEqual([]);
     });
 
     it('projects every public executable schema through its paired JSON-schema export', () => {

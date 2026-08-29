@@ -108,6 +108,7 @@ module.exports = { unpackTools };
     'packages/cli-common/src/componentArtifacts/copyCliNodeRuntimePayload.ts',
     'packages/cli-common/src/componentArtifacts/finalizeRuntimeArtifactPayload.ts',
     'packages/cli-common/src/componentArtifacts/stageCliProxyApiManagedRuntime.ts',
+    'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts',
     'packages/cli-common/src/componentArtifacts/deferredVoiceRuntimePackages.ts',
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
@@ -235,12 +236,15 @@ describe('daemon runtime support identity', () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
     const prebuiltRuntimePath = join(root, 'prebuilt', 'happier-cliproxyapi-managed');
+    const prebuiltCustodyPath = join(root, 'prebuilt', 'happier-process-custody');
     await writeFixtureFile(prebuiltRuntimePath, 'prebuilt runtime\n');
+    await writeFixtureFile(prebuiltCustodyPath, 'prebuilt custody\n');
     const identityInput = {
       repoRoot: root,
       target: targetForHost(),
       goVersion: 'go version go1.fixture',
       cliProxyApiManagedRuntimeExecutablePath: prebuiltRuntimePath,
+      processCustodyRuntimeExecutablePath: prebuiltCustodyPath,
     };
     const identity = readCliBinaryArtifactSupportIdentity(identityInput);
     const payloadDir = join(root, 'artifacts', 'daemon-support', 'support-fingerprint', 'payload');
@@ -295,12 +299,14 @@ describe('daemon runtime support identity', () => {
       payloadDir,
       supportArtifactFingerprint: identity.fingerprint,
       commandProbe: (command) => command === 'yarn',
-      runCommand: async (_command, args) => {
-        commandObservedWhileCliDistLocked = existsSync(cliDistLockPath);
-        commandObservedWhileSharedDepsLocked = existsSync(
+      runCommand: async (command, args) => {
+        commandObservedWhileCliDistLocked ||= existsSync(cliDistLockPath);
+        commandObservedWhileSharedDepsLocked ||= existsSync(
           join(root, '.project', 'tmp', 'cli-shared-deps.lock'),
         );
-        const outputIndex = args.indexOf('--output');
+        const outputIndex = args.indexOf(
+          command === 'go' ? '-o' : '--output',
+        );
         const outputPath = args[outputIndex + 1];
         if (outputIndex < 0 || !outputPath) throw new Error('fixture managed-runtime output path missing');
         await writeFixtureFile(outputPath, 'managed runtime\n');
@@ -365,13 +371,16 @@ describe('daemon runtime support identity', () => {
     const payloadDir = join(root, 'release-payload');
     const target = targetForHost();
     const prebuiltRuntimePath = join(root, 'prebuilt', `happier-cliproxyapi-managed${target.exeExt}`);
+    const prebuiltCustodyPath = join(root, 'prebuilt', `happier-process-custody${target.exeExt}`);
     await writeFixtureFile(prebuiltRuntimePath, 'prebuilt release runtime\n');
+    await writeFixtureFile(prebuiltCustodyPath, 'prebuilt release custody\n');
 
     await buildCliBinaryArtifactPayload({
       repoRoot: root,
       payloadDir,
       target,
       cliProxyApiManagedRuntimeExecutablePath: prebuiltRuntimePath,
+      processCustodyRuntimeExecutablePath: prebuiltCustodyPath,
       commandProbe: (command) => command === 'bun' || command === 'yarn',
       ensureWorkspacePackagesBuiltByName: async (_repoRoot, packageNames) => ({
         ok: true,

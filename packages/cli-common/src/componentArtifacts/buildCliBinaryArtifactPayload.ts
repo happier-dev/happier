@@ -401,9 +401,8 @@ export function readCliBinaryArtifactSupportIdentity({
 
   // The native process-custody runtime is part of the same publication
   // closure. Its Go module source is always an identity input; the staged
-  // bytes are hashed when provisioned and their deliberate absence is hashed
-  // as a marker so a payload without the helper can never share a fingerprint
-  // with one that has it.
+  // bytes are hashed when a release caller supplies an exact prebuilt. Without
+  // one, this source closure is the canonical workspace-build input.
   hashRequiredSupportInputPath({
     hash,
     repoRoot,
@@ -418,7 +417,7 @@ export function readCliBinaryArtifactSupportIdentity({
       label: 'process-custody:prebuilt-runtime',
     });
   } else {
-    hash.update('process-custody:prebuilt-runtime\0absent\0');
+    hash.update('process-custody:runtime-input\0workspace-source\0');
   }
 
   // The support payload can change when its owner’s staging/finalization
@@ -429,6 +428,7 @@ export function readCliBinaryArtifactSupportIdentity({
     'packages/cli-common/src/componentArtifacts/copyCliNodeRuntimePayload.ts',
     'packages/cli-common/src/componentArtifacts/finalizeRuntimeArtifactPayload.ts',
     'packages/cli-common/src/componentArtifacts/stageCliProxyApiManagedRuntime.ts',
+    'packages/cli-common/src/componentArtifacts/stageProcessCustodyRuntime.ts',
     'packages/cli-common/src/componentArtifacts/deferredVoiceRuntimePackages.ts',
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
@@ -815,6 +815,7 @@ async function stageCliBinaryArtifactSupportPayload({
     repoRoot,
     payloadDir,
     target,
+    runCommand,
     prebuiltExecutablePath: processCustodyRuntimeExecutablePath,
   });
   await stageDeferredVoiceInferenceRuntimeArchive(payloadDir, target);

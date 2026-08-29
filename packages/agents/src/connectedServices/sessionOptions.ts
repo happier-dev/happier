@@ -202,31 +202,6 @@ export function resolveConnectedServiceSessionSelection(params: Readonly<{
     : { status: 'no_selection' };
 }
 
-export function isConnectedServiceProfileKindSupportedForAgent(params: Readonly<{
-  agentCore: Pick<AgentCore, 'connectedServices'> | null;
-  serviceId: ConnectedServiceId;
-  kind: ConnectedServiceKind | null;
-}>): boolean {
-  const allowedKinds = params.agentCore?.connectedServices?.supportedKindsByServiceId?.[params.serviceId];
-  if (!Array.isArray(allowedKinds) || allowedKinds.length === 0) return true;
-  if (!params.kind) return true;
-
-  const allowed = new Set<ConnectedServiceKind>(allowedKinds);
-  return allowed.has(params.kind);
-}
-
-export function filterConnectedServiceV2ProfilesForAgent(params: Readonly<{
-  agentCore: Pick<AgentCore, 'connectedServices'> | null;
-  serviceId: ConnectedServiceId;
-  profiles: ReadonlyArray<ConnectedServiceV2ProfileProjection>;
-}>): ReadonlyArray<ConnectedServiceV2ProfileProjection> {
-  return params.profiles.filter((profile) => isConnectedServiceProfileKindSupportedForAgent({
-    agentCore: params.agentCore,
-    serviceId: params.serviceId,
-    kind: profile.kind ?? null,
-  }));
-}
-
 function normalizeConnectedServiceKind(kind: ConnectedServiceKind | null | undefined): 'oauth' | 'token' | null {
   if (kind === 'oauth' || kind === 'token') return kind;
   return null;
@@ -237,10 +212,8 @@ export function buildConnectedServiceProfileOptionsByServiceId(params: Readonly<
     serviceId: ConnectedServiceId;
     profiles?: ReadonlyArray<ConnectedServiceV2ProfileProjection>;
   }>;
-  agentCore: Pick<AgentCore, 'connectedServices'> | null;
   supportedConnectedServiceIds: ReadonlyArray<ConnectedServiceId>;
   labelsByKey: Record<string, string | undefined>;
-  resolveUnsupportedSubtitleKey?: (serviceId: ConnectedServiceId) => ConnectedServicesProfileOption['unsupportedSubtitleKey'] | null | undefined;
 }>): ConnectedServicesProfileOptionsByServiceId {
   const out: Record<string, ConnectedServicesProfileOption[]> = {};
   const rows = params.accountProfileConnectedServicesV2 ?? [];
@@ -260,21 +233,12 @@ export function buildConnectedServiceProfileOptionsByServiceId(params: Readonly<
             })
           : null;
         const kind = normalizeConnectedServiceKind(p.kind);
-        const kindSupported = isConnectedServiceProfileKindSupportedForAgent({
-          agentCore: params.agentCore,
-          serviceId,
-          kind,
-        });
-        const unsupportedSubtitleKey = kindSupported ? null : params.resolveUnsupportedSubtitleKey?.(serviceId) ?? null;
         return {
           profileId,
-          status: kindSupported
-            ? normalizeConnectedServiceCredentialHealthStatus(p.status)
-            : 'unsupported_kind',
+          status: normalizeConnectedServiceCredentialHealthStatus(p.status),
           kind,
           providerEmail: p.providerEmail ?? null,
           label,
-          ...(unsupportedSubtitleKey ? { unsupportedSubtitleKey } : {}),
         };
       })
       .filter((p) => p.profileId.length > 0);

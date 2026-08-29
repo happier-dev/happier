@@ -13,28 +13,28 @@ describe('Channels public protocol atomic cutover', () => {
                     setup: {
                         required: true,
                         input: { kind: 'contributorDefined' },
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                     },
                     setupRemediation: {
                         required: false,
                         input: { kind: 'contributorDefined' },
-                        action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+                        action: { surfaces: ['plugin', 'ui'], dangerLevel: 'writesRemote' },
                     },
                     connectionTest: {
                         required: true,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                     },
                     endpointResolve: {
                         required: false,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                     },
                     principalResolve: {
                         required: false,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                     },
                     observationsPoll: {
                         required: false,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                     automationEventAdmit: {
                         required: false,
@@ -43,19 +43,19 @@ describe('Channels public protocol atomic cutover', () => {
                             schema: protocol.ConversationProviderAutomationEventAdmitInputV1JsonSchema,
                         },
                         resultSchema: protocol.ConversationProviderAutomationEventAdmitResultV1JsonSchema,
-                        action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
                     },
                     messageDeliver: {
                         required: true,
-                        action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
                     },
                     deliveryReconcile: {
                         required: false,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                     connectionStop: {
                         required: false,
-                        action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
                     },
                 },
             }],

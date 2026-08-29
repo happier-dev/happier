@@ -32,28 +32,13 @@ describe('AGENTS_CORE cloudConnect status', () => {
     expect(AGENTS_CORE.pi.connectedServices?.supportedServiceIds).toContain('openai');
   });
 
-  it('exposes Claude subscription OAuth and setup-token compatibility for OpenCode', () => {
+  it('exposes Claude subscription connected-account compatibility for OpenCode', () => {
     expect(AGENTS_CORE.opencode.connectedServices?.supportedServiceIds).toContain('claude-subscription');
-    expect(AGENTS_CORE.opencode.connectedServices?.supportedKindsByServiceId?.['claude-subscription']).toEqual([
-      'oauth',
-      'token',
-    ]);
-    // Anthropic Console API key stays token-only (x-api-key, direct).
-    expect(AGENTS_CORE.opencode.connectedServices?.supportedKindsByServiceId?.anthropic).toEqual(['token']);
+    expect(AGENTS_CORE.opencode.connectedServices?.supportedServiceIds).toContain('anthropic');
   });
 
-  it('exposes Claude subscription OAuth and setup-token compatibility for Pi', () => {
+  it('exposes Claude subscription connected-account compatibility for Pi', () => {
     expect(AGENTS_CORE.pi.connectedServices?.supportedServiceIds).toContain('claude-subscription');
-    expect(AGENTS_CORE.pi.connectedServices?.supportedKindsByServiceId?.['claude-subscription']).toEqual([
-      'oauth',
-      'token',
-    ]);
-  });
-
-  it('keeps Gemini connected-service metadata token-only in shared agent core', () => {
-    expect(getAgentCore('antigravity').connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
-    expect(getAgentCore('gemini').connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
-    expect(getAgentCore('ohMyPi').connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
   });
 
   it('advertises Codex provider state sharing capabilities from the shared catalog', () => {

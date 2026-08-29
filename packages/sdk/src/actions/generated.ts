@@ -735,11 +735,6 @@ export type GeneratedActions = Readonly<{
         readonly list: (input: PublicActionInputById["sessions.spawn.profiles.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.spawn.profiles.list"]>;
       }> ;
     }> ;
-    readonly subagents: Readonly<{
-      readonly get: (input: PublicActionInputById["sessions.subagents.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.subagents.get"]>;
-      readonly list: (input: PublicActionInputById["sessions.subagents.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.subagents.list"]>;
-      readonly watch: (input: PublicActionInputById["sessions.subagents.watch"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.subagents.watch"]>;
-    }> ;
   }> ;
   readonly subagents: Readonly<{
     readonly delegate: Readonly<{
@@ -1322,11 +1317,6 @@ export function createGeneratedActions(execute: ActionExecute): GeneratedActions
         profiles: {
           list: (input: PublicActionInputById["sessions.spawn.profiles.list"], options?: ActionExecutionOptions) => execute("sessions.spawn.profiles.list", input, options),
         },
-      },
-      subagents: {
-        get: (input: PublicActionInputById["sessions.subagents.get"], options?: ActionExecutionOptions) => execute("sessions.subagents.get", input, options),
-        list: (input: PublicActionInputById["sessions.subagents.list"], options?: ActionExecutionOptions) => execute("sessions.subagents.list", input, options),
-        watch: (input: PublicActionInputById["sessions.subagents.watch"], options?: ActionExecutionOptions) => execute("sessions.subagents.watch", input, options),
       },
     },
     subagents: {

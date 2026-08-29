@@ -44,19 +44,19 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             required: true,
             input: { kind: 'protocolDefined', schema: TriageListInstancesInputV1Schema },
             resultSchema: TriageListInstancesResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
         },
         scan: {
             required: true,
             input: { kind: 'protocolDefined', schema: TriageScanInputV1Schema },
             resultSchema: TriageScanResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
         get: {
             required: true,
             input: { kind: 'protocolDefined', schema: TriageGetInputV1Schema },
             resultSchema: TriageGetResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
         },
         prepareReviewWorkspace: {
             required: false,
@@ -65,7 +65,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
                 schema: TriagePrepareReviewWorkspaceInputV1Schema,
             },
             resultSchema: TriagePrepareReviewWorkspaceResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'writesLocal' },
+            action: { surfaces: ['plugin'], dangerLevel: 'writesLocal' },
         },
         verifyReviewWorkspace: {
             required: false,
@@ -74,7 +74,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
                 schema: TriageVerifyReviewWorkspaceInputV1Schema,
             },
             resultSchema: TriageVerifyReviewWorkspaceResultV1Schema,
-            action: { surface: 'plugin', dangerLevel: 'safe' },
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
     },
     surfaces: {

@@ -188,7 +188,7 @@ export type PluginTargetedContributionSelectionV1 = Readonly<{
         immutableGenerationId: string;
     }>;
 }>;
-export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin';
+export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin' | 'voice';
 export type ContributionActionDangerLevel =
     | 'safe'
     | 'writesLocal'

@@ -229,6 +229,63 @@ describe('Happier SDK client', () => {
     await expect(client.actions.execute('machines.list', {})).rejects.toBeInstanceOf(HappierTransportError);
   });
 
+  it('validates caller request ids through the Protocol request-id schema without rewriting them', async () => {
+    const fetch = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
+      v: 1,
+      actionId: 'session.stop',
+      execution: { ok: true, result: { stopped: true } },
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+
+    // The original value is sent unchanged, including Unicode.
+    await expect(client.actions.execute(
+      'session.stop',
+      { sessionId: 'session-1' },
+      { requestId: 'corrélation-☃' },
+    )).resolves.toEqual({ stopped: true });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({ requestId: 'corrélation-☃' });
+
+    // The full 128-code-unit bound is admitted; 129 is a local TypeError.
+    await expect(client.actions.execute(
+      'session.stop',
+      { sessionId: 'session-1' },
+      { requestId: 'r'.repeat(128) },
+    )).resolves.toEqual({ stopped: true });
+    await expect(client.actions.execute(
+      'session.stop',
+      { sessionId: 'session-1' },
+      { requestId: 'r'.repeat(129) },
+    )).rejects.toThrow(new TypeError('requestId must be 1-128 code units with no outer whitespace'));
+
+    // Outer whitespace is rejected, never trimmed into a different identity.
+    await expect(client.actions.execute(
+      'session.stop',
+      { sessionId: 'session-1' },
+      { requestId: ' padded ' },
+    )).rejects.toBeInstanceOf(TypeError);
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('still generates a UUID request id for a mutation when none is supplied', async () => {
+    let requestId: string | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
+      requestId = JSON.parse(String(init?.body)).requestId;
+      return responseForRequest(init, {
+        v: 1,
+        actionId: 'session.message.send',
+        execution: { ok: true, result: { accepted: true } },
+      });
+    }));
+
+    await connect({ endpoint: 'http://daemon', token: 'pat' })
+      .actions.execute('session.message.send', { sessionId: 'session-1', message: 'Continue.', localId: 'input-1' });
+
+    expect(requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+  });
+
   it('preserves the effective generated request id on Action errors', async () => {
     let requestId: string | undefined;
     vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
