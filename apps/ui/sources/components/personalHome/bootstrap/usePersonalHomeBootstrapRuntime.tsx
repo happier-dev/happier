@@ -158,7 +158,9 @@ export function usePersonalHomeBootstrapRuntime(): PersonalHomeBootstrapRuntime 
         const localUrl = normalizeUrl(facts.relayRuntime ? resolveLocalUrl() : DEFAULT_PERSONAL_HOME_URL);
         const profilesBefore = listServerProfiles();
         const profile = facts.candidateLocalProfile ?? profilesBefore.find((entry) => profileMatchesUrl(entry, localUrl))
-            ?? upsertServerProfileOnly({ serverUrl: localUrl, source: 'desktop-personal-home' });
+            // Profile classification is a completion receipt owned by the profile lane. Keep the
+            // initial adoption write ordinary until the runtime/auth/sign-up facts are verified.
+            ?? upsertServerProfileOnly({ serverUrl: localUrl });
         const credentials = await TokenStorage.getCredentialsForServerUrl(localUrl, profile.serverIdentityId ? { serverId: profile.serverIdentityId } : {});
         if (credentials?.token) return;
 
