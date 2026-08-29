@@ -26,7 +26,8 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Keep the active failure collector intact; a newer scheduled/manual request may wait.
+  cancel-in-progress: false
 
 jobs:
   e2e-postgres:
@@ -86,20 +87,33 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Run core e2e suite (Postgres)
+      - name: Generate server provider client (postgres)
+        env:
+          HAPPIER_BUILD_DB_PROVIDERS: postgres
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+        run: yarn -s workspace @happier-dev/server generate:providers
+
+      - name: Run core e2e database suite (postgres)
         env:
           CI: "1"
           HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: postgres
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: "1"
           DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
-        run: yarn test:e2e
+        run: yarn test:e2e:core:fast -- --no-file-parallelism --maxWorkers=1 --minWorkers=1
 
-      - name: Upload e2e artifacts (on failure)
+      - name: Upload e2e diagnostics (on failure)
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: extended-e2e-postgres-artifacts
-          path: .project/logs/e2e
+          name: extended-e2e-postgres-diagnostics
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            .project/logs/e2e/**/*.log
+            .project/logs/e2e/**/*.json
+            .project/logs/e2e/**/*.jsonl
+            .project/logs/e2e/**/*.txt
 
   e2e-mysql:
     if: ${{ github.event_name != 'workflow_call' || inputs.run_e2e_mysql }}
@@ -157,20 +171,33 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Run core e2e suite (MySQL)
+      - name: Generate server provider client (mysql)
+        env:
+          HAPPIER_BUILD_DB_PROVIDERS: mysql
+          DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
+        run: yarn -s workspace @happier-dev/server generate:providers
+
+      - name: Run core e2e database suite (mysql)
         env:
           CI: "1"
           HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: mysql
+          HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: "1"
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
-        run: yarn test:e2e
+        run: yarn test:e2e:core:fast -- --no-file-parallelism --maxWorkers=1 --minWorkers=1
 
-      - name: Upload e2e artifacts (on failure)
+      - name: Upload e2e diagnostics (on failure)
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: extended-e2e-mysql-artifacts
-          path: .project/logs/e2e
+          name: extended-e2e-mysql-diagnostics
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            .project/logs/e2e/**/*.log
+            .project/logs/e2e/**/*.json
+            .project/logs/e2e/**/*.jsonl
+            .project/logs/e2e/**/*.txt
 
   db-contract-postgres:
     if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_postgres }}
