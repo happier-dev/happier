@@ -69,7 +69,7 @@ export const PluginWebhookEndpointReadinessV1Schema = z.enum([
 
 export const PluginWebhookEndpointSetupV1Schema = z.discriminatedUnion('kind', [
   z.object({
-    kind: z.literal('githubAccountEndpointV1'),
+    kind: z.literal('accountEndpointV1'),
     credential: z.literal('serverGenerated'),
   }).strict(),
   z.object({

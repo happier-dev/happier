@@ -35,6 +35,8 @@ export const ModelPackManifestSchema = z.object({
   publishedAt: z.string().min(1).optional(),
   licenseNotices: z.array(z.string().min(1)).optional(),
   voices: z.array(ModelPackVoiceCatalogEntrySchema).optional(),
+  /** Explicit catalog default. Omitted legacy manifests use the first declared voice. */
+  defaultVoiceId: z.string().min(1).optional(),
   files: z
     .array(
       z.object({
@@ -45,6 +47,17 @@ export const ModelPackManifestSchema = z.object({
       }),
     )
     .min(1),
+}).superRefine((manifest, ctx) => {
+  if (
+    manifest.defaultVoiceId
+    && !(manifest.voices ?? []).some((voice) => voice.id === manifest.defaultVoiceId)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['defaultVoiceId'],
+      message: 'The default voice must identify a declared voice.',
+    });
+  }
 });
 export type ModelPackManifest = z.infer<typeof ModelPackManifestSchema>;
 

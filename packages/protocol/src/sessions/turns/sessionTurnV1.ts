@@ -9,9 +9,10 @@ import {
   SessionTurnTranscriptAnchorsV1Schema,
 } from './sessionTurnMutationV1.js';
 import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
 const SessionTurnIdentifierV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
-const SessionTurnAgentIdV1Schema = z.string().trim().min(1).max(128);
+const SessionTurnAgentIdV1Schema = AgentIdV1Schema;
 const SessionTurnTimestampV1Schema = z.number().int().nonnegative();
 
 export const SessionTurnRollbackV1Schema = z

@@ -19,6 +19,7 @@ import {
 } from '../../hooks/hookExecutionSemantics.js';
 import { PluginJsonValueV2Schema } from '../contributions/publicTypes.js';
 import { ActionIdSchema } from '../../actions/actionIds.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
 export const PLUGIN_HOOK_IDS_V1 = [
   'session.spawned',
@@ -149,7 +150,7 @@ export const ActionExecuteAfterHookPayloadSchema = ActionExecuteBeforeHookPayloa
 export type ActionExecuteAfterHookPayload = z.infer<typeof ActionExecuteAfterHookPayloadSchema>;
 
 const AgentToolExecutionBaseHookPayloadSchema = z.object({
-  agentId: z.string().trim().min(1).max(256),
+  agentId: AgentIdV1Schema,
   runtimeFamily: PluginHookSupportedRuntimeFamilyV1Schema,
   capability: PluginExecutionInterceptionCapabilitySchema,
   sessionId: z.string().trim().min(1).optional(),

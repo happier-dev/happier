@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+/** A policy-deferred Action has not failed or executed; the present user owns the next step. */
+export const ActionApprovalRequestCreatedResultSchema = z.object({
+  kind: z.literal('approval_request_created'),
+  artifactId: z.string().trim().min(1),
+  actionId: z.string().trim().min(1),
+}).strict();
+
+export type ActionApprovalRequestCreatedResult = Readonly<
+  z.infer<typeof ActionApprovalRequestCreatedResultSchema>
+>;
+
 /**
  * The canonical outcome shape shared by Action execution projections.
  *

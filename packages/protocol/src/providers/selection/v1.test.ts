@@ -10,6 +10,7 @@ import {
   deserializeModelVisibilityRefV1,
   resolveSessionModelSelectionInputRefV1,
   resolveSessionModelSelectionIntentV1,
+  readSessionModelSelectionIntentSourceV1,
   sessionModelSelectionIntentRequiresAgentTargetV1,
   SessionModelSelectionIntentV1Schema,
   projectSessionMessageModelSelectionToLegacyModelV1,
@@ -671,6 +672,37 @@ describe('provider model selection contracts', () => {
       updatedAt: 11,
       selection: { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'newer-model' },
     });
+  });
+
+  it('treats a null canonical carrier as present-invalid, never as absent legacy deference', () => {
+    const newerLegacy = { v: 1, updatedAt: 999, modelId: 'gpt-5' } as const;
+
+    // undefined stays absent: a newer usable legacy override is the intent.
+    expect(readSessionModelSelectionIntentSourceV1({
+      canonical: undefined,
+      legacy: newerLegacy,
+    })).toEqual({ status: 'legacy', intent: newerLegacy });
+
+    // A null canonical carrier is PRESENT corrupted state. It must fail closed
+    // instead of silently deferring to the legacy override, because two
+    // answers for one stored payload apply different models.
+    expect(readSessionModelSelectionIntentSourceV1({
+      canonical: null,
+      legacy: newerLegacy,
+    })).toEqual({ status: 'invalid' });
+    expect(readSessionModelSelectionIntentSourceV1({
+      canonical: null,
+      legacy: undefined,
+    })).toEqual({ status: 'invalid' });
+    expect(resolveSessionModelSelectionIntentV1({
+      canonical: null,
+      legacy: newerLegacy,
+      agentTargetKey: 'agent:codex',
+    })).toBeNull();
+    expect(sessionModelSelectionIntentRequiresAgentTargetV1({
+      canonical: null,
+      legacy: newerLegacy,
+    })).toBe(false);
   });
 
   it('projects native and clear intent for released readers but omits provider-bound intent', () => {

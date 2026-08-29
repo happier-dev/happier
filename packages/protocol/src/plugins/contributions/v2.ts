@@ -41,6 +41,7 @@ import {
 } from '../requestInterceptors/v1.js';
 import {
   PluginSettingsContributionV2Schema,
+  readPluginSettingSecretCustody,
 } from './settings.js';
 import {
   PluginExecutionRunProfileContributionV2Schema,
@@ -422,13 +423,26 @@ const PluginAgentDisplayV2Shape = {
   catalog: PluginAgentCatalogV2Schema.optional(),
   ui: PluginAgentUiBehaviorContributionV2Schema.optional(),
 };
+const PluginAgentSessionCapabilitiesShape = {
+  surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
+  sessions: PluginAgentSessionCapabilitiesV2Schema,
+  tools: PluginAgentToolsCapabilityV2Schema.optional(),
+};
 const PluginAgentSessionPrimaryShape = {
   primary: z.literal('sessions'),
-  capabilities: z.object({ ...PluginAgentCapabilitiesV2Shape, sessions: PluginAgentSessionCapabilitiesV2Schema }).strict(),
+  // A Session-capable Agent registers only its native Session runtime: the
+  // host derives the finite Execution Run projection from Session facts, so a
+  // Session-primary declaration may not carry an `executionRuns` block and
+  // this strict shape rejects one.
+  capabilities: z.object(PluginAgentSessionCapabilitiesShape).strict(),
 };
 const PluginAgentExecutionPrimaryShape = {
   primary: z.literal('executionRuns'),
-  capabilities: z.object({ ...PluginAgentCapabilitiesV2Shape, executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema }).strict(),
+  capabilities: z.object({
+    surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
+    executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema,
+    tools: PluginAgentToolsCapabilityV2Schema.optional(),
+  }).strict(),
 };
 const PluginAgentPrimaryContributionV2Schema = z.union([
   z.object({ ...PluginAgentDisplayV2Shape, runtime: PluginAgentRuntimeAcpV2Schema, ...PluginAgentSessionPrimaryShape }).strict(),
@@ -724,6 +738,41 @@ const PluginContributesV2SchemaWithoutDefault = PluginContributesV2BaseSchema.ex
       ctx.addIssue({ code: 'custom', path: ['voiceProviders', index, 'id'], message: 'Duplicate voice provider contribution id' });
     }
     voiceProviderIds.add(provider.id);
+  });
+  const settingsFieldKeys = new Set<string>();
+  const settingsSecretIds = new Set<string>();
+  value.settings.forEach((settings, settingsIndex) => {
+    settings.fields.forEach((field, fieldIndex) => {
+      const isSecret = readPluginSettingSecretCustody(field.secret) !== null;
+      if (isSecret) {
+        if (settingsSecretIds.has(field.id) || [...settingsFieldKeys].some((key) => key.endsWith(`\u0000${field.id}`))) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['settings', settingsIndex, 'fields', fieldIndex, 'id'],
+            message: `Plugin secret setting '${field.id}' conflicts with another plugin-global Settings declaration.`,
+          });
+        }
+        settingsSecretIds.add(field.id);
+        return;
+      }
+      if (settingsSecretIds.has(field.id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['settings', settingsIndex, 'fields', fieldIndex, 'id'],
+          message: `Plugin setting '${field.id}' conflicts with a plugin-global secret Settings declaration.`,
+        });
+        return;
+      }
+      const fieldKey = `${settings.scope}\u0000${field.id}`;
+      if (settingsFieldKeys.has(fieldKey)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['settings', settingsIndex, 'fields', fieldIndex, 'id'],
+          message: `Duplicate Settings field '${field.id}' in scope '${settings.scope}'.`,
+        });
+      }
+      settingsFieldKeys.add(fieldKey);
+    });
   });
   const backgroundServiceIds = new Set<string>();
   value.backgroundServices.forEach((service, index) => {

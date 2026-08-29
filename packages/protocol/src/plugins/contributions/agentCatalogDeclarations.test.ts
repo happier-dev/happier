@@ -33,6 +33,25 @@ const agent = {
 } as const;
 
 describe('Agent catalog declarations', () => {
+  it('keeps Agent lifecycle capability grammar exclusive to the declared primary runtime', () => {
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      capabilities: {
+        ...agent.capabilities,
+        executionRuns: { open: ['create'], checkpoint: false, stop: true },
+      },
+    }).success).toBe(false);
+
+    expect(PluginAgentContributionV2Schema.safeParse({
+      ...agent,
+      primary: 'executionRuns',
+      capabilities: {
+        executionRuns: { open: ['create'], checkpoint: false, stop: true },
+        sessions: agent.capabilities.sessions,
+      },
+    }).success).toBe(false);
+  });
+
   it('admits only ordered data-only coding prompts and the closed resume-checklist policy', () => {
     expect(PluginAgentContributionV2Schema.parse(agent).catalog).toEqual(agent.catalog);
     expect(PluginAgentContributionV2Schema.safeParse({

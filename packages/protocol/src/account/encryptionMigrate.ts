@@ -1094,7 +1094,7 @@ export type AccountEncryptionMigrateTransitionAuthorizeRequest = z.infer<
 export const AccountEncryptionMigrateCollectionInventoryPageRequestSchema = z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
-    cursor: PluginCollectionOpaqueCursorV1Schema.optional(),
+    cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
   .strict();
 export type AccountEncryptionMigrateCollectionInventoryPageRequest = z.infer<
@@ -1106,7 +1106,7 @@ export const AccountEncryptionMigrateCollectionInventoryPageSchema = z
     items: z
       .array(AccountEncryptionMigrateCollectionInventoryItemSchema)
       .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
-    nextCursor: PluginCollectionOpaqueCursorV1Schema.optional(),
+    nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
   .strict();
 export type AccountEncryptionMigrateCollectionInventoryPage = z.infer<
@@ -1286,7 +1286,7 @@ export type AccountEncryptionMigrateAutomationStageItem = z.infer<
 export const AccountEncryptionMigrateAutomationInventoryPageRequestSchema = z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
-    cursor: PluginCollectionOpaqueCursorV1Schema.optional(),
+    cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
   .strict();
 export type AccountEncryptionMigrateAutomationInventoryPageRequest = z.infer<
@@ -1298,7 +1298,7 @@ export const AccountEncryptionMigrateAutomationInventoryPageSchema = z
     items: z
       .array(AccountEncryptionMigrateAutomationInventoryItemSchema)
       .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
-    nextCursor: PluginCollectionOpaqueCursorV1Schema.optional(),
+    nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
   .strict();
 export type AccountEncryptionMigrateAutomationInventoryPage = z.infer<

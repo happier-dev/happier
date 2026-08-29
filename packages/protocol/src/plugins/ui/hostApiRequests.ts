@@ -507,6 +507,21 @@ export const PluginUiSessionPlacementCandidateV1Schema = z.object({
 export type PluginUiSessionPlacementCandidateV1 =
   z.infer<typeof PluginUiSessionPlacementCandidateV1Schema>;
 
+export const PluginUiNewSessionPlacementV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('exactTarget'),
+    serverId: z.string().trim().min(1),
+    machineId: z.string().trim().min(1),
+    directory: z.string().trim().min(1).optional(),
+  }).strict(),
+  z.object({
+    kind: z.literal('currentTarget'),
+    directory: z.string().trim().min(1),
+  }).strict(),
+]);
+export type PluginUiNewSessionPlacementV1 =
+  z.infer<typeof PluginUiNewSessionPlacementV1Schema>;
+
 export const PluginUiNewSessionSeedV1Schema = z.object({
   prompt: z.string().trim().min(1).optional(),
   profileId: z.string().trim().min(1).optional(),
@@ -517,11 +532,7 @@ export const PluginUiNewSessionSeedV1Schema = z.object({
    * choice it needs to present.
    */
   checkoutIntent: PluginUiSessionCheckoutIntentV1Schema.optional(),
-  placement: z.object({
-    serverId: z.string().trim().min(1).optional(),
-    machineId: z.string().trim().min(1).optional(),
-    directory: z.string().trim().min(1).optional(),
-  }).strict().optional(),
+  placement: PluginUiNewSessionPlacementV1Schema.optional(),
   /**
    * Exact candidate placements stay candidates. In particular, a caller with
    * two matching checkouts must not convert the first array item into the

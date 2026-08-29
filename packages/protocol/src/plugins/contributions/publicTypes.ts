@@ -33,7 +33,7 @@ export const PluginContributionReferenceV2Schema = defineProtocolUnion([
 export type PluginContributionReferenceV2 = ReturnType<typeof PluginContributionReferenceV2Schema.parse>;
 
 
-type PluginPolicyExpressionV2 =
+export type PluginPolicyExpressionV2 =
   | { fact: string; operator: string; value: boolean | string }
   | { all: PluginPolicyExpressionV2[] }
   | { any: PluginPolicyExpressionV2[] }
@@ -48,6 +48,56 @@ export const PluginPolicyExpressionV2Schema: z.ZodType<PluginPolicyExpressionV2>
   z.object({ any: z.array(PluginPolicyExpressionV2Schema) }).strict(),
   z.object({ not: PluginPolicyExpressionV2Schema }).strict(),
 ]));
+
+export type PluginPolicyFactValueV2 = boolean | string | readonly string[] | undefined;
+export type PluginPolicyFactsV2 = Readonly<Record<string, PluginPolicyFactValueV2>>;
+
+/**
+ * Pure tri-state evaluation for the canonical availability expression grammar.
+ * `undefined` facts remain unknown so each realm can apply its own explicit
+ * presentation policy (for example, disabledWhen maps unknown to disabled).
+ */
+export function evaluatePluginPolicyExpressionV2(
+  expression: PluginPolicyExpressionV2,
+  facts: PluginPolicyFactsV2,
+): boolean | null {
+  if ('all' in expression) {
+    let unknown = false;
+    for (const child of expression.all) {
+      const result = evaluatePluginPolicyExpressionV2(child, facts);
+      if (result === false) return false;
+      if (result === null) unknown = true;
+    }
+    return unknown ? null : true;
+  }
+  if ('any' in expression) {
+    let unknown = false;
+    for (const child of expression.any) {
+      const result = evaluatePluginPolicyExpressionV2(child, facts);
+      if (result === true) return true;
+      if (result === null) unknown = true;
+    }
+    return unknown ? null : false;
+  }
+  if ('not' in expression) {
+    const result = evaluatePluginPolicyExpressionV2(expression.not, facts);
+    return result === null ? null : !result;
+  }
+  const value = facts[expression.fact];
+  if (value === undefined) return null;
+  switch (expression.operator) {
+    case 'equals':
+      return value === expression.value;
+    case 'notEquals':
+      return value !== expression.value;
+    case 'enabled':
+      return Array.isArray(value) ? value.includes(expression.value as string) : false;
+    case 'contains':
+      return Array.isArray(value) ? value.includes(expression.value as string) : false;
+  }
+  return null;
+}
+
 export const PluginAvailabilityDescriptorV2Schema = z.union([
   z.object({ when: PluginPolicyExpressionV2Schema.optional(), disabledWhen: z.never().optional(), disabledReason: z.never().optional() }).strict(),
   z.object({ when: PluginPolicyExpressionV2Schema.optional(), disabledWhen: PluginPolicyExpressionV2Schema, disabledReason: PluginLocalizedStringV2Schema }).strict(),

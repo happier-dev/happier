@@ -129,6 +129,26 @@ describe('Session permission mediation V1 schemas', () => {
       truncated: false,
       nextCursor: null,
     }).success).toBe(false);
+    expect(SessionPermissionRemotePendingListOutputV1Schema.safeParse({
+      requests: [{
+        kind: 'permission',
+        requestId: 'request-1',
+        turnId: 'turn-1',
+        createdAtMs: 1,
+        allowedScopes: ['request'],
+        agentRequestSummary: {
+          kind: 'permission',
+          toolLabel: 'Bash',
+          title: 'Run a reviewed command',
+          detail: 'Command: git',
+          toolInput: { command: 'git status' },
+          hiddenReasoning: 'private chain of thought',
+          providerNativeUpdate: { type: 'setMode' },
+        },
+      }],
+      truncated: false,
+      nextCursor: null,
+    }).success).toBe(false);
 
     expect(SessionPermissionRemoteRespondOutputV1Schema.safeParse({
       status: 'applied',

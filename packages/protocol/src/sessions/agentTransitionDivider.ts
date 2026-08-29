@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { AgentIdV1Schema } from '../agents/agentIdV1.js';
+
 /**
  * Transition divider contract — the ONLY transition history artifact.
  *
@@ -39,8 +41,8 @@ export const SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX = 'agent-transitio
 export const SessionAgentTransitionDividerV1Schema = z
   .object({
     v: z.literal(1),
-    fromAgentId: z.string().trim().min(1).max(128),
-    toAgentId: z.string().trim().min(1).max(128),
+    fromAgentId: AgentIdV1Schema,
+    toAgentId: AgentIdV1Schema,
     /**
      * UPPER bound: the source transcript cutoff the activation brief was built
      * from — the `upToSeqInclusive` the bounded context pass actually used.

@@ -53,6 +53,9 @@ export const ComposerRefV1Schema = defineProtocolUnion([
 ]);
 export type ComposerRefV1 = ReturnType<typeof ComposerRefV1Schema.parse>;
 
+/** Host-private transcript-admission metadata key for exact detached Composer source custody. */
+export const COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 = '__happierComposerSourceRefV1';
+
 /** Stable internal presentation/storage key for one exact Composer address. */
 export function composerRefV1Key(ref: ComposerRefV1): string {
   switch (ref.kind) {

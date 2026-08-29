@@ -141,7 +141,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
           localId: 'claude',
         },
       },
-      initialMessage: 'Start a new session.',
+      initialInput: { text: 'Start a new session.' },
     };
     const input = [
       'Ok.',

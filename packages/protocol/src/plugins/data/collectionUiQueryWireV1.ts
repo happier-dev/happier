@@ -8,6 +8,7 @@ import {
   PluginCollectionMemberNameV1Schema,
   PluginCollectionProjectedScalarValueV1Schema,
 } from './collectionContributionV1.js';
+import { PluginCollectionOpaqueCursorV1Schema } from './collectionOpaqueCursorV1.js';
 
 const MAX_COLLECTION_ROW_ID_UTF8_BYTES = 256;
 
@@ -26,8 +27,7 @@ export const PluginCollectionRowIdV1Schema = z.string().min(1).superRefine((valu
 });
 export type PluginCollectionRowIdV1 = z.infer<typeof PluginCollectionRowIdV1Schema>;
 
-/** Opaque direct and UI-query continuation evidence; callers cannot interpret it. */
-export const PluginCollectionOpaqueCursorV1Schema = z.string().min(1).max(4096).regex(/^[A-Za-z0-9_-]+$/);
+export { PluginCollectionOpaqueCursorV1Schema };
 
 /**
  * The authenticated static UI-query request and result wire are realm-neutral:
@@ -42,7 +42,7 @@ export const PluginCollectionUiQueryRequestV1Schema = z.object({
     PluginCollectionMemberNameV1Schema,
     z.union([z.string(), PluginCollectionFiniteNumberV1Schema, z.boolean()]),
   ).default({}),
-  cursor: PluginCollectionOpaqueCursorV1Schema.optional(),
+  cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
 }).strict();
 export type PluginCollectionUiQueryRequestV1 = z.infer<typeof PluginCollectionUiQueryRequestV1Schema>;
 
@@ -73,7 +73,7 @@ export type PluginCollectionUiRowV1 = z.infer<typeof PluginCollectionUiRowV1Sche
 
 export const PluginCollectionUiQueryResultV1Schema = z.object({
   rows: z.array(PluginCollectionUiRowV1Schema).max(200),
-  nextCursor: PluginCollectionOpaqueCursorV1Schema.optional(),
+  nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   changeCursor: z.number().int().nonnegative(),
 }).strict();
 export type PluginCollectionUiQueryResultV1 = z.infer<typeof PluginCollectionUiQueryResultV1Schema>;

@@ -57,7 +57,7 @@ function createActionExecutor(deps: ActionExecutorDeps): ReturnType<typeof creat
     execute: (actionId, input, context) => executor.execute(
       actionId,
       input,
-      { surface: 'ui', ...context },
+      { surface: 'ui', authority: 'present_user', ...context },
     ),
   };
 }
@@ -326,7 +326,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput, { authority: 'present_user' });
 
     expect(res).toEqual({
       ok: false,
@@ -345,7 +345,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput, { authority: 'present_user' });
 
     expect(res).toEqual({
       ok: false,
@@ -363,7 +363,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     }));
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput, { authority: 'present_user' });
 
     expect(res).toEqual({
       ok: false,
@@ -382,7 +382,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     }));
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput);
+    const res = await executor.execute('session.spawn_new', canonicalSessionSpawnInput, { authority: 'present_user' });
 
     expect(res).toEqual({
       ok: false,
@@ -538,10 +538,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
       agentId: 'claude',
       backendTargetKey: 'backend:claude',
       machineId: 'm1',
-      serverId: 'local',
       modelId: 'claude-opus-4-8',
       limit: 5,
-    });
+    }, { serverId: 'local' });
 
     expect(res.ok).toBe(true);
     expect(deps.agentsConfigOptionsList).toHaveBeenCalledWith({
@@ -582,6 +581,67 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
     expect((res as any).result.items).toEqual([{ id: 'plan', label: 'Plan' }]);
   });
+
+  const hostStampedServerInventoryCases = [
+    ['agents.models.list', 'agentsModelsList', {
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+      machineId: 'm1',
+    }],
+    ['agents.config_options.list', 'agentsConfigOptionsList', {
+      agentId: 'claude',
+      backendTargetKey: 'backend:claude',
+      machineId: 'm1',
+    }],
+    ['agents.session_modes.list', 'agentsSessionModesList', {
+      agentId: 'codex',
+      backendTargetKey: 'backend:codex',
+      machineId: 'm1',
+    }],
+    ['sessions.spawn.connected_services.list', 'spawnConnectedServicesList', {
+      agentId: 'codex',
+      backendTargetKey: 'backend:codex',
+      machineId: 'm1',
+    }],
+  ] as const;
+
+  it.each(hostStampedServerInventoryCases)(
+    'rejects caller-supplied server identity for %s',
+    async (actionId, dependencyName, actionInput) => {
+      const deps = createDeps();
+      const executor = createActionExecutor(deps);
+
+      await expect(executor.execute(
+        actionId,
+        { ...actionInput, serverId: 'caller-controlled' },
+        { serverId: 'host-stamped' },
+      )).resolves.toEqual({
+        ok: false,
+        errorCode: 'invalid_parameters',
+        error: 'invalid_parameters',
+      });
+      expect(deps[dependencyName]).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(hostStampedServerInventoryCases)(
+    'binds host-stamped server identity for %s',
+    async (actionId, dependencyName, actionInput) => {
+      const deps = createDeps();
+      const executor = createActionExecutor(deps);
+
+      const result = await executor.execute(
+        actionId,
+        actionInput,
+        { serverId: 'host-stamped' },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(deps[dependencyName]).toHaveBeenCalledWith(expect.objectContaining({
+        serverId: 'host-stamped',
+      }));
+    },
+  );
 
   it('lists spawn profiles with no agent scope, because a profile supplies the agent', async () => {
     // A Triage action selects a profile FIRST and the profile then supplies the
@@ -666,7 +726,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
-  it('preserves canonical built-in backendTargetKey values through agents.models.list', async () => {
+  it('rejects undeclared fields for agents.models.list', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
@@ -674,15 +734,15 @@ describe('createActionExecutor (inventory/discovery)', () => {
       backendTargetKey: 'backend:codex',
       machineId: 'm1',
       limit: 2,
+      providerTraceId: 'preview-field',
     });
 
-    expect(res.ok).toBe(true);
-    expect(deps.agentsModelsList).toHaveBeenCalledWith({
-      agentId: 'codex',
-      backendTargetKey: 'backend:codex',
-      machineId: 'm1',
-      limit: 2,
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
     });
+    expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });
 
   it('routes configured ACP backendTargetKey through agents.models.list', async () => {

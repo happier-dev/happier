@@ -48,9 +48,17 @@ export const AutomationQualifiedPluginContributionRefV1Schema =
   PluginContributionIdentityV1Schema;
 export type AutomationQualifiedPluginContributionRefV1 = PluginContributionIdentityV1;
 
+/**
+ * One selected observation transport per Event source. `checkpointedPull` is
+ * the ordered provider-cursor contract whose consumer must advance a durable
+ * provider checkpoint; `socket` is a provider-owned long-lived session-bound
+ * observation with no ordered pull checkpoint and no provider checkpoint
+ * cursor; `durablePush` is the webhook-delivered transport.
+ */
 export const AutomationObservationTransportKindV1Schema = z.enum([
   'checkpointedPull',
   'durablePush',
+  'socket',
 ]);
 export type AutomationObservationTransportKindV1 = z.infer<
   typeof AutomationObservationTransportKindV1Schema
@@ -64,7 +72,6 @@ export const PluginEventAutomationDeclarationV1Schema = z.object({
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
     supportedObservationTransports: z.array(AutomationObservationTransportKindV1Schema)
       .min(1)
-      .max(2)
       .superRefine((value, context) => {
         if (new Set(value).size !== value.length) {
           context.addIssue({ code: z.ZodIssueCode.custom, message: 'Observation transports must be unique' });

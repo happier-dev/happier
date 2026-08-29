@@ -6,6 +6,11 @@ import {
   createPluginActionPresentUserGate,
   projectPluginActionUnavailableOutcomeCode,
 } from './invocation.js';
+import {
+  defineProtocolLiteral,
+  defineProtocolObject,
+  defineProtocolString,
+} from './protocolComposableSchema.js';
 
 function currentIntentAuthorizationFacts(generation = '7') {
   return {
@@ -38,21 +43,25 @@ function currentIntentResolution(generation = '7') {
   };
 }
 
+type TestProtocolParser = (input: unknown) => Readonly<
+  | { success: true; data: unknown }
+  | {
+    success: false;
+    issues: readonly Readonly<{
+      path: readonly (string | number)[];
+      code: string;
+      message: string;
+    }>[];
+  }
+>;
+
 function createInvocation(params: Readonly<{
   generationSignal?: AbortSignal;
   isCurrent?: () => boolean;
   inputSchema?: object;
-  inputParser?: (input: unknown) => Readonly<
-    | { success: true; data: unknown }
-    | {
-      success: false;
-      issues: readonly Readonly<{
-        path: readonly (string | number)[];
-        code: string;
-        message: string;
-      }>[];
-    }
-  >;
+  inputParser?: TestProtocolParser;
+  resultSchema?: object;
+  resultParser?: TestProtocolParser;
 }> = {}) {
   return createPluginActionInvocation({
     pluginId: 'acme.action',
@@ -61,6 +70,8 @@ function createInvocation(params: Readonly<{
     isCurrent: params.isCurrent ?? (() => true),
     ...(params.inputSchema === undefined ? {} : { inputSchema: params.inputSchema }),
     ...(params.inputParser === undefined ? {} : { inputParser: params.inputParser }),
+    ...(params.resultSchema === undefined ? {} : { resultSchema: params.resultSchema }),
+    ...(params.resultParser === undefined ? {} : { resultParser: params.resultParser }),
   });
 }
 
@@ -409,6 +420,75 @@ describe('createPluginActionInvocation', () => {
     });
     expect(preDispatch).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('normalizes handler results through the executable parser at the canonical invocation owner', async () => {
+    const resultParser = vi.fn((input: unknown) => Object.freeze({
+      success: true as const,
+      data: Object.freeze({ title: String((input as { title?: unknown }).title ?? '') }),
+    }));
+    const invocation = createInvocation({
+      resultParser,
+      resultSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    });
+
+    await expect(invocation.invoke(null, {
+      handler: () => ({ title: 'Release', localOnly: true }),
+    })).resolves.toEqual({ status: 'executed', value: { title: 'Release' } });
+    expect(resultParser).toHaveBeenCalledOnce();
+
+    await expect(createInvocation({
+      resultParser: () => Object.freeze({ success: true as const, data: { title: 42 } }),
+      resultSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    }).invoke(null, { handler: () => ({ title: 'Release' }) })).resolves.toMatchObject({
+      status: 'failed',
+      code: 'plugin_action_schema_projection_mismatch',
+      message: expect.stringContaining('resultSchema'),
+    });
+
+    await expect(createInvocation({
+      resultParser: () => { throw new Error('parser drift'); },
+      resultSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    }).invoke(null, { handler: () => ({ title: 'Release' }) })).resolves.toMatchObject({
+      status: 'failed',
+      code: 'plugin_action_schema_projection_mismatch',
+      message: expect.stringContaining('resultSchema'),
+    });
+  });
+
+  it('rehydrates canonical manifest schemas when no executable parser carrier is present', async () => {
+    const inputSchema = defineProtocolObject({
+      title: defineProtocolString({ minLength: 1 }),
+    }, { policy: 'additive-open/drop' }).jsonSchema;
+    const resultSchema = defineProtocolObject({
+      accepted: defineProtocolLiteral(true),
+    }, { policy: 'additive-open/drop' }).jsonSchema;
+    const handler = vi.fn((handlerInput: { input: { title: string } }) => ({
+      accepted: true,
+      privateResult: handlerInput.input.title,
+    }));
+    const invocation = createInvocation({ inputSchema, resultSchema });
+
+    await expect(invocation.invoke({ title: 'Release', privateInput: true }, { handler }))
+      .resolves.toEqual({ status: 'executed', value: { accepted: true } });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      input: { title: 'Release' },
+    }));
   });
 
   it('runs host pre-dispatch only after input-schema admission and preserves its unavailable result', async () => {

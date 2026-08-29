@@ -53,6 +53,7 @@ describe('session.spawn_new approval replay directory proof', () => {
 
     await expect(executor.execute('session.spawn_new', sessionSpawnInput, {
       surface: 'cli',
+      authority: 'present_user',
     })).resolves.toEqual({
       ok: true,
       result: {
@@ -65,7 +66,7 @@ describe('session.spawn_new approval replay directory proof', () => {
     const replay = await executor.execute('approval.request.decide', {
       artifactId: 'approval-directory-1',
       decision: 'approve',
-    }, { surface: 'cli' });
+    }, { surface: 'cli', authority: 'present_user' });
 
     expect.soft(replay).toMatchObject({
       ok: true,

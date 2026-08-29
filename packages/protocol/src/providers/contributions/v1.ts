@@ -108,10 +108,22 @@ export const ProviderModelLoadDescriptorV1Schema = z.object({
 }).strict();
 export type ProviderModelLoadDescriptorV1 = z.infer<typeof ProviderModelLoadDescriptorV1Schema>;
 
+export const ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema = z.object({
+  // V1 intentionally supports only the current author need: at least one
+  // declared purpose must be bound. A literal avoids inventing arbitrary
+  // cardinality policy while optional Providers remain valid with zero.
+  minimumBound: z.literal(1),
+}).strict();
+export type ProviderManagedConnectedAccountPurposeBindingPolicyV1 = z.infer<
+  typeof ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema
+>;
+
 export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
   kind: z.literal('managed'),
   dependencies: z.array(asProtocolZod(PluginContributionLocalIdSchema)).max(16).optional(),
   connectedAccounts: ConnectedAccountPurposeDeclarationsV1Schema.optional(),
+  connectedAccountPurposeBindingPolicy:
+    ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema.optional(),
   requestAuthUses: ConnectedAccountRequestAuthUsesV1Schema.optional(),
   endpointTemplateIds: z.array(ProviderLocalIdSchema).min(1)
     .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
@@ -122,6 +134,16 @@ export const ProviderManagedRuntimeDeclarationV1Schema = z.object({
   }
   if (new Set(value.endpointTemplateIds).size !== value.endpointTemplateIds.length) {
     context.addIssue({ code: 'custom', path: ['endpointTemplateIds'], message: 'Managed Provider endpoint-template ids must be unique' });
+  }
+  if (
+    value.connectedAccountPurposeBindingPolicy !== undefined
+    && (value.connectedAccounts?.length ?? 0) === 0
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['connectedAccountPurposeBindingPolicy'],
+      message: 'Managed Provider purpose binding policy requires a declared connected-account purpose',
+    });
   }
   const declarationsByPurpose = new Map(
     (value.connectedAccounts ?? []).map((declaration) => [
@@ -167,6 +189,8 @@ export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
   dependencies: string[];
   connectedAccounts:
     ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[];
+  connectedAccountPurposeBindingPolicy?:
+    ProviderManagedConnectedAccountPurposeBindingPolicyV1;
   requestAuthUses: ConnectedAccountRequestAuthUseV1[];
   endpointTemplateIds: string[];
 }>;
@@ -256,6 +280,10 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
       });
     }).sort((left, right) =>
       compareProviderCanonicalStringsV1(left.purpose, right.purpose));
+  const connectedAccountPurposeBindingPolicy =
+    parsed.connectedAccountPurposeBindingPolicy === undefined
+      ? undefined
+      : Object.freeze({ ...parsed.connectedAccountPurposeBindingPolicy });
   const requestAuthUses: ConnectedAccountRequestAuthUseV1[] = (
     parsed.requestAuthUses ?? []
   ).map((use) => Object.freeze({
@@ -276,6 +304,9 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
     kind: 'managed',
     dependencies,
     connectedAccounts,
+    ...(connectedAccountPurposeBindingPolicy === undefined
+      ? {}
+      : { connectedAccountPurposeBindingPolicy }),
     requestAuthUses,
     endpointTemplateIds,
   });

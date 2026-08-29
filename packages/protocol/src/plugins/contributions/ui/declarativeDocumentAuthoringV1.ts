@@ -5,6 +5,16 @@ import {
   type PluginDeclarativeNodeV2,
 } from './v2.js';
 
+export {
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_DEPTH_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_NODES_V1,
+  MAX_PLUGIN_DECLARATIVE_DOCUMENT_PLAIN_VALUES_V1,
+  parsePluginDeclarativeDocumentResourceBytesV1,
+  preflightPluginDeclarativeDocumentV1,
+  type PluginDeclarativeDocumentPreflightFailureV1,
+  type PluginDeclarativeDocumentPreflightResultV1,
+} from './declarativeDocumentPreflightV1.js';
+
 /** The strict, browser-safe authored envelope for one declarative document. */
 export type PluginDeclarativeDocumentV1 = Readonly<{
   version: 1;

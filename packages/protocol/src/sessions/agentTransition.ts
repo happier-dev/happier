@@ -4,6 +4,7 @@ import { AcpConfigOptionOverridesV1Schema } from './metadata/metadataOverridesV1
 import { isSessionAgentTransitionDividerLocalId } from './agentTransitionDivider.js';
 import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
 import { SessionUserMessageSendRequestSchema } from './userMessageRpc.js';
+import { AgentIdV1Schema } from '../agents/agentIdV1.js';
 
 /**
  * Same-Session cross-Agent continuation — the frozen shared contract.
@@ -58,7 +59,7 @@ import { SessionUserMessageSendRequestSchema } from './userMessageRpc.js';
 export const SessionAgentTransitionSelectionV1Schema = z
   .object({
     v: z.literal(1),
-    agentId: z.string().trim().min(1).max(128),
+    agentId: AgentIdV1Schema,
     modelId: z.string().trim().min(1).max(256).optional(),
     /**
      * Model-provider connection. Accepted only where the receiving tree and the
@@ -120,7 +121,7 @@ export const SessionAgentTransitionRequestV1Schema = z
      * The server cannot compare it for an E2EE Session and relies on the
      * metadata tuple/version CAS instead.
      */
-    expectedCurrentAgentId: z.string().trim().min(1).max(128),
+    expectedCurrentAgentId: AgentIdV1Schema,
     selection: SessionAgentTransitionSelectionV1Schema,
     input: SessionAgentTransitionInputV1Schema,
   })
@@ -457,8 +458,8 @@ export const SessionAgentTransitionBriefPreviewRequestV1Schema = z
      * Rebuilding against today's current Agent would compose a brief for the
      * wrong reader.
      */
-    sourceAgentId: z.string().trim().min(1).max(128),
-    targetAgentId: z.string().trim().min(1).max(128),
+    sourceAgentId: AgentIdV1Schema,
+    targetAgentId: AgentIdV1Schema,
   })
   .strict();
 export type SessionAgentTransitionBriefPreviewRequestV1 =
@@ -528,7 +529,7 @@ export const ComposerAgentContinuationIntentV1Schema = z
   .object({
     v: z.literal(1),
     mode: z.literal('same_session'),
-    sourceAgentId: z.string().trim().min(1).max(128),
+    sourceAgentId: AgentIdV1Schema,
     selection: SessionAgentTransitionSelectionV1Schema,
   })
   .strict();

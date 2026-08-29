@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import * as availability from './index.js';
+import { PluginReleaseRefV1Schema as PluginReleaseRefV1NeutralSchema } from './releaseRefV1.js';
 import {
   PluginAccountPluginUiArtifactLinkV1Schema,
   PluginAccountPluginIntentV1Schema,
@@ -193,6 +194,7 @@ describe('Plugin Account availability v1', () => {
   });
 
   it('exports the availability grammar through its dedicated public family', () => {
+    expect(PluginReleaseRefV1PublicSchema).toBe(PluginReleaseRefV1NeutralSchema);
     expect(PluginReleaseVersionV1Schema.parse('1.2.3')).toBe('1.2.3');
     expect(PluginReleaseRefV1PublicSchema.parse({
       pluginId: 'com.acme.fixture',

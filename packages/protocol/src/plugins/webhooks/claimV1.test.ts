@@ -13,19 +13,32 @@ const target = {
   materialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'acme.github' },
   machineInstallationId: 'installation-1',
 } as const;
+const machine = { machineId: 'machine-1', machineInstallationId: 'installation-1' } as const;
 const lease = { leaseId: 'lease-1', revision: 2 } as const;
 
 describe('plugin webhook daemon claim wire V1', () => {
-  it('carries exact materialization/installation authority without a client serverId', () => {
-    expect(PluginWebhookClaimRequestV1Schema.parse({ v: 1, policyVersion: 1, target })).toEqual({
+  it('claims per authenticated machine installation and never names a materialization target', () => {
+    expect(PluginWebhookClaimRequestV1Schema.parse({ v: 1, policyVersion: 1, machine })).toEqual({
       v: 1,
       policyVersion: 1,
-      target,
+      machine,
     });
+    // The server selects the exact eligible materialization; a daemon-selected
+    // target or a client serverId would move that authority into mutable input.
     expect(PluginWebhookClaimRequestV1Schema.safeParse({
       v: 1,
       policyVersion: 1,
-      target: { ...target, serverId: 'spoofed' },
+      machine: { ...machine, materializationId: 'materialization-1' },
+    }).success).toBe(false);
+    expect(PluginWebhookClaimRequestV1Schema.safeParse({
+      v: 1,
+      policyVersion: 1,
+      machine: { ...machine, serverId: 'spoofed' },
+    }).success).toBe(false);
+    expect(PluginWebhookClaimRequestV1Schema.safeParse({
+      v: 1,
+      policyVersion: 1,
+      target,
     }).success).toBe(false);
   });
 
@@ -33,6 +46,8 @@ describe('plugin webhook daemon claim wire V1', () => {
     const delivery = {
       kind: 'delivery',
       deliveryId: 'delivery-1',
+      target,
+      pluginVersion: '1.0.0',
       endpoint: {
         webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
         revision: 3,

@@ -42,6 +42,7 @@ import {
   PluginEventAutomationDeclarationV1Schema,
   evaluateAutomationEventFilterV1,
   isAutomationEventObservationFreshV1,
+  isAutomationEventSourcesListPageProgressingV1,
   validateAutomationEventFilterAgainstPayloadSchemaV1,
 } from './automationEventV1.js';
 import {
@@ -224,6 +225,58 @@ describe('Automation event V1 contracts', () => {
           localId: 'baseline-history-gap',
         },
       },
+    }).success).toBe(false);
+  });
+
+  it('admits a session-socket observation declaration without checkpoint-only roles', () => {
+    // A session-bound socket source observes through its own long-lived
+    // provider session; it has no ordered pull checkpoint, so it may not
+    // declare the checkpointed recovery role.
+    expect(PluginEventAutomationDeclarationV1Schema.parse({
+      v: 1,
+      eligible: true,
+      source: {
+        sourceContractVersion: 1,
+        supportedObservationTransports: ['socket'],
+        sourceConfigSchema: { type: 'object', additionalProperties: false },
+        setupActionRef: {
+          pluginId: 'com.acme.chat',
+          localId: 'choose-channel',
+        },
+      },
+    })).toMatchObject({ eligible: true });
+
+    expect(PluginEventAutomationDeclarationV1Schema.safeParse({
+      v: 1,
+      eligible: true,
+      source: {
+        sourceContractVersion: 1,
+        supportedObservationTransports: ['socket'],
+        sourceConfigSchema: { type: 'object', additionalProperties: false },
+        setupActionRef: {
+          pluginId: 'com.acme.chat',
+          localId: 'choose-channel',
+        },
+        historyGapResetActionRef: {
+          pluginId: 'com.acme.chat',
+          localId: 'baseline-history-gap',
+        },
+      },
+    }).success).toBe(false);
+
+    const socketObservation = {
+      kind: 'socket' as const,
+      watcherMaterializationRef: {
+        machineId: 'machine-1',
+        pluginId: 'com.acme.chat',
+        materializationId: 'chat-generation-1',
+      },
+    };
+    expect(AutomationEventTriggerObservationTransportV1Schema.parse(socketObservation))
+      .toEqual(socketObservation);
+    expect(AutomationEventTriggerObservationTransportV1Schema.safeParse({
+      kind: 'socket',
+      watcherMaterializationRef: null,
     }).success).toBe(false);
   });
 
@@ -645,6 +698,18 @@ describe('Automation event V1 contracts', () => {
       nextCursor: null,
       checkpointRetirements: [],
     }).success).toBe(false);
+    expect(isAutomationEventSourcesListPageProgressingV1({
+      kind: 'page',
+      revision: '7',
+      definitions: [],
+      nextCursor: 'page-2',
+    })).toBe(false);
+    expect(isAutomationEventSourcesListPageProgressingV1({
+      kind: 'page',
+      revision: '7',
+      definitions: [],
+      nextCursor: null,
+    })).toBe(true);
   });
 
   it('keeps the exact-machine stored-definition hop strict and envelope-only', () => {

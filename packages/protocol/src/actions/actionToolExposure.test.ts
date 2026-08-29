@@ -253,19 +253,30 @@ describe('actionToolExposure', () => {
     }));
   });
 
-  it('keeps all six raw subagent lifecycle Actions RPC-only', () => {
-    const rawSubagentActionIds = [
+  it('exposes bounded subagent reads while keeping lifecycle mutations RPC-only', () => {
+    const readActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
+    ] as const;
+    const mutationActionIds = [
       'sessions.subagents.upsert',
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
 
     expect(INTERNAL_ACTION_IDS.filter((actionId) => actionId.startsWith('sessions.subagents.')))
-      .toEqual(rawSubagentActionIds);
-    for (const actionId of rawSubagentActionIds) {
+      .toEqual(mutationActionIds);
+    for (const actionId of readActionIds) {
+      expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
+        rpc: true,
+        api: true,
+        plugin: true,
+      }));
+      expect(INTERNAL_ACTION_REASONS).not.toHaveProperty(actionId);
+      expect(PLUGIN_SURFACE_EXCLUSION_REASONS).not.toHaveProperty(actionId);
+    }
+    for (const actionId of mutationActionIds) {
       expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
         rpc: true,
         api: false,

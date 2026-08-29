@@ -1176,6 +1176,164 @@ describe('canonical plugin manifest ingestion', () => {
     });
   });
 
+  it('validates Agent inline component surface ids against one same-plugin inline view', () => {
+    const agent = {
+      id: 'acme-agent',
+      title: 'Acme Agent',
+      runtime: { kind: 'custom' },
+      primary: 'sessions',
+      capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      ui: {
+        components: {
+          slots: [{ id: 'launch', slot: 'sessionSubagents.launchCards', surfaceId: 'agent-details' }],
+        },
+      },
+    };
+    const renderer = { id: 'agent-renderer', kind: 'declarative', root: { kind: 'text', text: 'Agent' } };
+    const view = {
+      id: 'agent-details',
+      renderer: 'agent-renderer',
+      container: 'sessionSubagentDetails',
+      target: { kind: 'session' },
+    };
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        agents: [{
+          ...agent,
+          ui: {
+            components: {
+              slots: [{
+                id: 'indexing',
+                slot: 'newSession.agentInputExtraActionChips',
+                chip: {
+                  kind: 'booleanOption',
+                  optionStateKey: 'allowIndexing',
+                  iconName: 'magnifying-glass',
+                  onLabelKey: 'acme.chip.on',
+                  offLabelKey: 'acme.chip.off',
+                },
+              }],
+            },
+          },
+        }],
+      },
+    })).ok).toBe(true);
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: { agents: [agent], ui: { renderers: [renderer], views: [view] } },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_invalid',
+        path: ['contributes', 'agents', 0, 'ui', 'components', 'slots', 0, 'surfaceId'],
+      })],
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        agents: [{
+          ...agent,
+          ui: { components: { slots: [{ id: 'launch', slot: 'sessionSubagents.launchCards', surfaceId: 'agent-launch' }] } },
+        }],
+        ui: { renderers: [renderer], views: [{ ...view, id: 'agent-launch', container: 'sessionSubagentLaunch' }] },
+      },
+    })).ok).toBe(true);
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        agents: [agent],
+        ui: { renderers: [renderer], views: [] },
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'agents', 0, 'ui', 'components', 'slots', 0, 'surfaceId'],
+      })],
+    });
+  });
+
+  it('validates every qualified Agent UI setting reference against the exact Agent scope', () => {
+    const agent = {
+      id: 'acme-agent',
+      title: 'Acme Agent',
+      runtime: { kind: 'custom' },
+      primary: 'sessions',
+      capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      ui: {
+        behavior: {
+          resume: {
+            experimentSwitches: [{
+              id: 'resume',
+              settingKey: { scope: 'daemon', localId: 'shared' },
+            }],
+          },
+        },
+      },
+    };
+    const settings = {
+      id: 'acme-agent-settings',
+      title: 'Agent settings',
+      target: { kind: 'agent', agent: 'acme-agent' },
+      scope: 'account',
+      fields: [{ id: 'shared', title: 'Shared', schema: { type: 'boolean' } }],
+    };
+
+    expect(ingestPluginManifestV2(manifest({ contributes: { agents: [agent], settings: [settings] } }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_wrong_scope_agent_setting_reference',
+        path: ['contributes', 'agents', 0, 'ui', 'behavior', 'resume', 'experimentSwitches', 0, 'settingKey'],
+        message: expect.stringContaining("scope 'daemon'"),
+      })],
+    });
+
+    expect(ingestPluginManifestV2(manifest({
+      contributes: {
+        agents: [agent],
+        settings: [{ ...settings, scope: 'daemon', fields: [{ id: 'other', title: 'Other', schema: { type: 'boolean' } }] }],
+      },
+    }))).toEqual({
+      ok: false,
+      diagnostics: [expect.objectContaining({
+        code: 'plugin_manifest_missing_agent_setting_reference',
+        path: ['contributes', 'agents', 0, 'ui', 'behavior', 'resume', 'experimentSwitches', 0, 'settingKey'],
+      })],
+    });
+  });
+
+  it('does not treat host-owned Agent chips as inline surface references', () => {
+    const result = ingestPluginManifestV2(manifest({
+      contributes: {
+        agents: [{
+          id: 'acme-agent',
+          title: 'Acme Agent',
+          runtime: { kind: 'custom' },
+          primary: 'sessions',
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+          ui: {
+            components: {
+              slots: [{
+                id: 'allow-indexing',
+                slot: 'newSession.agentInputExtraActionChips',
+                chip: {
+                  kind: 'booleanOption',
+                  optionStateKey: 'allowIndexing',
+                  iconName: 'magnifying-glass',
+                  onLabelKey: 'acme.indexing.on',
+                  offLabelKey: 'acme.indexing.off',
+                },
+              }],
+            },
+          },
+        }],
+      },
+    }));
+
+    expect(result.ok).toBe(true);
+  });
+
   it('resolves Composer control attachment references through the canonical manifest catalog', () => {
     const dangling = ingestPluginManifestV2(manifest({
       contributes: {

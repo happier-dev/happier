@@ -7,6 +7,7 @@ import {
 } from '../../connect/connectedServiceSchemas.js';
 import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ConnectedServiceLimitCategoryV1Schema } from '../../connect/connectedServiceLimitCategory.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
 export const TurnTerminalStatusV1Schema = z.enum(['completed', 'cancelled', 'failed']);
 export type TurnTerminalStatusV1 = z.infer<typeof TurnTerminalStatusV1Schema>;
@@ -192,7 +193,7 @@ export const SessionRuntimeIssueV1Schema = z.preprocess(
     source: SessionRuntimeIssueSourceV1Schema,
     occurredAt: z.number().int().nonnegative(),
     sessionSeq: z.number().int().nonnegative().optional(),
-    agentId: z.string().trim().min(1).max(128).optional(),
+    agentId: AgentIdV1Schema.optional(),
     agentTurnId: z.string().trim().min(1).max(256).optional(),
     sanitizedPreview: z.string().trim().min(1).max(2_000).optional(),
     usageLimit: SessionRuntimeUsageLimitDetailsV1Schema.optional(),

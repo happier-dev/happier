@@ -57,7 +57,7 @@ import {
 } from '../plugins/availability/materializationRefV1.js';
 import {
   PluginReleaseRefV1Schema,
-} from '../plugins/availability/v1.js';
+} from '../plugins/availability/releaseRefV1.js';
 import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
 import { PluginUiImmutableGenerationIdV1Schema } from '../plugins/ui/targetedContributions.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
@@ -180,6 +180,7 @@ export {
   AutomationEventSourcesListInputV1Schema,
   AutomationEventSourcesListResultV1Schema,
   AutomationEventSourcesListTransportV1Schema,
+  isAutomationEventSourcesListPageProgressingV1,
   AutomationEventSourceStatusCodeV1Schema,
   AutomationEventSourceStatusReportResultV1Schema,
   AutomationEventSourceStatusReportV1Schema,
@@ -734,6 +735,10 @@ export const AutomationEventTriggerObservationTransportV1Schema = z.discriminate
   z.object({
     kind: z.literal('checkpointedPull'),
     watcherMaterializationRef: PluginMachineMaterializationRefV1Schema.nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal('socket'),
+    watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
   }).strict(),
   z.object({
     kind: z.literal('durablePush'),

@@ -123,12 +123,6 @@ const listDefinition = {
   updatedAt: timestamp,
   assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: timestamp }],
   triggers: [schedule, event, lifecycle],
-  retiredTriggers: [{
-    id: 'trigger-retired',
-    kind: 'sessionLifecycle' as const,
-    revision: 7,
-    retiredAt: timestamp,
-  }],
 };
 
 const eventCause = {
@@ -369,7 +363,7 @@ describe('Automation versioned API schemas', () => {
           pluginId: 'happier.scm.github',
         },
         webhookRoutingSourceInstanceId: 'github:installation:2200',
-        setup: { kind: 'githubAccountEndpointV1' as const, credential: 'serverGenerated' as const },
+        setup: { kind: 'accountEndpointV1' as const, credential: 'serverGenerated' as const },
       },
     };
     expect(Api.AutomationTriggerCreateRequestSchema.parse({
@@ -426,6 +420,22 @@ describe('Automation versioned API schemas', () => {
       ],
     };
     expect(Api.AutomationDefinitionListItemSchema.parse(listDefinition)).toEqual(listDefinition);
+    expect(Api.AutomationDefinitionListRequestSchema.parse({})).toEqual({
+      limit: Api.AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
+    });
+    expect(Api.AutomationDefinitionListRequestSchema.safeParse({ cursor: 'not/a/cursor' }).success)
+      .toBe(false);
+    expect(Api.AutomationDefinitionListResponseSchema.parse({
+      automations: [listDefinition],
+      nextCursor: 'opaque-next-page',
+    })).toMatchObject({ nextCursor: 'opaque-next-page' });
+    expect(Api.AutomationDefinitionListResponseSchema.safeParse({
+      automations: [listDefinition],
+      nextCursor: 'not/a/cursor',
+    }).success).toBe(false);
+    expect(Api.AutomationDefinitionListResponseSchema.safeParse({
+      automations: [listDefinition],
+    }).success).toBe(false);
     expect(Api.AutomationDefinitionDetailSchema.parse(detail)).toMatchObject({
       id: detail.id,
       triggers: detail.triggers,
@@ -499,13 +509,23 @@ describe('Automation versioned API schemas', () => {
     }).success).toBe(false);
   });
 
-  it('uses the sole immutable cause and keeps retired-trigger history readable', () => {
+  it('uses the sole immutable cause and keeps retired-trigger history Run-owned', () => {
     expect(Api.AutomationSessionLifecycleTriggerStatusSchema.safeParse({
       state: 'retired',
       runId: null,
     }).success).toBe(false);
-    expect(Api.AutomationDefinitionListItemSchema.parse(listDefinition).retiredTriggers)
-      .toEqual(listDefinition.retiredTriggers);
+    // Ordinary definition list/detail projections carry no trigger tombstone
+    // census; immutable Runs remain the sole retired-trigger history owner.
+    expect(Api.AutomationDefinitionListItemSchema.safeParse({
+      ...listDefinition,
+      retiredTriggers: [],
+    }).success).toBe(false);
+    expect(Api.AutomationDefinitionDetailSchema.safeParse({
+      ...listDefinition,
+      executionRecipe: recipe,
+      triggers: [{ ...schedule, triggerDefinitionEnvelope: null }],
+      retiredTriggers: [],
+    }).success).toBe(false);
     expect(Api.AutomationV3RunListItemSchema.parse(run)).toEqual(run);
     expect(Api.AutomationV3RunListItemSchema.parse({
       ...run,

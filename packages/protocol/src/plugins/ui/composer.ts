@@ -32,12 +32,13 @@ type DeepReadonly<T> = T extends readonly (infer TItem)[]
     ? { readonly [TKey in keyof T]: DeepReadonly<T[TKey]> }
     : T;
 
-/** The incumbent composer text ceiling, in UTF-16 code units. */
-export const MAX_COMPOSER_TEXT_CODE_UNITS_V1 = 16_384;
 export const MAX_COMPOSER_DECORATIONS_V1 = 64;
 export const MAX_COMPOSER_INPUT_LOCK_REASONS_V1 = 16;
 
-const ComposerTextV1Schema = z.string().max(MAX_COMPOSER_TEXT_CODE_UNITS_V1);
+// Text length belongs to the mounted product Composer/submission owner. An
+// SDK-only ceiling would accept a host draft and then reject that same draft
+// when a plugin reads it back.
+const ComposerTextV1Schema = z.string();
 const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
 /**
  * The composer-scope grammar lives in its own leaf because it is the one
@@ -45,7 +46,11 @@ const ComposerRefV1ZodSchema = asProtocolZod(ComposerRefV1Schema);
  * this module keeps publishing it so every incumbent consumer is unchanged.
  */
 export { ComposerRefV1Schema } from './composerRef.js';
-export { composerRefV1Key, composerRefsV1Equal } from './composerRef.js';
+export {
+  COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1,
+  composerRefV1Key,
+  composerRefsV1Equal,
+} from './composerRef.js';
 export type { ComposerRefV1 } from './composerRef.js';
 
 export const ComposerScopeKindV1Schema = z.enum([

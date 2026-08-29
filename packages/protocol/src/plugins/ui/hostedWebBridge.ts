@@ -4,9 +4,9 @@ import {
   PluginHostedWebBridgeMessageKindV1Schema,
 } from '../contributions/ui/hostedWeb.js';
 import {
-  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
-  PluginHostedWebCollectionUiQueryBridgeChangeV1Schema,
-} from '../data/hostedWebCollectionUiQueryBridgeV1.js';
+  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
+  PluginHostedWebAccountDataBridgeChangeV1Schema,
+} from '../data/hostedWebAccountDataBridgeV1.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import {
   PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -149,7 +149,7 @@ export type PluginHostedWebBridgeResponseEnvelopeV1 =
 export const PLUGIN_HOSTED_WEB_BRIDGE_HOST_MESSAGE_KINDS_V1 = Object.freeze([
   'hostApi',
   'bootstrap',
-  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
 ] as const);
 export const PluginHostedWebBridgeHostMessageKindV1Schema = z.enum(
   PLUGIN_HOSTED_WEB_BRIDGE_HOST_MESSAGE_KINDS_V1,
@@ -220,19 +220,19 @@ export type PluginHostedWebBridgeBootstrapEnvelopeV1 =
  * base, nonce, and host sequence with host API delivery while retaining a
  * strict Data payload rather than borrowing the host-API wire envelope.
  */
-export const PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1Schema =
+export const PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema =
   PluginHostedWebBridgeEnvelopeBaseV1Schema.extend({
     direction: z.literal('hostToFrame'),
-    kind: z.literal(PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1),
-    payload: PluginHostedWebCollectionUiQueryBridgeChangeV1Schema,
+    kind: z.literal(PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1),
+    payload: PluginHostedWebAccountDataBridgeChangeV1Schema,
   }).strict();
-export type PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1 =
-  z.infer<typeof PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1Schema>;
+export type PluginHostedWebBridgeAccountDataMessageEnvelopeV1 =
+  z.infer<typeof PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema>;
 
 export const PluginHostedWebBridgeHostMessageEnvelopeV1Schema = z.union([
   PluginHostedWebBridgeHostApiMessageEnvelopeV1Schema,
   PluginHostedWebBridgeBootstrapEnvelopeV1Schema,
-  PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1Schema,
+  PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema,
 ]);
 export type PluginHostedWebBridgeHostMessageEnvelopeV1 =
   z.infer<typeof PluginHostedWebBridgeHostMessageEnvelopeV1Schema>;

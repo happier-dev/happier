@@ -373,8 +373,15 @@ describe('canonical Voice provider declarations', () => {
       settings: mutable,
     });
 
-    expect(resolved.transcribe).toEqual({ model: 'model-selected' });
-    expect(resolved.synthesize).toEqual({ model: 'model-selected', voiceName: 'voice-selected' });
+    expect(resolved.transcribe).toEqual({ model: 'model-selected', language: null });
+    expect(resolved.synthesize).toEqual({
+      model: 'model-selected',
+      voiceName: 'voice-selected',
+      languageCode: null,
+      format: null,
+      speakingRate: null,
+      pitch: null,
+    });
     expect(resolved.settings).toEqual(mutable);
     expect(Object.isFrozen(resolved.settings)).toBe(true);
     mutable.catalogModel = 'mutated-after-snapshot';
@@ -384,7 +391,14 @@ describe('canonical Voice provider declarations', () => {
       settings: { catalogModel: '   ', catalogVoice: 'voice-selected' },
     })).toMatchObject({
       transcribe: null,
-      synthesize: { model: null, voiceName: 'voice-selected' },
+      synthesize: {
+        model: null,
+        voiceName: 'voice-selected',
+        languageCode: null,
+        format: null,
+        speakingRate: null,
+        pitch: null,
+      },
     });
   });
 
@@ -416,7 +430,49 @@ describe('canonical Voice provider declarations', () => {
     expect(resolveVoiceSpeechSettingsCorrespondence({
       contribution: tts,
       settings: { voiceName: 'reserved-voice' },
-    }).synthesize).toEqual({ model: null, voiceName: 'reserved-voice' });
+    }).synthesize).toEqual({
+      model: null,
+      voiceName: 'reserved-voice',
+      languageCode: null,
+      format: null,
+      speakingRate: null,
+      pitch: null,
+    });
+  });
+
+  it('derives ordinary speech controls only from the immutable settings snapshot', () => {
+    const tts = VoiceProviderContributionSchema.parse({
+      id: 'settings-tts', title: 'Settings TTS', kind: 'speech',
+      roles: ['conversation_tts'], platforms: ['web'],
+      settings: {
+        schemaVersion: 2,
+        fields: [
+          { id: 'voiceName', title: 'Voice', schema: { type: 'string', minLength: 1, maxLength: 512 }, default: 'voice-default', presentation: { control: 'text' } },
+          { id: 'languageCode', title: 'Language', schema: { type: 'string', maxLength: 64 }, default: '', presentation: { control: 'text' } },
+          { id: 'format', title: 'Format', schema: { type: 'string', enum: ['mp3', 'wav'] }, default: 'mp3', presentation: { control: 'select', options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }] } },
+          { id: 'speakingRate', title: 'Rate', schema: { type: 'number', minimum: 0.25, maximum: 4 }, default: 1, presentation: { control: 'number' } },
+          { id: 'pitch', title: 'Pitch', schema: { type: 'number', minimum: -20, maximum: 20 }, default: 0, presentation: { control: 'number' } },
+        ],
+      },
+    });
+
+    expect(resolveVoiceSpeechSettingsCorrespondence({
+      contribution: tts,
+      settings: {
+        voiceName: 'snapshot-voice',
+        languageCode: 'en-US',
+        format: 'wav',
+        speakingRate: 1.25,
+        pitch: -2,
+      },
+    }).synthesize).toEqual({
+      model: null,
+      voiceName: 'snapshot-voice',
+      languageCode: 'en-US',
+      format: 'wav',
+      speakingRate: 1.25,
+      pitch: -2,
+    });
   });
 
   it('derives machine-bound exact endpoint consent from reserved speech settings', () => {

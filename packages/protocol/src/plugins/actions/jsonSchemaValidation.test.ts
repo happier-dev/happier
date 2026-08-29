@@ -476,30 +476,29 @@ describe('protocol composable schema kernel', () => {
     })).toBeNull();
   });
 
-  it('keeps unique-array input acceptance aligned with emitted JSON Schema before child normalization', () => {
+  it('enforces unique-array equality after Protocol child normalization', () => {
     const schema = defineProtocolUniqueArray(defineProtocolObject({
-      kind: defineProtocolLiteral('ready'),
+      kind: defineProtocolString(),
     }, { policy: 'additive-open/drop' }));
     const validates = compilePluginJsonSchema(schema.jsonSchema);
-    const distinctInput = [
+    const distinctBeforeNormalization = [
       { kind: 'ready', localOnly: 'first' },
       { kind: 'ready', localOnly: 'second' },
     ];
-    const duplicateInput = [
-      { kind: 'ready', localOnly: 'same' },
-      { kind: 'ready', localOnly: 'same' },
+    const uniqueAfterNormalization = [
+      { kind: 'ready', localOnly: 'first' },
+      { kind: 'ready-other', localOnly: 'second' },
     ];
 
-    // JSON Schema's `uniqueItems` compares the admitted input. The open/drop
-    // child normalizes both distinct items to the same output, which must not
-    // turn a schema-valid input into a parser rejection.
-    expect(validates(distinctInput)).toBe(true);
-    expect(schema.safeParse(distinctInput)).toEqual({
+    // The emitted JSON Schema can see only the pre-normalized input. The
+    // executable Protocol parser is the canonical owner of child normalization,
+    // and therefore rejects items that collide after open/drop normalization.
+    expect(validates(distinctBeforeNormalization)).toBe(true);
+    expect(schema.safeParse(distinctBeforeNormalization).success).toBe(false);
+    expect(schema.safeParse(uniqueAfterNormalization)).toEqual({
       success: true,
-      data: [{ kind: 'ready' }, { kind: 'ready' }],
+      data: [{ kind: 'ready' }, { kind: 'ready-other' }],
     });
-    expect(validates(duplicateInput)).toBe(false);
-    expect(schema.safeParse(duplicateInput).success).toBe(false);
   });
 
   it('takes one input snapshot for an untransformed JSON leaf', () => {

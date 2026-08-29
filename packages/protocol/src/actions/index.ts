@@ -13,8 +13,10 @@ export {
   type RuntimeActionIdV1,
 } from './actionIds.js';
 export {
+  ActionApprovalRequestCreatedResultSchema,
   ActionExecuteFailureSchema,
   projectActionExecuteFailure,
+  type ActionApprovalRequestCreatedResult,
   type ActionExecuteFailure,
   type ActionExecuteResult,
 } from './actionExecutionResult.js';
@@ -76,6 +78,8 @@ export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement }
 export {
   ACTION_SETTINGS_OPT_IN_PLACEMENTS,
   ActionsSettingsV1Schema,
+  normalizeActionsSettingsV1,
+  tryNormalizeActionsSettingsV1,
   isActionSettingsOptInPlacement,
   isActionEnabledByActionsSettings,
   type ActionSettingsActionId,

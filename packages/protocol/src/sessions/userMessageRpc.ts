@@ -16,6 +16,10 @@ import {
   type ComposerContentHandleV1,
   type HappierStructuredInputV1 as HappierStructuredInputV1Envelope,
 } from '../runtime/input/index.js';
+import {
+  SessionMediaMessageMetaV1Schema,
+  type SessionMediaMessageMetaV1,
+} from './messages/sessionMediaV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionIdSchema } from './idsV1.js';
 import { PendingLocalIdSchema } from './pending/pendingLocalId.js';
@@ -101,6 +105,15 @@ export const SessionPendingMessageComposerAdmissionPrepareResponseV1Schema = z.u
     text: z.string(),
     structuredInput: HappierStructuredInputV1EnvelopeSchema,
     stagedMediaHandles: z.array(ComposerContentHandleV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
+    sessionMediaMetadata: z.object({
+      key: z.enum(['happier', 'happierMedia']),
+      envelope: SessionMediaMessageMetaV1Schema,
+    }).strict().optional(),
+    /** Existing staged-media settlement owner cleanup facts for a prepare that never PATCHes. */
+    sessionMediaCleanup: z.object({
+      workingDirectory: z.string().min(1).max(32_768),
+      createdWorkspaceRelativePaths: z.array(z.string().min(1).max(32_768)).max(64),
+    }).strict().optional(),
   }).strict(),
   z.object({
     ok: z.literal(false),
@@ -118,12 +131,42 @@ export const SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema = z.o
   localId: PendingLocalIdSchema,
   structuredInput: HappierStructuredInputV1EnvelopeSchema,
   stagedMediaHandles: z.array(ComposerContentHandleV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
+  sessionMediaMetadata: z.object({
+    key: z.enum(['happier', 'happierMedia']),
+    envelope: SessionMediaMessageMetaV1Schema,
+  }).strict().optional(),
 }).strict();
 export type SessionPendingMessageComposerAdmissionAcceptedRequestV1 = Readonly<{
   sessionId: string;
   localId: z.infer<typeof PendingLocalIdSchema>;
   structuredInput: HappierStructuredInputV1Envelope;
   stagedMediaHandles: readonly ComposerContentHandleV1[];
+  sessionMediaMetadata?: Readonly<{
+    key: 'happier' | 'happierMedia';
+    envelope: SessionMediaMessageMetaV1;
+  }>;
+}>;
+
+/** Narrow abandonment of a pre-PATCH staged-media preparation. */
+export const SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema = z.object({
+  sessionId: asProtocolZod(SessionIdSchema),
+  localId: PendingLocalIdSchema,
+  structuredInput: HappierStructuredInputV1EnvelopeSchema,
+  stagedMediaHandles: z.array(ComposerContentHandleV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
+  sessionMediaCleanup: z.object({
+    workingDirectory: z.string().min(1).max(32_768),
+    createdWorkspaceRelativePaths: z.array(z.string().min(1).max(32_768)).max(64),
+  }).strict(),
+}).strict();
+export type SessionPendingMessageComposerAdmissionAbandonedRequestV1 = Readonly<{
+  sessionId: string;
+  localId: z.infer<typeof PendingLocalIdSchema>;
+  structuredInput: HappierStructuredInputV1Envelope;
+  stagedMediaHandles: readonly ComposerContentHandleV1[];
+  sessionMediaCleanup: Readonly<{
+    workingDirectory: string;
+    createdWorkspaceRelativePaths: readonly string[];
+  }>;
 }>;
 
 const SessionUserMessageSendSuccessResponseSchema = z.object({

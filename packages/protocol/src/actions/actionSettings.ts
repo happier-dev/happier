@@ -84,8 +84,12 @@ function normalizeLegacyActionSettingsOverride(raw: unknown): unknown {
   }
 
   const next = { ...(raw as Record<string, unknown>) };
-  next.disabledSurfaces = normalizeActionSurfaceList(next.disabledSurfaces);
-  next.approvalRequiredSurfaces = normalizeActionSurfaceList(next.approvalRequiredSurfaces);
+  if (Array.isArray(next.disabledSurfaces)) {
+    next.disabledSurfaces = normalizeActionSurfaceList(next.disabledSurfaces);
+  }
+  if (Array.isArray(next.approvalRequiredSurfaces)) {
+    next.approvalRequiredSurfaces = normalizeActionSurfaceList(next.approvalRequiredSurfaces);
+  }
   return next;
 }
 
@@ -107,6 +111,24 @@ export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema
 /** A host Action id or the canonical qualified contributed-Action identity. */
 export type ActionSettingsActionId = ActionId | QualifiedPluginActionId;
 
+function normalizeActionSettingsActionId(rawId: string): ActionSettingsActionId | null {
+  const hostAction = ActionIdSchema.safeParse(normalizeLegacyActionId(rawId));
+  if (hostAction.success) return hostAction.data;
+  const contributedAction = parseQualifiedPluginActionId(rawId);
+  return contributedAction ? formatQualifiedPluginActionId(contributedAction) : null;
+}
+
+function projectKnownActionSettings(
+  actions: Record<string, ActionSettingsOverride>,
+): Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> {
+  const next: Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> = {};
+  for (const [rawId, override] of Object.entries(actions)) {
+    const actionId = normalizeActionSettingsActionId(rawId);
+    if (actionId) next[actionId] = override;
+  }
+  return next;
+}
+
 export const ActionsSettingsV1Schema = z
   .object({
     v: z.literal(1),
@@ -115,23 +137,53 @@ export const ActionsSettingsV1Schema = z
     actions: z.record(z.string(), ActionSettingsOverrideSchema).default({}),
   })
   .passthrough()
-  .transform((value) => {
-    const next: Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> = {};
-    const actions = value.actions ?? {};
-    for (const [rawId, override] of Object.entries(actions)) {
-      const parsedId = ActionIdSchema.safeParse(normalizeLegacyActionId(rawId));
-      if (parsedId.success) {
-        next[parsedId.data] = override;
-        continue;
-      }
-      const contributedAction = parseQualifiedPluginActionId(rawId);
-      if (!contributedAction) continue;
-      next[formatQualifiedPluginActionId(contributedAction)] = override;
-    }
-    return { v: 1 as const, actions: next };
-  });
+  .transform((value) => ({
+    v: 1 as const,
+    actions: projectKnownActionSettings(value.actions ?? {}),
+  }));
 
 export type ActionsSettingsV1 = z.infer<typeof ActionsSettingsV1Schema>;
+
+const EMPTY_ACTIONS_SETTINGS_V1 = Object.freeze({
+  v: 1 as const,
+  actions: {},
+}) as ActionsSettingsV1;
+
+const MALFORMED_ACTION_SETTINGS_OVERRIDE = ActionSettingsOverrideSchema.parse({ enabled: false });
+
+/**
+ * Normalizes persisted/settings transport values without allowing one malformed
+ * row to erase unrelated Action policy. Unknown Actions are ignored; malformed
+ * known Action overrides fail closed while valid sibling policy is preserved.
+ */
+function isActionsSettingsV1Document(value: unknown): value is Readonly<{ v: 1; actions?: Record<string, unknown> }> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.v === 1 && (
+    record.actions === undefined
+    || (typeof record.actions === 'object' && record.actions !== null && !Array.isArray(record.actions))
+  );
+}
+
+/** Returns null only when the root document cannot be interpreted as v1. */
+export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1 | null {
+  const parsed = ActionsSettingsV1Schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  if (!isActionsSettingsV1Document(value)) return null;
+
+  const actions: Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> = {};
+  for (const [rawId, rawOverride] of Object.entries(value.actions ?? {})) {
+    const actionId = normalizeActionSettingsActionId(rawId);
+    if (!actionId) continue;
+    const override = ActionSettingsOverrideSchema.safeParse(rawOverride);
+    actions[actionId] = override.success ? override.data : MALFORMED_ACTION_SETTINGS_OVERRIDE;
+  }
+  return { v: 1, actions };
+}
+
+export function normalizeActionsSettingsV1(value: unknown): ActionsSettingsV1 {
+  return tryNormalizeActionsSettingsV1(value) ?? EMPTY_ACTIONS_SETTINGS_V1;
+}
 
 export type ActionEnablementContext = Readonly<{
   surface?: keyof ActionSurfaces | null;

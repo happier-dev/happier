@@ -28,7 +28,7 @@ import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOp
  *   interprets. Compiled descriptor/callback ids are absent; bundled and
  *   installed Agents author the same portable facts.
  *
- * Host-owned identifiers an Agent may reference — account setting keys,
+ * Host-owned identifiers an Agent may reference — host setting keys,
  * translation keys, icon names — stay strings here. They are validated by the
  * owner that knows them (the client interpreter), and restating their closed
  * sets in the wire schema would create a second decision-maker for them.
@@ -38,15 +38,28 @@ const AgentUiIdSchema = z.string().trim().min(1);
 const AgentUiIdArraySchema = z.array(AgentUiIdSchema);
 const AgentUiStringRecordSchema = z.record(z.string(), z.string());
 
-/** A host account-setting key the Agent's declaration reads. */
-const AgentUiSettingKeySchema = AgentUiIdSchema;
+/**
+ * A setting reference is always qualified by its owner scope. `host` is the
+ * incumbent host Account preference namespace; `account` and `daemon` are the
+ * declaring plugin's scoped Settings contributions. Bare local IDs are not a
+ * supported compatibility form.
+ */
+const AgentUiSettingReferenceSchema = z.object({
+  scope: z.enum(['host', 'account', 'daemon']),
+  localId: AgentUiIdSchema,
+}).strict();
+export type AgentUiSettingReferenceV1 = z.infer<typeof AgentUiSettingReferenceSchema>;
+const AgentUiMutablePluginSettingReferenceSchema = z.object({
+  scope: z.enum(['account', 'daemon']),
+  localId: AgentUiIdSchema,
+}).strict();
 /** A translation key resolved by the host's own catalogue. */
 const AgentUiTranslationKeySchema = AgentUiIdSchema;
 
 export type AgentUiConditionV1 =
   | { kind: 'experimentsEnabled' }
-  | { kind: 'settingEquals'; settingKey: string; value: string; aliases?: Record<string, string> }
-  | { kind: 'settingTrue'; settingKey: string }
+  | { kind: 'settingEquals'; settingKey: AgentUiSettingReferenceV1; value: string; aliases?: Record<string, string> }
+  | { kind: 'settingTrue'; settingKey: AgentUiSettingReferenceV1 }
   | { all: AgentUiConditionV1[] }
   | { any: AgentUiConditionV1[] };
 
@@ -55,11 +68,11 @@ export const AgentUiConditionV1Schema: z.ZodType<AgentUiConditionV1, AgentUiCond
   z.object({ kind: z.literal('experimentsEnabled') }).strict(),
   z.object({
     kind: z.literal('settingEquals'),
-    settingKey: AgentUiSettingKeySchema,
+    settingKey: AgentUiSettingReferenceSchema,
     value: z.string(),
     aliases: AgentUiStringRecordSchema.optional(),
   }).strict(),
-  z.object({ kind: z.literal('settingTrue'), settingKey: AgentUiSettingKeySchema }).strict(),
+  z.object({ kind: z.literal('settingTrue'), settingKey: AgentUiSettingReferenceSchema }).strict(),
   z.object({ all: z.array(AgentUiConditionV1Schema) }).strict(),
   z.object({ any: z.array(AgentUiConditionV1Schema) }).strict(),
 ]));
@@ -168,7 +181,7 @@ const AgentUiNewSessionSchema = z.object({
 const AgentUiEnvironmentVariablesSchema = z.object({
   backendMode: z.object({
     envKey: AgentUiIdSchema,
-    settingKey: AgentUiSettingKeySchema,
+    settingKey: AgentUiSettingReferenceSchema,
     legacyMetadataKey: AgentUiIdSchema,
     runtimeDescriptorField: AgentUiIdSchema,
     defaultValue: AgentUiIdSchema,
@@ -177,8 +190,8 @@ const AgentUiEnvironmentVariablesSchema = z.object({
   serverBaseUrl: z.object({
     envKey: AgentUiIdSchema,
     explicitEnvKey: AgentUiIdSchema,
-    settingKey: AgentUiSettingKeySchema,
-    byServerIdSettingKey: AgentUiSettingKeySchema,
+    settingKey: AgentUiSettingReferenceSchema,
+    byServerIdSettingKey: AgentUiSettingReferenceSchema,
     legacyMetadataKey: AgentUiIdSchema,
     legacyExplicitMetadataKey: AgentUiIdSchema,
     runtimeDescriptorField: AgentUiIdSchema,
@@ -220,7 +233,7 @@ const AgentUiPayloadSchema = z.object({
   sessionExtras: z.object({
     outputKey: AgentUiIdSchema,
     values: AgentUiIdArraySchema.min(1),
-    settingKey: AgentUiSettingKeySchema.optional(),
+    settingKey: AgentUiSettingReferenceSchema.optional(),
     aliases: AgentUiStringRecordSchema.optional(),
     defaultValue: AgentUiIdSchema.optional(),
   }).strict().optional(),
@@ -248,7 +261,7 @@ const AgentUiExternalSessionsBrowseSchema = z.object({
     keyPrefix: AgentUiIdSchema,
     labelKey: AgentUiTranslationKeySchema,
     labelParams: AgentUiStringRecordSchema.optional(),
-    detailSettingsKey: AgentUiSettingKeySchema.optional(),
+    detailSettingsKey: AgentUiSettingReferenceSchema.optional(),
     source: AgentUiExternalSessionsSourceSchema,
     serviceIdField: AgentUiIdSchema,
     profileIdField: AgentUiIdSchema,
@@ -289,7 +302,7 @@ const AgentUiExternalSessionsSchema = z.object({
 const AgentUiAskUserQuestionDialogSchema = z.object({
   dialogId: AgentUiIdSchema,
   settingMutation: z.object({
-    settingId: AgentUiIdSchema,
+    settingId: AgentUiMutablePluginSettingReferenceSchema,
     allowedValues: AgentUiIdArraySchema.min(1),
   }).strict().optional(),
   terminalNotice: z.object({
@@ -334,7 +347,7 @@ export const AgentUiBehaviorDeclarationV1Schema = z.object({
   resume: z.object({
     experimentSwitches: z.array(z.object({
       id: AgentUiIdSchema,
-      settingKey: AgentUiSettingKeySchema.optional(),
+      settingKey: AgentUiSettingReferenceSchema.optional(),
       when: AgentUiConditionV1Schema.optional(),
     }).strict()).optional(),
   }).strict().optional(),

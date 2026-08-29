@@ -27,6 +27,7 @@ describe('voice runtime config defaults', () => {
     expect(VOICE_RUNTIME_WARM_DEFAULTS.warmIdleEvictMs).toBe(5 * 60 * 1000);
     expect(VOICE_RUNTIME_WARM_DEFAULTS.warmOnVoiceHomeAttach).toBe(true);
     expect(VOICE_RUNTIME_WARM_DEFAULTS.perModelConcurrency).toBe(1);
+    expect(VOICE_RUNTIME_WARM_DEFAULTS.warmRequestTimeoutMs).toBe(10 * 60 * 1000);
   });
 
   it('captures the canonical STT defaults', () => {

@@ -109,6 +109,23 @@ describe('createActionExecutor (runtime-unification actions)', () => {
     expect(runtimeActionExecute).not.toHaveBeenCalled();
   });
 
+  it('fails closed when a caller omits host-stamped authority', async () => {
+    const runtimeActionExecute = vi.fn(async () => ({ v: 1, outcome: 'canceled' as const, canceledCount: 1 }));
+    const executor = createActionExecutor(createDeps({ runtimeActionExecute }));
+
+    const result = await executor.execute('browser.automation.cancelActive', {
+      browserSessionId: 'browser_session_1',
+      viewId: 'view_1',
+    }, { surface: 'ui' });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'present_user_required',
+      error: 'present_user_required',
+    });
+    expect(runtimeActionExecute).not.toHaveBeenCalled();
+  });
+
   it('fails closed when a runtime action producer returns output outside its declared schema', async () => {
     const runtimeActionExecute = vi.fn(async () => ({ navigated: true }));
     const executor = createActionExecutor(createDeps({ runtimeActionExecute }));

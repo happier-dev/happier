@@ -1,9 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
-import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from './actionSettings.js';
+import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
 
 describe('ActionsSettingsV1Schema', () => {
+  it('keeps valid sibling policy and fails closed only a malformed known override on tolerant reads', () => {
+    const parsed = normalizeActionsSettingsV1({
+      v: 1,
+      futureRootField: { preservedByThePersistedDocument: true },
+      actions: {
+        'session.message.send': { enabled: false },
+        'session.stop': { disabledSurfaces: 'api' },
+        'unknown.action': { enabled: false },
+      },
+    });
+
+    expect(parsed.actions['session.message.send' as keyof typeof parsed.actions]).toMatchObject({ enabled: false });
+    expect(parsed.actions['session.stop' as keyof typeof parsed.actions]).toMatchObject({ enabled: false });
+    expect(parsed.actions).not.toHaveProperty('unknown.action');
+    expect(isActionEnabledByActionsSettings('session.message.send', parsed)).toBe(false);
+    expect(isActionEnabledByActionsSettings('session.stop', parsed)).toBe(false);
+  });
+
   it('accepts per-action overrides and enforces per-surface + per-placement disablement', () => {
     const parsed = ActionsSettingsV1Schema.parse({
       v: 1,

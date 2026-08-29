@@ -30,11 +30,14 @@ export {
   AgentUiComponentsDeclarationV1Schema,
   AgentUiConditionV1Schema,
   AgentUiMessageDeclarationV1Schema,
+  AgentUiSessionDeclarationV1Schema,
   AgentUiProjectedDeclarationV1Schema,
   type AgentUiBehaviorDeclarationV1,
   type AgentUiComponentsDeclarationV1,
   type AgentUiConditionV1,
   type AgentUiMessageDeclarationV1,
+  type AgentUiSessionDeclarationV1,
+  type AgentUiSettingReferenceV1,
   type AgentUiProjectedDeclarationV1,
 } from '../contributions/agentUiGrammar.js';
 export {

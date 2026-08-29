@@ -88,6 +88,11 @@ export const AutomationPluginEventObservationTransportInputSchema = z.discrimina
     watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
   }).strict(),
   z.object({
+    kind: z.literal('socket'),
+    /** The exact plugin materialization hosting the provider's observation session. */
+    watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
+  }).strict(),
+  z.object({
     kind: z.literal('durablePush'),
     webhookEndpointId: PluginWebhookEndpointIdV1Schema,
     endpointMaterializationRef: PluginMachineMaterializationRefV1Schema,

@@ -77,8 +77,10 @@ const SessionPermissionRemoteAllowedScopesV1Schema = z.union([
 /**
  * The remote pending projection is deliberately a bounded reviewer surface,
  * not a copy of the internal tool-input payload.  The host owns derivation
- * and truncation before this Action boundary; mediators only render these
- * semantic facts and send indexed answers back to the current Session owner.
+ * and applies its canonical credential redactor before bounded truncation and
+ * this Action boundary; mediators only render these approval-relevant semantic
+ * facts and send indexed answers back to the current Session owner. Command,
+ * path, prompt, and choice text may appear only through that one summary.
  */
 export const SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES = 256;
 export const SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES = 1_024;

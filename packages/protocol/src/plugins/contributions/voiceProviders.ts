@@ -414,10 +414,190 @@ export const VoiceProviderSettingFieldSchema = PluginSettingFieldV2Schema.superR
 });
 export type VoiceProviderSettingField = z.infer<typeof VoiceProviderSettingFieldSchema>;
 
+const VoiceProviderSettingsPresentationTextSchema = PluginLocalizedStringV2Schema;
+const VoiceProviderSettingsPresentationPathSchema = z.string().min(1).max(256).refine((value) => {
+  const segments = value.split('.');
+  return segments.length <= 12 && segments.every((segment) => (
+    /^[A-Za-z][A-Za-z0-9_]*$/u.test(segment)
+    && segment !== '__proto__'
+    && segment !== 'prototype'
+    && segment !== 'constructor'
+  ));
+}, 'Voice settings presentation paths must be bounded safe dotted paths.');
+
+const VoiceProviderSettingsPresentationOptionSchema = z.union([
+  z.string().max(512),
+  z.object({
+    id: z.string().max(512),
+    kind: z.enum(['pinned', 'moving_alias']).optional(),
+    title: VoiceProviderSettingsPresentationTextSchema.optional(),
+    titleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+    subtitle: VoiceProviderSettingsPresentationTextSchema.optional(),
+    subtitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  }).strict(),
+]);
+
+const VoiceProviderSettingsPresentationNumericSchema = z.object({
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  step: z.number().finite().positive().optional(),
+  reset: z.number().finite().optional(),
+  integer: z.boolean().optional(),
+  nullable: z.boolean().optional(),
+  requiresOptIn: z.boolean().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.min !== undefined && value.max !== undefined && value.min > value.max) {
+    context.addIssue({ code: 'custom', path: ['min'], message: 'Voice presentation minimum cannot exceed maximum.' });
+  }
+  if (value.reset !== undefined && (
+    (value.min !== undefined && value.reset < value.min)
+    || (value.max !== undefined && value.reset > value.max)
+  )) {
+    context.addIssue({ code: 'custom', path: ['reset'], message: 'Voice presentation reset must satisfy its bounds.' });
+  }
+});
+
+const VoiceProviderSettingsPresentationSubfieldSchema = z.object({
+  path: VoiceProviderSettingsPresentationPathSchema,
+  suffix: z.string().min(1).max(128).optional(),
+  kind: z.literal('number').optional(),
+  titleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  subtitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  promptTitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  promptBodyKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  confirmTitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  confirmBodyKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  confirmActionKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  step: z.number().finite().positive().optional(),
+  reset: z.number().finite().optional(),
+  integer: z.boolean().optional(),
+  nullable: z.boolean().optional(),
+  requiresOptIn: z.boolean().optional(),
+}).strict();
+
+export const VoiceProviderSettingsPresentationFieldSchema = z.object({
+  kind: z.enum([
+    'welcome',
+    'text',
+    'remote_voice',
+    'select',
+    'number',
+    'model',
+    'voice_catalog',
+    'instructions',
+    'segmented',
+    'range',
+    'language_hint',
+    'keyterms',
+    'server_vad',
+    'privacy_opt_in',
+  ]),
+  path: VoiceProviderSettingsPresentationPathSchema,
+  titleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  subtitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  promptTitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  promptBodyKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  searchPlaceholderKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  confirmTitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  confirmBodyKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  confirmActionKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  options: z.array(VoiceProviderSettingsPresentationOptionSchema).max(64).optional(),
+  supportedModelIds: z.array(z.string().min(1).max(512)).max(64).optional(),
+  catalog: z.literal('voices').optional(),
+  customIdAllowed: z.boolean().optional(),
+  movingAliasRequiresOptIn: z.boolean().optional(),
+  advanced: z.boolean().optional(),
+  defaultValue: VoiceJsonScalarSchema.optional(),
+  forgetAction: z.literal('forget_provider_conversation').optional(),
+  maxLength: z.number().int().positive().max(10_000).optional(),
+  maxItems: z.number().int().positive().max(1_000).optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  step: z.number().finite().positive().optional(),
+  reset: z.number().finite().optional(),
+  integer: z.boolean().optional(),
+  nullable: z.boolean().optional(),
+  requiresOptIn: z.boolean().optional(),
+  subfields: z.array(VoiceProviderSettingsPresentationSubfieldSchema).min(1).max(16).optional(),
+}).strict().superRefine((field, context) => {
+  if ((field.kind === 'number' || field.kind === 'range')
+    && !VoiceProviderSettingsPresentationNumericSchema.safeParse({
+      min: field.min,
+      max: field.max,
+      step: field.step,
+      reset: field.reset,
+      integer: field.integer,
+      nullable: field.nullable,
+      requiresOptIn: field.requiresOptIn,
+    }).success) {
+    context.addIssue({ code: 'custom', message: 'Voice numeric presentation metadata must be internally consistent.' });
+  }
+  if (field.kind === 'server_vad' && !field.subfields) {
+    context.addIssue({ code: 'custom', path: ['subfields'], message: 'Voice server VAD presentation requires subfields.' });
+  }
+  if (field.kind === 'privacy_opt_in' && field.titleKey === undefined) {
+    context.addIssue({ code: 'custom', path: ['titleKey'], message: 'Voice privacy controls require a title.' });
+  }
+});
+export type VoiceProviderSettingsPresentationField = z.infer<
+  typeof VoiceProviderSettingsPresentationFieldSchema
+>;
+
+export const VoiceProviderSettingsPresentationSchema = z.object({
+  kind: z.literal('voice.provider-settings.v1'),
+  modes: uniqueBoundedArray(z.enum(['byo', 'happier']), 1, 2, 'Voice settings presentation modes'),
+  titleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  footerKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  credential: z.object({
+    kind: z.enum(['api_key', 'none']),
+    credentialPurpose: ConnectedAccountPurposeIdSchema.optional(),
+    catalog: z.literal('voices').nullable(),
+    titleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+    promptTitleKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+    promptBodyKey: VoiceProviderSettingsPresentationTextSchema.optional(),
+  }).strict(),
+  links: z.object({
+    account: z.string().url().max(2_048).optional(),
+    apiKeys: z.string().url().max(2_048).optional(),
+    privacy: z.string().url().max(2_048).optional(),
+  }).strict().superRefine((links, context) => {
+    Object.entries(links).forEach(([name, raw]) => {
+      const url = new URL(raw);
+      if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
+        context.addIssue({ code: 'custom', path: [name], message: 'Voice settings presentation links must use HTTPS without embedded credentials.' });
+      }
+    });
+  }),
+  fields: z.array(VoiceProviderSettingsPresentationFieldSchema).max(64),
+}).strict().superRefine((presentation, context) => {
+  if (presentation.credential.kind === 'none' && presentation.credential.catalog !== null) {
+    context.addIssue({ code: 'custom', path: ['credential', 'catalog'], message: 'Voice settings without credentials cannot declare a credential catalog.' });
+  }
+  const paths = new Set<string>();
+  presentation.fields.forEach((field, index) => {
+    if (paths.has(field.path)) {
+      context.addIssue({ code: 'custom', path: ['fields', index, 'path'], message: 'Voice settings presentation paths must be unique.' });
+    }
+    paths.add(field.path);
+    field.subfields?.forEach((subfield, subfieldIndex) => {
+      if (!subfield.path.startsWith(`${field.path}.`) || paths.has(subfield.path)) {
+        context.addIssue({ code: 'custom', path: ['fields', index, 'subfields', subfieldIndex, 'path'], message: 'Voice settings presentation subfields must be unique descendants.' });
+      }
+      paths.add(subfield.path);
+    });
+  });
+});
+export type VoiceProviderSettingsPresentation = z.infer<
+  typeof VoiceProviderSettingsPresentationSchema
+>;
+
 export const VoiceProviderSettingsSchema = z.object({
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
   fields: z.array(VoiceProviderSettingFieldSchema).max(16),
   privacyDisclosure: PluginLocalizedStringV2Schema.optional(),
+  presentation: VoiceProviderSettingsPresentationSchema.optional(),
   connectedServicesBinding: z.object({
     id: PluginSettingFieldIdV2Schema,
     title: PluginLocalizedStringV2Schema,
@@ -467,6 +647,25 @@ export const VoiceProviderSettingsSchema = z.object({
       message: 'Voice Connected Services binding ids must not collide with setting field ids.',
     });
   }
+  settings.presentation?.fields.forEach((field, index) => {
+    const rootFieldId = field.path.split('.')[0]!;
+    if (field.kind !== 'welcome' && !fieldsById.has(rootFieldId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['presentation', 'fields', index, 'path'],
+        message: 'Voice settings presentation paths must resolve from a declared setting field.',
+      });
+    }
+    field.subfields?.forEach((subfield, subfieldIndex) => {
+      if (!fieldsById.has(subfield.path.split('.')[0]!)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['presentation', 'fields', index, 'subfields', subfieldIndex, 'path'],
+          message: 'Voice settings presentation subfield paths must resolve from a declared setting field.',
+        });
+      }
+    });
+  });
   settings.readiness?.forEach((rule, index) => {
     const target = fieldsById.get(rule.settingId);
     if (!target || target.schema.type !== 'string') {
@@ -516,6 +715,9 @@ export const VoiceSpeechProviderLimitsSchema = z.object({
   }).strict().optional(),
 }).strict();
 export type VoiceSpeechProviderLimits = z.infer<typeof VoiceSpeechProviderLimitsSchema>;
+
+/** One public speech-response ceiling shared by provider declarations and daemon transfer/wire admission. */
+export const VOICE_SPEECH_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
 /**
  * Provider evidence that effectful Voice tools can be retried/redelivered without
@@ -801,8 +1003,15 @@ export type VoiceSpeechSettingsSnapshot = Readonly<
 
 export type VoiceSpeechSettingsCorrespondence = Readonly<{
   settings: VoiceSpeechSettingsSnapshot;
-  transcribe: Readonly<{ model: string }> | null;
-  synthesize: Readonly<{ model: string | null; voiceName: string }> | null;
+  transcribe: Readonly<{ model: string; language: string | null }> | null;
+  synthesize: Readonly<{
+    model: string | null;
+    voiceName: string;
+    languageCode: string | null;
+    format: 'mp3' | 'wav' | null;
+    speakingRate: number | null;
+    pitch: number | null;
+  }> | null;
 }>;
 
 export type VoiceSpeechEndpointPolicy = Readonly<{
@@ -867,6 +1076,29 @@ function readVoiceSpeechRequestString(
   return value || null;
 }
 
+function readVoiceSpeechRequestNumber(
+  settings: VoiceSpeechSettingsSnapshot,
+  fieldId: string,
+): number | null {
+  const raw = settings[fieldId];
+  if (raw === undefined) return null;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    throw new TypeError('voice_speech_settings_invalid');
+  }
+  return raw;
+}
+
+function readVoiceSpeechOutputFormat(
+  settings: VoiceSpeechSettingsSnapshot,
+): 'mp3' | 'wav' | null {
+  const raw = settings.format;
+  if (raw === undefined) return null;
+  if (raw !== 'mp3' && raw !== 'wav') {
+    throw new TypeError('voice_speech_settings_invalid');
+  }
+  return raw;
+}
+
 /**
  * Validates and snapshots one speech contribution's non-secret settings, then
  * derives the sole request-bearing model/voice correspondence from its cold
@@ -913,15 +1145,24 @@ export function resolveVoiceSpeechSettingsCorrespondence(input: Readonly<{
   const hasTtsRole = contribution.roles.includes('conversation_tts');
   const model = readVoiceSpeechRequestString(settings, modelsFieldId);
   const voiceName = readVoiceSpeechRequestString(settings, voicesFieldId);
+  const language = readVoiceSpeechRequestString(settings, 'language');
+  const languageCode = readVoiceSpeechRequestString(settings, 'languageCode');
+  const format = readVoiceSpeechOutputFormat(settings);
+  const speakingRate = readVoiceSpeechRequestNumber(settings, 'speakingRate');
+  const pitch = readVoiceSpeechRequestNumber(settings, 'pitch');
   return Object.freeze({
     settings,
     transcribe: hasSttRole && model
-      ? Object.freeze({ model })
+      ? Object.freeze({ model, language })
       : null,
     synthesize: hasTtsRole && voiceName
       ? Object.freeze({
           model,
           voiceName,
+          languageCode,
+          format,
+          speakingRate,
+          pitch,
         })
       : null,
   });

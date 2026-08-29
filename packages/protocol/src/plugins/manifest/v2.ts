@@ -404,7 +404,9 @@ export const PluginManifestV2Schema = z.object({
     } else {
       nonSecretByScope.set(scopeKey, field);
     }
-    if (!nonSecretById.has(field.id)) nonSecretById.set(field.id, field);
+    if (!nonSecretById.has(field.id)) {
+      nonSecretById.set(field.id, field);
+    }
   }
   const secretById = new Map<string, DeclaredSecretIdentity>();
   for (const secret of secrets) {

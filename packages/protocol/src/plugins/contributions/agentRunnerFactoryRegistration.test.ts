@@ -47,8 +47,8 @@ describe('Agent runner-factory registration correspondence', () => {
     }]);
   });
 
-  it('requires one runner locator when a composite execution-primary factory also declares sessions', () => {
-    expect(derivePluginDaemonContributionRegistrationRights({
+  it('rejects an execution-primary Agent that also declares Session capability', () => {
+    expect(() => derivePluginDaemonContributionRegistrationRights({
       agents: [{
         id: 'composite-agent',
         runtime: { kind: 'custom' },
@@ -58,11 +58,6 @@ describe('Agent runner-factory registration correspondence', () => {
           sessions: sessionCapabilities,
         },
       }],
-    })).toEqual([{
-      family: 'agents',
-      localId: 'composite-agent',
-      target: { realm: 'daemon' },
-      requiredFields: ['factory', 'sessionRunnerFactory'],
-    }]);
+    })).toThrow("Execution-primary Agent 'composite-agent' cannot declare Session capabilities");
   });
 });

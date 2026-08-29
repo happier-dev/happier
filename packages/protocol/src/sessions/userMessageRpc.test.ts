@@ -398,6 +398,29 @@ describe('SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema', () => 
     };
     expect(SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.safeParse(accepted).success).toBe(true);
     expect(SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.safeParse({
+      ...accepted,
+      sessionMediaMetadata: {
+        key: 'happier',
+        envelope: {
+          kind: 'session_media.v1',
+          payload: {
+            media: [{
+              id: 'media-1',
+              role: 'input',
+              category: 'attachment',
+              mediaKind: 'image',
+              mimeType: 'image/png',
+              name: 'hero.png',
+              path: '.happier/uploads/hero.png',
+              sizeBytes: 42,
+              sha256: 'a'.repeat(64),
+              origin: { source: 'user-upload' },
+            }],
+          },
+        },
+      },
+    }).success).toBe(true);
+    expect(SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.safeParse({
       localId: accepted.localId,
       draftAttachments: [{
         ...pluginAttachment,

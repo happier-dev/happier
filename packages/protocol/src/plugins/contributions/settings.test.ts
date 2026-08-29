@@ -24,6 +24,60 @@ describe('canonical settings contributions', () => {
     expect(readPluginSettingSecretCustody({ custody: 'other' })).toBeNull();
   });
 
+  it('admits same-id Account and daemon Settings fields with intentionally different non-secret schemas', () => {
+    const parsed = PluginContributesV2Schema.safeParse({
+      settings: [{
+        id: 'account-preferences',
+        title: 'Account preferences',
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [{ id: 'shared', title: 'Shared', schema: { type: 'string' } }],
+      }, {
+        id: 'daemon-preferences',
+        title: 'Daemon preferences',
+        target: { kind: 'plugin' },
+        scope: 'daemon',
+        fields: [{ id: 'shared', title: 'Shared', schema: { type: 'object', additionalProperties: true } }],
+      }],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects same-scope Settings field duplicates and plugin-global secret collisions', () => {
+    expect(PluginContributesV2Schema.safeParse({
+      settings: [{
+        id: 'primary',
+        title: 'Primary',
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [{ id: 'shared', title: 'Shared', schema: { type: 'string' } }],
+      }, {
+        id: 'secondary',
+        title: 'Secondary',
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [{ id: 'shared', title: 'Shared', schema: { type: 'number' } }],
+      }],
+    }).success).toBe(false);
+
+    expect(PluginContributesV2Schema.safeParse({
+      settings: [{
+        id: 'account-preferences',
+        title: 'Account preferences',
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [{ id: 'shared', title: 'Shared', schema: { type: 'string' } }],
+      }, {
+        id: 'daemon-secret',
+        title: 'Daemon secret',
+        target: { kind: 'plugin' },
+        scope: 'daemon',
+        fields: [{ id: 'shared', title: 'Shared', schema: { type: 'string' }, secret: { custody: 'daemon' } }],
+      }],
+    }).success).toBe(false);
+  });
+
   it('uses one strict settings family for plugin and Agent targets', () => {
     const pluginSettings = PluginSettingsContributionV2Schema.parse({
       id: 'general',

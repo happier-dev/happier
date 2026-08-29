@@ -442,7 +442,12 @@ describe('plugin UI open and Action components', () => {
             prompt: 'Repair the failing check',
             profileId: 'profile-review',
             checkoutIntent: 'createWorktree',
-            placement: { serverId: 'server-1', machineId: 'machine-1', directory: '/workspace' },
+            placement: {
+                kind: 'exactTarget',
+                serverId: 'server-1',
+                machineId: 'machine-1',
+                directory: '/workspace',
+            },
         } as const;
 
         expect(PluginUiOpenNewSessionRequestV1Schema.parse(seed)).toEqual(seed);
@@ -454,8 +459,14 @@ describe('plugin UI open and Action components', () => {
         // A seed that declares only some members stays valid: an absent member
         // is "not seeded", never "seeded empty".
         expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
-            placement: { directory: '/workspace' },
+            placement: { kind: 'currentTarget', directory: '/workspace' },
         }).success).toBe(true);
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            placement: { machineId: 'machine-1' },
+        }).success).toBe(false);
+        expect(PluginUiOpenNewSessionRequestV1Schema.safeParse({
+            placement: { kind: 'exactTarget', machineId: 'machine-1', directory: '/workspace' },
+        }).success).toBe(false);
 
         // An ambiguous repository join stays a reader choice. The seed carries
         // the incumbent server-start candidate grammar verbatim, rather than

@@ -15,6 +15,7 @@ import {
 } from '../agentTransitionDivider.js';
 import { createSessionMessageMetaSchema } from './sessionMessageMeta.js';
 import type { SessionMessageMeta } from './sessionMessageMeta.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
 const UsageDataSchema = z
   .object({
@@ -652,7 +653,7 @@ const AgentEventSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('runtime-config-outcome'),
-      agentId: z.string().trim().min(1).max(128).optional(),
+      agentId: AgentIdV1Schema.optional(),
       runtime: z.string().trim().min(1).max(128),
       status: RuntimeConfigOutcomeStatusV1Schema,
       timing: RuntimeConfigOutcomeTimingV1Schema.optional(),

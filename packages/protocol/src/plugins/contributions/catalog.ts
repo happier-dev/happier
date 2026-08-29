@@ -630,15 +630,35 @@ function declaresAgentExternalSessions(value: Readonly<Record<string, unknown>>)
     && !Array.isArray(surfaces.externalSession);
 }
 
-function declaresAgentSessions(value: Readonly<Record<string, unknown>>): boolean {
-  const capabilities = value.capabilities
-    && typeof value.capabilities === 'object'
-    && !Array.isArray(value.capabilities)
-    ? value.capabilities as Readonly<Record<string, unknown>>
+function readAgentCapabilities(value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
+  const capabilities = value.capabilities;
+  return capabilities
+    && typeof capabilities === 'object'
+    && !Array.isArray(capabilities)
+    ? capabilities as Readonly<Record<string, unknown>>
     : null;
+}
+
+function declaresAgentSessions(value: Readonly<Record<string, unknown>>): boolean {
+  const capabilities = readAgentCapabilities(value);
   return capabilities?.sessions !== null
     && typeof capabilities?.sessions === 'object'
     && !Array.isArray(capabilities.sessions);
+}
+
+function assertExclusiveAgentPrimaryLifecycle(value: Readonly<Record<string, unknown>>): void {
+  const capabilities = readAgentCapabilities(value);
+  const primary = value.primary;
+  if (primary === 'executionRuns' && capabilities?.sessions !== undefined) {
+    throw new TypeError(
+      `Execution-primary Agent '${String(value.id ?? '<unknown>')}' cannot declare Session capabilities`,
+    );
+  }
+  if (primary === 'sessions' && capabilities?.executionRuns !== undefined) {
+    throw new TypeError(
+      `Session-primary Agent '${String(value.id ?? '<unknown>')}' cannot declare Execution Run capabilities`,
+    );
+  }
 }
 
 function declaresAgentCliAuth(value: Readonly<Record<string, unknown>>): boolean {
@@ -1027,6 +1047,7 @@ function derivePluginContributionRegistrationRightsForHost(
         }];
       }
       if (entry.manifestKey !== 'agents') return [{ family, localId, target }];
+      assertExclusiveAgentPrimaryLifecycle(record);
       const fields: ('factory' | 'sessionRunnerFactory' | 'cliAuth' | 'externalSessions')[] = [];
       if ((record.runtime as Readonly<{ kind?: unknown }> | undefined)?.kind === 'custom') {
         fields.push('factory');

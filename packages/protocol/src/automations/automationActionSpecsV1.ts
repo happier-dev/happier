@@ -112,6 +112,10 @@ export const AutomationEventSourceObservationTransportV1Schema = z.discriminated
     watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
   }).strict(),
   z.object({
+    kind: z.literal('socket'),
+    watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
+  }).strict(),
+  z.object({
     kind: z.literal('durablePush'),
     webhookEndpointId: PluginWebhookEndpointIdV1Schema,
     endpointMaterializationRef: PluginMachineMaterializationRefV1Schema,
@@ -139,6 +143,7 @@ export type AutomationEventSourceDefinitionV1 = z.infer<typeof AutomationEventSo
 
 export const AutomationEventSourcesListTransportV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('checkpointedPull') }).strict(),
+  z.object({ kind: z.literal('socket') }).strict(),
   z.object({ kind: z.literal('durablePush') }).strict(),
 ]);
 export type AutomationEventSourcesListTransportV1 = z.infer<
@@ -147,6 +152,7 @@ export type AutomationEventSourcesListTransportV1 = z.infer<
 
 export const AutomationEventSourceCatalogScopeV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('checkpointedPull') }).strict(),
+  z.object({ kind: z.literal('socket') }).strict(),
   z.object({ kind: z.literal('durablePush'), webhookEndpointId: PluginWebhookEndpointIdV1Schema }).strict(),
 ]);
 export type AutomationEventSourceCatalogScopeV1 = z.infer<
@@ -263,6 +269,27 @@ export const AutomationEventSourcesListResultV1Schema = z.discriminatedUnion('ki
   z.object({ kind: z.literal('cursorStale'), currentRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA }).strict(),
 ]);
 export type AutomationEventSourcesListResultV1 = z.infer<typeof AutomationEventSourcesListResultV1Schema>;
+
+/**
+ * One source-list page makes traversal progress when it either terminates the
+ * scan or carries at least one definition before its continuation cursor.
+ * Keeping this semantic check beside the canonical result contract prevents
+ * host and SDK readers from accepting different malformed pagination shapes.
+ */
+export function isAutomationEventSourcesListPageProgressingV1(
+  result: Readonly<
+    | {
+        kind: 'page';
+        definitions: readonly unknown[];
+        nextCursor: string | null;
+      }
+    | { kind: 'unchanged' | 'cursorStale' }
+  >,
+): boolean {
+  return result.kind !== 'page'
+    || result.nextCursor === null
+    || result.definitions.length > 0;
+}
 
 export const AutomationEventAdmitDefinitionSelectorV1Schema = z.object({
   automationId: asProtocolZod(AutomationIdV1Schema),

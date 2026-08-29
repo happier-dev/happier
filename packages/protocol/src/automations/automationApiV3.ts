@@ -17,6 +17,7 @@ import {
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationEventDeclarationV1.js';
 import {
   AutomationEventSourceCatalogStatusStateV1Schema,
+  OPAQUE_CURSOR_SCHEMA,
   UNSIGNED_DECIMAL_BIGINT_SCHEMA,
 } from './automationActionSpecsV1.js';
 import {
@@ -398,6 +399,20 @@ export type AutomationCheckpointedPullObservation = z.infer<
   typeof AutomationCheckpointedPullObservationSchema
 >;
 
+export const AutomationSocketObservationSchema = z.object({
+  kind: z.literal('socket'),
+  /** Exact materialization hosting the provider's observation session; null when unavailable. */
+  watcher: z.object({
+    machineId: IDENTIFIER_SCHEMA,
+    machineInstallationId: IDENTIFIER_SCHEMA,
+    pluginId: IDENTIFIER_SCHEMA,
+    materializationId: IDENTIFIER_SCHEMA,
+  }).strict().nullable(),
+}).strict();
+export type AutomationSocketObservation = z.infer<
+  typeof AutomationSocketObservationSchema
+>;
+
 export const AutomationDurablePushObservationSchema = z.object({
   kind: z.literal('durablePush'),
   webhookEndpointId: IDENTIFIER_SCHEMA,
@@ -416,6 +431,7 @@ export const AutomationPluginEventTriggerSchema = z.object({
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   observation: z.union([
     AutomationCheckpointedPullObservationSchema,
+    AutomationSocketObservationSchema,
     AutomationDurablePushObservationSchema,
   ]),
 }).strict();
@@ -488,21 +504,6 @@ export const AutomationTriggerDetailSchema = z.discriminatedUnion('kind', [
 ]);
 export type AutomationTriggerDetail = z.infer<typeof AutomationTriggerDetailSchema>;
 
-/**
- * Read-only tombstone facts for an automatic trigger removed from the mutable
- * definition. Retired rows never re-enter `triggers[]`; immutable Runs remain
- * the owner of historical cause details.
- */
-export const AutomationRetiredTriggerProjectionSchema = z.object({
-  id: AutomationTriggerIdSchema,
-  kind: z.enum(['schedule', 'pluginEvent', 'sessionLifecycle']),
-  revision: AutomationTriggerRevisionSchema,
-  retiredAt: TIMESTAMP_SCHEMA,
-}).strict();
-export type AutomationRetiredTriggerProjection = z.infer<
-  typeof AutomationRetiredTriggerProjectionSchema
->;
-
 const AutomationDefinitionBaseSchema = z.object({
   id: IDENTIFIER_SCHEMA,
   name: z.string(),
@@ -521,7 +522,6 @@ const AutomationDefinitionBaseSchema = z.object({
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
   assignments: z.array(AutomationAssignmentSchema),
-  retiredTriggers: z.array(AutomationRetiredTriggerProjectionSchema),
 }).strict();
 
 function requireExactlyOneDefinitionContent(
@@ -559,8 +559,24 @@ export const AutomationDefinitionDetailSchema = AutomationDefinitionBaseSchema.e
 }).strict().superRefine(requireExactlyOneDefinitionContent);
 export type AutomationDefinitionDetail = z.infer<typeof AutomationDefinitionDetailSchema>;
 
+/**
+ * A definition page is a transport/storage bound, never an Account-level
+ * Automation ceiling. The opaque cursor is owned by the server's canonical
+ * `(updatedAt DESC, id ASC)` definition ordering.
+ */
+export const AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS = 100;
+
+export const AutomationDefinitionListRequestSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)
+    .default(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS),
+  cursor: OPAQUE_CURSOR_SCHEMA.optional(),
+}).strict();
+export type AutomationDefinitionListRequest = z.infer<typeof AutomationDefinitionListRequestSchema>;
+
 export const AutomationDefinitionListResponseSchema = z.object({
-  automations: z.array(AutomationDefinitionListItemSchema),
+  automations: z.array(AutomationDefinitionListItemSchema)
+    .max(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS),
+  nextCursor: OPAQUE_CURSOR_SCHEMA.nullable(),
 }).strict();
 export type AutomationDefinitionListResponse = z.infer<typeof AutomationDefinitionListResponseSchema>;
 

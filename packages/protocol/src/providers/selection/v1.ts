@@ -254,10 +254,13 @@ function normalizeUsableLegacyModelOverrideV1(
  * consume this owner rather than re-deciding, because two implementations can
  * assign different meaning to one stored payload.
  *
- * - `absent`: neither carrier holds a usable intent.
- * - `invalid`: the canonical carrier is PRESENT but does not parse. That is
- *   corrupted state; it is never reinterpreted as the legacy override, because
- *   doing so hides the corruption and silently applies a different model.
+ * - `absent`: neither carrier holds a usable intent. Only `undefined` is
+ *   absent; the key's writers clear intent by deleting the key.
+ * - `invalid`: the canonical carrier is PRESENT but does not parse — including
+ *   a root `null`, which strict envelopes and pre-strict flat records can
+ *   carry. That is corrupted state; it is never reinterpreted as the legacy
+ *   override, because doing so hides the corruption and silently applies a
+ *   different model.
  * - `canonical`: a Provider-bound canonical selection always wins (the legacy
  *   carrier cannot express a connection at all, so a newer one would silently
  *   re-point the Session at a different model authority); otherwise the newer
@@ -274,7 +277,10 @@ export function readSessionModelSelectionIntentSourceV1(input: Readonly<{
   canonical: unknown;
   legacy: unknown;
 }>): SessionModelSelectionIntentSourceV1 {
-  const canonicalPresent = input.canonical !== undefined && input.canonical !== null;
+  // Presence is key presence, not value truthiness: `undefined` is an absent
+  // carrier, and every other value — including `null` — is a present carrier
+  // whose validity the schema decides.
+  const canonicalPresent = input.canonical !== undefined;
   const canonicalParse = canonicalPresent
     ? SessionModelSelectionIntentV1Schema.safeParse(input.canonical)
     : null;

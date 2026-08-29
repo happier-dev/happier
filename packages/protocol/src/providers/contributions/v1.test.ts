@@ -52,6 +52,7 @@ describe('ProviderContributionV1Schema', () => {
       managedRuntime: {
         kind: 'managed',
         dependencies: ['gateway-service'],
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
         connectedAccounts: [{
           purpose: 'upstream',
           service: 'openai',
@@ -92,6 +93,7 @@ describe('ProviderContributionV1Schema', () => {
       pluginId: 'acme.gateway',
       localId: 'openai',
     });
+    expect(relative.connectedAccountPurposeBindingPolicy).toEqual({ minimumBound: 1 });
     expect(relative.connectedAccounts[0]?.title).toEqual({
       key: 'plugins.acme.gateway.connectedAccounts.upstream',
       fallback: 'OpenAI upstream account',
@@ -118,6 +120,40 @@ describe('ProviderContributionV1Schema', () => {
     expect(Object.isFrozen(relative)).toBe(true);
     expect(Object.isFrozen(relative.connectedAccounts)).toBe(true);
     expect(Object.isFrozen(relative.connectedAccounts[0]?.service)).toBe(true);
+  });
+
+
+  it('keeps zero-bound managed Providers valid unless their producer requires one purpose', () => {
+    const implementationIdentity = { pluginId: 'acme.gateway', localId: 'gateway' };
+    const base = {
+      kind: 'managed' as const,
+      connectedAccounts: [{
+        purpose: 'optional-upstream',
+        service: 'openai',
+        required: false,
+      }],
+      endpointTemplateIds: ['responses'],
+    };
+
+    expect(() => resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity,
+      managedRuntime: base,
+    })).not.toThrow();
+    expect(resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity,
+      managedRuntime: {
+        ...base,
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
+      },
+    }).connectedAccountPurposeBindingPolicy).toEqual({ minimumBound: 1 });
+    expect(() => resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity,
+      managedRuntime: {
+        kind: 'managed',
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
+        endpointTemplateIds: ['responses'],
+      },
+    })).toThrow();
   });
 
   it('canonicalizes managed declaration set fields without reordering endpoint templates', () => {

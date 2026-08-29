@@ -132,6 +132,16 @@ const PluginWebhookClaimTargetV1Schema = z.object({
   machineInstallationId: z.string().min(1).max(256).refine((value) => value === value.trim()),
 }).strict().readonly();
 
+/**
+ * Claim authority is the authenticated Account/machine installation pair. The
+ * server selects the one currently eligible exact materialization target; only
+ * renew/complete/fail address work by exact target.
+ */
+export const PluginWebhookMachineInstallationV1Schema = z.object({
+  machineId: z.string().min(1).max(256).refine((value) => value === value.trim()),
+  machineInstallationId: z.string().min(1).max(256).refine((value) => value === value.trim()),
+}).strict().readonly();
+
 const PluginWebhookLeaseIdentityV1Shape = {
   leaseId: ASCII_TOKEN_128_SCHEMA,
   revision: z.number().int().nonnegative().safe(),
@@ -162,7 +172,7 @@ export const PluginWebhookInvocationReferenceV1Schema = z.object({
 export const PluginWebhookClaimRequestV1Schema = z.object({
   v: z.literal(1),
   policyVersion: z.literal(1),
-  target: PluginWebhookClaimTargetV1Schema,
+  machine: PluginWebhookMachineInstallationV1Schema,
 }).strict().readonly();
 
 export const PluginWebhookClaimResultV1Schema = z.discriminatedUnion('kind', [
@@ -173,6 +183,11 @@ export const PluginWebhookClaimResultV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('delivery'),
     deliveryId: ASCII_TOKEN_128_SCHEMA,
+    // Exact server-selected target plus frozen materialization/release/version
+    // authority for this delivery; the daemon dispatches exactly what the
+    // response carries.
+    target: PluginWebhookClaimTargetV1Schema,
+    pluginVersion: z.string().min(1).max(256),
     endpoint: PluginWebhookClaimedEndpointV1Schema,
     attempt: z.number().int().min(1).max(12),
     replay: z.number().int().min(0).max(10),
@@ -249,6 +264,7 @@ export type PluginWebhookActionInputV1 = z.infer<typeof PluginWebhookActionInput
 export type PluginWebhookActionResultV1 = z.infer<typeof PluginWebhookActionResultV1Schema>;
 export type PluginWebhookClaimRequestV1 = z.infer<typeof PluginWebhookClaimRequestV1Schema>;
 export type PluginWebhookClaimResultV1 = z.infer<typeof PluginWebhookClaimResultV1Schema>;
+export type PluginWebhookMachineInstallationV1 = z.infer<typeof PluginWebhookMachineInstallationV1Schema>;
 export type PluginWebhookInvocationReferenceV1 = z.infer<typeof PluginWebhookInvocationReferenceV1Schema>;
 export type PluginWebhookRenewRequestV1 = z.infer<typeof PluginWebhookRenewRequestV1Schema>;
 export type PluginWebhookRenewResultV1 = z.infer<typeof PluginWebhookRenewResultV1Schema>;

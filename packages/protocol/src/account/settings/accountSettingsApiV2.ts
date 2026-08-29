@@ -87,3 +87,40 @@ export const AccountSettingsV2UpdateResponseSchema = z.union([
 ]);
 
 export type AccountSettingsV2UpdateResponse = z.infer<typeof AccountSettingsV2UpdateResponseSchema>;
+
+/**
+ * History snapshots are stored-envelope facts, never decrypted content. The
+ * listing exposes version/time/content kind/byte length only (SET-11), and the
+ * detail response supplies the exact recorded envelope a current client opens
+ * in its recorded mode for classification-aware restore (SET-07).
+ */
+export const AccountSettingsV2HistoryContentKindV1Schema = z.enum(['encrypted', 'plain', 'empty']);
+export type AccountSettingsV2HistoryContentKindV1 = z.infer<typeof AccountSettingsV2HistoryContentKindV1Schema>;
+
+export const AccountSettingsV2HistoryListResponseSchema = z.object({
+    snapshots: z.array(z.object({
+        version: z.number().int().min(0),
+        createdAt: z.string().datetime(),
+        contentKind: AccountSettingsV2HistoryContentKindV1Schema,
+        byteLength: z.number().int().min(0),
+    })),
+}).strict();
+export type AccountSettingsV2HistoryListResponse = z.infer<typeof AccountSettingsV2HistoryListResponseSchema>;
+
+export const AccountSettingsV2HistoryDetailResponseSchema = z.object({
+    content: AccountSettingsStoredContentEnvelopeSchema.nullable(),
+    version: z.number().int().min(0),
+    createdAt: z.string().datetime(),
+}).strict();
+export type AccountSettingsV2HistoryDetailResponse = z.infer<typeof AccountSettingsV2HistoryDetailResponseSchema>;
+
+/**
+ * The retired exact-content restore operation. The server cannot classify
+ * E2EE content, so it can never remain a second restore writer beside
+ * client-side classification-aware restore.
+ */
+export const AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema = z.object({
+    error: z.literal('account_settings_restore_client_update_required'),
+}).strict();
+export type AccountSettingsV2HistoryRestoreClientUpdateRequiredResponse =
+    z.infer<typeof AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema>;

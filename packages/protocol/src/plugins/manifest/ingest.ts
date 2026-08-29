@@ -29,7 +29,9 @@ export type PluginManifestIngestionDiagnostic = Readonly<{
     | 'plugin_manifest_duplicate_contribution_id'
     | 'plugin_manifest_invalid_contribution_id'
     | 'plugin_manifest_dangling_reference'
-    | 'plugin_manifest_wrong_family_reference';
+    | 'plugin_manifest_wrong_family_reference'
+    | 'plugin_manifest_missing_agent_setting_reference'
+    | 'plugin_manifest_wrong_scope_agent_setting_reference';
   path?: readonly (string | number)[];
   message: string;
 }>;
@@ -185,6 +187,79 @@ type ManifestReferenceCandidate = Readonly<{
   path: readonly (string | number)[];
 }>;
 
+/**
+ * Agent UI setting references are qualified because an Agent may have Account
+ * and Daemon declarations with the same local id. They are not ordinary
+ * contribution references: the target must be this plugin's exact Agent
+ * settings contribution, scope, and field. Validate them at manifest ingress
+ * so a projected descriptor can never silently turn a missing ref into an
+ * unset setting.
+ */
+function readAgentUiSettingReferenceDiagnostics(
+  manifest: ParsedPluginManifestV2,
+): PluginManifestIngestionDiagnostic[] {
+  const settingsByAgentScope = new Map<string, Map<string, Set<string>>>();
+  manifest.contributes.settings.forEach((contribution) => {
+    if (contribution.target.kind !== 'agent') return;
+    const agentId = typeof contribution.target.agent === 'string'
+      ? contribution.target.agent
+      : contribution.target.agent.pluginId === manifest.id
+        ? contribution.target.agent.localId
+        : null;
+    if (!agentId) return;
+    const byScope = settingsByAgentScope.get(agentId) ?? new Map<string, Set<string>>();
+    const fields = byScope.get(contribution.scope) ?? new Set<string>();
+    contribution.fields.forEach((field) => fields.add(field.id));
+    byScope.set(contribution.scope, fields);
+    settingsByAgentScope.set(agentId, byScope);
+  });
+
+  const diagnostics: PluginManifestIngestionDiagnostic[] = [];
+  const settingReferenceKeys = new Set(['settingKey', 'settingId', 'detailSettingsKey', 'byServerIdSettingKey']);
+  const visit = (value: unknown, path: readonly (string | number)[], agentId: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, [...path, index], agentId));
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    Object.entries(value as Readonly<Record<string, unknown>>).forEach(([key, entry]) => {
+      const entryPath = [...path, key];
+      if (settingReferenceKeys.has(key) && entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const reference = entry as Readonly<Record<string, unknown>>;
+        const scope = reference.scope;
+        const localId = reference.localId;
+        // Host settings are intentionally host-owned and have no plugin
+        // contribution target to validate here.
+        if (scope === 'host') return;
+        if ((scope !== 'account' && scope !== 'daemon') || typeof localId !== 'string') return;
+        const byScope = settingsByAgentScope.get(agentId);
+        const exactFields = byScope?.get(scope);
+        if (exactFields?.has(localId)) return;
+        const existsInOtherScope = byScope
+          ? [...byScope.entries()].some(([candidateScope, fields]) => candidateScope !== scope && fields.has(localId))
+          : false;
+        diagnostics.push({
+          code: existsInOtherScope
+            ? 'plugin_manifest_wrong_scope_agent_setting_reference'
+            : 'plugin_manifest_missing_agent_setting_reference',
+          path: entryPath,
+          message: existsInOtherScope
+            ? `Agent '${agentId}' references setting '${localId}' in scope '${scope}', but that field is declared in a different scope for this plugin Agent.`
+            : `Agent '${agentId}' references missing ${scope}-scoped setting '${localId}' in this plugin's Agent settings contributions.`,
+        });
+        return;
+      }
+      visit(entry, entryPath, agentId);
+    });
+  };
+
+  manifest.contributes.agents.forEach((agent, agentIndex) => {
+    if (!agent.ui) return;
+    visit(agent.ui, ['contributes', 'agents', agentIndex, 'ui'], agent.id);
+  });
+  return diagnostics;
+}
+
 function readHostAccessReferenceCandidates(manifest: ParsedPluginManifestV2): readonly ManifestReferenceCandidate[] {
   const candidates: ManifestReferenceCandidate[] = [];
   for (const [requirement, requests] of [
@@ -326,6 +401,61 @@ function readReferenceDiagnostics(manifest: ParsedPluginManifestV2): PluginManif
       message: `Host access references undeclared ${candidate.targetFamily} id '${ref}'.`,
     });
   }
+  return diagnostics;
+}
+
+/**
+ * Agent component slots are symbolic references to the declaring plugin's
+ * ordinary inline views. Keep this check in the manifest integrity pass so a
+ * malformed slot cannot become a projected Agent and only fail later in a
+ * client renderer. The slot and view ids are local to this manifest; a view
+ * must exist exactly once and carry the role named by the slot.
+ */
+function readAgentInlineSurfaceDiagnostics(
+  manifest: ParsedPluginManifestV2,
+): PluginManifestIngestionDiagnostic[] {
+  const viewsById = new Map<string, ParsedPluginManifestV2['contributes']['ui']['views']>();
+  for (const view of manifest.contributes.ui.views) {
+    const existing = viewsById.get(view.id);
+    viewsById.set(view.id, existing ? [...existing, view] : [view]);
+  }
+  const diagnostics: PluginManifestIngestionDiagnostic[] = [];
+  manifest.contributes.agents.forEach((agent, agentIndex) => {
+    const slots = agent.ui?.components?.slots ?? [];
+    slots.forEach((slot, slotIndex) => {
+      if ('chip' in slot) return;
+      if (slot.slot !== 'sessionSubagents.launchCards'
+        && slot.slot !== 'sessionSubagents.teammateDetailsTab') return;
+      const expectedRole = slot.slot === 'sessionSubagents.launchCards'
+        ? 'sessionSubagentLaunch'
+        : 'sessionSubagentDetails';
+      const path = ['contributes', 'agents', agentIndex, 'ui', 'components', 'slots', slotIndex, 'surfaceId'] as const;
+      const matches = viewsById.get(slot.surfaceId) ?? [];
+      if (matches.length === 0) {
+        diagnostics.push({
+          code: 'plugin_manifest_dangling_reference',
+          path,
+          message: `Agent component slot references undeclared ui.views id '${slot.surfaceId}'.`,
+        });
+        return;
+      }
+      if (matches.length !== 1) {
+        diagnostics.push({
+          code: 'plugin_manifest_invalid',
+          path,
+          message: `Agent component slot ui.views id '${slot.surfaceId}' must resolve unambiguously to one view.`,
+        });
+        return;
+      }
+      if (matches[0]!.container !== expectedRole) {
+        diagnostics.push({
+          code: 'plugin_manifest_invalid',
+          path,
+          message: `Agent component slot '${slot.slot}' must reference a '${expectedRole}' inline view.`,
+        });
+      }
+    });
+  });
   return diagnostics;
 }
 
@@ -779,7 +909,9 @@ export function ingestPluginManifestV2(input: unknown): PluginManifestIngestionR
   }
   const semanticDiagnostics = [
     ...readContributionIds(parsed.data.contributes as Readonly<Record<string, unknown>>),
+    ...readAgentUiSettingReferenceDiagnostics(parsed.data),
     ...readReferenceDiagnostics(parsed.data),
+    ...readAgentInlineSurfaceDiagnostics(parsed.data),
     ...readEventAutomationSetupActionDiagnostics(parsed.data),
     ...readEventAutomationHistoryGapResetActionDiagnostics(parsed.data),
     ...readDynamicResourceHostAccessDiagnostics(parsed.data),
@@ -817,6 +949,7 @@ export function resolvePluginManifestSetReferencesV2(
   const diagnostics: PluginManifestIngestionDiagnostic[] = manifests.flatMap(
     readOpenableContentViewerDestinationDiagnostics,
   );
+  diagnostics.push(...manifests.flatMap(readAgentInlineSurfaceDiagnostics));
   diagnostics.push(...manifests.flatMap(readEventAutomationSetupActionDiagnostics));
   diagnostics.push(...manifests.flatMap(readEventAutomationHistoryGapResetActionDiagnostics));
   for (const manifest of manifests) {

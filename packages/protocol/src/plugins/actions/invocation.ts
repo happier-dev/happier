@@ -18,6 +18,7 @@ import {
 import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
+  rehydrateCanonicalProtocolComposableSchema,
 } from './jsonSchemaValidation.js';
 import {
   evaluatePluginActionPolicy,
@@ -141,6 +142,7 @@ export type PluginActionInputParserResult = Readonly<
 export type PluginActionInputParser = (
   input: StrictJsonValue,
 ) => PluginActionInputParserResult;
+export type PluginActionResultParser = PluginActionInputParser;
 
 /** Canonical terminal code when cancellation races an already-started Action. */
 export const PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE = 'plugin_action_outcome_unknown';
@@ -213,10 +215,16 @@ function invalidInputFromParserIssues(
   });
 }
 
-const schemaProjectionMismatch = Object.freeze({
+const inputSchemaProjectionMismatch = Object.freeze({
   status: 'failed' as const,
   code: 'plugin_action_schema_projection_mismatch',
   message: 'Plugin action executable input semantics disagree with the manifest inputSchema',
+});
+
+const resultSchemaProjectionMismatch = Object.freeze({
+  status: 'failed' as const,
+  code: 'plugin_action_schema_projection_mismatch',
+  message: 'Plugin action executable result semantics disagree with the manifest resultSchema',
 });
 
 function invalidResult(message: string): PluginActionInvocationResult {
@@ -225,6 +233,18 @@ function invalidResult(message: string): PluginActionInvocationResult {
     code: 'plugin_action_result_schema_invalid',
     message,
   });
+}
+
+function rehydrateActionParser(schema: object | undefined): PluginActionInputParser | undefined {
+  if (!schema) return undefined;
+  const rehydrated = rehydrateCanonicalProtocolComposableSchema(schema);
+  if (!rehydrated) return undefined;
+  return (input) => {
+    const parsed = rehydrated.safeParse(input);
+    return parsed.success
+      ? Object.freeze({ success: true as const, data: parsed.data })
+      : Object.freeze({ success: false as const, issues: parsed.error.issues });
+  };
 }
 
 function unavailable(code: string, message: string): PluginActionInvocationResult {
@@ -803,6 +823,7 @@ export function createPluginActionInvocation(params: Readonly<{
   inputSchema?: object;
   inputParser?: PluginActionInputParser;
   resultSchema?: object;
+  resultParser?: PluginActionResultParser;
   generationSignal: AbortSignal;
   isCurrent(): boolean;
 }>): Readonly<{
@@ -824,6 +845,8 @@ export function createPluginActionInvocation(params: Readonly<{
   });
   const inputValidator = compileSchema(params.inputSchema);
   const resultValidator = compileSchema(params.resultSchema);
+  const inputParser = params.inputParser ?? rehydrateActionParser(params.inputSchema);
+  const resultParser = params.resultParser ?? rehydrateActionParser(params.resultSchema);
 
   return Object.freeze({
     qualifiedId,
@@ -837,22 +860,22 @@ export function createPluginActionInvocation(params: Readonly<{
       const parsedInput = AgentRuntimeJsonValueV1Schema.safeParse(input);
       if (!parsedInput.success) return invalidInput;
       let normalizedInput = parsedInput.data;
-      if (params.inputParser) {
+      if (inputParser) {
         let semanticResult: PluginActionInputParserResult;
         try {
-          semanticResult = params.inputParser(parsedInput.data);
+          semanticResult = inputParser(parsedInput.data);
         } catch {
-          return schemaProjectionMismatch;
+          return inputSchemaProjectionMismatch;
         }
         if (!semanticResult.success) {
           return invalidInputFromParserIssues(semanticResult.issues);
         }
         const parsedNormalizedInput = AgentRuntimeJsonValueV1Schema.safeParse(semanticResult.data);
-        if (!parsedNormalizedInput.success) return schemaProjectionMismatch;
+        if (!parsedNormalizedInput.success) return inputSchemaProjectionMismatch;
         normalizedInput = parsedNormalizedInput.data;
       }
       if (!validates(inputValidator, normalizedInput)) {
-        return params.inputParser ? schemaProjectionMismatch : invalidInput;
+        return inputParser ? inputSchemaProjectionMismatch : invalidInput;
       }
 
       const linked = linkAbortSignals(params.generationSignal, options.signal);
@@ -952,10 +975,27 @@ export function createPluginActionInvocation(params: Readonly<{
         const rawResult = value === undefined ? null : value;
         const parsedResult = AgentRuntimeJsonValueV1Schema.safeParse(rawResult);
         if (!parsedResult.success) return invalidResult('Plugin action result must be JSON-safe');
-        if (!validates(resultValidator, parsedResult.data)) {
-          return invalidResult('Plugin action result does not match its manifest resultSchema');
+        let normalizedResult = parsedResult.data;
+        if (resultParser) {
+          let semanticResult: PluginActionInputParserResult;
+          try {
+            semanticResult = resultParser(parsedResult.data);
+          } catch {
+            return resultSchemaProjectionMismatch;
+          }
+          if (!semanticResult.success) {
+            return invalidResult(semanticResult.issues[0]?.message ?? 'Plugin action result does not match its executable result schema');
+          }
+          const parsedNormalizedResult = AgentRuntimeJsonValueV1Schema.safeParse(semanticResult.data);
+          if (!parsedNormalizedResult.success) return resultSchemaProjectionMismatch;
+          normalizedResult = parsedNormalizedResult.data;
         }
-        return Object.freeze({ status: 'executed', value: parsedResult.data });
+        if (!validates(resultValidator, normalizedResult)) {
+          return resultParser
+            ? resultSchemaProjectionMismatch
+            : invalidResult('Plugin action result does not match its manifest resultSchema');
+        }
+        return Object.freeze({ status: 'executed', value: normalizedResult });
       } finally {
         linked.dispose();
       }

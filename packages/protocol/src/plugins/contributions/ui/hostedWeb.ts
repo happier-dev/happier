@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1 } from '../../data/hostedWebCollectionUiQueryBridgeV1.js';
+import { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 } from '../../data/hostedWebAccountDataBridgeV1.js';
 import { PluginUiFallbackRefV1Schema } from './actions.js';
 import { PluginUiCompatibilityV1Schema } from './compatibility.js';
 import { PluginHostedWebSecurityPolicyV1Schema } from './hostedWebSecurity.js';
@@ -43,7 +43,7 @@ export type PluginHostedWebBridgeLifecycleKindV1 =
  * remains opt-in through the existing hosted-web `allowedMessages` declaration.
  */
 export const PLUGIN_HOSTED_WEB_BRIDGE_OPERATION_KINDS_V1 = Object.freeze([
-  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
 ] as const);
 export type PluginHostedWebBridgeOperationKindV1 =
   (typeof PLUGIN_HOSTED_WEB_BRIDGE_OPERATION_KINDS_V1)[number];

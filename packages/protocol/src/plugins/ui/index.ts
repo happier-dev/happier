@@ -32,18 +32,18 @@ export {
   type PluginUiRendererChainBindingV1,
 } from '../contributions/ui/rendererChainBinding.js';
 export {
-  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
-  PluginHostedWebCollectionUiQueryBridgeChangeV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeOperationV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeRequestV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeResponseV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeSnapshotV1Schema,
-  type PluginHostedWebCollectionUiQueryBridgeChangeV1,
-  type PluginHostedWebCollectionUiQueryBridgeOperationV1,
-  type PluginHostedWebCollectionUiQueryBridgeRequestV1,
-  type PluginHostedWebCollectionUiQueryBridgeResponseV1,
-  type PluginHostedWebCollectionUiQueryBridgeSnapshotV1,
-} from '../data/hostedWebCollectionUiQueryBridgeV1.js';
+  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
+  PluginHostedWebAccountDataBridgeChangeV1Schema,
+  PluginHostedWebAccountDataBridgeOperationV1Schema,
+  PluginHostedWebAccountDataBridgeRequestV1Schema,
+  PluginHostedWebAccountDataBridgeResponseV1Schema,
+  PluginHostedWebAccountDataBridgeSnapshotV1Schema,
+  type PluginHostedWebAccountDataBridgeChangeV1,
+  type PluginHostedWebAccountDataBridgeOperationV1,
+  type PluginHostedWebAccountDataBridgeRequestV1,
+  type PluginHostedWebAccountDataBridgeResponseV1,
+  type PluginHostedWebAccountDataBridgeSnapshotV1,
+} from '../data/hostedWebAccountDataBridgeV1.js';
 export {
   PluginUiArtifactFileV1Schema,
   type PluginUiArtifactFileV1,

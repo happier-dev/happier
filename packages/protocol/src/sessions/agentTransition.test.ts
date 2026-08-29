@@ -64,10 +64,16 @@ describe('session agent transition — portable selection', () => {
     expect(parsed.error?.issues.some((issue) => issue.path.join('.') === 'modelId')).toBe(true);
   });
 
-  it('trims bounded identifiers instead of persisting padded ids', () => {
-    const parsed = SessionAgentTransitionSelectionV1Schema.parse({
+  it('requires canonical Agent routing ids while normalizing non-routing identifiers', () => {
+    expect(SessionAgentTransitionSelectionV1Schema.safeParse({
       v: 1,
       agentId: '  claude  ',
+      modelId: 'opus',
+    }).success).toBe(false);
+
+    const parsed = SessionAgentTransitionSelectionV1Schema.parse({
+      v: 1,
+      agentId: 'claude',
       modelId: '  opus  ',
     });
     expect(parsed.agentId).toBe('claude');

@@ -1720,14 +1720,6 @@ const SessionPermissionRespondInputSchema = z.object({
   requestId: z.string().min(1).optional(),
 }).passthrough();
 
-// A plugin may ask a present user to decide one current permission request,
-// but it cannot select another Session or carry host-only permission updates
-// into the durable approval artifact.
-const SessionPermissionRespondPluginInputSchema = z.object({
-  requestId: z.string().min(1),
-  decision: z.enum(['allow', 'deny']),
-}).strict();
-
 const SessionUserActionAnswerItemSchema = z.object({
   question: z.string().min(1).refine((value) => value.trim().length > 0, {
     message: 'question must not be blank',
@@ -5506,7 +5498,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     id: 'sessions.spawn.profiles.list',
     title: 'List spawn profiles',
     sideEffectClass: 'read',
-    description: 'List backend profile references available for new sessions without exposing secret bindings.',
+    description: 'List Agent launch profile references available for new sessions without exposing secret bindings.',
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
@@ -6376,13 +6368,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'session.permission.respond' },
-    surfaceBindings: {
-      plugin: {
-        inputSchema: SessionPermissionRespondPluginInputSchema,
-        bindInput: bindPluginCurrentSessionInput,
-        projectOutput: projectPluginSessionInteractionResponse,
-      },
-    },
     surfaces: {
       ui: true,
       voice: false,
@@ -6390,7 +6375,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       mcp: false,
       cli: true,
       rpc: true,
-      },
+    },
     inputHints: {
       title: 'Respond to permission request',
       fields: [
@@ -8640,9 +8625,6 @@ export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.',
   'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.',
   'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.',
-  'sessions.subagents.list': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
-  'sessions.subagents.get': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
-  'sessions.subagents.watch': 'Raw host lifecycle projection watch; user operations use the planning/delegation Actions.',
   'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
@@ -8747,6 +8729,7 @@ export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
   'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
   'sessions.external.transcript.readAfter': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',
   'sessions.external.takeover.start': 'Raw durable takeover Start; SessionsService.external.takeover privately delegates to it and is the documented author workflow.',
+  'session.permission.respond': 'Present-user permission approval cannot be represented by trusted-plugin provenance; plugins use session.permission.remote.respond for mediated external-human approval.',
 } as const satisfies Readonly<Partial<Record<ActionId, string>>>);
 
 export type PluginSurfaceExcludedActionId =

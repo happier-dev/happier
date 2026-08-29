@@ -193,6 +193,19 @@ describe('plugin manifest v2 root contract', () => {
       },
     });
     expect(PluginManifestV2Schema.safeParse(secretCollision).success).toBe(false);
+
+    const scopeQualifiedNonSecret = manifest({
+      contributes: {
+        settings: [{
+          id: 'account-settings', title: 'Account', target: { kind: 'plugin' }, scope: 'account',
+          fields: [{ id: 'shared-field', title: 'Shared', schema: { type: 'string' } }],
+        }, {
+          id: 'daemon-settings', title: 'Daemon', target: { kind: 'plugin' }, scope: 'daemon',
+          fields: [{ id: 'shared-field', title: 'Shared', schema: { type: 'boolean' } }],
+        }],
+      },
+    });
+    expect(PluginManifestV2Schema.safeParse(scopeQualifiedNonSecret).success).toBe(true);
   });
 
   it('rejects retired own-secret HostAccess requests', () => {

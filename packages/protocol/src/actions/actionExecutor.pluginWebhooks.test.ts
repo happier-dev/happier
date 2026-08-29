@@ -10,7 +10,7 @@ const ensureInput = {
     pluginId: 'example.github',
   },
   sourceInstanceId: 'channel:github:primary',
-  setup: { kind: 'githubAccountEndpointV1', credential: 'serverGenerated' },
+  setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
   idempotencyKey: 'ensure-github-primary-0001',
 } as const;
 

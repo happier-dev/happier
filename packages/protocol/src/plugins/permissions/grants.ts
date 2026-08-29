@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { canonicalBoundedRecordKeySchema } from '../../common/canonicalRecordKey.js';
 import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposes.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
+import { PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
 import { PluginPermissionCapabilityV1Schema } from './capabilityV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
@@ -27,11 +28,7 @@ export type CredentialAccessSelectedAuthorityDigest = z.infer<
   typeof CredentialAccessSelectedAuthorityDigestSchema
 >;
 
-/**
- * Domain-separated digest of the selected source's declared raw realm/phase/
- * request tuple set. This keeps one disclosure-set approval rather than
- * manufacturing independently approved individual tuples.
- */
+/** Domain-separated digest of one exact raw realm/phase/request tuple. */
 export const CredentialAccessSelectedRawAccessDigestSchema = LowercaseSha256DigestSchema
   .brand<'CredentialAccessSelectedRawAccessDigest'>();
 export type CredentialAccessSelectedRawAccessDigest = z.infer<
@@ -240,6 +237,8 @@ export const PluginPermissionGrantListActionInputV1Schema = z.object({
   capability: PluginPermissionCapabilityV1Schema.optional(),
   targetScope: PluginPermissionGrantTargetScopeV1Schema.optional(),
   subject: PluginPermissionSubjectV1Schema.optional(),
+  /** Exact caller provenance for the signed plugin branch; scoped server-side. */
+  caller: PluginMachineMaterializationRefV1Schema.optional(),
   includeRevoked: z.boolean().default(false),
   includeResolvedRequests: z.boolean().default(false),
   limit: z.number().int().positive().max(200).default(50),
@@ -253,6 +252,8 @@ export const PluginPermissionGrantRequestActionInputV1Schema = z.object({
   subject: PluginPermissionSubjectV1Schema,
   requester: PluginPermissionGrantActorV1Schema,
   reason: z.string().trim().min(1),
+  /** Exact caller provenance; server-verified against the signed publisher proof. */
+  caller: PluginMachineMaterializationRefV1Schema.optional(),
 }).strict();
 export type PluginPermissionGrantRequestActionInputV1 = z.infer<typeof PluginPermissionGrantRequestActionInputV1Schema>;
 
@@ -265,6 +266,8 @@ export type PluginPermissionGrantGrantActionInputV1 = z.infer<typeof PluginPermi
 export const PluginPermissionGrantRevokeActionInputV1Schema = z.object({
   grantId: z.string().trim().min(1),
   reason: z.string().trim().min(1).optional(),
+  /** Exact caller provenance for plugin self-revocation; server-verified and atomically ownership-bound. */
+  caller: PluginMachineMaterializationRefV1Schema.optional(),
 }).strict();
 export type PluginPermissionGrantRevokeActionInputV1 = z.infer<typeof PluginPermissionGrantRevokeActionInputV1Schema>;
 

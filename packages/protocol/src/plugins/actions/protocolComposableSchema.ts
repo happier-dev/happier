@@ -782,11 +782,11 @@ export function defineProtocolUniqueArray<
       if (!parsed.success) return prefixProtocolFailure(parsed, index);
       output.push(parsed.data);
     }
-    // `uniqueItems` compares admitted JSON values. Child parsers may
-    // intentionally normalize their outputs (for example, an open/drop
-    // object), so comparing `output` here would reject inputs that the one
-    // emitted JSON Schema accepts.
-    return hasUniquePluginJsonValues(input)
+    // `uniqueItems` is a Protocol semantic over admitted child values. Child
+    // parsers may normalize their outputs (for example, an open/drop object),
+    // so uniqueness is decided after that normalization at this canonical
+    // executable parser owner.
+    return hasUniquePluginJsonValues(output)
       ? { success: true, data: output as readonly ProtocolSchemaOutput<TSchema>[] }
       : createProtocolSingleFailure('duplicate_array_item', 'Protocol array items must be unique');
   });

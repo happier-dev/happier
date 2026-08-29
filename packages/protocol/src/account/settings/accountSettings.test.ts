@@ -968,6 +968,21 @@ describe('accountSettings', () => {
     });
   });
 
+  it('preserves valid Action policy when one known persisted override is malformed', () => {
+    const parsed = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.message.send': { enabled: false },
+          'session.stop': { disabledSurfaces: 'api' },
+        },
+      },
+    });
+
+    expectActionSurfaceEnabled('session.message.send', parsed.actionsSettingsV1, 'cli', false);
+    expectActionSurfaceEnabled('session.stop', parsed.actionsSettingsV1, 'cli', false);
+  });
+
   it('migrates legacy default agent action settings to the current agent default matrix', () => {
     const legacyDefaultDisabled = [
       'session.stop',

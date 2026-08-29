@@ -14,6 +14,8 @@ export type PluginTranscriptActivityContentTypeV1 = z.infer<
 >;
 
 export const MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1 = 16;
+/** Concrete activity rows the host may render across all Resources in one Session tail. */
+export const MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1 = 16;
 export const MAX_PLUGIN_TRANSCRIPT_ACTIVITY_ACTIONS_V1 = 4;
 export const MAX_PLUGIN_TRANSCRIPT_ACTIVITY_CHECKLIST_ITEMS_V1 = 8;
 export const MAX_PLUGIN_TRANSCRIPT_ACTIVITY_TEXT_UTF8_BYTES_V1 = 280;

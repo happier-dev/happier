@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
-import semver from 'semver';
 
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
@@ -28,20 +27,17 @@ import {
   PluginMachineMaterializationRefV1Schema,
   type PluginMachineMaterializationRefV1,
 } from './materializationRefV1.js';
+import {
+  PluginReleaseRefV1Schema,
+  PluginReleaseVersionV1Schema,
+} from './releaseRefV1.js';
+
 
 export {
   PluginMachineMaterializationRefV1Schema,
   type PluginMachineMaterializationRefV1,
 } from './materializationRefV1.js';
 
-export const MAX_PLUGIN_RELEASE_VERSION_BYTES = 256;
-
-export const PluginReleaseVersionV1Schema = z.string().trim().min(1).max(
-  MAX_PLUGIN_RELEASE_VERSION_BYTES,
-).refine(
-  (value) => semver.valid(value) === value,
-  'Plugin release versions must be canonical semver versions.',
-);
 const ServerIdentityIdSchema = z.string().trim().regex(SERVER_IDENTITY_ID_PATTERN);
 const ContributionIdSchema = z.string().trim().min(1).max(256);
 const ArtifactTierSchema = z.enum(['declarative', 'hostedWeb', 'reactNative']);
@@ -55,11 +51,12 @@ const TimestampMsSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INT
  */
 export const MAX_PLUGIN_ACCOUNT_AVAILABILITY_INTENT_IDS = 200;
 
-export const PluginReleaseRefV1Schema = z.object({
-  pluginId: asProtocolZod(PluginIdSchema),
-  version: PluginReleaseVersionV1Schema,
-}).strict();
-export type PluginReleaseRefV1 = z.infer<typeof PluginReleaseRefV1Schema>;
+export {
+  MAX_PLUGIN_RELEASE_VERSION_BYTES,
+  PluginReleaseRefV1Schema,
+  PluginReleaseVersionV1Schema,
+  type PluginReleaseRefV1,
+} from './releaseRefV1.js';
 
 /**
  * Availability consumes the canonical manifest parser's output. The manifest schema

@@ -27,6 +27,71 @@ function nestedJson(depth: number): unknown {
 }
 
 describe('Voice provider structured settings declarations', () => {
+  it('accepts one canonical rich settings presentation for nested provider fields', () => {
+    const parsed = PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...baseContribution,
+        settings: {
+          schemaVersion: 1,
+          fields: [{
+            id: 'config',
+            title: 'Configuration',
+            schema: { type: 'object', additionalProperties: true },
+            default: { speed: 1 },
+            presentation: { control: 'json' },
+          }],
+          presentation: {
+            kind: 'voice.provider-settings.v1',
+            modes: ['byo'],
+            credential: { kind: 'none', catalog: null },
+            links: { privacy: 'https://example.com/privacy' },
+            fields: [{
+              kind: 'range', path: 'config.speed', min: 0.7, max: 1.5, step: 0.05, reset: 1,
+              titleKey: { key: 'voice.speed', fallback: 'Speed' },
+            }],
+          },
+        },
+      }],
+    });
+
+    expect(parsed.voiceProviders[0]?.settings?.presentation?.fields[0]).toMatchObject({
+      kind: 'range',
+      path: 'config.speed',
+      reset: 1,
+    });
+  });
+
+  it('rejects duplicate and unsafe rich presentation paths', () => {
+    const settings = {
+      schemaVersion: 1,
+      fields: [{
+        id: 'config', title: 'Configuration', schema: { type: 'object', additionalProperties: true },
+        default: {}, presentation: { control: 'json' },
+      }],
+      presentation: {
+        kind: 'voice.provider-settings.v1', modes: ['byo'],
+        credential: { kind: 'none', catalog: null }, links: {},
+        fields: [
+          { kind: 'text', path: 'config.value' },
+          { kind: 'text', path: 'config.value' },
+        ],
+      },
+    };
+    expect(PluginContributesV2Schema.safeParse({ voiceProviders: [{ ...baseContribution, settings }] }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({
+      voiceProviders: [{
+        ...baseContribution,
+        settings: {
+          ...settings,
+          presentation: {
+            ...settings.presentation,
+            fields: [{ kind: 'text', path: '__proto__.polluted' }],
+          },
+        },
+      }],
+    }).success).toBe(false);
+  });
+
   it('accepts a localized disclosure without inventing a provider setting', () => {
     const parsed = PluginContributesV2Schema.parse({
       voiceProviders: [{

@@ -17,8 +17,8 @@ const SUPPORTED_DECLARATION = {
     resume: {
       experimentSwitches: [{
         id: 'acme.fastResume',
-        settingKey: 'experiments',
-        when: { all: [{ kind: 'experimentsEnabled' }, { kind: 'settingTrue', settingKey: 'experiments' }] },
+        settingKey: { scope: 'account', localId: 'experiments' },
+        when: { all: [{ kind: 'experimentsEnabled' }, { kind: 'settingTrue', settingKey: { scope: 'account', localId: 'experiments' } }] },
       }],
     },
     contextWindow: { defaultTokens: 200000, observedUsageBumpTokens: [400000] },
@@ -34,7 +34,7 @@ const SUPPORTED_DECLARATION = {
       dialogs: [{
         dialogId: 'review_scope_confirmation',
         settingMutation: {
-          settingId: 'reviewScopePreference',
+          settingId: { scope: 'account', localId: 'reviewScopePreference' },
           allowedValues: ['ask_every_time', 'always_include'],
         },
         terminalNotice: {
@@ -135,7 +135,7 @@ describe('public Agent UI authoring grammar', () => {
             {
               dialogId: 'review_scope_confirmation',
               settingMutation: {
-                settingId: 'reviewScopePreference',
+                settingId: { scope: 'account', localId: 'reviewScopePreference' },
                 allowedValues: ['ask_every_time'],
               },
             },
@@ -147,6 +147,48 @@ describe('public Agent UI authoring grammar', () => {
               },
             },
           ],
+        },
+      },
+    }).success).toBe(false);
+  });
+
+  it('requires every setting reference to name its scope', () => {
+    expect(parse({
+      behavior: { resume: { experimentSwitches: [{ id: 'resume', settingKey: 'legacyBareId' }] } },
+    }).success).toBe(false);
+    expect(parse({
+      behavior: {
+        resume: {
+          experimentSwitches: [{
+            id: 'resume',
+            settingKey: { scope: 'account', localId: 'ownedSetting' },
+          }],
+        },
+      },
+    }).success).toBe(true);
+  });
+
+  it('keeps host preferences readable but refuses them as plugin setting mutation targets', () => {
+    expect(parse({
+      behavior: {
+        resume: {
+          experimentSwitches: [{
+            id: 'resume',
+            settingKey: { scope: 'host', localId: 'experiments' },
+          }],
+        },
+      },
+    }).success).toBe(true);
+    expect(parse({
+      behavior: {
+        askUserQuestion: {
+          dialogs: [{
+            dialogId: 'review_scope_confirmation',
+            settingMutation: {
+              settingId: { scope: 'host', localId: 'reviewScopePreference' },
+              allowedValues: ['always_include'],
+            },
+          }],
         },
       },
     }).success).toBe(false);
@@ -309,7 +351,7 @@ describe('public Agent UI authoring grammar', () => {
           environmentVariables: {
             backendMode: {
               envKey: 'ACME_MODE',
-              settingKey: 'acmeMode',
+              settingKey: { scope: 'account', localId: 'acmeMode' },
               legacyMetadataKey: 'acmeMode',
               runtimeDescriptorField: 'backendMode',
               defaultValue: 'server',

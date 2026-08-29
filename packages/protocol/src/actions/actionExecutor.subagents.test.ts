@@ -240,6 +240,67 @@ describe('ActionExecutor subagent registry actions', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  it('allows subagent reads and rejects lifecycle mutations on the API surface', async () => {
+    const list = vi.fn(async () => []);
+    const get = vi.fn(async () => null);
+    const watch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
+    const upsert = vi.fn(async (_args: unknown) => ({}));
+    const updateStatus = vi.fn(async (_args: unknown) => ({}));
+    const complete = vi.fn(async (_args: unknown) => ({}));
+    const executor = createActionExecutor(createDeps({
+      subagentsList: list,
+      subagentsGet: get,
+      subagentsWatch: watch,
+      subagentsUpsert: upsert,
+      subagentsUpdateStatus: updateStatus,
+      subagentsComplete: complete,
+    }));
+    const context = { surface: 'api' as const, authority: 'account_automation' as const };
+
+    for (const [actionId, input] of [
+      ['sessions.subagents.list', { parentSessionId: 'other-session' }],
+      ['sessions.subagents.get', { id: 'subagent-1', parentSessionId: 'other-session' }],
+      ['sessions.subagents.watch', { id: 'subagent-1', parentSessionId: 'other-session' }],
+    ] as const) {
+      await expect(executor.execute(ActionIdSchema.parse(actionId), input, context))
+        .resolves.toMatchObject({ ok: true });
+    }
+
+    for (const [actionId, input] of [
+      ['sessions.subagents.upsert', {
+        id: 'subagent-1',
+        parentSessionId: 'other-session',
+        origin: 'agent' as const,
+        kind: 'native' as const,
+        agentRef: { agentId: 'acme.sample' },
+      }],
+      ['sessions.subagents.updateStatus', {
+        id: 'subagent-1',
+        parentSessionId: 'other-session',
+        status: 'running' as const,
+      }],
+      ['sessions.subagents.complete', {
+        id: 'subagent-1',
+        parentSessionId: 'other-session',
+        status: 'completed' as const,
+      }],
+    ] as const) {
+      await expect(executor.execute(ActionIdSchema.parse(actionId), input, context))
+        .resolves.toMatchObject({
+          ok: false,
+          errorCode: 'action_disabled',
+          details: { reason: 'unsupported_surface', surface: 'api' },
+        });
+    }
+
+    expect(list).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledOnce();
+    expect(watch).toHaveBeenCalledOnce();
+    expect(upsert).not.toHaveBeenCalled();
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it('uses the default session id and forwards limit for subagent read actions', async () => {
     const calls: unknown[] = [];
     const deps = createDeps({

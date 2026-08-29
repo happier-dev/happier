@@ -15,70 +15,33 @@ import {
 import {
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
 } from '../contributions/strictJsonValue.js';
+import {
+  PLUGIN_ACCOUNT_STORAGE_BROWSER_NEUTRAL_LIMITS_V1,
+  PluginAccountStorageJsonValueV1Schema,
+  PluginAccountStorageLogicalKeyV1Schema,
+  addPluginAccountStorageCustomIssueV1 as addCustomIssue,
+  normalizePluginAccountStorageJsonValueV1,
+  pluginAccountStorageUtf8ByteLengthV1 as utf8ByteLength,
+  type PluginAccountStorageJsonValueV1,
+  type PluginAccountStorageLogicalKeyV1,
+} from './accountKvValueV1.js';
 
-const PLUGIN_ACCOUNT_STORAGE_MAXIMUM_ROW_ENCODED_BYTES_V1 = 512 * 1024;
+export {
+  PluginAccountStorageJsonValueV1Schema,
+  PluginAccountStorageLogicalKeyV1Schema,
+  normalizePluginAccountStorageJsonValueV1,
+} from './accountKvValueV1.js';
+export type {
+  PluginAccountStorageJsonValueV1,
+  PluginAccountStorageLogicalKeyV1,
+} from './accountKvValueV1.js';
 
 export const PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 = Object.freeze({
-  maximumLogicalKeys: 256,
-  maximumLogicalKeyUtf8Bytes: 256,
-  maximumValueEncodedBytes: 64 * 1024,
-  maximumRowEncodedBytes: PLUGIN_ACCOUNT_STORAGE_MAXIMUM_ROW_ENCODED_BYTES_V1,
+  ...PLUGIN_ACCOUNT_STORAGE_BROWSER_NEUTRAL_LIMITS_V1,
   maximumEncryptedCiphertextUtf8Bytes: getAccountScopedBlobCiphertextBase64LengthV1(
-    PLUGIN_ACCOUNT_STORAGE_MAXIMUM_ROW_ENCODED_BYTES_V1,
+    PLUGIN_ACCOUNT_STORAGE_BROWSER_NEUTRAL_LIMITS_V1.maximumRowEncodedBytes,
   ),
 } as const);
-
-const textEncoder = new TextEncoder();
-const RESERVED_LOGICAL_KEY_PREFIX = '@happier/' as const;
-
-function utf8ByteLength(value: string): number {
-  return textEncoder.encode(value).byteLength;
-}
-
-function addCustomIssue(context: z.RefinementCtx, message: string): void {
-  context.addIssue({ code: z.ZodIssueCode.custom, message });
-}
-
-/**
- * Account KV shares Protocol's one strict-JSON grammar. Its only additional
- * value rule is the Data-owned complete serialized-byte ceiling.
- */
-export function normalizePluginAccountStorageJsonValueV1(input: unknown): JsonValue {
-  const normalized = normalizeStrictJsonValue(input);
-  if (
-    measureSerializedValidatedStrictPluginJsonUtf8Bytes(
-      normalized,
-      'Plugin Account KV value',
-      PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumValueEncodedBytes,
-    ) > PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumValueEncodedBytes
-  ) {
-    throw new Error('Plugin Account KV value byte limit exceeded');
-  }
-  return normalized;
-}
-
-export const PluginAccountStorageJsonValueV1Schema = z.unknown().transform((value, context): JsonValue => {
-  try {
-    return normalizePluginAccountStorageJsonValueV1(value);
-  } catch (error) {
-    addCustomIssue(
-      context,
-      error instanceof Error ? error.message : 'Invalid Plugin Account KV JSON value',
-    );
-    return z.NEVER;
-  }
-});
-export type PluginAccountStorageJsonValueV1 = z.infer<typeof PluginAccountStorageJsonValueV1Schema>;
-
-export const PluginAccountStorageLogicalKeyV1Schema = z.string().min(1).superRefine((key, context) => {
-  if (key.startsWith(RESERVED_LOGICAL_KEY_PREFIX)) {
-    addCustomIssue(context, 'Plugin Account KV logical keys cannot use the @happier/ namespace');
-  }
-  if (utf8ByteLength(key) > PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumLogicalKeyUtf8Bytes) {
-    addCustomIssue(context, 'Plugin Account KV logical keys must be at most 256 UTF-8 bytes');
-  }
-});
-export type PluginAccountStorageLogicalKeyV1 = z.infer<typeof PluginAccountStorageLogicalKeyV1Schema>;
 
 export const PluginAccountStorageValueEntryV1Schema = z.object({
   version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),

@@ -250,7 +250,7 @@ function compareCanonicalText(left: string, right: string): number {
   return 0;
 }
 
-const OpaqueCollectionCursorSchema = PluginCollectionOpaqueCursorV1Schema;
+const OpaqueCollectionCursorSchema = asProtocolZod(PluginCollectionOpaqueCursorV1Schema);
 const ProjectedScalarValueSchema = PluginCollectionProjectedScalarValueV1Schema;
 
 export const PluginCollectionContractDigestV1Schema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);

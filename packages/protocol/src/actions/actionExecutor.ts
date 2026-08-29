@@ -472,7 +472,15 @@ function buildSessionSpawnNewArgs(
     : ctx.surface === 'plugin'
     && ctx.actionCaller?.kind === 'plugin'
     ? `plugin:${ctx.actionCaller.pluginId}`
-    : 'user';
+    : ctx.authority === 'account_automation'
+    && ctx.externalActionCredential
+    && normalizeId(ctx.externalActionCredential.accountId)
+    && normalizeId(ctx.externalActionCredential.principalId)
+    ? `api-principal:${normalizeId(ctx.externalActionCredential.accountId)}:${normalizeId(ctx.externalActionCredential.principalId)}`
+    : ctx.authority === 'present_user'
+    ? 'user'
+    : null;
+  if (!callerCreationNamespace) return null;
   const args: Record<string, unknown> = {
     ...data,
     creationKey,
@@ -1071,16 +1079,6 @@ function readDynamicOptionMachineId(
   return typeof input.machineId === 'string' ? input.machineId : undefined;
 }
 
-function readDynamicOptionServerId(
-  input: Record<string, unknown>,
-  actionId: ActionId | null,
-): string | undefined {
-  if (actionId === 'session.spawn_new') {
-    return readNonEmptyString(readRecord(input.executionTarget).serverId);
-  }
-  return readNonEmptyString(input.serverId);
-}
-
 function readDynamicOptionModelId(
   input: Record<string, unknown>,
   actionId: ActionId | null,
@@ -1112,7 +1110,9 @@ async function resolveDynamicActionOptions(params: Readonly<{
 }>): Promise<ActionExecuteResult> {
   const { deps, ctx, actionId, optionsSourceId, input } = params;
   const machineId = readDynamicOptionMachineId(input, actionId);
-  const serverId = readDynamicOptionServerId(input, actionId);
+  const serverId = actionId === 'session.spawn_new'
+    ? readNonEmptyString(readRecord(input.executionTarget).serverId)
+    : readNonEmptyString(ctx.serverId);
   const modelId = readDynamicOptionModelId(input, actionId);
   const directory = readDynamicOptionDirectory(input, actionId);
 
@@ -1757,14 +1757,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   }
 
   function resolveHostStampedAuthority(ctx: ActionExecutorContext): ActionRequiredAuthority {
-    if (ctx.authority) return ctx.authority;
-    // Existing in-process adapters predate the explicit context field. Their
-    // only noninteractive host-owned surfaces are conservatively automation;
-    // new public ingress must stamp `authority` explicitly and never reaches
-    // this compatibility default.
-    return ctx.surface === 'api' || ctx.surface === 'plugin' || ctx.surface === 'agent' || ctx.surface === 'mcp'
-      ? 'account_automation'
-      : 'present_user';
+    return ctx.authority ?? 'account_automation';
   }
 
   function requiredAuthorityFailure(
@@ -4067,7 +4060,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.agentsModelsList({
             ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
-            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
+            ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
             ...(backendTargetKey ? { backendTargetKey } : {}),
           });
@@ -4083,7 +4076,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.agentsConfigOptionsList({
             ...selectionArgs,
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
-            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
+            ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...((data.modelId) ? { modelId: String(data.modelId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
           });
@@ -4099,7 +4092,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.agentsSessionModesList({
             ...selectionArgs,
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
-            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
+            ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
           });
           return completeActionResult(res);
@@ -4132,7 +4125,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.spawnConnectedServicesList({
             ...selectionArgs,
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
-            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
+            ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.includeUnavailable === 'boolean' ? { includeUnavailable: data.includeUnavailable } : {}),
           });
           return completeActionResult(res);

@@ -27,9 +27,12 @@ export const VOICE_RUNTIME_TTS_LATENCY_DEMOTION_THRESHOLD_BOUNDS: VoiceRuntimeBo
 
 /** Warm-residency and concurrency defaults. */
 export const VOICE_RUNTIME_WARM_DEFAULTS = {
-  warmIdleEvictMs: 5 * 60 * 1000,
-  warmOnVoiceHomeAttach: true,
-  perModelConcurrency: 1,
+    warmIdleEvictMs: 5 * 60 * 1000,
+    warmOnVoiceHomeAttach: true,
+    perModelConcurrency: 1,
+    // Measured supported cold starts can take several minutes under admitted host load.
+    // This bounds the end-to-end warm request, not ordinary interactive inference.
+    warmRequestTimeoutMs: 10 * 60 * 1000,
 } as const;
 
 /** Bounds for the env-overridable warm idle residency. */

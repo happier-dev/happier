@@ -41,6 +41,7 @@ describe('session.spawn_new canonical execution', () => {
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
       surface: 'api',
+      authority: 'present_user',
       actionCaller: { kind: 'host' },
       serverId: 'server-host',
       externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
@@ -49,6 +50,95 @@ describe('session.spawn_new canonical execution', () => {
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       executionTarget: { serverId: 'server-host', machineId: 'machine-host' },
     }));
+  });
+
+  it('rejects deterministic user Session identity without host-stamped present-user authority', async () => {
+    const sessionSpawnNew = vi.fn();
+    const executor = createActionExecutor({
+      sessionSpawnNew,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
+  });
+
+  it('derives deterministic Account-automation Session identity only from a verified API principal', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({
+      type: 'pending' as const,
+      retryWithSameCreationKey: true as const,
+      outcome: 'accepted' as const,
+    }));
+    const executor = createActionExecutor({
+      sessionSpawnNew,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      authority: 'account_automation',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
+      externalActionCredential: {
+        accountId: 'account-1',
+        principalId: 'principal-1',
+        credentialId: 'credential-1',
+      },
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
+      sessionCreationTag: deriveSessionCreationTagV1({
+        callerCreationNamespace: 'api-principal:account-1:principal-1',
+        creationKey: apiSpawnInput.creationKey,
+      }),
+    }));
+  });
+
+  it('fails deterministic Account-automation Session spawn closed without verified API principal identity', async () => {
+    const sessionSpawnNew = vi.fn();
+    const executor = createActionExecutor({
+      sessionSpawnNew,
+      isActionApprovalRequired: () => false,
+    } as unknown as ActionExecutorDeps);
+
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      authority: 'account_automation',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    await expect(executor.execute('session.spawn_new', apiSpawnInput, {
+      surface: 'api',
+      authority: 'account_automation',
+      actionCaller: { kind: 'host' },
+      serverId: 'server-host',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
+      externalActionCredential: {
+        accountId: 'account-1',
+        principalId: '',
+        credentialId: 'credential-1',
+      },
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_parameters',
+      error: 'invalid_parameters',
+    });
+    expect(sessionSpawnNew).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -63,6 +153,7 @@ describe('session.spawn_new canonical execution', () => {
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
       surface: 'api',
+      authority: 'present_user',
       actionCaller: { kind: 'host' },
       serverId: 'server-host',
       ...targetContext,
@@ -103,6 +194,7 @@ describe('session.spawn_new canonical execution', () => {
 
     await expect(executor.execute('session.spawn_new', apiSpawnInput, {
       surface: 'api',
+      authority: 'present_user',
       actionCaller: { kind: 'host' },
       serverId: 'server-host',
       externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
@@ -120,7 +212,7 @@ describe('session.spawn_new canonical execution', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-api-spawn-1',
       decision: 'approve',
-    }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
+    }, { surface: 'cli', authority: 'present_user' })).resolves.toMatchObject({ ok: true });
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       executionTarget: { serverId: 'server-host', machineId: 'machine-host' },
     }));
@@ -155,6 +247,7 @@ describe('session.spawn_new canonical execution', () => {
 
     await expect(executor.execute('session.spawn_new', apiInputWithoutCreationKey, {
       surface: 'api',
+      authority: 'present_user',
       actionCaller: { kind: 'host' },
       serverId: 'server-host',
       externalActionTarget: { kind: 'machine', machineId: 'machine-host' },
@@ -167,7 +260,7 @@ describe('session.spawn_new canonical execution', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-api-request-id-spawn-1',
       decision: 'approve',
-    }, { surface: 'cli' })).resolves.toMatchObject({
+    }, { surface: 'cli', authority: 'present_user' })).resolves.toMatchObject({
       ok: true,
       result: { status: 'executed', execution: { ok: true } },
     });
@@ -216,13 +309,14 @@ describe('session.spawn_new canonical execution', () => {
       createdBy: { surface: 'system' },
     }, {
       surface: 'cli',
+      authority: 'present_user',
       actionRequestId: 'manual-request-identity-7',
     })).resolves.toMatchObject({ ok: true });
 
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-manual-request-id-spawn-1',
       decision: 'approve',
-    }, { surface: 'cli' })).resolves.toMatchObject({
+    }, { surface: 'cli', authority: 'present_user' })).resolves.toMatchObject({
       ok: true,
       result: { status: 'executed', execution: { ok: true } },
     });
@@ -464,6 +558,7 @@ describe('session.spawn_new canonical execution', () => {
 
     await executor.execute('session.spawn_new', withoutCreationKey, {
       surface: 'cli',
+      authority: 'present_user',
       actionRequestId: 'request-9',
     });
 
@@ -485,6 +580,7 @@ describe('session.spawn_new canonical execution', () => {
 
     const result = await executor.execute('session.spawn_new', canonicalInput, {
       surface: 'voice',
+      authority: 'present_user',
     });
 
     expect(result).toEqual({
@@ -510,6 +606,7 @@ describe('session.spawn_new canonical execution', () => {
       tag: '  predecessor metadata label  ',
     }, {
       surface: 'cli',
+      authority: 'present_user',
       actionRequestId: 'legacy-request-7',
     });
 
@@ -571,7 +668,7 @@ describe('session.spawn_new canonical execution', () => {
     const decisionResult = await executor.execute('approval.request.decide', {
       artifactId: 'approval-remote-dev-1',
       decision: 'approve',
-    }, { surface: 'cli' });
+    }, { surface: 'cli', authority: 'present_user' });
 
     expect(decisionResult.ok).toBe(true);
     expect(normalizeSessionSpawnNewLegacyApprovalReplay).toHaveBeenCalledWith(expect.objectContaining({
@@ -658,7 +755,7 @@ describe('session.spawn_new canonical execution', () => {
     const result = await executor.execute('approval.request.decide', {
       artifactId: 'approval-remote-dev-env-1',
       decision: 'approve',
-    }, { surface: 'cli' });
+    }, { surface: 'cli', authority: 'present_user' });
 
     expect(result.ok).toBe(true);
     expect(normalizeSessionSpawnNewLegacyApprovalReplay).toHaveBeenCalledOnce();
@@ -708,6 +805,7 @@ describe('session.spawn_new canonical execution', () => {
 
     await expect(executor.execute('session.spawn_new', canonicalInput, {
       surface: 'cli',
+      authority: 'present_user',
     })).resolves.toEqual({
       ok: true,
       result: {
@@ -727,7 +825,7 @@ describe('session.spawn_new canonical execution', () => {
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-directory-1',
       decision: 'approve',
-    }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
+    }, { surface: 'cli', authority: 'present_user' })).resolves.toMatchObject({ ok: true });
 
     expect(sessionSpawnNewDirectoryApprovalPreflight).toHaveBeenCalledTimes(2);
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({

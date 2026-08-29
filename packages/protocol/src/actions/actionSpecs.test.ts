@@ -1047,7 +1047,7 @@ describe('Action Spec Registry', () => {
         expect(spec.surfaces.plugin, spec.id).toBe(true);
       }
     }
-    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(true);
+    expect(getActionSpec('session.permission.respond').surfaces.plugin).toBe(false);
     expect(getActionSpec('session.user_action.answer').surfaces.plugin).toBe(true);
   });
 
@@ -1076,44 +1076,14 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.permission.remote.grants.revoke').surfaces.api).toBe(true);
   });
 
-  it('keeps permission approval discoverable while binding a strict plugin request to the current Session', async () => {
+  it('keeps permission approval public for present users but excludes trusted-plugin publication', () => {
     const permission = getActionSpec('session.permission.respond');
     const userAction = getActionSpec('session.user_action.answer');
     expect(permission.requiredAuthority).toBe('present_user');
     expect(userAction.requiredAuthority).toBe('present_user');
-    const permissionInput = permission.surfaceBindings?.plugin?.inputSchema;
     const userActionInput = userAction.surfaceBindings?.plugin?.inputSchema;
 
-    expect(permissionInput?.parse({
-      requestId: 'permission-1',
-      decision: 'allow',
-    })).toEqual({
-      requestId: 'permission-1',
-      decision: 'allow',
-    });
-    expect(permissionInput?.safeParse({
-      requestId: 'permission-1',
-      decision: 'allow',
-      updatedPermissions: { mode: 'forged' },
-    }).success).toBe(false);
-    expect(permissionInput?.safeParse({
-      sessionId: 'session-forged',
-      requestId: 'permission-1',
-      decision: 'allow',
-    }).success).toBe(false);
-    expect(await permission.surfaceBindings?.plugin?.bindInput?.({
-      requestId: 'permission-1',
-      decision: 'allow',
-    }, {
-      actionId: permission.id,
-      surface: 'plugin',
-      caller: { kind: 'plugin', pluginId: 'acme.permissions' },
-      defaultSessionId: 'session-current',
-    })).toEqual({
-      sessionId: 'session-current',
-      requestId: 'permission-1',
-      decision: 'allow',
-    });
+    expect(permission.surfaceBindings?.plugin).toBeUndefined();
     expect(permission.surfaces).toMatchObject({
       ui: true,
       cli: true,
@@ -1122,14 +1092,13 @@ describe('Action Spec Registry', () => {
       mcp: false,
       voice: false,
       api: true,
-      plugin: true,
+      plugin: false,
     });
-    expect(permission.requiredAuthority).toBe('present_user');
     expect(PublicActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
     expect(PUBLIC_ACTION_IDS).toContain('session.permission.respond');
-    expect(PluginInvocableActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
-    expect(PLUGIN_INVOCABLE_ACTION_IDS).toContain('session.permission.respond');
-    expect(PLUGIN_ACTION_INPUT_SCHEMAS).toHaveProperty('session.permission.respond');
+    expect(PluginInvocableActionIdSchema.safeParse('session.permission.respond').success).toBe(false);
+    expect(PLUGIN_INVOCABLE_ACTION_IDS).not.toContain('session.permission.respond');
+    expect(PLUGIN_ACTION_INPUT_SCHEMAS).not.toHaveProperty('session.permission.respond');
 
     expect(userActionInput?.parse({
       requestId: 'question-1',
@@ -1244,20 +1213,36 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       provider: 'codex',
     })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
-    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
     expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
   });
 
-  it('keeps all six raw subagent lifecycle Actions RPC-only', () => {
-    const rawSubagentActionIds = [
+  it('exposes bounded subagent reads and keeps lifecycle mutations RPC-only', () => {
+    const readActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
+    ] as const;
+    const mutationActionIds = [
       'sessions.subagents.upsert',
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    for (const actionId of rawSubagentActionIds) {
+    for (const actionId of readActionIds) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.api).toBe(true);
+      expect(spec.surfaces.plugin).toBe(true);
+      expect(PublicActionIdSchema.safeParse(actionId).success).toBe(true);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(true);
+      expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, actionId)).toBe(true);
+      expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(true);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(true);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(true);
+      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(false);
+      expect(isInternalActionId(actionId)).toBe(false);
+    }
+    for (const actionId of mutationActionIds) {
       const spec = getActionSpec(actionId);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(false);
@@ -3229,17 +3214,19 @@ describe('Action Spec Registry', () => {
     ).toThrow();
   });
 
-  it('accepts canonical built-in backendTargetKey values when listing models', () => {
+  it('accepts additive-open agents.models.list input while canonical execution drops unknown fields', () => {
     const spec = getActionSpec('agents.models.list');
 
     expect(spec.inputSchema.parse({
       backendTargetKey: 'backend:codex',
       machineId: 'machine-1',
       limit: 10,
+      providerTraceId: 'preview-field',
     })).toMatchObject({
       backendTargetKey: 'backend:codex',
       machineId: 'machine-1',
       limit: 10,
+      providerTraceId: 'preview-field',
     });
   });
 

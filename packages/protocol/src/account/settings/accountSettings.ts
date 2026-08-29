@@ -25,6 +25,7 @@ import {
 
 import {
   ActionsSettingsV1Schema,
+  tryNormalizeActionsSettingsV1,
   type ActionSettingsOverride,
   type ActionsSettingsV1,
 } from '../../actions/actionSettings.js';
@@ -405,7 +406,12 @@ const BackendCliSourcePreferenceByTargetKeySchema = z
   .record(BackendTargetKeyV2InputSchema, BackendCliSourcePreferenceSchema)
   .catch({});
 
-const UNSAFE_ACCOUNT_SETTINGS_ROOT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+/**
+ * Root keys that can never name a settings root, however they arrived in a raw
+ * persisted document. Exported beside the retired-root guard so every raw
+ * restore/normalize corridor rejects them through this one owner.
+ */
+export const UNSAFE_ACCOUNT_SETTINGS_ROOT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
  * Root keys that formerly participated in the Account blob but no longer have a
@@ -527,9 +533,9 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
   }
 
   if (next.actionsSettingsV1 && typeof next.actionsSettingsV1 === 'object' && !Array.isArray(next.actionsSettingsV1)) {
-    const parsed = ActionsSettingsV1Schema.safeParse(next.actionsSettingsV1);
-    if (parsed.success) {
-      next.actionsSettingsV1 = migrateLegacyDefaultActionsSettingsV1(parsed.data);
+    const parsed = tryNormalizeActionsSettingsV1(next.actionsSettingsV1);
+    if (parsed) {
+      next.actionsSettingsV1 = migrateLegacyDefaultActionsSettingsV1(parsed);
     }
   }
 
@@ -1646,7 +1652,10 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineAccountSettingDefinitions({
     { semanticDomain: 'source control', classification: 'preference', maximumSerializedValueBytes: 8 },
   ),
   actionsSettingsV1: accountCatalogDefinition(
-    ActionsSettingsV1Schema.catch(DEFAULT_ACTIONS_SETTINGS_V1).default(DEFAULT_ACTIONS_SETTINGS_V1),
+    z.preprocess(
+      (value) => tryNormalizeActionsSettingsV1(value) ?? DEFAULT_ACTIONS_SETTINGS_V1,
+      ActionsSettingsV1Schema,
+    ),
     DEFAULT_ACTIONS_SETTINGS_V1,
     { semanticDomain: 'action policy', classification: 'policy', maximumSerializedValueBytes: 64 * 1024 },
   ),

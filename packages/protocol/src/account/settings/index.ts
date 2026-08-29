@@ -5,6 +5,7 @@ export {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   RETIRED_ACCOUNT_SETTINGS_SESSION_ONLY_KEYS,
   RETIRED_ACCOUNT_SETTINGS_SESSION_ORGANIZATION_KEYS,
+  isRetiredAccountSettingsRootKey,
   AccountSettingsSchema,
   AccountSettingsPersistedObjectSchema,
   ForegroundBehaviorSchema,
@@ -99,9 +100,17 @@ export {
   AccountSettingsV2UpdateRequestAdmissionSchema,
   AccountSettingsV2UpdateRequestSchema,
   AccountSettingsV2UpdateResponseSchema,
+  AccountSettingsV2HistoryContentKindV1Schema,
+  AccountSettingsV2HistoryListResponseSchema,
+  AccountSettingsV2HistoryDetailResponseSchema,
+  AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema,
   type AccountSettingsV2GetResponse,
   type AccountSettingsV2UpdateRequest,
   type AccountSettingsV2UpdateResponse,
+  type AccountSettingsV2HistoryContentKindV1,
+  type AccountSettingsV2HistoryListResponse,
+  type AccountSettingsV2HistoryDetailResponse,
+  type AccountSettingsV2HistoryRestoreClientUpdateRequiredResponse,
 } from './accountSettingsApiV2.js';
 
 export {
@@ -112,6 +121,12 @@ export {
   type AccountSettingsMutationInvalidReason,
   type AccountSettingsMutationResult,
 } from './accountSettingMutationV1.js';
+
+export {
+  applyAccountSettingsHistoryRestoreV1,
+  type AccountSettingsHistoryRestoreApplicationV1,
+  type AccountSettingsHistoryRestoreInvalidReasonV1,
+} from './accountSettingsHistoryRestoreV1.js';
 
 export {
   DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1,

@@ -149,6 +149,8 @@ export const VoiceModelPackManifestV1Schema = z.object({
   license: VoiceModelPackLicenseV1Schema,
   supportArtifacts: z.array(VoiceModelPackSupportArtifactV1Schema).max(32).optional(),
   voices: z.array(VoiceModelPackVoiceCatalogEntryV1Schema).max(512).optional(),
+  /** Explicit catalog default. Omitted manifests use the first declared voice. */
+  defaultVoiceId: VoiceModelPackLocalIdV1Schema.optional(),
   files: z.array(z.object({
     path: z.string().min(1).max(512),
     url: secureHttpsUrlSchema('Voice model-pack file URL'),
@@ -167,6 +169,16 @@ export const VoiceModelPackManifestV1Schema = z.object({
     });
   }
   rejectDuplicateVoiceIds(manifest.voices, ctx);
+  if (
+    manifest.defaultVoiceId
+    && !(manifest.voices ?? []).some((voice) => voice.id === manifest.defaultVoiceId)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['defaultVoiceId'],
+      message: 'The default voice must identify a declared voice.',
+    });
+  }
   try {
     assertManifestPathsSafe(manifest);
   } catch {

@@ -102,6 +102,7 @@ export type {
 /** Transcript activity Resources are browser-decoded host payloads. */
 export {
   MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1,
   MAX_PLUGIN_TRANSCRIPT_ACTIVITY_RESOURCE_BYTES_V1,
   PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
   PluginTranscriptActivityContentTypeV1Schema,
@@ -264,22 +265,22 @@ export type {
   PluginUiTargetedContributionsV1,
 } from './targetedContributions.js';
 export {
-  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
-  PluginHostedWebCollectionUiQueryBridgeChangeV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeOperationV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeRequestV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeResponseV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeSnapshotV1Schema,
-  type PluginHostedWebCollectionUiQueryBridgeChangeV1,
-  type PluginHostedWebCollectionUiQueryBridgeOperationV1,
-  type PluginHostedWebCollectionUiQueryBridgeRequestV1,
-  type PluginHostedWebCollectionUiQueryBridgeResponseV1,
-  type PluginHostedWebCollectionUiQueryBridgeSnapshotV1,
-} from '../data/hostedWebCollectionUiQueryBridgeV1.js';
+  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
+  PluginHostedWebAccountDataBridgeChangeV1Schema,
+  PluginHostedWebAccountDataBridgeOperationV1Schema,
+  PluginHostedWebAccountDataBridgeRequestV1Schema,
+  PluginHostedWebAccountDataBridgeResponseV1Schema,
+  PluginHostedWebAccountDataBridgeSnapshotV1Schema,
+  type PluginHostedWebAccountDataBridgeChangeV1,
+  type PluginHostedWebAccountDataBridgeOperationV1,
+  type PluginHostedWebAccountDataBridgeRequestV1,
+  type PluginHostedWebAccountDataBridgeResponseV1,
+  type PluginHostedWebAccountDataBridgeSnapshotV1,
+} from '../data/hostedWebAccountDataBridgeV1.js';
 export {
   PLUGIN_HOSTED_WEB_NATIVE_ARTIFACT_URL_SCHEME_V1,
   PluginHostedWebBridgeBootstrapEnvelopeV1Schema,
-  PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1Schema,
+  PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema,
   PluginHostedWebBridgeBootstrapPayloadV1Schema,
   PluginHostedWebBridgeEnvelopeV1Schema,
   PluginHostedWebBridgeHostMessageEnvelopeV1Schema,
@@ -288,7 +289,7 @@ export {
   readPluginHostedWebBridgeFrameOriginV1,
   type PluginHostedWebBridgeBootstrapEnvelopeV1,
   type PluginHostedWebBridgeBootstrapPayloadV1,
-  type PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1,
+  type PluginHostedWebBridgeAccountDataMessageEnvelopeV1,
   type PluginHostedWebBridgeEnvelopeV1,
   type PluginHostedWebBridgeHostMessageEnvelopeV1,
   type PluginHostedWebBridgeResponseEnvelopeV1,

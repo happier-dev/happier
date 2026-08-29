@@ -8,9 +8,10 @@ import {
   AgentSessionProviderCheckpointMaxJsonBytesV1,
   AgentSessionProviderCheckpointV1Schema,
 } from '../../runtime/agentSessionV1.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 
 const SessionTurnMutationIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
-const SessionTurnAgentIdV1Schema = z.string().trim().min(1).max(128);
+const SessionTurnAgentIdV1Schema = AgentIdV1Schema;
 const SessionTurnAgentTurnIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
 const SessionTurnObservedAtV1Schema = z.number().int().nonnegative();
 const SessionTurnReasonV1Schema = z.string().trim().min(1).max(256);
