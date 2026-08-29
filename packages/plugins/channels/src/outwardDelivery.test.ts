@@ -268,7 +268,32 @@ class MemoryAccountCollection {
           || current.revision !== input.expectedRevision))) {
       throw Object.assign(new Error('conflict'), { code: 'plugin_collection_conflict' });
     }
-    const row = { rowId, revision: (current?.revision ?? 0) + 1, value, deleted: false };
+    // Most custody tests predate the strict shared binding decoder and focus
+    // on delivery state rather than reconstructing every persisted binding
+    // field. Complete those positive binding fixtures at this storage seam so
+    // they exercise the same canonical row shape as production without
+    // duplicating a subtly different binding constructor in every test.
+    const payload = value.payload;
+    const storedValue = value['record-kind'] === 'binding'
+      && typeof payload === 'object'
+      && payload !== null
+      && !Array.isArray(payload)
+      ? {
+        ...value,
+        v: value.v ?? 1,
+        'created-at': value['created-at'] ?? 0,
+        'updated-at': value['updated-at'] ?? 0,
+        payload: {
+          allowedPrincipalIds: ['provider:principal-1'],
+          allowBotSenders: false,
+          inputMode: 'allAllowedMessages',
+          inboundDebounceMs: 0,
+          senderFeedback: 'off',
+          ...payload,
+        },
+      }
+      : value;
+    const row = { rowId, revision: (current?.revision ?? 0) + 1, value: storedValue, deleted: false };
     this.rows.set(rowId, row);
     return row;
   }
@@ -1535,6 +1560,222 @@ describe('Channels control-response outward custody', () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
+  it('selects unresolved attention rows directly instead of paging unrelated false-attention history', async () => {
+    // Keyset fake for the declared `by-connection-attention` index, implementing
+    // the canonical host query semantics proven by the Data owner's compound
+    // binary-index contract: `prefix` fixes leading key components and
+    // `range` bounds the next component, ascending nulls first.
+    type KeyRow = Readonly<{
+      rowId: string;
+      revision: number;
+      value: Readonly<Record<string, unknown>>;
+    }>;
+    type KeyComponent = string | boolean | null;
+    const indexKey = (row: KeyRow): readonly KeyComponent[] => [
+      row.value['connection-id'] as string,
+      row.value.attention as boolean,
+      (row.value['binding-id'] as string | null) ?? null,
+      row.rowId,
+    ];
+    const compareComponent = (left: KeyComponent, right: KeyComponent): number => {
+      if (left === null && right === null) return 0;
+      if (left === null) return -1;
+      if (right === null) return 1;
+      if (typeof left === 'boolean' && typeof right === 'boolean') {
+        return left === right ? 0 : left ? 1 : -1;
+      }
+      if (typeof left === 'string' && typeof right === 'string') {
+        return left.localeCompare(right);
+      }
+      throw new Error('Index key component types diverged from the declared index');
+    };
+    const compareKeys = (
+      left: readonly KeyComponent[],
+      right: readonly KeyComponent[],
+    ): number => {
+      for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+        const compared = compareComponent(left[index] ?? null, right[index] ?? null);
+        if (compared !== 0) return compared;
+      }
+      return 0;
+    };
+    const startsWith = (
+      key: readonly KeyComponent[],
+      prefix: readonly KeyComponent[],
+    ): boolean => prefix.every((component, index) => compareComponent(key[index] ?? null, component) === 0);
+
+    const makeKeysetCollection = () => {
+      const rows = new Map<string, KeyRow>();
+      return {
+        rows,
+        async put(value: Readonly<Record<string, unknown>>, request: Readonly<{ expectedRevision: number | 'absent' }>) {
+          const rowId = String(value.id);
+          const current = rows.get(rowId);
+          const matches = request.expectedRevision === 'absent'
+            ? current === undefined
+            : current?.revision === request.expectedRevision;
+          if (!matches) throw Object.assign(new Error('conflict'), { code: 'plugin_collection_conflict' });
+          const row = { rowId, revision: current?.revision === undefined ? 1 : current.revision + 1, value };
+          rows.set(rowId, row);
+          return row;
+        },
+        async get(rowId: string) {
+          return rows.get(rowId) ?? null;
+        },
+        async query(request: Readonly<{ index: string; prefix?: readonly KeyComponent[]; range?: Readonly<{ lower?: KeyComponent; upper?: KeyComponent }>; order?: string; cursor?: string; limit?: number }>) {
+          assertChannelsTestCollectionQueryLimit(request.limit);
+          if (request.index !== 'by-connection-attention') return { rows: [], changeCursor: 1 };
+          const prefix = request.prefix ?? [];
+          const selected = [...rows.values()]
+            .map((row) => ({ row, key: indexKey(row) }))
+            .filter(({ key }) => startsWith(key, prefix))
+            .filter(({ key }) => {
+              if (request.range === undefined) return true;
+              const component = key[prefix.length] ?? null;
+              if (request.range.lower !== undefined && compareComponent(component, request.range.lower) < 0) return false;
+              if (request.range.upper !== undefined && compareComponent(component, request.range.upper) > 0) return false;
+              return true;
+            })
+            .sort((left, right) => compareKeys(left.key, right.key));
+          const cursorKey = request.cursor === undefined ? null : (JSON.parse(request.cursor) as readonly KeyComponent[]);
+          const afterCursor = cursorKey === null
+            ? selected
+            : selected.filter(({ key }) => compareKeys(key, cursorKey) > 0);
+          const limit = request.limit ?? afterCursor.length;
+          const page = afterCursor.slice(0, limit);
+          return {
+            rows: page.map(({ row }) => row),
+            ...(afterCursor.length > page.length && page.length > 0
+              ? { nextCursor: JSON.stringify(page[page.length - 1]!.key) }
+              : {}),
+            changeCursor: 1,
+          };
+        },
+      };
+    };
+
+    const state = new MemoryAccountCollection();
+    const deliveries = makeKeysetCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal: new AbortController().signal,
+      now: () => 100,
+    });
+    const bindingObligation = obligation();
+    if (bindingObligation.bindingId === undefined) {
+      throw new Error('Attention-index fixture requires binding-qualified custody.');
+    }
+
+    // Many unrelated terminal (false-attention) rows across bindings whose
+    // identifiers sort before and after the unresolved rows' binding, plus
+    // false-attention rows inside the unresolved binding itself: under the
+    // former bare-connection prefix every one of them precedes the first
+    // unresolved row of the last binding.
+    const unrelatedBindings = ['binding-aaa', 'binding-bbb', 'binding-zzz'] as const;
+    const unrelatedCounts = { 'binding-aaa': 150, 'binding-bbb': 150, 'binding-zzz': 100 } as const;
+    let unrelatedOrdinal = 0;
+    for (const bindingId of unrelatedBindings) {
+      for (let index = 0; index < unrelatedCounts[bindingId]; index += 1) {
+        const created = await store.ensure({
+          ...bindingObligation,
+          bindingId,
+          source: {
+            kind: 'sessionProjection',
+            sessionId: `session-history-${bindingId}-${index}`,
+            semanticItemId: `semantic-history-${bindingId}-${index}`,
+          },
+          content: `Unrelated delivered history ${unrelatedOrdinal}`,
+          deliveryKey: `history:${bindingId}:${index}`,
+        });
+        if (created.kind !== 'created') throw new Error('Expected unrelated history custody creation.');
+        const delivered = await store.compareAndSwap({
+          custodyId: created.record.custodyId,
+          expectedRevision: created.record.revision,
+          custody: {
+            state: 'delivered',
+            attemptCount: 1,
+            providerMessageIds: [`provider-${unrelatedOrdinal}`],
+          },
+        });
+        if (delivered.kind !== 'updated') throw new Error('Expected unrelated history settlement.');
+        unrelatedOrdinal += 1;
+      }
+    }
+    expect(unrelatedOrdinal).toBe(400);
+
+    const unresolvedBindings = [
+      { bindingId: 'binding-aaa', state: 'partial' as const, control: 'delivery-direct-partial-aaa' },
+      { bindingId: 'binding-zzz', state: 'partial' as const, control: 'delivery-direct-partial-zzz' },
+      { bindingId: 'binding-zzz', state: 'outcomeUnknown' as const, control: 'delivery-direct-unknown-zzz' },
+    ];
+    const unresolvedCustodyIds = new Set<string>();
+    for (const unresolved of unresolvedBindings) {
+      const created = await store.ensure({
+        ...bindingObligation,
+        bindingId: unresolved.bindingId,
+        source: {
+          kind: 'controlResponse',
+          controlId: unresolved.control,
+          controlKind: 'recovery',
+        },
+        content: `Private unresolved body ${unresolved.control}.`,
+        deliveryKey: unresolved.control,
+      });
+      if (created.kind !== 'created') throw new Error('Expected unresolved custody creation.');
+      const ambiguous = await store.compareAndSwap({
+        custodyId: created.record.custodyId,
+        expectedRevision: created.record.revision,
+        custody: unresolved.state === 'partial'
+          ? { state: 'partial', attemptCount: 1, providerMessageIds: ['provider-message-private'], failedChunk: 1 }
+          : { state: 'outcomeUnknown', attemptCount: 1, providerMessageIds: ['provider-message-private'] },
+      });
+      if (ambiguous.kind !== 'updated') throw new Error('Expected unresolved custody settlement.');
+      unresolvedCustodyIds.add(created.record.custodyId);
+    }
+
+    const query = vi.spyOn(deliveries, 'query');
+    const firstPage = await readConversationOutwardDeliveryResolutionPage({
+      deliveriesCollection: deliveries as never,
+      connectionId: 'connection-1',
+      limit: 50,
+    });
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({
+      index: 'by-connection-attention',
+      prefix: ['connection-1'],
+      range: { lower: true, upper: true },
+      order: 'asc',
+      limit: 50,
+    }), undefined);
+    // The first page is exactly the unresolved set: none of the 400 unrelated
+    // false-attention rows precedes or displaces it.
+    expect(new Set(firstPage.rows.map((row) => row.custodyId))).toEqual(unresolvedCustodyIds);
+    expect(firstPage.nextCursor).toBeUndefined();
+
+    // The bounded region still pages when the caller asks for smaller pages.
+    const firstSmall = await readConversationOutwardDeliveryResolutionPage({
+      deliveriesCollection: deliveries as never,
+      connectionId: 'connection-1',
+      limit: 2,
+    });
+    expect(firstSmall.rows).toHaveLength(2);
+    if (firstSmall.nextCursor === undefined) throw new Error('Expected a continuation cursor.');
+    const secondSmall = await readConversationOutwardDeliveryResolutionPage({
+      deliveriesCollection: deliveries as never,
+      connectionId: 'connection-1',
+      cursor: firstSmall.nextCursor,
+      limit: 2,
+    });
+    const smallPageCustodyIds = [
+      ...firstSmall.rows.map((row) => row.custodyId),
+      ...secondSmall.rows.map((row) => row.custodyId),
+    ];
+    expect(new Set(smallPageCustodyIds)).toEqual(unresolvedCustodyIds);
+    expect(new Set(smallPageCustodyIds).size).toBe(3);
+    expect(secondSmall.nextCursor).toBeUndefined();
+  });
+
   it('reads only exact ambiguous-custody CAS facts and resolves them through the canonical Collection row', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
@@ -1604,8 +1845,10 @@ describe('Channels control-response outward custody', () => {
       ],
     });
     expect(query).toHaveBeenCalledWith({
-      index: 'by-owner-attention',
+      index: 'by-connection-attention',
       prefix: ['connection-1'],
+      // The connection/attention index makes attention the ranged component.
+      range: { lower: true, upper: true },
       order: 'asc',
       cursor: 'prior-page',
       limit: 200,
@@ -1941,9 +2184,13 @@ describe('Channels control-response outward custody', () => {
     // refuses a body-free row an owner could still unarchive and resend, so
     // the body-free predicate cannot silently drop retry input.
     if (stored === undefined) throw new Error('Expected the settled custody row.');
+    const storedPayload = stored.payload;
+    if (storedPayload === null || Array.isArray(storedPayload) || typeof storedPayload !== 'object') {
+      throw new Error('Expected the settled custody payload.');
+    }
     expect(isValidPluginJsonSchemaValue(validateDeliveryRow, {
       ...stored,
-      payload: { ...stored.payload, archiveRecovery: 'unarchiveAndRetry' },
+      payload: { ...storedPayload, archiveRecovery: 'unarchiveAndRetry' },
     })).toBe(false);
   });
 

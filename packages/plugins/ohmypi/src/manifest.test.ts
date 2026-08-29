@@ -20,26 +20,31 @@ describe('OhMyPi plugin manifest', () => {
         service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         required: false,
         materializationKinds: ['environment'],
+        credentialKinds: ['oauth'],
       }, {
         purpose: 'openai',
         service: { pluginId: 'happier.voice.openai', localId: 'openai' },
         required: false,
         materializationKinds: ['environment'],
+        credentialKinds: ['token'],
       }, {
         purpose: 'claude-subscription',
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
         required: false,
         materializationKinds: ['environment'],
+        credentialKinds: ['token'],
       }, {
         purpose: 'anthropic',
         service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
         required: false,
         materializationKinds: ['environment'],
+        credentialKinds: ['token'],
       }, {
         purpose: 'gemini',
         service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
         required: false,
         materializationKinds: ['environment'],
+        credentialKinds: ['token'],
       }],
       capabilities: {
         surfaces: ['externalSessions'],

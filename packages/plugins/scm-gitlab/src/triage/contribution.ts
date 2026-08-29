@@ -246,7 +246,10 @@ type TriageActionDeclaration = Readonly<{
   title: string;
   description: string;
   scopes: readonly ['settings'] | readonly ['global'];
-  surfaces: readonly PluginActionInvocationSurfaceV2[];
+  surfaces: readonly [
+    PluginActionInvocationSurfaceV2,
+    ...PluginActionInvocationSurfaceV2[],
+  ];
   execution: Readonly<{ target: 'daemon' }>;
   dangerLevel: 'safe' | 'writesLocal';
   inputSchema: PluginJsonSchema;
@@ -266,7 +269,7 @@ type GitlabMutationActionDeclaration = Readonly<{
   title: string;
   description: string;
   scopes: readonly ['global'];
-  surfaces: readonly ['ui', 'plugin'];
+  surfaces: readonly ['ui'];
   placementBindings: readonly ['detailsPanel'];
   execution: Readonly<{ target: 'daemon' }>;
   dangerLevel: 'destructive' | 'externalSideEffect' | 'writesRemote';
@@ -300,7 +303,7 @@ function declareOperationAction(input: Readonly<{
     title: input.title,
     description: input.description,
     scopes: input.scopes,
-    surfaces: [...declaration.surfaces],
+    surfaces: declaration.surfaces,
     execution: { target: 'daemon' },
     dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
     inputSchema: declaration.input.schema.jsonSchema,
@@ -363,8 +366,10 @@ export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration
  * Unlike the three operation roles above, these publish this source's OWN
  * schemas: there is no protocol-defined role for "one page of GitLab
  * discussions", and inventing one would put GitLab vocabulary into the shared
- * contract. They stay `plugin`-surfaced and account-bound so the same exact
- * configured account gates them as gates `scan` and `get`.
+ * contract. Only this source's own mounted detail body invokes them, through
+ * the mounted Plugin UI host — present-user authority — so they are `ui`-
+ * surfaced and account-bound: the same exact configured account gates them as
+ * gates `scan` and `get`.
  */
 export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDeclaration[] =
   Object.freeze([
@@ -424,7 +429,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
-    surfaces: ['plugin'] as const,
+    surfaces: ['ui'] as const,
     execution: { target: 'daemon' as const },
     dangerLevel: 'safe' as const,
     hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
@@ -437,21 +442,17 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
  * Four properties of these declarations are load-bearing rather than
  * decorative, and each is a rule from `sources/SCM.md` §3.8:
  *
- * - **`surfaces: ['ui', 'plugin']`, and the OMISSIONS are the gate.** The human
+ * - **`surfaces: ['ui']`, and the OMISSIONS are the gate.** The human
  *   gate is *reachability*, not a prompt: with no `agent` and no `mcp` surface no
  *   agent can reach these Actions at all — no tool, no prompt, no exposure —
  *   where a danger level plus `agent: true` would only *floor* them to an
  *   approval prompt, which is not the required guarantee.
  *
- *   `plugin` is not a relaxation of that gate, it is what makes the `ui` half
- *   reachable. The only thing that renders these controls is this source's own
- *   mounted detail artifact, and a mounted plugin surface dispatches as a PLUGIN
- *   caller: `evaluateTargetActionPolicy` refuses any Action whose declared
- *   `surfaces` omit the calling surface with `plugin_action_surface_unavailable`,
- *   before the handler is entered. Declaring `ui` alone therefore does not
- *   produce a human-only write — it produces a write **nobody** can perform.
- *   The present-user confirmation is unaffected and still fires, because it keys
- *   off the separate `invocationSurface`, which this dispatch stamps as `ui`.
+ *   `ui` is the write's whole product reach. The daemon derives the invoking
+ *   surface from the authenticated mounted-UI provenance, so this source's own
+ *   mounted detail artifact reaches each write as present-user authority while
+ *   direct plugin code — ActionsService — checks only the `plugin` surface and
+ *   is refused here.
  * - **The declared danger level is the contract's, row for row.** `merge` is
  *   `destructive` because it is irreversible on the forge; `mark-ready` is
  *   `externalSideEffect` because its reviewer notification fan-out *is* the
@@ -712,7 +713,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
-    surfaces: ['ui', 'plugin'] as const,
+    surfaces: ['ui'] as const,
     placementBindings: ['detailsPanel'] as const,
     execution: { target: 'daemon' as const },
     hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],

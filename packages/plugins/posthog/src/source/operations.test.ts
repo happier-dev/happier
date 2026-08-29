@@ -21,7 +21,7 @@ import crudIssueRead from '../api/__fixtures__/crudIssueRead.json' with { type: 
 import queryIssueEventsPage from '../api/__fixtures__/queryIssueEventsPage.json' with { type: 'json' };
 import queryIssueDetail from '../api/__fixtures__/queryIssueDetail.json' with { type: 'json' };
 import issueActivityPage from '../api/__fixtures__/issueActivityPage.json' with { type: 'json' };
-import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
+import { POSTHOG_ACTION_IDS, POSTHOG_CONNECTED_ACCOUNT_PURPOSE, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import { PosthogConfigurationDirectoryResultV1Schema } from '../connect/configurationContract.js';
 import {
     POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
@@ -78,6 +78,10 @@ function context(
         request?: RequestStub;
         /** Lets a cancellation/deadline case own the invocation's caller signal. */
         signal?: AbortSignal;
+        /** Lets a mounted-deadline case own the host-stamped invocation surface. */
+        surface?: PluginInvocationContext['surface'];
+        /** The host-stamped caller provenance for the invocation under test. */
+        caller?: PluginInvocationContext['caller'];
     }> = {},
 ) {
     let call = 0;
@@ -118,6 +122,8 @@ function context(
     return {
         value: {
             signal: options.signal ?? new AbortController().signal,
+            ...(options.surface === undefined ? {} : { surface: options.surface }),
+            ...(options.caller === undefined ? {} : { caller: options.caller }),
             services: {
                 connectedAccounts: { listAccounts, materializeListedAccount },
                 http: { request },
@@ -1043,6 +1049,63 @@ describe('PostHog invocation boundaries', () => {
             localRef: LOCAL_REF,
             failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
         });
+    });
+
+    it('arms the interactive get deadline only for a mounted same-plugin ui read', async () => {
+        const instance = configuredInstance();
+        const input = { v: 1, instance, localRef: LOCAL_REF };
+        const observedSignals: AbortSignal[] = [];
+        // A refused materialization settles the read immediately; the only fact
+        // under test is which signal this source handed the account boundary.
+        const materialize: MaterializeStub = async (_request, materializeOptions) => {
+            observedSignals.push(materializeOptions.signal ?? new AbortController().signal);
+            return { kind: 'oauthToken' as const, token: 'not-a-token' };
+        };
+        // The diagnostic provenance names `ui` in both cases; only the
+        // host-stamped dispatch surface differs.
+        const pluginCaller = {
+            kind: 'plugin' as const,
+            pluginId: POSTHOG_PLUGIN_ID,
+            contribution: {
+                id: POSTHOG_ACTION_IDS.get,
+                qualifiedId: `${POSTHOG_PLUGIN_ID}:${POSTHOG_ACTION_IDS.get}`,
+            },
+            materialization: {
+                machineId: 'machine-under-test',
+                materializationId: 'materialization-under-test',
+                pluginId: POSTHOG_PLUGIN_ID,
+            },
+            originSurface: 'ui' as const,
+        };
+
+        // The host stamps a mounted detail-body read `ui` and attributes it to
+        // this plugin: exactly the shape the interactive deadline exists for.
+        const mounted = context([], [], {
+            materialize,
+            surface: 'ui',
+            caller: pluginCaller,
+        });
+        const mountedResult = await getPosthogSourceEntry(input, mounted.value);
+        expect(mountedResult.kind).toBe('unresolved');
+        expect(observedSignals).toHaveLength(1);
+        // A fresh composite signal means one bounded invocation was armed over
+        // the caller's own signal, so the whole mounted read owns a deadline.
+        expect(observedSignals[0]).not.toBe(mounted.value.signal);
+
+        observedSignals.length = 0;
+        // A plugin-surface dispatch is the aggregate's own call even when its
+        // diagnostic provenance names `ui`: originSurface is caller data, never
+        // inherited authority, so the aggregate's deadline passes through
+        // unchanged and no second timer is armed over it.
+        const aggregate = context([], [], {
+            materialize,
+            surface: 'plugin',
+            caller: pluginCaller,
+        });
+        const aggregateResult = await getPosthogSourceEntry(input, aggregate.value);
+        expect(aggregateResult.kind).toBe('unresolved');
+        expect(observedSignals).toHaveLength(1);
+        expect(observedSignals[0]).toBe(aggregate.value.signal);
     });
 
     it('admits the materialized account through the shared authorization owner', async () => {

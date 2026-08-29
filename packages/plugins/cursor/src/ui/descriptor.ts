@@ -40,8 +40,6 @@ export const CURSOR_UI_DESCRIPTOR = Object.freeze({
     resume: 'experimental',
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'cursor' },

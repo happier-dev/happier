@@ -321,6 +321,36 @@ describe('GitHub Triage source operations', () => {
     );
   });
 
+  it.each([
+    ['missing', undefined, { kind: 'unsupported' as const }],
+    [
+      'malformed',
+      { v: 1 as const, routingToken: 'https://api.github.com/repos/octo-org/example-app' },
+      { kind: 'refused' as const, reason: 'pullRequestMoved' as const },
+    ],
+  ] as const)('does not prepare a workspace from repository configuration when the locator is %s', async (
+    _case,
+    lastKnownLocator,
+    expected,
+  ) => {
+    const stub = searchTransport();
+    const materializer = withReviewWorkspaceMaterializer(stub.context);
+    const input = prepareWorkspaceInput({ scope: 'repository' });
+    const request = lastKnownLocator === undefined
+      ? (({ lastKnownLocator: _locator, ...withoutLocator }) => withoutLocator)(input)
+      : { ...input, lastKnownLocator };
+
+    await expect(prepareGithubTriageReviewWorkspace(
+      request,
+      materializer.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual(expected);
+
+    expect(stub.materializations).toHaveLength(0);
+    expect(stub.requests).toHaveLength(0);
+    expect(materializer.execute).not.toHaveBeenCalled();
+  });
+
   it('rereads the exact pull request and asks canonical SCM to verify the prepared local HEAD', async () => {
     const stub = createStubGithubTransport({
       respond: (request): StubHttpResponse | undefined => {
@@ -669,6 +699,12 @@ describe('GitHub Triage source operations', () => {
       v: 1,
       instance: configuredInstance({ scope: 'repository' }),
       localRef,
+      lastKnownLocator: {
+        v: 1,
+        webUrl: `https://github.com/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pull/1284`,
+        displayPath: `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}#1284`,
+        routingToken: `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`,
+      },
     }, stub.context, { now: fixedClock(1_700_000_000_000) });
 
     expect(() => TriageGetResultV1Schema.parse(result)).not.toThrow();
@@ -680,6 +716,36 @@ describe('GitHub Triage source operations', () => {
       headSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
       nativeRevision: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
     });
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', { v: 1 as const, routingToken: 'https://api.github.com/repos/octo-org/example-app' }],
+  ] as const)('does not guess an exact route from repository configuration when the locator is %s', async (
+    _case,
+    lastKnownLocator,
+  ) => {
+    const stub = searchTransport();
+    const localRef = {
+      kindId: 'pull-request',
+      collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`,
+      entryId: '1284',
+    } as const;
+
+    const result = await getGithubTriageEntry({
+      v: 1,
+      instance: configuredInstance({ scope: 'repository' }),
+      localRef,
+      ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
+    }, stub.context, { now: fixedClock(1_700_000_000_000) });
+
+    expect(result).toEqual({
+      kind: 'unresolved',
+      localRef,
+      failure: { class: 'unknown', code: 'github_locator_unusable' },
+    });
+    expect(stub.requests).toHaveLength(0);
+    expect(stub.materializations).toHaveLength(0);
   });
 
   it('answers unresolved without an outbound call when the configured instance carries no route', async () => {

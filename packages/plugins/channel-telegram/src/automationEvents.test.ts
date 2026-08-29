@@ -1,9 +1,10 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
-import { admitTelegramAutomationEvent } from './automationEvents.js';
+import { admitTelegramAutomationEvent, TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS } from './automationEvents.js';
 import { setupTelegramChatEventSource } from './channelActions.js';
 import { TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID } from './constants.js';
+import { TELEGRAM_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
 const telegramAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
@@ -63,9 +64,9 @@ function context(
         machineId: 'telegram-automation-events-fixture-machine',
         materializationId: 'telegram-automation-events-fixture-materialization',
         pluginId: 'happier.channels',
-        immutableGenerationId: 'telegram-automation-events-fixture-generation',
       },
     },
+    invokedAtMs: 1_700_000_000_000,
     signal: new AbortController().signal,
     services: {
       connectedAccounts: {
@@ -365,6 +366,23 @@ describe('Telegram Automation Event source', () => {
 
     await expect(admitTelegramAutomationEvent(admissionInput(), context(noHttp, execute)))
       .resolves.toEqual({ kind: 'checkpointSafe' });
+  });
+
+  it('localizes every message-source setup hint in every locale the plugin ships', () => {
+    const referencedKeys = [
+      TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS.title.key,
+      TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS.description.key,
+      TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS.submitLabel.key,
+      ...TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS.fields.flatMap((field) => [
+        field.title.key,
+        ...('description' in field && field.description ? [field.description.key] : []),
+      ]),
+    ];
+    for (const bundle of TELEGRAM_UI_TRANSLATION_BUNDLES) {
+      const messages = bundle.messages as Readonly<Record<string, string>>;
+      const missing = referencedKeys.filter((key) => typeof messages[key] !== 'string');
+      expect({ locale: bundle.locale, missing }).toEqual({ locale: bundle.locale, missing: [] });
+    }
   });
 
 });

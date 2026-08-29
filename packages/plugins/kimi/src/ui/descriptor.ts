@@ -34,8 +34,6 @@ export const KIMI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'kimi' },
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'kimi' },

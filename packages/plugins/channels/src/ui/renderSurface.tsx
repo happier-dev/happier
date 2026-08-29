@@ -28,6 +28,7 @@ import {
   ScrollArea,
   Stack,
   Status,
+  type ListSectionData,
   Text,
   Tabs,
   defineUiSurface,
@@ -2577,6 +2578,10 @@ type BindingCreateTarget =
     execution: BindingCreateAutomationExecution;
   }>;
 type BindingCreateSessionCandidate = Readonly<{ id: string; label: string }>;
+type BindingCreateSessionPage = Readonly<{
+  candidates: readonly BindingCreateSessionCandidate[];
+  nextCursor?: string;
+}>;
 type BindingCreateAutomationCandidate = Readonly<{
   automationId: string;
   label: string;
@@ -2984,8 +2989,11 @@ function bindingCreatePrincipalSelection(
   };
 }
 
-function parseBindingCreateSessionCandidates(value: unknown): readonly BindingCreateSessionCandidate[] {
-  if (!isRecord(value) || !Array.isArray(value.sessions)) return [];
+function parseBindingCreateSessionPage(value: unknown): BindingCreateSessionPage | undefined {
+  if (!isRecord(value) || !Array.isArray(value.sessions) || value.sessions.length > 100) return undefined;
+  if (value.nextCursor !== undefined && value.nextCursor !== null && !isNonEmptyString(value.nextCursor)) {
+    return undefined;
+  }
   const seen = new Set<string>();
   const candidates: BindingCreateSessionCandidate[] = [];
   for (const entry of value.sessions) {
@@ -2998,7 +3006,10 @@ function parseBindingCreateSessionCandidates(value: unknown): readonly BindingCr
       label: isNonEmptyString(entry.title) ? entry.title : 'Session',
     });
   }
-  return candidates;
+  return {
+    candidates,
+    ...(isNonEmptyString(value.nextCursor) ? { nextCursor: value.nextCursor } : {}),
+  };
 }
 
 function parseBindingCreateAutomationExecution(value: unknown): BindingCreateAutomationExecution | undefined {
@@ -3698,6 +3709,7 @@ function BindingCreateJourney(props: Readonly<{
   const [pairingContext, setPairingContext] = React.useState<BindingCreatePairingContext | undefined>();
   const [pairingCreateRequest, setPairingCreateRequest] = React.useState<BindingCreatePairingRequest | undefined>();
   const [sessionCandidates, setSessionCandidates] = React.useState<readonly BindingCreateSessionCandidate[]>([]);
+  const [sessionNextCursor, setSessionNextCursor] = React.useState<string | undefined>();
   const [automationCandidates, setAutomationCandidates] = React.useState<readonly BindingCreateAutomationCandidate[]>([]);
   const [automationNextCursor, setAutomationNextCursor] = React.useState<string | undefined>();
   const [target, setTarget] = React.useState<BindingCreateTarget | undefined>();
@@ -3808,6 +3820,7 @@ function BindingCreateJourney(props: Readonly<{
     setPairingContext(undefined);
     setPairingCreateRequest(undefined);
     setSessionCandidates([]);
+    setSessionNextCursor(undefined);
     setAutomationCandidates([]);
     setAutomationNextCursor(undefined);
     setTarget(undefined);
@@ -3987,21 +4000,34 @@ function BindingCreateJourney(props: Readonly<{
     }
   }, [actionLocked, currentConnection, endpointSelection, principalQuery, props.signal, resolveAction]);
 
-  const loadSessions = React.useCallback(async () => {
+  const loadSessions = React.useCallback(async (cursor?: string) => {
     if (actionLocked || props.signal.aborted) return;
     setFeedback(undefined);
-    const settled = await sessionsAction.execute({ limit: 100, includeLastMessagePreview: false });
+    const settled = await sessionsAction.execute({
+      limit: 100,
+      includeLastMessagePreview: false,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
     if (!mountedRef.current || props.signal.aborted) return;
     if (settled.status !== 'success') {
       setFeedback('sessionUnavailable');
       return;
     }
-    const candidates = parseBindingCreateSessionCandidates(settled.result);
-    if (candidates.length === 0) {
+    const page = parseBindingCreateSessionPage(settled.result);
+    if (page === undefined || (cursor === undefined && page.candidates.length === 0)) {
       setFeedback('sessionUnavailable');
       return;
     }
-    setSessionCandidates(candidates);
+    setSessionCandidates((previous) => {
+      if (cursor === undefined) return page.candidates;
+      const seen = new Set(previous.map((candidate) => candidate.id));
+      return [...previous, ...page.candidates.filter((candidate) => {
+        if (seen.has(candidate.id)) return false;
+        seen.add(candidate.id);
+        return true;
+      })];
+    });
+    setSessionNextCursor(page.nextCursor);
   }, [actionLocked, props.signal, sessionsAction]);
 
   const loadAutomationTargets = React.useCallback(async (cursor?: string) => {
@@ -4442,30 +4468,44 @@ function BindingCreateJourney(props: Readonly<{
                   )}
                 />
               ) : null}
+              <BindingTargetCandidateList
+                sessionCandidates={sessionCandidates}
+                automationCandidates={automationCandidates}
+                disabled={actionLocked}
+                onSession={(candidate) => {
+                  setTarget({ kind: 'session', sessionId: candidate.id, label: candidate.label });
+                  setNewSessionDraft(undefined);
+                  setStage('policies');
+                }}
+                onAutomation={(candidate) => {
+                  setTarget({
+                    kind: 'automation',
+                    automationId: candidate.automationId,
+                    label: candidate.label,
+                    execution: candidate.execution,
+                  });
+                  setNewSessionDraft(undefined);
+                  setStage('policies');
+                }}
+                t={props.t}
+              />
               <Stack gap="small">
-                <Heading level={3} value={props.t('plugins.channels.surface.bindingCreateSession', 'Session')} />
-                {sessionCandidates.map((candidate) => (
-                  <List.Item
-                    key={candidate.id}
-                    title={candidate.label}
-                    disabled={actionLocked}
-                    onPress={() => {
-                      setTarget({ kind: 'session', sessionId: candidate.id, label: candidate.label });
-                      setNewSessionDraft(undefined);
-                      setStage('policies');
-                    }}
-                  />
-                ))}
                 <Button
                   title={props.t('plugins.channels.surface.bindingCreateSessionReload', 'Reload Sessions')}
                   variant="plain"
                   busy={sessionsAction.execution.status === 'pending'}
                   disabled={actionLocked}
-                  onPress={loadSessions}
+                  onPress={() => { void loadSessions(); }}
                 />
-              </Stack>
-              <Stack gap="small">
-                <Heading level={3} value={props.t('plugins.channels.surface.bindingCreateAutomation', 'Automation')} />
+                {sessionNextCursor === undefined ? null : (
+                  <Button
+                    title={props.t('plugins.channels.surface.bindingCreateSessionLoadMore', 'Show more Sessions')}
+                    variant="plain"
+                    busy={sessionsAction.execution.status === 'pending'}
+                    disabled={actionLocked}
+                    onPress={() => { void loadSessions(sessionNextCursor); }}
+                  />
+                )}
                 {automationCandidates.length === 0 ? (
                   <Button
                     title={props.t('plugins.channels.surface.bindingCreateAutomationLoad', 'Show Automations')}
@@ -4475,23 +4515,6 @@ function BindingCreateJourney(props: Readonly<{
                     onPress={() => { void loadAutomationTargets(); }}
                   />
                 ) : null}
-                {automationCandidates.map((candidate) => (
-                  <List.Item
-                    key={candidate.automationId}
-                    title={candidate.label}
-                    disabled={actionLocked}
-                    onPress={() => {
-                      setTarget({
-                        kind: 'automation',
-                        automationId: candidate.automationId,
-                        label: candidate.label,
-                        execution: candidate.execution,
-                      });
-                      setNewSessionDraft(undefined);
-                      setStage('policies');
-                    }}
-                  />
-                ))}
                 {automationNextCursor === undefined ? null : (
                   <Button
                     title={props.t('plugins.channels.surface.bindingCreateAutomationLoadMore', 'Show more Automations')}
@@ -5024,6 +5047,7 @@ function BindingEditJourney(props: Readonly<{
   const [selectedPrincipals, setSelectedPrincipals] = React.useState<readonly BindingEditorPrincipalCandidate[]>([]);
   const [audienceResolution, setAudienceResolution] = React.useState<BindingEditorAudienceResolution>('none');
   const [sessionCandidates, setSessionCandidates] = React.useState<readonly BindingCreateSessionCandidate[]>([]);
+  const [sessionNextCursor, setSessionNextCursor] = React.useState<string | undefined>();
   const [automationCandidates, setAutomationCandidates] = React.useState<readonly BindingCreateAutomationCandidate[]>([]);
   const [automationNextCursor, setAutomationNextCursor] = React.useState<string | undefined>();
   const [reloadPhase, setReloadPhase] = React.useState<
@@ -5369,21 +5393,34 @@ function BindingEditJourney(props: Readonly<{
     setStage('policies');
   }, [actionLocked, audienceResolution, currentConnection, endpointLabel, endpointSelection, principalQuery, selectedPrincipals]);
 
-  const loadSessions = React.useCallback(async () => {
+  const loadSessions = React.useCallback(async (cursor?: string) => {
     if (actionLocked || props.signal.aborted) return;
     setFeedback(undefined);
-    const settled = await sessionsAction.execute({ limit: 100, includeLastMessagePreview: false });
+    const settled = await sessionsAction.execute({
+      limit: 100,
+      includeLastMessagePreview: false,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
     if (!mountedRef.current || props.signal.aborted) return;
     if (settled.status !== 'success') {
       setFeedback('sessionUnavailable');
       return;
     }
-    const candidates = parseBindingCreateSessionCandidates(settled.result);
-    if (candidates.length === 0) {
+    const page = parseBindingCreateSessionPage(settled.result);
+    if (page === undefined || (cursor === undefined && page.candidates.length === 0)) {
       setFeedback('sessionUnavailable');
       return;
     }
-    setSessionCandidates(candidates);
+    setSessionCandidates((previous) => {
+      if (cursor === undefined) return page.candidates;
+      const seen = new Set(previous.map((candidate) => candidate.id));
+      return [...previous, ...page.candidates.filter((candidate) => {
+        if (seen.has(candidate.id)) return false;
+        seen.add(candidate.id);
+        return true;
+      })];
+    });
+    setSessionNextCursor(page.nextCursor);
   }, [actionLocked, props.signal, sessionsAction]);
 
   const loadAutomationTargets = React.useCallback(async (cursor?: string) => {
@@ -5874,84 +5911,85 @@ function BindingEditJourney(props: Readonly<{
         <Stack gap="small">
           <Heading level={2} value={props.t('plugins.channels.surface.bindingCreateTarget', 'Choose a target')} focusTarget={stageFocusTarget} />
           <Text tone="secondary" value={bindingEditorTargetLabel(draft.target, props.t)} />
-          <Heading level={3} value={props.t('plugins.channels.surface.bindingCreateSession', 'Session')} />
-          {sessionCandidates.map((candidate) => (
-            <List.Item
-              key={candidate.id}
-              title={candidate.label}
-              disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-              onPress={() => {
-                setDraft((current) => {
-                  if (current === undefined) return current;
-                  const policy: BindingEditorSessionTarget['policy'] = current.target.kind === 'session'
-                    ? current.target.policy
-                    : {
-                      deliveryMode: conversationSessionBindingDeliveryModeForOmittedFieldV1(
-                        editorEndpointAudience,
-                      ),
-                      permissionCeiling: 'read-only',
-                      approvals: { kind: 'off' as const },
-                      newSession: { kind: 'off' as const },
-                    };
-                  return {
-                    ...current,
-                    targetChanged: true,
-                    target: { kind: 'session', sessionId: candidate.id, policy },
-                  };
-                });
-                setFeedback(undefined);
-                setStage('policies');
-              }}
-            />
-          ))}
-          <Button
-            title={props.t('plugins.channels.surface.bindingCreateSessionReload', 'Reload Sessions')}
-            variant="plain"
-            busy={sessionsAction.execution.status === 'pending'}
+          <BindingTargetCandidateList
+            sessionCandidates={sessionCandidates}
+            automationCandidates={automationCandidates}
             disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-            onPress={() => { void loadSessions(); }}
-          />
-          <Heading level={3} value={props.t('plugins.channels.surface.bindingCreateAutomation', 'Automation')} />
-          {automationCandidates.length === 0 ? (
-            <Button
-              title={props.t('plugins.channels.surface.bindingCreateAutomationLoad', 'Show Automations')}
-              variant="secondary"
-              busy={automationAction.execution.status === 'pending'}
-              disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-              onPress={() => { void loadAutomationTargets(); }}
-            />
-          ) : null}
-          {automationCandidates.map((candidate) => (
-            <List.Item
-              key={candidate.automationId}
-              title={candidate.label}
-              disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-              onPress={() => {
-                setDraft((current) => current === undefined ? current : {
+            onSession={(candidate) => {
+              setDraft((current) => {
+                if (current === undefined) return current;
+                const policy: BindingEditorSessionTarget['policy'] = current.target.kind === 'session'
+                  ? current.target.policy
+                  : {
+                    deliveryMode: conversationSessionBindingDeliveryModeForOmittedFieldV1(
+                      editorEndpointAudience,
+                    ),
+                    permissionCeiling: 'read-only',
+                    approvals: { kind: 'off' as const },
+                    newSession: { kind: 'off' as const },
+                  };
+                return {
                   ...current,
                   targetChanged: true,
-                  target: {
-                    kind: 'automation',
-                    automationId: candidate.automationId,
-                    policy: current.target.kind === 'automation'
-                      ? current.target.policy
-                      : { resultDelivery: 'none' },
-                  },
-                });
-                setFeedback(undefined);
-                setStage('policies');
-              }}
-            />
-          ))}
-          {automationNextCursor === undefined ? null : (
+                  target: { kind: 'session', sessionId: candidate.id, policy },
+                };
+              });
+              setFeedback(undefined);
+              setStage('policies');
+            }}
+            onAutomation={(candidate) => {
+              setDraft((current) => current === undefined ? current : {
+                ...current,
+                targetChanged: true,
+                target: {
+                  kind: 'automation',
+                  automationId: candidate.automationId,
+                  policy: current.target.kind === 'automation'
+                    ? current.target.policy
+                    : { resultDelivery: 'none' },
+                },
+              });
+              setFeedback(undefined);
+              setStage('policies');
+            }}
+            t={props.t}
+          />
+          <Stack gap="small">
             <Button
-              title={props.t('plugins.channels.surface.bindingCreateAutomationLoadMore', 'Show more Automations')}
+              title={props.t('plugins.channels.surface.bindingCreateSessionReload', 'Reload Sessions')}
               variant="plain"
-              busy={automationAction.execution.status === 'pending'}
+              busy={sessionsAction.execution.status === 'pending'}
               disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
-              onPress={() => { void loadAutomationTargets(automationNextCursor); }}
+              onPress={() => { void loadSessions(); }}
             />
-          )}
+            {sessionNextCursor === undefined ? null : (
+              <Button
+                title={props.t('plugins.channels.surface.bindingCreateSessionLoadMore', 'Show more Sessions')}
+                variant="plain"
+                busy={sessionsAction.execution.status === 'pending'}
+                disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
+                onPress={() => { void loadSessions(sessionNextCursor); }}
+              />
+            )}
+            {automationCandidates.length === 0 ? (
+              <Button
+                title={props.t('plugins.channels.surface.bindingCreateAutomationLoad', 'Show Automations')}
+                variant="secondary"
+                busy={automationAction.execution.status === 'pending'}
+                disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
+                onPress={() => { void loadAutomationTargets(); }}
+              />
+            ) : null}
+            {automationNextCursor === undefined ? null : (
+              <Button
+                title={props.t('plugins.channels.surface.bindingCreateAutomationLoadMore', 'Show more Automations')}
+                variant="plain"
+                busy={automationAction.execution.status === 'pending'}
+                disabled={actionLocked || !providerControlsAvailable || finalizingDelete}
+                onPress={() => { void loadAutomationTargets(automationNextCursor); }}
+              />
+            )}
+          </Stack>
           <Stack gap="small">
             <Button title={props.t('plugins.channels.surface.bindingCreateBack', 'Back')} variant="plain" disabled={actionLocked} onPress={() => setStage('policies')} />
             <Button title={props.t('plugins.channels.surface.cancel', 'Cancel')} variant="plain" disabled={actionLocked && !outcomeUnknown} onPress={() => props.onClose(true)} />
@@ -6485,6 +6523,78 @@ type AccountLocalBindingEditorFeedback =
  * resolution, or delete: each of those needs current provider or Automation
  * authority that an unreachable machine cannot supply.
  */
+type BindingTargetCandidateRow =
+  | Readonly<{ kind: 'session'; candidate: BindingCreateSessionCandidate }>
+  | Readonly<{ kind: 'automation'; candidate: BindingCreateAutomationCandidate }>;
+
+/**
+ * One bounded virtualized collection for the paged Session and Automation
+ * target candidates. Accumulated pages previously mounted one static row per
+ * candidate without bound; this owner keeps the mounted tree bounded while the
+ * paging Actions and the target composition they feed stay unchanged.
+ */
+function BindingTargetCandidateList(props: Readonly<{
+  sessionCandidates: readonly BindingCreateSessionCandidate[];
+  automationCandidates: readonly BindingCreateAutomationCandidate[];
+  disabled: boolean;
+  onSession: (candidate: BindingCreateSessionCandidate) => void;
+  onAutomation: (candidate: BindingCreateAutomationCandidate) => void;
+  t: Translate;
+}>): React.ReactElement {
+  const sections = React.useMemo<readonly ListSectionData<BindingTargetCandidateRow>[]>(() => [
+    {
+      key: 'session',
+      title: props.t('plugins.channels.surface.bindingCreateSession', 'Session'),
+      data: props.sessionCandidates.map((candidate) => ({ kind: 'session' as const, candidate })),
+    },
+    {
+      key: 'automation',
+      title: props.t('plugins.channels.surface.bindingCreateAutomation', 'Automation'),
+      data: props.automationCandidates.map((candidate) => ({ kind: 'automation' as const, candidate })),
+    },
+  ], [props.automationCandidates, props.sessionCandidates, props.t]);
+  const renderItem = React.useCallback((row: BindingTargetCandidateRow) => (
+    row.kind === 'session' ? (
+      <List.Item
+        testID={`channels-binding-target-session:${row.candidate.id}`}
+        title={row.candidate.label}
+        disabled={props.disabled}
+        onPress={() => props.onSession(row.candidate)}
+      />
+    ) : (
+      <List.Item
+        testID={`channels-binding-target-automation:${row.candidate.automationId}`}
+        title={row.candidate.label}
+        disabled={props.disabled}
+        onPress={() => props.onAutomation(row.candidate)}
+      />
+    )
+  ), [props.disabled, props.onAutomation, props.onSession]);
+  const filterTarget = React.useCallback((row: BindingTargetCandidateRow, query: string) => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return normalizedQuery === ''
+      || row.candidate.label.toLocaleLowerCase().includes(normalizedQuery);
+  }, []);
+  return (
+    <List
+      sections={sections}
+      keyForItem={(row) => row.kind === 'session'
+        ? `session:${row.candidate.id}`
+        : `automation:${row.candidate.automationId}`}
+      renderItem={renderItem}
+      search={{
+        label: props.t('plugins.channels.surface.bindingCreateTargetSearch', 'Search loaded targets'),
+        placeholder: props.t('plugins.channels.surface.bindingCreateTargetSearchPlaceholder', 'Search Sessions and Automations'),
+        testID: 'channels-binding-target-search',
+        filter: filterTarget,
+      }}
+      accessibilityLabel={props.t('plugins.channels.surface.bindingCreateTarget', 'Choose a target')}
+      testID="channels-binding-target-candidates"
+      style={{ height: 320 }}
+    />
+  );
+}
+
 function AccountLocalBindingPolicyEditor(props: Readonly<{
   collection: ChannelStateCollection;
   bindingId: string;
@@ -6611,8 +6721,15 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
   const reload = React.useCallback(() => {
     if (reloadLocked) return;
     props.onRefresh();
-    void readDetail({ preserveDraft: true }).then(() => {
+    // Reload is the exit from an ambiguous outcome only when the exact reread
+    // reaches the owner. An unavailable reread proves nothing about the
+    // ambiguous write, so the outcome-unknown latch stays on and Save stays
+    // locked against the retained bytes. An authoritative `notFound` cleared
+    // the detail, so no second write is reachable there and the operation
+    // state may retire with the surface.
+    void readDetail({ preserveDraft: true }).then((outcome) => {
       if (!mountedRef.current) return;
+      if (outcome !== 'ready' && outcome !== 'notFound') return;
       operation.reset();
     });
   }, [operation, props.onRefresh, readDetail, reloadLocked]);
@@ -8699,8 +8816,6 @@ function IngressAttentionControls(props: Readonly<{
     CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry,
   );
   const [activeObligationId, setActiveObligationId] = React.useState<string | undefined>();
-  const [outcomeUnknownRereadPending, setOutcomeUnknownRereadPending] = React.useState(false);
-  const sawOutcomeUnknownReread = React.useRef(false);
   const actionOutcomeUnknown = retryAction.execution.status === 'outcomeUnknown';
   const actionUnavailable = retryAction.execution.status === 'pending' || actionOutcomeUnknown;
 
@@ -8721,36 +8836,18 @@ function IngressAttentionControls(props: Readonly<{
     }
   }, [actionUnavailable, attentionRows, props.recoveryActionsAvailable, retryAction.execute]);
 
-  const requestAttentionReread = React.useCallback(() => {
-    if (!actionOutcomeUnknown) {
-      attentionRows.refresh();
-      return;
-    }
-    sawOutcomeUnknownReread.current = false;
-    setOutcomeUnknownRereadPending(true);
-    attentionRows.refresh();
-  }, [actionOutcomeUnknown, attentionRows]);
-
-  React.useEffect(() => {
-    if (!outcomeUnknownRereadPending) return;
-    if (attentionRows.resource.pending !== 'idle'
-      || attentionRows.resource.freshness !== 'fresh'
-      || attentionRows.resource.error !== undefined) {
-      sawOutcomeUnknownReread.current = true;
-      return;
-    }
-    if (!sawOutcomeUnknownReread.current) return;
-    sawOutcomeUnknownReread.current = false;
-    setOutcomeUnknownRereadPending(false);
-    setActiveObligationId(undefined);
-    retryAction.reset();
-  }, [
-    attentionRows.resource.error,
-    attentionRows.resource.freshness,
-    attentionRows.resource.pending,
-    outcomeUnknownRereadPending,
-    retryAction.reset,
-  ]);
+  // Same canonical unknown-outcome owner as the delivery-resolution controls:
+  // the reread must settle idle, fresh, and error-free before the ambiguity
+  // lock clears; failed reads keep the typed recovery surface.
+  const requestAttentionReread = useExplicitFreshRereadAfterUnknownOutcome({
+    outcomeUnknown: actionOutcomeUnknown,
+    resource: attentionRows.resource,
+    onRefresh: attentionRows.refresh,
+    onReconciled: React.useCallback(() => {
+      setActiveObligationId(undefined);
+      retryAction.reset();
+    }, [retryAction.reset]),
+  });
 
   const rows = attentionRows.rows ?? [];
   const loading = attentionRows.resource.pending !== 'idle';
@@ -8847,8 +8944,12 @@ function IngressAttentionControls(props: Readonly<{
               <Status
                 tone="warning"
                 label={props.t(
-                  'plugins.channels.surface.ingressAttentionTerminal',
-                  'An incoming message was not accepted.',
+                  row.category === 'recoverable'
+                    ? 'plugins.channels.surface.ingressAttentionTerminalRecoverable'
+                    : 'plugins.channels.surface.ingressAttentionTerminal',
+                  row.category === 'recoverable'
+                    ? 'An incoming message is waiting for its connection or target to be reachable again.'
+                    : 'An incoming message was not accepted.',
                 )}
               />
             ) : (
@@ -8963,8 +9064,6 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
   );
   const action = props.resolveOperation ?? resolveAction;
   const [activeCustodyId, setActiveCustodyId] = React.useState<string | undefined>();
-  const [outcomeUnknownRereadPending, setOutcomeUnknownRereadPending] = React.useState(false);
-  const sawOutcomeUnknownReread = React.useRef(false);
   const hasAmbiguousDelivery = props.connection.attention.outwardDelivery.partial
     || props.connection.attention.outwardDelivery.outcomeUnknown
     || props.connection.attention.outwardDelivery.archiveRecovery;
@@ -8997,38 +9096,23 @@ function ConnectionDeliveryResolutionControls(props: Readonly<{
     }
   }, [action.execute, actionUnavailable, deliveryRows, props.onRefresh]);
 
-  const requestDeliveryReread = React.useCallback(() => {
-    if (!actionOutcomeUnknown) {
-      deliveryRows.refresh();
-      props.onRefresh();
-      return;
-    }
-    sawOutcomeUnknownReread.current = false;
-    setOutcomeUnknownRereadPending(true);
+  const reconcileDeliveryRows = React.useCallback(() => {
     deliveryRows.refresh();
     props.onRefresh();
-  }, [actionOutcomeUnknown, deliveryRows, props.onRefresh]);
-
-  React.useEffect(() => {
-    if (!outcomeUnknownRereadPending) return;
-    if (deliveryRows.resource.pending !== 'idle'
-      || deliveryRows.resource.freshness !== 'fresh'
-      || deliveryRows.resource.error !== undefined) {
-      sawOutcomeUnknownReread.current = true;
-      return;
-    }
-    if (!sawOutcomeUnknownReread.current) return;
-    sawOutcomeUnknownReread.current = false;
-    setOutcomeUnknownRereadPending(false);
-    setActiveCustodyId(undefined);
-    action.reset();
-  }, [
-    action.reset,
-    deliveryRows.resource.error,
-    deliveryRows.resource.freshness,
-    deliveryRows.resource.pending,
-    outcomeUnknownRereadPending,
-  ]);
+  }, [deliveryRows, props.onRefresh]);
+  // The canonical unknown-outcome owner owns the reread discipline: the
+  // ambiguous decision stays locked until an explicit fresh delivery reread
+  // settles idle, fresh, and error-free. A failed or offline reread never
+  // reconciles - the uncertainty banner and its typed retry remain.
+  const requestDeliveryReread = useExplicitFreshRereadAfterUnknownOutcome({
+    outcomeUnknown: actionOutcomeUnknown,
+    resource: deliveryRows.resource,
+    onRefresh: reconcileDeliveryRows,
+    onReconciled: React.useCallback(() => {
+      setActiveCustodyId(undefined);
+      action.reset();
+    }, [action.reset]),
+  });
 
   if (!hasAmbiguousDelivery) return null;
 

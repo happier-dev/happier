@@ -217,6 +217,11 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Enumerates the workspaces reachable by each authorized Bitbucket Cloud account.',
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
+      // Mounted-only placement. `plugin` stays because the Triage daemon
+      // consumes it and `ui` because this source's own mounted surfaces hold
+      // present-user authority; the explicit empty list only withdraws the
+      // Action from global placement discovery — it disables no invocation.
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
@@ -242,6 +247,11 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reads one pull request authoritatively through one exact configured Bitbucket Cloud instance.',
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
+      // Mounted-only placement. `plugin` stays because the Triage daemon
+      // consumes it and `ui` because this source's own mounted surfaces hold
+      // present-user authority; the explicit empty list only withdraws the
+      // Action from global placement discovery — it disables no invocation.
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: sources.operations.get.declaration.dangerLevel,
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
@@ -276,15 +286,16 @@ export const BITBUCKET_PLUGIN = definePlugin({
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: verifyBitbucketReviewWorkspaceAction,
     },
-    // The three source-native detail planes. Their published surface is
-    // `plugin`, so the only caller that reaches them is this plugin's own
-    // mounted detail artifact.
+    // The source-native detail planes. Only this plugin's own mounted
+    // detail artifact invokes them, through the mounted Plugin UI host —
+    // present-user authority — so they declare `ui` and nothing else.
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
       title: 'Read a Bitbucket activity page',
       description: 'Reads one bounded page of the combined approval, update and comment activity'
         + ' of one pull request.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketActivityInputV1Schema.jsonSchema,
@@ -297,7 +308,8 @@ export const BITBUCKET_PLUGIN = definePlugin({
       title: 'Refresh a Bitbucket pull-request overview',
       description: 'Reads the pull request authoritatively from Bitbucket for the mounted Overview.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketOverviewInputV1Schema.jsonSchema,
@@ -310,7 +322,8 @@ export const BITBUCKET_PLUGIN = definePlugin({
       title: 'Read a Bitbucket pull-request diff',
       description: 'Reads the raw diff and its bounded diffstat projection without dropping the pull request.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketDiffInputV1Schema.jsonSchema,
@@ -324,7 +337,8 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reads one bounded page of the build statuses reported against one pull'
         + ' request, with a rollup only when that page is the whole collection.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketBuildsInputV1Schema.jsonSchema,
@@ -338,7 +352,8 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reads one bounded page of the comments on one pull request, in provider'
         + ' order, with their real resolution tri-state.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: BitbucketCommentsInputV1Schema.jsonSchema,
@@ -347,15 +362,16 @@ export const BITBUCKET_PLUGIN = definePlugin({
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: listBitbucketComments,
     },
-    // The four enabled Bitbucket pull-request writes.
+    // The enabled Bitbucket pull-request writes.
     //
-    // `surfaces: ['ui', 'plugin']` is the human gate, and the gate is reachability rather than a
+    // `surfaces: ['ui']` is the human gate, and the gate is reachability rather than a
     // prompt: with no `agent` and no `mcp` surface not one of them is agent-reachable at all. A
     // `danger` level plus `agent: true` would only floor an agent invocation to an approval
     // prompt, which is a weaker guarantee — so there is no list of exempt callers here, and none
-    // may be added. `plugin` is the other half of that same reachability fact, and it is required
-    // rather than optional: this plugin's own mounted detail artifact dispatches as a plugin
-    // caller, so a write missing it is refused before it runs and no user can reach it either.
+    // may be added. `ui` is the write's whole product reach: the daemon derives the invoking
+    // surface from the authenticated mounted-UI provenance, so this plugin's own mounted detail
+    // artifact reaches the write as present-user authority while direct plugin code —
+    // ActionsService — checks only the `plugin` surface and is refused here.
     //
     // Every one reaches the provider and the exact configured account, and every one binds the
     // account path its configured instance carries, exactly as `scan` and `get` do. A write Action
@@ -365,7 +381,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Merges one pull request with the exact strategy and source-branch decision the'
         + ' user chose, only while its head is still the commit they saw.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       // Irreversible on the forge, and it may delete the source branch.
@@ -399,7 +415,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Declines one open pull request. Bitbucket has no reopen, so this cannot be'
         + ' undone through its API.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
@@ -431,7 +447,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Marks one comment thread on this pull request resolved, and confirms it from'
         + ' the comment itself.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
@@ -465,7 +481,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reopens one resolved comment thread on this pull request, and confirms it from'
         + ' the comment itself.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
@@ -493,7 +509,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       title: 'Submit this Bitbucket pull-request review',
       description: 'Publishes the selected canonical Happier review comments in order, then applies the requested Bitbucket verdict against the exact base and head revisions shown.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       dangerLevel: 'externalSideEffect',
@@ -521,7 +537,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       title: 'Publish this Bitbucket review comment',
       description: 'Publishes one canonical Happier proposal at its exact pinned Bitbucket diff anchor.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       dangerLevel: 'externalSideEffect',
@@ -540,7 +556,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       title: 'Reply to this Bitbucket review comment',
       description: 'Publishes one canonical Happier proposal beneath one exact Bitbucket pull-request comment.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
@@ -588,9 +604,13 @@ export const BITBUCKET_PLUGIN = definePlugin({
             outcomeReconciliation: 'none',
             fields: [
               {
+                // Bitbucket Cloud API tokens authenticate with the Atlassian account EMAIL and the
+                // token as the password. A username, workspace slug or nickname is not a Basic-auth
+                // identity substitute, and inviting one here is how a reader ends up with a 401 on
+                // every call (sources/SCM.md §5.1).
                 id: 'identity',
-                title: 'Email or username',
-                description: 'The email address or username associated with the Bitbucket API token.',
+                title: 'Atlassian account email',
+                description: 'The email address of the Atlassian account this API token belongs to.',
                 schema: { type: 'string', minLength: 1 },
                 secret: false,
               },

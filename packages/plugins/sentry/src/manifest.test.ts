@@ -250,7 +250,7 @@ describe('Sentry plugin manifest', () => {
       SENTRY_ACTION_IDS.listTagValues,
     ]) {
       const action = actions.get(id);
-      expect(action?.surfaces).toEqual(['plugin']);
+      expect(action?.surfaces).toEqual(['ui']);
       expect(action?.inputSchema).toBeDefined();
       expect(action?.resultSchema).toBeDefined();
       // Every detail read reaches the provider through the exact selected
@@ -258,6 +258,57 @@ describe('Sentry plugin manifest', () => {
       expect(action?.connectedAccountPurposeBindings)
         .toEqual([{ path: 'instance.binding.account', purpose: 'sentry-account-use' }]);
     }
+  });
+
+  it('declares the exact mounted-only placement for its six UI-capable reads', () => {
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [
+      action.id,
+      action,
+    ]));
+    const sources = TriageSourcesContributionProtocolV1;
+
+    // Discovery and the authoritative read keep their Protocol-owned `plugin`
+    // + `ui` surfaces — the Triage daemon consumes `plugin`, and this source's
+    // own mounted surfaces hold present-user `ui` authority — while the four
+    // source-native detail reads stay `ui`-only. All six declare the same
+    // mounted-only placement: the explicit empty list withdraws them from
+    // global placement discovery without disabling any invocation surface.
+    for (const [id, requiredSurfaces] of [
+      [SENTRY_ACTION_IDS.listInstances, sources.operations.listInstances.declaration.surfaces],
+      [SENTRY_ACTION_IDS.get, sources.operations.get.declaration.surfaces],
+    ] as const) {
+      expect(actions.get(id)?.surfaces, id).toEqual(requiredSurfaces);
+      expect(actions.get(id)?.placementBindings, id).toEqual([]);
+    }
+    for (const id of [
+      SENTRY_ACTION_IDS.readIssue,
+      SENTRY_ACTION_IDS.listIssueEvents,
+      SENTRY_ACTION_IDS.readEvent,
+      SENTRY_ACTION_IDS.listTagValues,
+    ]) {
+      expect(actions.get(id)?.surfaces, id).toEqual(['ui']);
+      expect(actions.get(id)?.placementBindings, id).toEqual([]);
+    }
+    // `scan` remains a programmatic role: no `ui` surface, so the grammar asks
+    // for no placement decision and the projection supplies none.
+    expect(actions.get(SENTRY_ACTION_IDS.scan)?.surfaces)
+      .toEqual(sources.operations.scan.declaration.surfaces);
+    expect(actions.get(SENTRY_ACTION_IDS.scan)?.placementBindings).toBeUndefined();
+    // And the mounted-only list is exact: these six and nothing else.
+    expect(
+      PLUGIN_MANIFEST.contributes.actions
+        .filter((action) => action.placementBindings !== undefined
+          && action.placementBindings.length === 0)
+        .map((action) => action.id)
+        .sort(),
+    ).toEqual([
+      SENTRY_ACTION_IDS.listInstances,
+      SENTRY_ACTION_IDS.get,
+      SENTRY_ACTION_IDS.readIssue,
+      SENTRY_ACTION_IDS.listIssueEvents,
+      SENTRY_ACTION_IDS.readEvent,
+      SENTRY_ACTION_IDS.listTagValues,
+    ].sort());
   });
 
   it('declares the exact deployment as host-owned Connected Account origin configuration', () => {

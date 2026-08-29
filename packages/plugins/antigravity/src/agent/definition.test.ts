@@ -16,7 +16,6 @@ describe('Antigravity agent definition', () => {
         flavorAliases: ['agy'],
         connectedServices: {
           supportedServiceIds: ['gemini'],
-          supportedKindsByServiceId: { gemini: ['token'] },
         },
         sessionStorage: { direct: false, persisted: true },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'antigravitySessionId' },
@@ -47,8 +46,12 @@ describe('Antigravity agent definition', () => {
       },
     });
     expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
-    expect(AGENT_DEFINITION.core.connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
-    expect(AGENT_DEFINITION.core.connectedServices?.supportedKindsByServiceId?.gemini).not.toContain('oauth');
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([
+      expect.objectContaining({
+        service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+        credentialKinds: ['token'],
+      }),
+    ]);
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
       executable: { binaryName: 'agy', sourcePreference: 'system-first' },

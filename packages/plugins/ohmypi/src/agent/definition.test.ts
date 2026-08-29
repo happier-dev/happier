@@ -4,12 +4,17 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('OhMyPi agent definition', () => {
-  it('advertises Claude subscription credentials as token-only', () => {
-    expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId['claude-subscription']).toEqual(['token']);
-  });
-
-  it('advertises Gemini connected-service credentials as token-only', () => {
-    expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId.gemini).toEqual(['token']);
+  it('publishes token-only eligibility through public connected-account declarations', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+        credentialKinds: ['token'],
+      }),
+      expect.objectContaining({
+        service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+        credentialKinds: ['token'],
+      }),
+    ]));
   });
 
   it('projects CLI/install/auth facts from the strict manifest without changing runtime ownership', () => {

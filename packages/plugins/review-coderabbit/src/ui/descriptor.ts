@@ -34,8 +34,6 @@ export const CODERABBIT_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: null },
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {},
 });

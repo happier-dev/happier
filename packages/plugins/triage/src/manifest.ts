@@ -176,12 +176,12 @@ function createTriagePlugin() {
           fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
         },
         scopes: ['global'],
-        // The aggregate's own mounted surfaces invoke this bounded read through
-        // `plugin`, and Voice discovers that same declaration through `voice`.
-        // It remains neither a placed affordance nor an agent/MCP tool. Declaring
-        // `ui` here would require a placement binding and put a "read the list"
-        // button in the product.
-        surfaces: ['plugin', 'voice'],
+        // The aggregate's own mounted list window invokes this bounded read,
+        // and Voice discovers the same declaration through `voice`. It remains
+        // neither a placed affordance nor an agent/MCP tool. Direct plugin
+        // code is refused: the mounted UI press is present-user authority.
+        surfaces: ['ui', 'voice'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageListEntriesInputV1Schema,
@@ -194,10 +194,11 @@ function createTriagePlugin() {
         title: 'Pin or unpin an entry',
         description: 'Keeps one pull request, issue or error group at the top of the list, or removes that mark again.',
         scopes: ['global'],
-        // Same `plugin` surface as the list read, and for the same reason: the
+        // Same mounted UI surface as the list read, and for the same reason: the
         // caller is this plugin's own mounted row affordance, not a placed
         // command, an agent tool or an MCP tool.
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         // A pin is durable user state, but the exact inverse is one press away
         // and nothing outside Happier is touched.
         dangerLevel: 'safe',
@@ -211,7 +212,8 @@ function createTriagePlugin() {
         title: 'Read the pinned entries',
         description: 'Reads one bounded page of the entries the user pinned, newest first.',
         scopes: ['global'],
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageListPinnedEntriesInputV1Schema,
@@ -224,14 +226,21 @@ function createTriagePlugin() {
         title: 'Link an entry to a session',
         description: 'Records that a pull request, issue or error group is being worked on in one session.',
         scopes: ['global'],
-        // The same `plugin` surface as the list read and the pin: the caller is
-        // this plugin's own mounted affordance, not a placed command, an agent
-        // tool or an MCP tool. A link is routing state a person established, and
-        // an agent must not be able to claim an entry for a Session on its own.
-        surfaces: ['plugin'],
+        // The same mounted UI surface as the list read and the pin: the caller
+        // is this plugin's own mounted affordance, not a placed command, an
+        // agent tool or an MCP tool. A link is routing state a person
+        // established, and an agent must not be able to claim an entry for a
+        // Session on its own.
+        surfaces: ['ui'],
+        placementBindings: [],
         // It writes durable Account state — the connection between a Session and
         // the entry it was started from — and nothing outside Happier.
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Link this entry to the session?',
+          body: 'This records the entry as work for the selected session in this Happier Account. You can unlink it later.',
+          confirmLabel: 'Link entry',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageLinkEntryToSessionInputV1Schema,
         resultSchema: TriageLinkEntryToSessionActionResultV1Schema,
@@ -244,18 +253,23 @@ function createTriagePlugin() {
         title: 'Start a session on an entry',
         description: 'Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.',
         scopes: ['global'],
-        // The same `plugin` surface as the link write beneath it, and for the
-        // same reason: the caller is this plugin's own always-mounted header,
-        // which dispatches as a plugin caller. `ui` is deliberately absent —
-        // that surface requires a placement binding and would put a bare "start
-        // a session" command in the product with no entry selected. `agent` and
-        // `mcp` are absent because starting a session on a person's machine and
-        // claiming an entry for it is a decision a person makes.
-        surfaces: ['plugin'],
+        // The same mounted UI surface as the link write beneath it, and for the
+        // same reason: the caller is this plugin's own always-mounted header.
+        // `plugin` is absent because direct plugin code is not the authority
+        // here — starting a session on a person's machine and claiming an entry
+        // for it is a decision a person makes. `agent` and `mcp` are absent for
+        // the same reachability reason.
+        surfaces: ['ui'],
+        placementBindings: [],
         // It writes durable Account state and reaches the generic Session
         // creator. Nothing outside Happier is touched: the one materialization
         // that would enter a checkout is not reachable from this wire.
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Start a session on this entry?',
+          body: 'This creates or rejoins the selected session, records this entry as its work, and opens the session.',
+          confirmLabel: 'Start session',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageStartEntrySessionInputV1Schema,
         resultSchema: TriageStartEntrySessionResultV1Schema,
@@ -268,8 +282,14 @@ function createTriagePlugin() {
         title: 'Start a pull request review',
         description: 'Rereads the selected pull request and starts the chosen review engine.',
         scopes: ['global'],
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Start this pull request review?',
+          body: 'This rereads the selected pull request and starts the chosen review engine.',
+          confirmLabel: 'Start review',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageStartPullRequestReviewInputV1Schema,
         resultSchema: TriageStartPullRequestReviewResultV1Schema,
@@ -282,8 +302,14 @@ function createTriagePlugin() {
         // The reader who linked the wrong entry is the only caller. An agent
         // that could drop the relationship would undo a person's routing
         // decision without them.
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Unlink this entry from the session?',
+          body: 'This removes the saved relationship from this Happier Account. It does not end or delete the session.',
+          confirmLabel: 'Unlink entry',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageUnlinkEntryFromSessionActionInputV1Schema,
         resultSchema: TriageUnlinkEntryFromSessionActionResultV1Schema,
@@ -294,14 +320,20 @@ function createTriagePlugin() {
         title: 'Configure a source',
         description: 'Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.',
         scopes: ['global'],
-        // A source Settings surface reaches this through the incumbent plugin
-        // dispatcher, which authorizes every plugin caller on the target `plugin`
-        // surface. It is deliberately not an agent, MCP or CLI capability: only a
-        // person choosing a source in Settings may change what is configured.
-        surfaces: ['plugin'],
+        // A source Settings surface reaches this through the mounted Plugin UI
+        // dispatcher, which admits the caller as present-user UI authority. It
+        // is deliberately not an agent, MCP or CLI capability: only a person
+        // choosing a source in Settings may change what is configured.
+        surfaces: ['ui'],
+        placementBindings: [],
         // It writes durable Account state — the record of which sources the user
         // configured — and nothing outside Happier.
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Apply this source change?',
+          body: 'This creates, reconfigures, removes, or restores the selected source in this Happier Account.',
+          confirmLabel: 'Apply change',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageSourceAdministrationActionInputV1Schema,
         resultSchema: TriageSourceAdministrationActionResultV1Schema,
@@ -317,11 +349,14 @@ function createTriagePlugin() {
         title: 'Read the sources you configured',
         description: 'Reads the pull-request, issue and error-group sources the calling source has configured, so it can change or remove one.',
         scopes: ['global'],
-        // The same `plugin` surface as the administration Action it completes: a
-        // source Settings surface reaches it through the incumbent dispatcher.
-        // Which rows it may see is not decided here — the handler resolves the
-        // caller's own admitted contribution and returns nothing else's.
-        surfaces: ['plugin'],
+        // Reached two ways: a source Settings mounted surface (present-user UI
+        // authority) and another plugin's daemon code through its own
+        // ActionsService — the sentry Composer reference resolver reads exactly
+        // its own configured rows this way. Which rows a caller may see is not
+        // decided here — the handler resolves the caller's own admitted
+        // contribution and returns nothing else's.
+        surfaces: ['ui', 'plugin'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageReadConfiguredSourceInstancesInputV1Schema,
@@ -337,7 +372,8 @@ function createTriagePlugin() {
         // The aggregate's own mounted detail region is the only caller, and the
         // handler refuses every other plugin: the value carries the owning
         // source's account binding and its private configuration.
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageReadEntryDetailInputV1Schema,
@@ -350,7 +386,8 @@ function createTriagePlugin() {
         title: 'Re-read an entry after a provider change',
         description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
         scopes: ['global'],
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageReobserveEntryInputV1Schema,
@@ -362,7 +399,8 @@ function createTriagePlugin() {
         title: 'Read the saved views',
         description: 'Reads the saved filter and order views, and which one is selected.',
         scopes: ['global'],
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageReadSavedViewsInputV1Schema,
@@ -376,12 +414,18 @@ function createTriagePlugin() {
         title: 'Save, update, delete or select a view',
         description: 'Creates, renames, removes or selects one saved filter and order view.',
         scopes: ['global'],
-        // The same `plugin` surface as the list read: the caller is this plugin's
+        // The same mounted UI surface as the list read: the caller is this plugin's
         // own mounted lens control, which holds no Settings member of its own.
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Apply this saved-view change?',
+          body: 'This creates, renames, removes, or selects a saved PRs & Issues view in this Happier Account.',
+          confirmLabel: 'Apply change',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageAdministerSavedViewInputV1Schema,
         resultSchema: TriageAdministerSavedViewResultV1Schema,
@@ -393,7 +437,8 @@ function createTriagePlugin() {
         scopes: ['global'],
         // The caller is this plugin's own mounted action editor, which holds a
         // Host API with actions and no Settings member of its own.
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         inputSchema: TriageReadActionsInputV1Schema,
@@ -404,10 +449,16 @@ function createTriagePlugin() {
         title: 'Add, change, remove or reorder an action',
         description: 'Creates, renames, disables, reconfigures, removes or reorders one configured action.',
         scopes: ['global'],
-        surfaces: ['plugin'],
+        surfaces: ['ui'],
+        placementBindings: [],
         // It writes durable Account state, and the exact inverse is one press
         // away; nothing outside Happier is touched.
         dangerLevel: 'writesLocal',
+        confirmation: {
+          title: 'Apply this configured-action change?',
+          body: 'This adds, changes, removes, enables, disables, or reorders an entry action in this Happier Account.',
+          confirmLabel: 'Apply change',
+        },
         execution: { target: 'daemon' },
         inputSchema: TriageAdministerActionInputV1Schema,
         resultSchema: TriageAdministerActionResultV1Schema,

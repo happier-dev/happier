@@ -61,6 +61,7 @@ function channelsCallerContext(input: Readonly<{
     plugin: { id: 'happier.channel.discord', version: '0.0.0' },
     contribution: { id: 'channels/setup-v1', qualifiedId: 'happier.channel.discord/actions/channels/setup-v1' },
     surface: 'plugin' as const,
+    invokedAtMs: 1_700_000_000_000,
     caller: {
       kind: 'plugin' as const,
       pluginId: 'happier.channels',

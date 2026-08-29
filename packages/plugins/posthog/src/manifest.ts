@@ -303,7 +303,10 @@ export const POSTHOG_PLUGIN = definePlugin({
             execution: { target: 'daemon' },
             description: 'Reads one user-requested page of PostHog organizations or environments.',
             scopes: ['global'],
-            surfaces: ['plugin'],
+            // The explicit empty list is the canonical mounted-only placement:
+            // only the settings page this plugin itself mounts invokes it.
+            surfaces: ['ui'],
+            placementBindings: [],
             dangerLevel: 'safe',
             inputSchema: PosthogConfigurationDirectoryInputV1Schema.jsonSchema,
             resultSchema: PosthogConfigurationDirectoryResultV1Schema.jsonSchema,
@@ -320,6 +323,12 @@ export const POSTHOG_PLUGIN = definePlugin({
             description: 'Lists the PostHog organizations each connected PostHog account can reach.',
             scopes: ['global'],
             surfaces: sources.operations.listInstances.declaration.surfaces,
+            // Mounted-only placement. `plugin` stays because the Triage daemon
+            // consumes it and `ui` because this source's own mounted surfaces
+            // hold present-user authority; the explicit empty list only
+            // withdraws the Action from global placement discovery — it
+            // disables no invocation.
+            placementBindings: [],
             dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
             inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
             resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
@@ -344,9 +353,12 @@ export const POSTHOG_PLUGIN = definePlugin({
             execution: { target: 'daemon' },
             description: 'Reads one bounded page of sampled exception events for one PostHog issue.',
             scopes: ['global'],
-            // The published Triage roles declare the `plugin` surface; this native read
-            // is invoked the same way, by the source's own mounted detail body.
-            surfaces: ['plugin'],
+            // Only the source's own mounted detail body invokes this native read,
+            // through the mounted Plugin UI host — present-user authority. The
+            // explicit empty list keeps global placement discovery from offering
+            // it a destination while the mounted invocation stays untouched.
+            surfaces: ['ui'],
+            placementBindings: [],
             dangerLevel: 'safe',
             inputSchema: PosthogSampledEventsInputV1Schema.jsonSchema,
             resultSchema: PosthogSampledEventsResultV1Schema.jsonSchema,
@@ -359,7 +371,8 @@ export const POSTHOG_PLUGIN = definePlugin({
             execution: { target: 'daemon' },
             description: 'Reads one page of the recorded activity for one PostHog issue.',
             scopes: ['global'],
-            surfaces: ['plugin'],
+            surfaces: ['ui'],
+            placementBindings: [],
             dangerLevel: 'safe',
             inputSchema: PosthogIssueActivityInputV1Schema.jsonSchema,
             resultSchema: PosthogIssueActivityResultV1Schema.jsonSchema,
@@ -372,7 +385,8 @@ export const POSTHOG_PLUGIN = definePlugin({
             execution: { target: 'daemon' },
             description: 'Rereads one selected occurrence and returns its captured variables after confirmation.',
             scopes: ['global'],
-            surfaces: ['plugin'],
+            surfaces: ['ui'],
+            placementBindings: [],
             dangerLevel: 'safe',
             inputSchema: PosthogCodeVariablesInputV1Schema.jsonSchema,
             resultSchema: PosthogCodeVariablesResultV1Schema.jsonSchema,
@@ -386,6 +400,12 @@ export const POSTHOG_PLUGIN = definePlugin({
             description: 'Reads one PostHog error issue authoritatively through its configured environment.',
             scopes: ['global'],
             surfaces: sources.operations.get.declaration.surfaces,
+            // Mounted-only placement. `plugin` stays because the Triage daemon
+            // consumes it and `ui` because this source's own mounted surfaces
+            // hold present-user authority; the explicit empty list only
+            // withdraws the Action from global placement discovery — it
+            // disables no invocation.
+            placementBindings: [],
             dangerLevel: sources.operations.get.declaration.dangerLevel,
             inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
             resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,

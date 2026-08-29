@@ -40,8 +40,6 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
   behavior: {
     descriptorId: 'pi.uiBehavior.v1',
   },
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'pi' },

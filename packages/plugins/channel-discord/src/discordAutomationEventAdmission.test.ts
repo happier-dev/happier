@@ -63,6 +63,7 @@ function createContext(
     plugin: { id: DISCORD_PLUGIN_ID, version: '0.0.0' },
     contribution: { id: 'test', qualifiedId: `${DISCORD_PLUGIN_ID}/actions/test` },
     surface: 'plugin',
+    invokedAtMs: 1_700_000_000_000,
     caller: {
       kind: 'plugin',
       pluginId: 'happier.channels',
@@ -71,7 +72,6 @@ function createContext(
         machineId: 'discord-automation-events-fixture-machine',
         materializationId: 'discord-automation-events-fixture-materialization',
         pluginId: 'happier.channels',
-        immutableGenerationId: 'discord-automation-events-fixture-generation',
       },
     },
     signal,

@@ -144,6 +144,14 @@ describe('githubOfferedMutationsV1', () => {
     })).toEqual(['reopen']);
   });
 
+  it('does not offer an impossible reopen after GitHub reports the pull request merged', () => {
+    expect(githubOfferedMutationsV1({
+      kindId: 'pull-request',
+      state: detailInput({ presentation: 'closed', nativeLabel: 'Merged' })
+        .observation.snapshot.state,
+    })).toEqual([]);
+  });
+
   it('offers an issue its own two transitions, and never merge', () => {
     // An issue has both state Actions registered, and a surface that offered it
     // nothing left six registered writes unreachable from the product. It has no
@@ -155,7 +163,7 @@ describe('githubOfferedMutationsV1', () => {
 
     expect(githubOfferedMutationsV1({
       kindId: 'issue',
-      state: detailInput({ kindId: 'issue', presentation: 'closed', nativeLabel: 'Closed as completed' })
+      state: detailInput({ kindId: 'issue', presentation: 'resolved', nativeLabel: 'Closed as completed' })
         .observation.snapshot.state,
     })).toEqual(['reopen']);
   });
@@ -326,12 +334,26 @@ describe('projectGithubMutationOutcomeV1', () => {
     expect(projectGithubMutationOutcomeV1(
       { status: 'success', result: null },
       { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION },
-    )).toEqual({ kind: 'applied', effect: 'changed' });
+    )).toEqual({
+      kind: 'applied',
+      effect: 'changed',
+      confirmedState: { presentation: 'closed', nativeLabel: 'Merged' },
+      confirmedEntryRef: {
+        kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284',
+      },
+    });
 
     expect(projectGithubMutationOutcomeV1(
       { status: 'success', result: null },
       { kind: 'applied', effect: 'alreadySatisfied', observation: APPLIED_OBSERVATION },
-    )).toEqual({ kind: 'applied', effect: 'alreadySatisfied' });
+    )).toEqual({
+      kind: 'applied',
+      effect: 'alreadySatisfied',
+      confirmedState: { presentation: 'closed', nativeLabel: 'Merged' },
+      confirmedEntryRef: {
+        kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284',
+      },
+    });
   });
 
   it('carries each refusal reason through instead of collapsing them to one word', () => {
@@ -415,7 +437,9 @@ describe('projectGithubMutationOutcomeV1', () => {
 
 describe('GitHub post-mutation provider semantics', () => {
   it('reconciles only the published outcomes which can follow a provider write', () => {
-    expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'applied', effect: 'changed' }))
+    expect(githubMutationMayHaveChangedProviderStateV1({
+      kind: 'applied', effect: 'changed', confirmedState: null, confirmedEntryRef: null,
+    }))
       .toBe(true);
     expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'pending' })).toBe(true);
     expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'uncertain', failure: null }))
@@ -424,7 +448,11 @@ describe('GitHub post-mutation provider semantics', () => {
     expect(githubMutationMayHaveChangedProviderStateV1({
       kind: 'applied',
       effect: 'alreadySatisfied',
-    })).toBe(false);
+      confirmedState: { presentation: 'closed', nativeLabel: 'Merged' },
+      confirmedEntryRef: {
+        kindId: 'pull-request', collisionScope: 'github:1296269', entryId: '1284',
+      },
+    })).toBe(true);
     expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'refused', reason: 'state_changed' }))
       .toBe(false);
     expect(githubMutationMayHaveChangedProviderStateV1({

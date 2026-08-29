@@ -30,8 +30,6 @@ export const ANTIGRAVITY_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'antigravity' },
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'antigravity' },

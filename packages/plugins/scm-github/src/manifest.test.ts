@@ -158,7 +158,13 @@ describe('GitHub SCM manifest', () => {
       ]);
       expect(action.dangerLevel).toBe('safe');
       // They carry no Triage operation role: the aggregate never invokes them.
-      expect(action.surfaces).toEqual(['plugin']);
+      // Only this source's own mounted detail body reaches them, through the
+      // mounted Plugin UI host — present-user authority — so `ui` is the only
+      // declared surface and direct plugin code is refused.
+      expect(action.surfaces).toEqual(['ui']);
+      // The explicit empty list is the canonical mounted-only placement
+      // decision: global placement discovery reads no destination from it.
+      expect(action.placementBindings).toEqual([]);
       expect(() => PluginActionContributionV2Schema.parse(action)).not.toThrow();
     }
 
@@ -168,6 +174,33 @@ describe('GitHub SCM manifest', () => {
     for (const id of declared) {
       expect(roleBound).not.toContain(id);
     }
+  });
+
+  it('declares the exact mounted-only placement for its seven UI-reachable reads', () => {
+    const actions = new Map(
+      (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
+    );
+
+    // Discovery and the authoritative read keep their Protocol-owned `plugin`
+    // + `ui` surfaces — the Triage daemon consumes `plugin` — while the five
+    // source-native detail reads stay `ui`-only. All seven declare the same
+    // mounted-only placement: the explicit empty list withdraws them from
+    // global placement discovery without disabling any invocation surface.
+    const mountedOnly = [
+      GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
+      GITHUB_TRIAGE_ACTION_IDS_V1.get,
+      ...Object.values(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1),
+    ];
+    for (const id of mountedOnly) {
+      expect(actions.get(id)?.placementBindings, id).toEqual([]);
+    }
+    expect(
+      (PLUGIN_MANIFEST.contributes.actions ?? [])
+        .filter((action) => Array.isArray(action.placementBindings)
+          && action.placementBindings.length === 0)
+        .map((action) => action.id)
+        .sort(),
+    ).toEqual([...mountedOnly].sort());
   });
 
   it('binds the scan account leaf under a declaration that can actually fail', () => {
@@ -243,14 +276,16 @@ describe('GitHub SCM manifest', () => {
       // addition to this array.
       expect(action.surfaces).not.toContain('agent');
       expect(action.surfaces).not.toContain('mcp');
-      // `plugin` is REQUIRED for the write to be reachable at all and does not
-      // weaken the gate above. A mounted plugin surface always dispatches as a
-      // plugin caller, so `executeContributedAction` resolves `actionSurface` to
-      // `plugin` and refuses anything that does not declare it — which is why
-      // the detail READS already declare `['plugin']`. Host confirmation is
-      // unaffected because it keys off `invocationSurface` ('ui' from the
-      // dispatcher), computed separately from `actionSurface`.
-      expect(action.surfaces).toEqual(['ui', 'plugin']);
+      // `ui` is the write's whole product reach. The daemon derives the
+      // invoking surface from the authenticated mounted-UI provenance, so a
+      // mounted Plugin UI press is admitted as UI authority while direct
+      // plugin code — ActionsService — checks only the `plugin` surface and
+      // is refused here. Host confirmation is unaffected because it keys off
+      // the same invoking surface.
+      expect(action.surfaces).toEqual(['ui']);
+      // The one placement is the details panel the write lives in; global
+      // placement discovery is offered no other destination.
+      expect(action.placementBindings).toEqual(['detailsPanel']);
       expect(action.dangerLevel).not.toBe('safe');
       // Non-safe + a non-`plugin` surface is exactly the condition the manifest
       // grammar uses to require host confirmation presentation.
@@ -297,6 +332,15 @@ describe('GitHub SCM manifest', () => {
     // They bind to no Triage operation role: the aggregate never invokes a write.
     const roleBound = JSON.stringify(PLUGIN_MANIFEST.contributes.targetedPluginContributions);
     for (const id of declared) expect(roleBound).not.toContain(id);
+
+    // And the details-panel list is exact: these eighteen and nothing else.
+    expect(
+      (PLUGIN_MANIFEST.contributes.actions ?? [])
+        .filter((action) => Array.isArray(action.placementBindings)
+          && action.placementBindings.includes('detailsPanel'))
+        .map((action) => action.id)
+        .sort(),
+    ).toEqual([...declared].sort());
   });
 
   it('admits exactly the verbs the declared Actions consume on the one github-api grant', () => {

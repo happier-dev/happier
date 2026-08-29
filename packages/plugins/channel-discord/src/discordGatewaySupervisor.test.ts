@@ -67,6 +67,7 @@ function backgroundContext(
       qualifiedId: `happier.channel.discord/backgroundServices/${DISCORD_GATEWAY_BACKGROUND_SERVICE_ID}`,
     },
     surface: 'background',
+    invokedAtMs: 1_700_000_000_000,
     signal,
     // These are the genuine host boundaries used by the supervisor; no provider
     // parsing, lifecycle, or admission behavior is substituted in this fixture.
@@ -123,6 +124,7 @@ function supervisorBackgroundHarness(input: Readonly<{
               qualifiedId: `happier.channel.discord/actions/${DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID}`,
             },
             surface: 'plugin',
+            invokedAtMs: background.invokedAtMs,
             caller: {
               kind: 'plugin',
               pluginId: background.plugin.id,
@@ -178,6 +180,7 @@ function channelsCoreContext(): PluginInvocationContext {
       qualifiedId: 'happier.channel.discord/actions/channels/connection-stop-v1',
     },
     surface: 'plugin',
+    invokedAtMs: 1_700_000_000_000,
     caller: {
       kind: 'plugin',
       pluginId: 'happier.channels',

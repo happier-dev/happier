@@ -27,6 +27,21 @@ function buildCodexCredential() {
 }
 
 describe('Codex runtime auth adapter', () => {
+  it('attributes runtime failures to the canonical qualified Connected Account service', () => {
+    expect(createCodexConnectedServiceRuntimeAuthAdapter().classifyRuntimeAuthFailure({
+      target: { agentId: 'codex' },
+      selection: {
+        serviceId: 'happier.agent.codex/openai-codex',
+        profileId: 'work',
+      },
+      error: { code: 'refresh_token_expired' },
+    })).toMatchObject({
+      kind: 'auth_expired',
+      serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'work',
+    });
+  });
+
   it('returns a public runtime usage observation without writing the retired quota snapshot store', async () => {
     const record = buildCodexCredential();
     const retiredRuntimeQuotaSnapshots = { recordSnapshot: vi.fn() };
@@ -225,7 +240,7 @@ describe('Codex runtime auth adapter', () => {
       expectedProviderAccountId: 'acct-work',
       actualProviderAccountId: 'acct-other',
       retryable: true,
-      reason: 'provider_account_auth_store_mismatch',
+      reason: 'provider_account_auth_store_conflict',
     });
   });
 

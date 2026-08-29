@@ -49,6 +49,7 @@ describe('GitHub mutation input provider constraints', () => {
       effect: 'changed',
       requestedReviewers: { users: [observed], teams: [] },
     });
+    if (parsed.kind !== 'applied') throw new Error(`expected applied, got ${parsed.kind}`);
 
     expect(parsed.requestedReviewers.users).toEqual([observed]);
   });

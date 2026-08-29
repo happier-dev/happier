@@ -37,6 +37,7 @@
  */
 
 import * as React from 'react';
+import { Animated } from 'react-native';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   createReviewCommentLinkedIssueIdV1,
@@ -55,6 +56,7 @@ import {
   Form,
   Item,
   ItemGroup,
+  Icon,
   List,
   LoadingState,
   Markdown,
@@ -531,6 +533,7 @@ function WriteOutcome({
 type GithubObservedEntryHandlerV1 = (
   execution: PluginActionExecution<unknown>,
   outcome: GithubMutationOutcomeV1 | null,
+  actionLocalId: string,
 ) => void;
 
 type GithubWriteControllerV1 = Readonly<{
@@ -583,9 +586,9 @@ function useGithubWrite(
       const parsed = settled.status === 'success' ? parseResult(settled.result) : null;
       const outcome = projectGithubMutationOutcomeV1(settled, parsed);
       setOutcome(outcome);
-      onObserved(settled, outcome);
+      onObserved(settled, outcome, localId);
     })();
-  }, [execute, onObserved, parseResult]);
+  }, [execute, localId, onObserved, parseResult]);
 
   return React.useMemo(
     () => ({ outcome, pending: execution.status === 'pending', run }),
@@ -633,6 +636,74 @@ function parseThreadResolutionResult(value: unknown): GithubMutationResultV1 | n
   return parsed.success ? parsed.data : null;
 }
 
+type GithubMergeSignatureStateV1 = Readonly<{
+  terminal: boolean;
+  /** Changes only after this mount's exact merge Action confirms a changed merge. */
+  celebrationSequence: number;
+}>;
+
+const STATIC_OPEN_MERGE_SIGNATURE: GithubMergeSignatureStateV1 = Object.freeze({
+  terminal: false,
+  celebrationSequence: 0,
+});
+
+function isGithubMergedState(
+  state: TriageDetailSurfaceInputV1['observation']['snapshot']['state'],
+): boolean {
+  return state.presentation === 'closed' && state.nativeLabel === 'Merged';
+}
+
+/**
+ * Source-owned lifecycle glyph. Its animation is decorative: the canonical
+ * Action banner and aggregate state remain the accessible semantic result.
+ */
+function GithubMergeSignature({ state }: Readonly<{
+  state: GithubMergeSignatureStateV1;
+}>): React.ReactElement {
+  const { reducedMotion } = useSurfaceContext();
+  const progress = React.useRef(new Animated.Value(1)).current;
+  const previousSequence = React.useRef(state.celebrationSequence);
+
+  React.useEffect(() => {
+    if (state.celebrationSequence === previousSequence.current || reducedMotion) {
+      previousSequence.current = state.celebrationSequence;
+      progress.setValue(1);
+      return undefined;
+    }
+    previousSequence.current = state.celebrationSequence;
+    progress.setValue(0);
+    const motion = Animated.timing(progress, {
+      toValue: 1,
+      duration: 480,
+      useNativeDriver: true,
+    });
+    motion.start();
+    return () => motion.stop();
+  }, [progress, reducedMotion, state.celebrationSequence]);
+
+  return (
+    <Animated.View
+      aria-hidden
+      style={{
+        alignSelf: 'flex-start',
+        opacity: progress,
+        transform: [{
+          scale: progress.interpolate({
+            inputRange: [0, 0.55, 1],
+            outputRange: [0.82, 1.08, 1],
+          }),
+        }],
+      }}
+    >
+      <Icon
+        name={state.terminal ? 'change-complete' : 'change-open'}
+        tone={state.terminal ? 'success' : 'secondary'}
+        testID={state.terminal ? 'github-merge-signature-complete' : 'github-merge-signature-open'}
+      />
+    </Animated.View>
+  );
+}
+
 /**
  * The merge control: choose how, then merge the head you are looking at.
  *
@@ -644,9 +715,11 @@ function parseThreadResolutionResult(value: unknown): GithubMutationResultV1 | n
  */
 function MergeWrite({
   input,
+  terminal,
   onObserved,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
+  terminal: boolean;
   onObserved: GithubObservedEntryHandlerV1;
 }>): React.ReactElement {
   const text = usePluginTranslation();
@@ -699,7 +772,7 @@ function MergeWrite({
           const chosen = GITHUB_MERGE_METHODS_V1.find((method) => method === value);
           if (chosen !== undefined) setMergeMethod(chosen);
         }}
-        disabled={write.pending}
+        disabled={write.pending || terminal}
       />
       {head === undefined
         ? null
@@ -717,7 +790,7 @@ function MergeWrite({
         titleKey="plugins.github.ui.mutations.merge"
         variant="primary"
         busy={write.pending}
-        disabled={payload === null || write.pending}
+        disabled={payload === null || write.pending || terminal}
         onPress={() => {
           if (payload !== null) write.run(payload);
         }}
@@ -1373,11 +1446,13 @@ function IssueWrites({
 function WritesSection({
   input,
   kindId,
+  mergeSignature,
   onObserved,
   publicationProposals,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
+  mergeSignature: GithubMergeSignatureStateV1;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
 }>): React.ReactElement | null {
@@ -1389,11 +1464,14 @@ function WritesSection({
     () => buildGithubPullRequestTargetInputV1(input),
     [input],
   );
-  if (offered.length === 0) return null;
+  if (offered.length === 0 && kindId !== 'pull-request') return null;
 
   return (
     <Stack gap="small">
       <Divider />
+      {kindId === 'pull-request' ? <GithubMergeSignature state={mergeSignature} /> : null}
+      {offered.length === 0 ? null : (
+        <>
       <Text
         variant="label"
         valueKey="plugins.github.ui.mutations"
@@ -1420,7 +1498,13 @@ function WritesSection({
               fallback="These change the pull request on GitHub itself. Each one asks you to confirm before anything is written."
             />
             {offered.includes('merge')
-              ? <MergeWrite input={input} onObserved={onObserved} />
+              ? (
+                <MergeWrite
+                  input={input}
+                  terminal={mergeSignature.terminal}
+                  onObserved={onObserved}
+                />
+              )
               : null}
             {input.observation.snapshot.state.presentation === 'active'
               ? (
@@ -1455,6 +1539,8 @@ function WritesSection({
               : null}
           </Stack>
         )}
+        </>
+      )}
     </Stack>
   );
 }
@@ -1467,6 +1553,7 @@ function OverviewPanel({
   kindId,
   locale,
   nowMs,
+  mergeSignature,
   onObserved,
   publicationProposals,
 }: Readonly<{
@@ -1475,6 +1562,7 @@ function OverviewPanel({
   kindId: GithubTriageKindIdV1;
   locale: string;
   nowMs: number;
+  mergeSignature: GithubMergeSignatureStateV1;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
 }>): React.ReactElement {
@@ -1539,7 +1627,13 @@ function OverviewPanel({
             </Row>
           </Stack>
         )}
-        <WritesSection input={input} kindId={kindId} onObserved={onObserved} publicationProposals={publicationProposals} />
+        <WritesSection
+          input={input}
+          kindId={kindId}
+          mergeSignature={mergeSignature}
+          onObserved={onObserved}
+          publicationProposals={publicationProposals}
+        />
       </Stack>
     </ScrollArea>
   );
@@ -2984,16 +3078,54 @@ function GithubDetailBody({
   // One render-time read, passed down as data, so no child owns a hidden clock.
   const nowMs = Date.now();
   const completePostMutation = useTriagePostMutationCompletion();
+  const launchedMerged = isGithubMergedState(launched.observation.snapshot.state);
+  const [mergeSignature, setMergeSignature] = React.useState<GithubMergeSignatureStateV1>(() => (
+    launchedMerged
+      ? Object.freeze({ terminal: true, celebrationSequence: 0 })
+      : STATIC_OPEN_MERGE_SIGNATURE
+  ));
+  React.useEffect(() => {
+    // A background/provider refresh changes truth immediately but is not this
+    // reader's successful merge, so it never starts the signature motion.
+    setMergeSignature((current) => {
+      if (launchedMerged) {
+        return current.terminal
+          ? current
+          : Object.freeze({ terminal: true, celebrationSequence: current.celebrationSequence });
+      }
+      return current.terminal ? STATIC_OPEN_MERGE_SIGNATURE : current;
+    });
+  }, [launchedMerged]);
   const onObserved = React.useCallback((
     execution: PluginActionExecution<unknown>,
     outcome: GithubMutationOutcomeV1 | null,
+    actionLocalId: string,
   ) => {
+    if (actionLocalId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge
+      && outcome?.kind === 'applied'
+      && outcome.confirmedState !== null
+      && outcome.confirmedEntryRef?.kindId === launched.observation.entryRef.kindId
+      && outcome.confirmedEntryRef.collisionScope === launched.observation.entryRef.collisionScope
+      && outcome.confirmedEntryRef.entryId === launched.observation.entryRef.entryId
+      && isGithubMergedState(outcome.confirmedState)) {
+      setMergeSignature((current) => Object.freeze({
+        terminal: true,
+        celebrationSequence: outcome.effect === 'changed'
+          ? current.celebrationSequence + 1
+          : current.celebrationSequence,
+      }));
+    }
     void completeTriagePostMutationIfNeeded(
       completePostMutation,
       execution,
       () => githubMutationMayHaveChangedProviderStateV1(outcome),
     );
-  }, [completePostMutation]);
+  }, [
+    completePostMutation,
+    launched.observation.entryRef.collisionScope,
+    launched.observation.entryRef.entryId,
+    launched.observation.entryRef.kindId,
+  ]);
   const input = launched;
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
   const publicationProposals = useReviewCommentProposalsForEntry({
@@ -3017,6 +3149,7 @@ function GithubDetailBody({
         kindId={kindId}
         locale={locale}
         nowMs={nowMs}
+        mergeSignature={mergeSignature}
         onObserved={onObserved}
         publicationProposals={publicationProposals}
       />

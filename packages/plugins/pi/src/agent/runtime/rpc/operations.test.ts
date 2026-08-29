@@ -1427,10 +1427,10 @@ describe('createPiRuntimeOperations', () => {
     await emit(capture, {
       type: 'message_end',
       terminalStatus: 'failed',
-      provider: 'openai',
+      provider: 'zai',
       message: {
         role: 'assistant',
-        provider: 'openai',
+        provider: 'zai',
         content: [],
         stopReason: 'error',
         errorMessage: '429: {"code":"1302","message":"Rate limit reached for requests"}',

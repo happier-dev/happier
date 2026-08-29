@@ -265,6 +265,7 @@ describe('GitHub detail projection schema admission', () => {
       projectionTruncated: true,
       continuation: JSON.stringify({ v: 1, page: 2, perPage: 50 }),
     });
+    if (result.kind !== 'timeline') throw new Error(`expected timeline, got ${result.kind}`);
     expect(result.rows).toHaveLength(GITHUB_MAX_TIMELINE_ROWS_V1);
   });
 
@@ -293,6 +294,7 @@ describe('GitHub detail projection schema admission', () => {
       incomplete: 'ceiling',
       continuation: JSON.stringify({ v: 1, page: 2, perPage: 100 }),
     });
+    if (result.kind !== 'changedFiles') throw new Error(`expected changedFiles, got ${result.kind}`);
     expect(result.rows).toHaveLength(GITHUB_MAX_CHANGED_FILE_ROWS_V1);
   });
 
@@ -320,6 +322,7 @@ describe('GitHub detail projection schema admission', () => {
       omittedRowCount: 0,
       projectionTruncated: true,
     });
+    if (result.kind !== 'checks') throw new Error(`expected checks, got ${result.kind}`);
     expect(result.rows).toHaveLength(observations.length);
   });
 
@@ -341,6 +344,7 @@ describe('GitHub detail projection schema admission', () => {
       omittedRowCount: projected.omittedRowCount,
       projectionTruncated: projected.projectionTruncated,
     });
+    if (result.kind !== 'reviews') throw new Error(`expected reviews, got ${result.kind}`);
     expect(result.reviewed).toHaveLength(historical.length);
     expect(result.requested).toHaveLength(outstanding.length);
     expect(result.omittedRowCount).toBe(0);

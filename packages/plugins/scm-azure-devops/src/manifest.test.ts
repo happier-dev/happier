@@ -80,12 +80,10 @@ describe('Azure DevOps pull-request write declarations', () => {
       // only floor an agent invocation to an approval prompt; omitting the surface means there is
       // no tool, no prompt and no exposure at all.
       expect(declaration.surfaces).toContain('ui');
-      // `plugin` is REACHABILITY, and its absence is silent: a mounted plugin
-      // surface always dispatches as a plugin caller, so `executeContributedAction`
-      // resolves `actionSurface` to `plugin` and refuses anything that does not
-      // declare it. Without this line the whole write is dead on arrival with a
-      // green suite — removing `plugin` was verified to pass every other test.
-      expect(declaration.surfaces).toContain('plugin');
+      // Mounted RPC admission validates the lease and host-stamps `ui`; the
+      // provider must not widen this human-only write to the plugin/background
+      // surface merely because its renderer is plugin-contributed.
+      expect(declaration.surfaces).not.toContain('plugin');
       expect(declaration.surfaces).not.toContain('agent');
       expect(declaration.surfaces).not.toContain('mcp');
       expect(declaration.surfaces).not.toContain('cli');

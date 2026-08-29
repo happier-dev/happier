@@ -779,7 +779,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       checkpointRow({ automationId: push.automationId, sourceSelectorId: push.sourceSelectorId }),
       checkpointRow({
         automationId: issue.automationId,
-        eventLocalId: issue.eventRef.localId,
+        eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
         sourceSelectorId: issue.sourceSelectorId,
       }),
     ]);

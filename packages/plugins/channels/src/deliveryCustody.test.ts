@@ -158,7 +158,7 @@ describe('Channels outward delivery custody', () => {
         state: 'notDelivered',
         attemptCount: 1,
         providerMessageIds: [],
-        archiveRecovery: 'ownerMustUnarchiveOrRebind',
+        archiveRecovery: 'ownerMustUnarchiveOrRebind' as const,
       },
     })).toEqual({ kind: 'notRetryable' });
   });
@@ -312,7 +312,7 @@ describe('Channels outward delivery custody', () => {
         state: 'notDelivered',
         attemptCount: 1,
         providerMessageIds: [],
-        archiveRecovery: 'unarchiveAndRetry',
+        archiveRecovery: 'unarchiveAndRetry' as const,
       },
     })).toEqual({
       kind: 'connectionDeleted',
@@ -365,7 +365,7 @@ describe('Channels outward delivery custody', () => {
         state: 'notDelivered' as const,
         attemptCount: 1,
         providerMessageIds: [],
-        archiveRecovery: 'ownerMustUnarchiveOrRebind',
+        archiveRecovery: 'ownerMustUnarchiveOrRebind' as const,
       },
     ]) {
       expect(isConversationDeliveryContentFree(custody)).toBe(true);
@@ -388,7 +388,7 @@ describe('Channels outward delivery custody', () => {
         state: 'notDelivered' as const,
         attemptCount: 1,
         providerMessageIds: [],
-        archiveRecovery: 'unarchiveAndRetry',
+        archiveRecovery: 'unarchiveAndRetry' as const,
       },
     ]) {
       expect(isConversationDeliveryContentFree(custody)).toBe(false);

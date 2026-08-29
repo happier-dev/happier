@@ -65,6 +65,33 @@ describe('Triage plugin manifest', () => {
     expect(parsed.ok ? null : parsed.diagnostics).toBe(null);
   });
 
+  it('puts every durable local mutation behind host-owned confirmation', () => {
+    const nonSafeActions = PLUGIN_MANIFEST.contributes.actions
+      .filter((action) => action.dangerLevel !== 'safe');
+
+    expect(nonSafeActions).toHaveLength(7);
+    for (const action of nonSafeActions) {
+      expect(action.confirmation, action.id).toMatchObject({
+        title: expect.anything(),
+        body: expect.anything(),
+        confirmLabel: expect.anything(),
+      });
+    }
+  });
+
+  it('keeps mounted UI Actions out of global placement discovery', () => {
+    const uiActions = PLUGIN_MANIFEST.contributes.actions
+      .filter((action) => action.surfaces.includes('ui'));
+
+    expect(uiActions.length).toBeGreaterThan(0);
+    // The explicit empty list is the canonical mounted-only declaration: the
+    // definePlugin projection preserves it on the wire, and the host admits it
+    // while global placement discovery reads no destination from it.
+    for (const action of uiActions) {
+      expect(action, action.id).toMatchObject({ placementBindings: [] });
+    }
+  });
+
   it('declares the persisted identity that source contributions target', () => {
     // The plugin id is the persisted connected-account, contribution and
     // Collection-row key, so it is asserted as an exact literal rather than
@@ -136,7 +163,7 @@ describe('Triage plugin manifest', () => {
     // router is involved.
     expect(action).toMatchObject({
       id: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
-      surfaces: ['plugin', 'voice'],
+      surfaces: ['ui', 'voice'],
       execution: { target: 'daemon' },
     });
     expect(PLUGIN_MANIFEST.contributes.actions

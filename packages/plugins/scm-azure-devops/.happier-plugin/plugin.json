@@ -27,6 +27,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -699,7 +700,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Discover Azure DevOps organizations"
       },
@@ -2985,6 +2987,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -3707,7 +3710,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Read an Azure DevOps pull request"
       },
@@ -4979,6 +4983,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5125,7 +5130,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the Azure DevOps iterations of a pull request"
       },
@@ -5365,6 +5370,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5513,7 +5519,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read an Azure DevOps commit page"
       },
@@ -5990,6 +5996,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6229,7 +6236,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read an Azure DevOps iteration change page"
       },
@@ -6465,6 +6472,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6687,7 +6695,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the Azure DevOps policies of a pull request"
       },
@@ -6933,6 +6941,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7115,7 +7124,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the Azure DevOps threads of a pull request"
       },
@@ -11196,8 +11205,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Complete an Azure DevOps pull request"
       },
@@ -15261,8 +15269,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Abandon an Azure DevOps pull request"
       },
@@ -19326,8 +19333,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reactivate an Azure DevOps pull request"
       },
@@ -23408,8 +23414,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Request review on an Azure DevOps pull request"
       },
@@ -23986,8 +23991,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Set the status of an Azure DevOps review thread"
       },
@@ -27639,8 +27643,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Submit an Azure DevOps pull request review"
       },
@@ -30467,8 +30470,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Publish an Azure DevOps pull request review comment"
       },
@@ -33303,8 +33305,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reply to an Azure DevOps pull request review thread"
       }
@@ -33587,6 +33588,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "The changed files are unavailable",
             "plugins.azureDevops.ui.invalidInput": "This pull request cannot be shown",
             "plugins.azureDevops.ui.invalidInput.description": "Triage supplied a detail input this Azure DevOps build does not accept.",
+            "plugins.azureDevops.ui.iterationTitle": "Iteration {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Updated",
             "plugins.azureDevops.ui.iterations": "Iterations",
             "plugins.azureDevops.ui.iterationsUnavailable": "The iterations could not be read",
             "plugins.azureDevops.ui.metadata.blocking": "Blocking",
@@ -33710,6 +33713,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Reading the policies from Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Reading the threads from Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Re-read the commits from Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Re-read the changed files from Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Re-read the pull request iterations from Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Re-read the policies from Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Re-read the threads from Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "{count} row(s) on the pages read could not be understood.",
@@ -33791,6 +33797,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "Измененные файлы недоступны",
             "plugins.azureDevops.ui.invalidInput": "Этот запрос не может быть показан",
             "plugins.azureDevops.ui.invalidInput.description": "Triage предоставил ввод деталей, который этот сбор Azure DevOps не принимает.",
+            "plugins.azureDevops.ui.iterationTitle": "Итерация {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Обновлено",
             "plugins.azureDevops.ui.iterations": "Итерации",
             "plugins.azureDevops.ui.iterationsUnavailable": "Итерации не могут быть прочитаны",
             "plugins.azureDevops.ui.metadata.blocking": "Блокирующие",
@@ -33914,6 +33922,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Чтение политик из Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Чтение потоков из Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Повторно прочитать коммиты из Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Повторно прочитать изменённые файлы из Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Повторно прочитать итерации пул-реквеста из Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Повторно прочитать политики из Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Повторно прочитать ветки из Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "Не удалось распознать строк на прочитанных страницах: {count}.",
@@ -33995,6 +34006,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "Zmienionych plików nie jest dostępnych",
             "plugins.azureDevops.ui.invalidInput": "Pull request nie może być wyświetlony",
             "plugins.azureDevops.ui.invalidInput.description": "Triage dostarczył wprowadzenie szczegółowe, którego nie akceptuje tę wersję Azure DevOps",
+            "plugins.azureDevops.ui.iterationTitle": "Iteracja {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Zaktualizowano",
             "plugins.azureDevops.ui.iterations": "Iteracje",
             "plugins.azureDevops.ui.iterationsUnavailable": "Nie udało się odczytać iteracji",
             "plugins.azureDevops.ui.metadata.blocking": "Blokujące",
@@ -34118,6 +34131,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Czytanie zasad z Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Czytanie wątków z Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Ponownie wczytaj commity z Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Ponownie wczytaj zmienione pliki z Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Ponownie wczytaj iteracje pull requesta z Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Ponownie wczytaj zasady z Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Ponownie wczytaj wątki z Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "Nie udało się zrozumieć wierszy na odczytanych stronach: {count}.",
@@ -34199,6 +34215,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "Los archivos cambiados no están disponibles",
             "plugins.azureDevops.ui.invalidInput": "Este pull request no puede mostrarse",
             "plugins.azureDevops.ui.invalidInput.description": "La panadería proporcionada por Triage contiene una entrada de detalles que este build de Azure DevOps no acepta.",
+            "plugins.azureDevops.ui.iterationTitle": "Iteración {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Actualizado",
             "plugins.azureDevops.ui.iterations": "Iteraciones",
             "plugins.azureDevops.ui.iterationsUnavailable": "No se pudieron leer las iteraciones",
             "plugins.azureDevops.ui.metadata.blocking": "Bloqueantes",
@@ -34322,6 +34340,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Leyendo las políticas de Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Leyendo los hilos de Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Vuelve a leer los commits de Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Vuelve a leer los archivos modificados de Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Vuelve a leer las iteraciones de la solicitud de incorporación de cambios de Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Vuelve a leer las políticas de Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Vuelve a leer los hilos de Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "No se pudieron interpretar {count} fila(s) de las páginas leídas.",
@@ -34403,6 +34424,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "Les fichiers modifiés sont indisponibles",
             "plugins.azureDevops.ui.invalidInput": "Cette demande de fusion ne peut pas être affichée",
             "plugins.azureDevops.ui.invalidInput.description": "L'analyse a fourni une entrée de détail que cette version d'Azure DevOps ne prend pas en charge.",
+            "plugins.azureDevops.ui.iterationTitle": "Itération {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Mis à jour",
             "plugins.azureDevops.ui.iterations": "Itérations",
             "plugins.azureDevops.ui.iterationsUnavailable": "Les itérations ne peuvent pas être lues",
             "plugins.azureDevops.ui.metadata.blocking": "Bloquantes",
@@ -34526,6 +34549,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Lecture des politiques depuis Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Lecture des fils de discussion depuis Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Relire les commits depuis Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Relire les fichiers modifiés depuis Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Relire les itérations de la pull request depuis Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Renvoie les politiques de Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Relire les fils de discussion depuis Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "{count} ligne(s) des pages lues n’ont pas pu être interprétées.",
@@ -34607,6 +34633,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "I file modificati non sono disponibili",
             "plugins.azureDevops.ui.invalidInput": "Questa richiesta di pull non può essere mostrata",
             "plugins.azureDevops.ui.invalidInput.description": "Triage ha fornito un input dettagliato che questo build di Azure DevOps non accetta.",
+            "plugins.azureDevops.ui.iterationTitle": "Iterazione {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Aggiornato",
             "plugins.azureDevops.ui.iterations": "Iterazioni",
             "plugins.azureDevops.ui.iterationsUnavailable": "Le iterazioni non possono essere lette",
             "plugins.azureDevops.ui.metadata.blocking": "Bloccanti",
@@ -34730,6 +34758,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Leggendo le politiche da Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Leggendo i fili di discussione da Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Ricarica i commit da Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Ricarica i file modificati da Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Ricarica le iterazioni della pull request da Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Ricarica i criteri da Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Ricarica i thread da Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "Impossibile interpretare {count} riga/righe nelle pagine lette.",
@@ -34811,6 +34842,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "Os arquivos alterados estão indisponíveis",
             "plugins.azureDevops.ui.invalidInput": "Esta solicitação de fusão não pode ser exibida",
             "plugins.azureDevops.ui.invalidInput.description": "A Triage forneceu uma entrada de detalhes que esta construção do Azure DevOps não aceita.",
+            "plugins.azureDevops.ui.iterationTitle": "Iteração {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Atualizado",
             "plugins.azureDevops.ui.iterations": "Iterações",
             "plugins.azureDevops.ui.iterationsUnavailable": "As iterações não podem ser lidas",
             "plugins.azureDevops.ui.metadata.blocking": "Bloqueadoras",
@@ -34934,6 +34967,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Lendo as políticas do Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Lendo as threads do Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Volte a ler os commits do Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Volte a ler os arquivos alterados do Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Volte a ler as iterações do pull request do Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Volte a ler as políticas do Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Volte a ler as threads do Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "Não foi possível interpretar {count} linha(s) nas páginas lidas.",
@@ -35015,6 +35051,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "Els fitxers modificats no estan disponibles",
             "plugins.azureDevops.ui.invalidInput": "No es pot mostrar aquesta sol·licitud de pull",
             "plugins.azureDevops.ui.invalidInput.description": "Triage ha proporcionat una entrada detallada que aquesta edició de Azure DevOps no accepta.",
+            "plugins.azureDevops.ui.iterationTitle": "Iteració {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "Actualitzat",
             "plugins.azureDevops.ui.iterations": "Iteracions",
             "plugins.azureDevops.ui.iterationsUnavailable": "No es poden llegir les iteracions",
             "plugins.azureDevops.ui.metadata.blocking": "Bloquejants",
@@ -35138,6 +35176,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Llegint les polítiques de Azure DevOps",
             "plugins.azureDevops.ui.readingThreads": "Llegint els fils de discusió de Azure DevOps",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Torna a llegir els commits d’Azure DevOps",
+            "plugins.azureDevops.ui.rereadFiles": "Torna a llegir els fitxers modificats d’Azure DevOps",
+            "plugins.azureDevops.ui.rereadIterations": "Torna a llegir les iteracions de la pull request d’Azure DevOps",
             "plugins.azureDevops.ui.rereadPolicies": "Rerebuda les polítiques de Azure DevOps",
             "plugins.azureDevops.ui.rereadThreads": "Rerebuda les fils de discussió de Azure DevOps",
             "plugins.azureDevops.ui.rowsUnreadable": "No s’han pogut interpretar {count} fila(es) de les pàgines llegides.",
@@ -35219,6 +35260,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "更改的文件不可用",
             "plugins.azureDevops.ui.invalidInput": "无法显示此拉取请求",
             "plugins.azureDevops.ui.invalidInput.description": "Triage提供的详细输入不被此Azure DevOps构建接受。",
+            "plugins.azureDevops.ui.iterationTitle": "迭代 {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "已更新",
             "plugins.azureDevops.ui.iterations": "迭代",
             "plugins.azureDevops.ui.iterationsUnavailable": "无法读取迭代",
             "plugins.azureDevops.ui.metadata.blocking": "阻止项",
@@ -35342,6 +35385,9 @@
             "plugins.azureDevops.ui.readingPolicies": "从Azure DevOps读取策略",
             "plugins.azureDevops.ui.readingThreads": "从Azure DevOps读取线程",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "从 Azure DevOps 重新读取提交",
+            "plugins.azureDevops.ui.rereadFiles": "从 Azure DevOps 重新读取所更改的文件",
+            "plugins.azureDevops.ui.rereadIterations": "从 Azure DevOps 重新读取拉取请求的迭代",
             "plugins.azureDevops.ui.rereadPolicies": "从 Azure DevOps 重新读取策略",
             "plugins.azureDevops.ui.rereadThreads": "从 Azure DevOps 重新读取线程",
             "plugins.azureDevops.ui.rowsUnreadable": "已读取页面中有 {count} 行无法解析。",
@@ -35423,6 +35469,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "更動檔案不可用",
             "plugins.azureDevops.ui.invalidInput": "此拉取請求無法顯示",
             "plugins.azureDevops.ui.invalidInput.description": "Triage 提供的詳細輸入，此 Azure DevOps 版本無法接受。",
+            "plugins.azureDevops.ui.iterationTitle": "反覆項目 {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "已更新",
             "plugins.azureDevops.ui.iterations": "迭代",
             "plugins.azureDevops.ui.iterationsUnavailable": "無法讀取迭代",
             "plugins.azureDevops.ui.metadata.blocking": "封鎖項目",
@@ -35546,6 +35594,9 @@
             "plugins.azureDevops.ui.readingPolicies": "讀取 Azure DevOps 中的策略",
             "plugins.azureDevops.ui.readingThreads": "讀取 Azure DevOps 中的執行緒",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "從 Azure DevOps 重新讀取提交",
+            "plugins.azureDevops.ui.rereadFiles": "從 Azure DevOps 重新讀取所變更的檔案",
+            "plugins.azureDevops.ui.rereadIterations": "從 Azure DevOps 重新讀取拉取請求的迭代",
             "plugins.azureDevops.ui.rereadPolicies": "從 Azure DevOps 重新讀取策略",
             "plugins.azureDevops.ui.rereadThreads": "從 Azure DevOps 重新讀取線程",
             "plugins.azureDevops.ui.rowsUnreadable": "已讀取頁面中有 {count} 列無法解析。",
@@ -35627,6 +35678,8 @@
             "plugins.azureDevops.ui.filesUnavailable": "変更されたファイルは利用できません",
             "plugins.azureDevops.ui.invalidInput": "このpull requestを表示できません",
             "plugins.azureDevops.ui.invalidInput.description": "TriageがこのAzure DevOpsビルドが受け入れない詳細入力",
+            "plugins.azureDevops.ui.iterationTitle": "イテレーション {id}",
+            "plugins.azureDevops.ui.iterationUpdated": "更新済み",
             "plugins.azureDevops.ui.iterations": "イテレーション",
             "plugins.azureDevops.ui.iterationsUnavailable": "イテレーションを読み取ることができません",
             "plugins.azureDevops.ui.metadata.blocking": "ブロック",
@@ -35750,6 +35803,9 @@
             "plugins.azureDevops.ui.readingPolicies": "Azure DevOpsからポリシーを読み取っています",
             "plugins.azureDevops.ui.readingThreads": "Azure DevOpsからスレッドを読み取っています",
             "plugins.azureDevops.ui.replyToThread": "Reply to thread {thread}",
+            "plugins.azureDevops.ui.rereadCommits": "Azure DevOps からコミットを再読み取る",
+            "plugins.azureDevops.ui.rereadFiles": "Azure DevOps から変更されたファイルを再読み取る",
+            "plugins.azureDevops.ui.rereadIterations": "Azure DevOps からプル リクエストのイテレーションを再読み取る",
             "plugins.azureDevops.ui.rereadPolicies": "Azure DevOps からポリシーを再読み取る",
             "plugins.azureDevops.ui.rereadThreads": "Azure DevOps からスレッドを再読み取る",
             "plugins.azureDevops.ui.rowsUnreadable": "読み取ったページ内の {count} 行を解釈できませんでした。",

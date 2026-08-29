@@ -721,6 +721,7 @@ function backgroundContext(input: Readonly<{
       qualifiedId: 'happier.channels/backgroundServices/outward-delivery-supervisor',
     },
     surface: 'background',
+    invokedAtMs: 1_700_000_000_000,
     signal: new AbortController().signal,
     services: {
       storage: {

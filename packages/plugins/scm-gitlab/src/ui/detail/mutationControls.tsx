@@ -135,9 +135,14 @@ function describeRefusal(
   issueWrite: boolean,
 ): string {
   if (issueWrite) {
-    return dispatched
-      ? 'GitLab rejected this issue change after it was dispatched.'
-      : 'Nothing was written: GitLab reports this issue cannot accept that change.';
+    return text(
+      dispatched
+        ? 'plugins.gitlab.ui.mutations.issue.refused.dispatched'
+        : 'plugins.gitlab.ui.mutations.issue.refused.local',
+      dispatched
+        ? 'GitLab rejected this issue change after it was dispatched.'
+        : 'Nothing was written: GitLab reports this issue cannot accept that change.',
+    );
   }
   switch (reason) {
     case 'headAdvanced':
@@ -285,7 +290,10 @@ function projectSettledWrite(
       return {
         tone: 'warning',
         title: issueWrite
-          ? 'Nothing was written: this issue changed after you read it. Reload and decide again.'
+          ? text(
+            'plugins.gitlab.ui.mutations.issue.reconfirm',
+            'Nothing was written: this issue changed after you read it. Reload and decide again.',
+          )
           : text(
             'plugins.gitlab.ui.mutations.reconfirm',
             'Nothing was written: this merge request changed after you read it. Reload and decide again.',
@@ -327,7 +335,10 @@ function projectSettledWrite(
       return {
         tone: 'warning',
         title: issueWrite
-          ? 'The outcome is unknown. Reload this issue before trying again.'
+          ? text(
+            'plugins.gitlab.ui.mutations.issue.outcomeUnknown',
+            'The outcome is unknown. Reload this issue before trying again.',
+          )
           : text(
             'plugins.gitlab.ui.mutations.outcomeUnknown',
             'The outcome is unknown. Reload this merge request before trying again.',
@@ -337,7 +348,10 @@ function projectSettledWrite(
       return {
         tone: 'danger',
         title: issueWrite
-          ? 'This did not complete. Reload this issue to see where it stands.'
+          ? text(
+            'plugins.gitlab.ui.mutations.issue.rejected',
+            'This did not complete. Reload this issue to see where it stands.',
+          )
           : text(
             'plugins.gitlab.ui.mutations.rejected',
             'This did not complete. Reload this merge request to see where it stands.',
@@ -435,10 +449,50 @@ function parseNames(value: string): readonly string[] {
   return name === '' ? [] : [name];
 }
 
+/**
+ * The per-kind delta-control vocabulary, stated once: the key and the exact
+ * English fallback beside it, so the source stays the one place the sentence
+ * lives and the catalog entries must match it byte for byte.
+ */
+const DELTA_CONTROL_VOCABULARY: Readonly<Record<'reviewers' | 'assignees' | 'labels', Readonly<{
+  fieldKey: string;
+  fieldLabel: string;
+  addKey: string;
+  addLabel: string;
+  removeKey: string;
+  removeLabel: string;
+}>>> = Object.freeze({
+  reviewers: Object.freeze({
+    fieldKey: 'plugins.gitlab.ui.mutations.reviewers.field',
+    fieldLabel: 'Reviewer username',
+    addKey: 'plugins.gitlab.ui.mutations.reviewers.add',
+    addLabel: 'Add reviewers',
+    removeKey: 'plugins.gitlab.ui.mutations.reviewers.remove',
+    removeLabel: 'Remove reviewers',
+  }),
+  assignees: Object.freeze({
+    fieldKey: 'plugins.gitlab.ui.mutations.assignees.field',
+    fieldLabel: 'Assignee username',
+    addKey: 'plugins.gitlab.ui.mutations.assignees.add',
+    addLabel: 'Add assignees',
+    removeKey: 'plugins.gitlab.ui.mutations.assignees.remove',
+    removeLabel: 'Remove assignees',
+  }),
+  labels: Object.freeze({
+    fieldKey: 'plugins.gitlab.ui.mutations.labels.field',
+    fieldLabel: 'Label name',
+    addKey: 'plugins.gitlab.ui.mutations.labels.add',
+    addLabel: 'Add labels',
+    removeKey: 'plugins.gitlab.ui.mutations.labels.remove',
+    removeLabel: 'Remove labels',
+  }),
+});
+
 function NamedDeltaControls({ input, kind }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kind: 'reviewers' | 'assignees' | 'labels';
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const [value, setValue] = React.useState('');
   const names = parseNames(value);
   const build = (operation: 'add' | 'remove') => kind === 'reviewers'
@@ -449,12 +503,14 @@ function NamedDeltaControls({ input, kind }: Readonly<{
   const write: GitlabWriteIdV1 = kind === 'reviewers'
     ? 'reviewerChange'
     : kind === 'assignees' ? 'issueAssign' : 'issueLabel';
-  const fieldLabel = kind === 'reviewers'
-    ? 'Reviewer username'
-    : kind === 'assignees' ? 'Assignee username' : 'Label name';
+  const vocabulary = DELTA_CONTROL_VOCABULARY[kind];
   return (
     <Stack gap="small">
-      <TextField label={fieldLabel} value={value} onChange={setValue} />
+      <TextField
+        label={text(vocabulary.fieldKey, vocabulary.fieldLabel)}
+        value={value}
+        onChange={setValue}
+      />
       <Row gap="small">
         {(['add', 'remove'] as const).map((operation) => {
           const built = build(operation);
@@ -463,7 +519,10 @@ function NamedDeltaControls({ input, kind }: Readonly<{
               key={operation}
               write={write}
               input={built}
-              label={`${operation === 'add' ? 'Add' : 'Remove'} ${kind}`}
+              label={operation === 'add'
+                ? text(vocabulary.addKey, vocabulary.addLabel)
+                : text(vocabulary.removeKey, vocabulary.removeLabel)}
+              labelKey={operation === 'add' ? vocabulary.addKey : vocabulary.removeKey}
               variant="secondary"
             />
           );
@@ -517,7 +576,7 @@ export function GitlabMutationControls({
     <Stack gap="large">
       <Text variant="label">
         {input.observation.entryRef.kindId === 'issue'
-          ? 'Issue actions'
+          ? text('plugins.gitlab.ui.mutations.issue.title', 'Issue actions')
           : text('plugins.gitlab.ui.mutations.title', 'Merge request actions')}
       </Text>
       <Stack gap="small">
@@ -586,12 +645,18 @@ export function GitlabDiscussionResolutionControl({ input, discussionId, resolve
   discussionId: string;
   resolved: boolean;
 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   const built = buildGitlabDiscussionResolutionInputV1(input, discussionId, !resolved);
   return built === null ? null : (
     <GitlabWriteControl
       write="discussionResolution"
       input={built}
-      label={resolved ? 'Reopen discussion' : 'Resolve discussion'}
+      label={resolved
+        ? text('plugins.gitlab.ui.mutations.discussion.reopen', 'Reopen discussion')
+        : text('plugins.gitlab.ui.mutations.discussion.resolve', 'Resolve discussion')}
+      labelKey={resolved
+        ? 'plugins.gitlab.ui.mutations.discussion.reopen'
+        : 'plugins.gitlab.ui.mutations.discussion.resolve'}
       variant="secondary"
     />
   );

@@ -42,6 +42,25 @@ export function isConversationSenderFeedbackEligible(input: Readonly<{
     && SENDER_VISIBLE_REFUSALS.has(input.reason);
 }
 
+/**
+ * The closed privacy-safe presentation vocabulary a terminal refusal projects
+ * from its frozen nonAdmission fact. Availability refusals recover when the
+ * named environment is reachable again; every other refusal is informational
+ * history. `actionable` is not reason-derived: a row earns it only from its
+ * own live retry or owner-exit affordance, never from this mapping.
+ */
+const RECOVERABLE_NON_ADMISSION_REASONS = new Set<ConversationNonAdmissionReason>([
+  'connectionUnavailable',
+  'targetUnavailable',
+  'permissionCeilingUnavailable',
+]);
+
+export function projectConversationNonAdmissionPresentationCategory(
+  reason: ConversationNonAdmissionReason,
+): 'informational' | 'recoverable' {
+  return RECOVERABLE_NON_ADMISSION_REASONS.has(reason) ? 'recoverable' : 'informational';
+}
+
 export type ConversationCommandPolicyInput = Readonly<{
   command: ConversationCommandClassification;
   actor: Readonly<{

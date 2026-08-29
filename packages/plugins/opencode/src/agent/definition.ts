@@ -6,14 +6,6 @@ const OPENCODE_AGENT_CORE = Object.freeze({
   cloudConnect: null,
   connectedServices: {
     supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
-    supportedKindsByServiceId: {
-      'openai-codex': ['oauth'],
-      openai: ['token'],
-      // Browser-login OAuth is resolved at the request interceptor. Setup tokens and Anthropic
-      // Console API keys remain native token credentials.
-      'claude-subscription': ['oauth', 'token'],
-      anthropic: ['token'],
-    },
   },
   resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'opencodeSessionId' },
   sessionStorage: { direct: true, persisted: true },

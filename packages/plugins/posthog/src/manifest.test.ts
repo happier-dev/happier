@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import { TriageScanInputV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageScanInputV1Schema, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -291,6 +291,48 @@ describe('PostHog plugin manifest', () => {
             .find((candidate) => candidate.target.pluginId === 'happier.triage');
         expect(Object.values(contribution?.operations ?? {}))
             .not.toContain(POSTHOG_ACTION_IDS.issueActivity);
+    });
+
+    it('declares the exact mounted-only placement for its six UI-capable reads', () => {
+        const actions = new Map(
+            PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+        );
+        const sources = TriageSourcesContributionProtocolV1;
+
+        // The settings directory read, discovery, the three source-native detail
+        // reads and the authoritative get are exactly the `ui`-reachable Actions
+        // this plugin declares, and every one carries the same mounted-only
+        // placement: the explicit empty list withdraws it from global placement
+        // discovery while its `ui` (and, for the two Protocol-owned roles,
+        // `plugin`) invocation stays exactly as reachable as before.
+        const mountedOnly = [
+            POSTHOG_ACTION_IDS.configuration,
+            POSTHOG_ACTION_IDS.listInstances,
+            POSTHOG_ACTION_IDS.issueEvents,
+            POSTHOG_ACTION_IDS.issueActivity,
+            POSTHOG_ACTION_IDS.codeVariables,
+            POSTHOG_ACTION_IDS.get,
+        ];
+        for (const id of mountedOnly) {
+            expect(actions.get(id)?.placementBindings, id).toEqual([]);
+        }
+        expect(actions.get(POSTHOG_ACTION_IDS.listInstances)?.surfaces, 'posthog/list-instances')
+            .toEqual(sources.operations.listInstances.declaration.surfaces);
+        expect(actions.get(POSTHOG_ACTION_IDS.get)?.surfaces, 'posthog/get')
+            .toEqual(sources.operations.get.declaration.surfaces);
+        // And the mounted-only list is exact: these six and nothing else.
+        expect(
+            PLUGIN_MANIFEST.contributes.actions
+                .filter((action) => action.placementBindings !== undefined
+                    && action.placementBindings.length === 0)
+                .map((action) => action.id)
+                .sort(),
+        ).toEqual([...mountedOnly].sort());
+        // `scan` remains a programmatic role: no `ui` surface, so the grammar
+        // asks for no placement decision and the projection supplies none.
+        expect(actions.get(POSTHOG_ACTION_IDS.scan)?.surfaces)
+            .toEqual(sources.operations.scan.declaration.surfaces);
+        expect(actions.get(POSTHOG_ACTION_IDS.scan)?.placementBindings).toBeUndefined();
     });
 
     it('takes the PostHog deployment only from the declared origin-semantic field', () => {

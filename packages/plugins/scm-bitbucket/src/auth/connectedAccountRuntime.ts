@@ -147,7 +147,7 @@ async function confirmBitbucketAccount(
       status: 'rejected',
       diagnostic: diagnostic(
         BITBUCKET_ACCOUNT_FAILURE_CODES.credentialsRejected,
-        'Bitbucket rejected this email or username and API token.',
+        'Bitbucket rejected this Atlassian account email and API token.',
       ),
     };
   }
@@ -211,7 +211,7 @@ async function completeManualConnection(
       status: 'rejected' as const,
       diagnostic: diagnostic(
         BITBUCKET_ACCOUNT_FAILURE_CODES.credentialsIncomplete,
-        'Bitbucket requires both an email or username and an API token.',
+        'Bitbucket requires both your Atlassian account email and an API token.',
       ),
     };
   }

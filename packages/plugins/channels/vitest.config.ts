@@ -60,6 +60,12 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**'],
+    // React's dev/prod CJS build is chosen by NODE_ENV, and only the dev
+    // build exports `act`. Pin it — and mark the act environment like the
+    // plugin-ui rnw project — so an exported production NODE_ENV in a
+    // contributor shell cannot fail every mounted-surface test at once.
+    env: { HAPPIER_FEATURE_POLICY_ENV: '', NODE_ENV: 'test' },
+    setupFiles: ['../../plugin-ui/src/rnwTestSetup.ts'],
     server: {
       deps: {
         // Source-level Channels checks must transform the current SDK and

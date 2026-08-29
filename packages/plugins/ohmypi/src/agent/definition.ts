@@ -11,13 +11,6 @@ export const AGENT_DEFINITION = Object.freeze({
     cloudConnect: null,
     connectedServices: {
       supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic', 'gemini'],
-      supportedKindsByServiceId: {
-        'openai-codex': ['oauth'],
-        openai: ['token'],
-        'claude-subscription': ['token'],
-        anthropic: ['token'],
-        gemini: ['token'],
-      },
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'ohMyPiSessionId' },
     sessionStorage: { direct: true, persisted: true },

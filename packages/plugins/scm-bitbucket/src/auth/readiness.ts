@@ -41,7 +41,7 @@ export function resolveBitbucketAuthReadiness(input: BitbucketAuthReadinessInput
     return {
       state: 'missing_descriptor',
       diagnostic: 'Bitbucket Cloud API credentials are not available from connected-account descriptors.',
-      remediation: 'Connect Bitbucket with an email or username plus API token.',
+      remediation: 'Connect Bitbucket with your Atlassian account email plus API token.',
     };
   }
   if (normalizeHost(input.host) !== 'bitbucket.org') {
@@ -61,15 +61,17 @@ export function resolveBitbucketAuthReadiness(input: BitbucketAuthReadinessInput
   if (!input.username?.trim()) {
     return {
       state: 'missing_email',
-      diagnostic: 'Bitbucket Cloud credentials are missing an email or username.',
-      remediation: 'Reconnect Bitbucket and enter the account email or username.',
+      diagnostic: 'Bitbucket Cloud credentials are missing an Atlassian account email.',
+      remediation: 'Reconnect Bitbucket and enter the Atlassian account email the API token belongs to.',
     };
   }
   if (!input.apiTokenAvailable) {
     return {
       state: 'missing_token',
       diagnostic: 'Bitbucket Cloud credentials are missing an API token.',
-      remediation: 'Reconnect Bitbucket with an API token or app password.',
+      // App passwords reached end of life on 2026-07-28 and no longer work, so the remediation
+      // must never send a reader to one.
+      remediation: 'Reconnect Bitbucket with an Atlassian API token.',
     };
   }
   if (input.apiProbe === 'unavailable') {

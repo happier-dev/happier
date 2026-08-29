@@ -26,6 +26,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -698,7 +699,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Discover Bitbucket Cloud workspaces"
       },
@@ -2982,6 +2984,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -3704,7 +3707,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Read one Bitbucket Cloud pull request"
       },
@@ -4977,6 +4981,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5142,7 +5147,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read a Bitbucket activity page"
       },
@@ -5377,6 +5382,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6184,7 +6190,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Refresh a Bitbucket pull-request overview"
       },
@@ -6423,6 +6429,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6612,7 +6619,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read a Bitbucket pull-request diff"
       },
@@ -6851,6 +6858,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7024,7 +7032,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read a Bitbucket build-status page"
       },
@@ -7263,6 +7271,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7449,7 +7458,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read a Bitbucket comment page"
       },
@@ -11583,8 +11592,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Merge a Bitbucket pull request"
       },
@@ -15683,8 +15691,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Decline a Bitbucket pull request"
       },
@@ -16193,8 +16200,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Resolve a Bitbucket comment thread"
       },
@@ -16703,8 +16709,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reopen a Bitbucket comment thread"
       },
@@ -20350,8 +20355,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Submit this Bitbucket pull-request review"
       },
@@ -23170,8 +23174,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Publish this Bitbucket review comment"
       },
@@ -25990,8 +25993,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reply to this Bitbucket review comment"
       }
@@ -26013,14 +26015,14 @@
             {
               "fields": [
                 {
-                  "description": "The email address or username associated with the Bitbucket API token.",
+                  "description": "The email address of the Atlassian account this API token belongs to.",
                   "id": "identity",
                   "schema": {
                     "minLength": 1,
                     "type": "string"
                   },
                   "secret": false,
-                  "title": "Email or username"
+                  "title": "Atlassian account email"
                 },
                 {
                   "description": "A Bitbucket API token with repository access.",

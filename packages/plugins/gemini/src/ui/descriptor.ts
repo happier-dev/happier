@@ -29,8 +29,6 @@ export const GEMINI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'gemini' },
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'gemini' },

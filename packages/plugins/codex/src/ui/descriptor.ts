@@ -237,8 +237,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
       },
     },
   },
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'codex' },

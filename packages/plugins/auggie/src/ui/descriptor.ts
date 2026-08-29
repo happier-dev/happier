@@ -42,8 +42,6 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
       ],
     },
   },
-  session: {},
-  message: {},
   components: {
     slots: [
       {

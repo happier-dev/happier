@@ -60,4 +60,15 @@ describe('OhMyPi strict plugin manifest', () => {
       },
     }));
   });
+
+  it('rejects a connected-account purpose with an unsupported credential kind', () => {
+    const manifest = JSON.parse(JSON.stringify(PLUGIN_MANIFEST)) as {
+      contributes: { agents: Array<{ connectedAccounts: Array<{ credentialKinds: string[] }> }> };
+    };
+    const oauthProfile = manifest.contributes.agents[0]!.connectedAccounts[0]!;
+    expect(oauthProfile.credentialKinds).toEqual(['oauth']);
+    oauthProfile.credentialKinds = ['password'];
+
+    expect(ingestPluginManifestV2(manifest)).toMatchObject({ ok: false });
+  });
 });

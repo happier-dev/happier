@@ -198,6 +198,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -870,7 +871,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Discover GitHub accounts"
       },
@@ -3154,6 +3156,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -3876,7 +3879,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Read one GitHub pull request or issue"
       },
@@ -5155,6 +5159,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5380,7 +5385,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read a GitHub timeline page"
       },
@@ -5625,6 +5630,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5808,7 +5814,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read a GitHub changed-file page"
       },
@@ -6295,6 +6301,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6808,7 +6815,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read one GitHub feedback connection"
       },
@@ -7043,6 +7050,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7389,7 +7397,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the GitHub checks of a pull request"
       },
@@ -7624,6 +7632,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7902,7 +7911,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the GitHub reviews of a pull request"
       },
@@ -10519,8 +10528,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Merge this pull request"
       },
@@ -13095,8 +13103,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Close this pull request"
       },
@@ -15671,8 +15678,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reopen this pull request"
       },
@@ -18261,8 +18267,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Mark this pull request ready for review"
       },
@@ -21914,8 +21919,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Submit this pull request review"
       },
@@ -24740,8 +24744,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Publish this pull request review comment"
       },
@@ -27565,8 +27568,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reply to this pull request review thread"
       },
@@ -30385,8 +30387,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Comment on this GitHub issue"
       },
@@ -33705,8 +33706,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Update this branch"
       },
@@ -34183,8 +34183,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Request review from people"
       },
@@ -34661,8 +34660,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Withdraw review requests"
       },
@@ -35134,8 +35132,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Resolve or reopen a review conversation"
       },
@@ -37724,8 +37721,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Close this issue"
       },
@@ -40300,8 +40296,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Reopen this issue"
       },
@@ -42156,8 +42151,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Assign people to this issue"
       },
@@ -44012,8 +44006,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Unassign people from this issue"
       },
@@ -45866,8 +45859,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Add labels to this issue"
       },
@@ -47715,8 +47707,7 @@
           "global"
         ],
         "surfaces": [
-          "ui",
-          "plugin"
+          "ui"
         ],
         "title": "Remove a label from this issue"
       },
@@ -48130,6 +48121,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -48402,7 +48396,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Set up GitHub Channels"
       },
@@ -48846,6 +48841,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -48960,7 +48958,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Test GitHub Channel connection"
       },
@@ -49092,6 +49091,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -49363,7 +49365,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Resolve GitHub issue or pull request"
       },
@@ -49667,6 +49670,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -49775,7 +49781,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Resolve GitHub principal"
       },

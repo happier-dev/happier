@@ -98,6 +98,19 @@ async function readPackedDiscordBrandAsset(): Promise<Buffer> {
 }
 
 describe('Discord Channels manifest', () => {
+  it('keeps the discord-rest host access narrowed to the methods the provider actually issues', () => {
+    // The provider's single REST codec (createDiscordBotApi) issues only GET
+    // reads and POST message sends; it deliberately never PATCHes a thread.
+    const rest = (PLUGIN_MANIFEST.hostAccess?.required ?? []).find(({ id }) => id === 'discord-rest');
+    expect(rest).toMatchObject({
+      capability: 'network',
+      scope: {
+        targets: [{ kind: 'fixedOrigin', origin: 'https://discord.com' }],
+        methods: ['GET', 'POST'],
+      },
+    });
+  });
+
   it('publishes the complete plugin-owned UI translation bundles', () => {
     expect(PLUGIN_MANIFEST.contributes.ui?.translations).toEqual(DISCORD_UI_TRANSLATION_BUNDLES);
   });

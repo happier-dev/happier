@@ -6149,6 +6149,27 @@
             "fields": [
               {
                 "direction": "asc",
+                "field": "connection-id"
+              },
+              {
+                "direction": "asc",
+                "field": "attention"
+              },
+              {
+                "direction": "asc",
+                "field": "binding-id"
+              },
+              {
+                "direction": "asc",
+                "field": "id"
+              }
+            ],
+            "id": "by-connection-attention"
+          },
+          {
+            "fields": [
+              {
+                "direction": "asc",
                 "field": "terminal"
               },
               {
@@ -19831,7 +19852,9 @@
               "automationEventAdmit": {
                 "action": {
                   "dangerLevel": "writesRemote",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -19961,7 +19984,9 @@
               "connectionStop": {
                 "action": {
                   "dangerLevel": "writesRemote",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -20155,7 +20180,10 @@
               "connectionTest": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -20369,7 +20397,9 @@
               "deliveryReconcile": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -20796,7 +20826,10 @@
               "endpointResolve": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -21184,7 +21217,9 @@
               "messageDeliver": {
                 "action": {
                   "dangerLevel": "writesRemote",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -21684,7 +21719,9 @@
               "observationsPoll": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -23318,7 +23355,10 @@
               "principalResolve": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -23715,7 +23755,10 @@
               "setup": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "contributorDefined"
@@ -23993,7 +24036,10 @@
               "setupRemediation": {
                 "action": {
                   "dangerLevel": "writesRemote",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "contributorDefined"
@@ -24645,6 +24691,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "Could not confirm the saved input retry",
             "plugins.channels.surface.ingressAttentionRetrying": "Retrying saved input…",
             "plugins.channels.surface.ingressAttentionTerminal": "An incoming message was not accepted.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "An incoming message is waiting for its connection or target to be reachable again.",
             "plugins.channels.surface.ingressAttentionTitle": "Incoming messages need attention",
             "plugins.channels.surface.ingressOccurrenceConflict": "Incoming occurrence conflict needs attention",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier received contradictory evidence for one incoming occurrence. It will not retry or advance this connection; delete the connection to remove the retained conflict.",
@@ -25149,6 +25196,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "Не удалось подтвердить сохраненную повторную попытку ввода.",
             "plugins.channels.surface.ingressAttentionRetrying": "Повторная попытка сохраненного ввода…",
             "plugins.channels.surface.ingressAttentionTerminal": "Входящее сообщение не было принято.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Входящее сообщение ожидает, пока соединение или цель снова станут доступными.",
             "plugins.channels.surface.ingressAttentionTitle": "Входящие сообщения требуют внимания",
             "plugins.channels.surface.ingressOccurrenceConflict": "Возникающий конфликт требует внимания",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Хэппиер получил противоречивые свидетельства об одном происшествии. Он не будет повторять или продвигать это соединение;удалите соединение, чтобы устранить сохраняющийся конфликт.",
@@ -25653,6 +25701,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "Nie udało się potwierdzić zapisanej próby wprowadzenia danych",
             "plugins.channels.surface.ingressAttentionRetrying": "Ponawiam próbę zapisania danych…",
             "plugins.channels.surface.ingressAttentionTerminal": "Wiadomość przychodząca nie została zaakceptowana.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Wiadomość przychodząca czeka, aż połączenie lub cel będzie ponownie dostępny.",
             "plugins.channels.surface.ingressAttentionTitle": "Przychodzące wiadomości wymagają uwagi",
             "plugins.channels.surface.ingressOccurrenceConflict": "Nadchodzący konflikt zdarzeń wymaga uwagi",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier otrzymał sprzeczne dowody na jedno nadchodzące zdarzenie. Nie będzie ponawiać ani przyspieszać tego połączenia;usuń połączenie, aby usunąć zachowany konflikt.",
@@ -26157,6 +26206,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "No se pudo confirmar el reintento de entrada guardado",
             "plugins.channels.surface.ingressAttentionRetrying": "Reintentando la entrada guardada...",
             "plugins.channels.surface.ingressAttentionTerminal": "No se aceptó un mensaje entrante.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Un mensaje entrante espera a que su conexión o destino vuelva a estar disponible.",
             "plugins.channels.surface.ingressAttentionTitle": "Los mensajes entrantes necesitan atención",
             "plugins.channels.surface.ingressOccurrenceConflict": "El conflicto entrante necesita atención",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier recibió pruebas contradictorias de un suceso entrante. No volverá a intentar ni avanzará en esta conexión;elimine la conexión para eliminar el conflicto retenido.",
@@ -26661,6 +26711,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "Impossible de confirmer la nouvelle tentative de saisie enregistrée",
             "plugins.channels.surface.ingressAttentionRetrying": "Nouvelle tentative d'entrée enregistrée…",
             "plugins.channels.surface.ingressAttentionTerminal": "Un message entrant n'a pas été accepté.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Un message entrant attend que sa connexion ou sa cible soit de nouveau accessible.",
             "plugins.channels.surface.ingressAttentionTitle": "Les messages entrants nécessitent une attention particulière",
             "plugins.channels.surface.ingressOccurrenceConflict": "Un conflit d’occurrence entrant nécessite une attention particulière",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier a reçu des preuves contradictoires pour un événement entrant. Il ne réessayera pas et ne fera pas avancer cette connexion ;supprimez la connexion pour supprimer le conflit conservé.",
@@ -27165,6 +27216,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "Impossibile confermare il nuovo tentativo di input salvato",
             "plugins.channels.surface.ingressAttentionRetrying": "Nuovo tentativo di input salvato…",
             "plugins.channels.surface.ingressAttentionTerminal": "Un messaggio in arrivo non è stato accettato.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Un messaggio in arrivo attende che la sua connessione o destinazione torni raggiungibile.",
             "plugins.channels.surface.ingressAttentionTitle": "I messaggi in arrivo richiedono attenzione",
             "plugins.channels.surface.ingressOccurrenceConflict": "Il conflitto relativo agli eventi in arrivo richiede attenzione",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier ha ricevuto prove contraddittorie per un evento imminente. Non tenterà né avanzerà questa connessione;eliminare la connessione per rimuovere il conflitto mantenuto.",
@@ -27669,6 +27721,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "Não foi possível confirmar a nova tentativa de entrada salva",
             "plugins.channels.surface.ingressAttentionRetrying": "Tentando novamente a entrada salva…",
             "plugins.channels.surface.ingressAttentionTerminal": "Uma mensagem recebida não foi aceita.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Uma mensagem recebida aguarda que a sua conexão ou destino volte a estar acessível.",
             "plugins.channels.surface.ingressAttentionTitle": "As mensagens recebidas precisam de atenção",
             "plugins.channels.surface.ingressOccurrenceConflict": "Conflito de ocorrência recebida precisa de atenção",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier recebeu evidências contraditórias para uma ocorrência recente. Ele não tentará novamente nem avançará esta conexão;exclua a conexão para remover o conflito retido.",
@@ -28173,6 +28226,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "No s'ha pogut confirmar l'entrada desada de nou",
             "plugins.channels.surface.ingressAttentionRetrying": "S'està tornant a provar l'entrada desada...",
             "plugins.channels.surface.ingressAttentionTerminal": "No s'ha acceptat un missatge entrant.",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "Un missatge entrant espera que la seva connexió o destinació torni a ser accessible.",
             "plugins.channels.surface.ingressAttentionTitle": "Els missatges entrants necessiten atenció",
             "plugins.channels.surface.ingressOccurrenceConflict": "El conflicte d'ocurrència entrant necessita atenció",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "Happier va rebre proves contradictòries d'un esdeveniment entrant. No tornarà a intentar ni avançarà aquesta connexió;suprimiu la connexió per eliminar el conflicte retingut.",
@@ -28677,6 +28731,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "无法确认已保存的输入重试",
             "plugins.channels.surface.ingressAttentionRetrying": "正在重试保存的输入...",
             "plugins.channels.surface.ingressAttentionTerminal": "传入消息未被接受。",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "传入消息正在等待其连接或目标恢复可达。",
             "plugins.channels.surface.ingressAttentionTitle": "需要注意传入消息",
             "plugins.channels.surface.ingressOccurrenceConflict": "即将发生的冲突需要注意",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "哈皮尔收到了关于一件即将发生的事件的相互矛盾的证据。它不会重试或推进此连接；删除连接以消除保留的冲突。",
@@ -29181,6 +29236,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "無法確認已儲存的輸入重試",
             "plugins.channels.surface.ingressAttentionRetrying": "正在重試已儲存的輸入...",
             "plugins.channels.surface.ingressAttentionTerminal": "傳入訊息未被接受。",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "傳入訊息正在等待其連線或目標恢復可連線。",
             "plugins.channels.surface.ingressAttentionTitle": "需要注意傳入訊息",
             "plugins.channels.surface.ingressOccurrenceConflict": "即將發生的衝突需要注意",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "哈皮爾收到了關於一件即將發生的事件的相互矛盾的證據。它不會重試或推進此連接；刪除連接以消除保留的衝突。",
@@ -29685,6 +29741,7 @@
             "plugins.channels.surface.ingressAttentionRetryUnknownTitle": "保存された入力リトライを確認できませんでした",
             "plugins.channels.surface.ingressAttentionRetrying": "保存した入力を再試行しています…",
             "plugins.channels.surface.ingressAttentionTerminal": "受信メッセージは受け入れられませんでした。",
+            "plugins.channels.surface.ingressAttentionTerminalRecoverable": "受信メッセージは、接続またはターゲットが再び到達可能になるのを待っています。",
             "plugins.channels.surface.ingressAttentionTitle": "受信メッセージには注意が必要です",
             "plugins.channels.surface.ingressOccurrenceConflict": "受信競合の発生には注意が必要です",
             "plugins.channels.surface.ingressOccurrenceConflictDescription": "ハッピーは、ある出来事について矛盾する証拠を受け取りました。この接続は再試行または続行されません。接続を削除して、保持された競合を削除します。",

@@ -78,7 +78,7 @@ export function TriageEntriesControlCompact(context: RenderContext): React.React
             <Icon
                 name={compactIcon(state)}
                 size="small"
-                tone={state.selected ? 'accent' : 'default'}
+                tone={state.selected ? 'accent' : 'neutral'}
             />
             {/*
               * One line, and the label is the accessible name: a truncated

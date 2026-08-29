@@ -955,10 +955,12 @@ const UUID_PATTERN
     = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
 function isMountedPosthogUiRead(context: PluginInvocationContext): boolean {
-    return context.surface === 'plugin'
+    // The dispatcher stamps the handler-visible surface with the authenticated
+    // invoking origin: a mounted detail-body read arrives as `ui`, while the
+    // aggregate-owned get is `plugin`.
+    return context.surface === 'ui'
         && context.caller?.kind === 'plugin'
-        && context.caller.pluginId === POSTHOG_PLUGIN_ID
-        && context.caller.originSurface === 'ui';
+        && context.caller.pluginId === POSTHOG_PLUGIN_ID;
 }
 
 /** One authoritative read of one local ref through one exact configured instance. */

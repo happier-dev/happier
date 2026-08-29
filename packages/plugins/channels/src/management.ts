@@ -172,8 +172,6 @@ import {
   type CurrentProviderContributionWitness,
 } from './providerContributions.js';
 
-const MAX_CREATE_ID_ATTEMPTS = 4;
-
 export {
   readConversationBindingManagementRows,
   readConversationIngressAttentionPage,
@@ -1862,6 +1860,12 @@ function connectionRows(input: Readonly<{
   return [reservation, connection];
 }
 
+/*
+ * One authoritative create attempt owns the outcome: canonical reservation
+ * create, tombstone reuse at its exact revision, and the authoritative reread.
+ * Losing that race surfaces the existing retryable conflict to the caller's
+ * own retry path instead of an unowned local attempt count.
+ */
 async function createOrRejoinConnection(input: Readonly<{
   context: PluginInvocationContext;
   createInput: ConversationConnectionCreateInputV1;
@@ -1886,61 +1890,59 @@ async function createOrRejoinConnection(input: Readonly<{
   if (existing !== null) return { kind: 'rejoined', connectionId: existing };
 
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
-  for (let attempt = 0; attempt < MAX_CREATE_ID_ATTEMPTS; attempt += 1) {
-    assertNotAborted(input.context.signal);
-    const connectionId = createConnectionId();
-    const [reservation, connection] = connectionRows({
-      connectionId,
-      reservationRowId,
-      createInput: input.createInput,
-      providerPluginId: input.providerPluginId,
-      setup: input.setup,
-      transportOrigin: input.transportOrigin,
-      now: Date.now(),
-    });
-    const result = await collection.batch([
-      { kind: 'put', value: reservation, expectedRevision: 'absent' },
+  assertNotAborted(input.context.signal);
+  const connectionId = createConnectionId();
+  const [reservation, connection] = connectionRows({
+    connectionId,
+    reservationRowId,
+    createInput: input.createInput,
+    providerPluginId: input.providerPluginId,
+    setup: input.setup,
+    transportOrigin: input.transportOrigin,
+    now: Date.now(),
+  });
+  const result = await collection.batch([
+    { kind: 'put', value: reservation, expectedRevision: 'absent' },
+    { kind: 'put', value: connection, expectedRevision: 'absent' },
+  ], { signal: input.context.signal });
+  assertNotAborted(input.context.signal);
+  if (result.status === 'updated') return { kind: 'created', connectionId };
+
+  let reservationTombstoneRevision: number | undefined;
+  for (const conflict of result.conflicts) {
+    const revision = conflict.revision;
+    if (conflict.rowId !== reservationRowId
+      || conflict.deleted !== true
+      || typeof revision !== 'number'
+      || !Number.isSafeInteger(revision)
+      || revision < 1) continue;
+    reservationTombstoneRevision = revision;
+    break;
+  }
+  if (reservationTombstoneRevision !== undefined) {
+    // A generic Data tombstone still owns uniqueness during its offline-writer
+    // window. Reuse only that opaque reservation row at its exact revision;
+    // the accompanying connection remains a fresh absent row, so no retired
+    // routing identity or dependent binding can be resurrected.
+    const recreated = await collection.batch([
+      { kind: 'put', value: reservation, expectedRevision: reservationTombstoneRevision },
       { kind: 'put', value: connection, expectedRevision: 'absent' },
     ], { signal: input.context.signal });
     assertNotAborted(input.context.signal);
-    if (result.status === 'updated') return { kind: 'created', connectionId };
-
-    let reservationTombstoneRevision: number | undefined;
-    for (const conflict of result.conflicts) {
-      const revision = conflict.revision;
-      if (conflict.rowId !== reservationRowId
-        || conflict.deleted !== true
-        || typeof revision !== 'number'
-        || !Number.isSafeInteger(revision)
-        || revision < 1) continue;
-      reservationTombstoneRevision = revision;
-      break;
-    }
-    if (reservationTombstoneRevision !== undefined) {
-      // A generic Data tombstone still owns uniqueness during its offline-writer
-      // window. Reuse only that opaque reservation row at its exact revision;
-      // the accompanying connection remains a fresh absent row, so no retired
-      // routing identity or dependent binding can be resurrected.
-      const recreated = await collection.batch([
-        { kind: 'put', value: reservation, expectedRevision: reservationTombstoneRevision },
-        { kind: 'put', value: connection, expectedRevision: 'absent' },
-      ], { signal: input.context.signal });
-      assertNotAborted(input.context.signal);
-      if (recreated.status === 'updated') return { kind: 'created', connectionId };
-    }
-
-    const rejoined = await readExistingReservation({
-      context: input.context,
-      reservationRowId,
-      providerPluginId: input.providerPluginId,
-      providerConnectionKey: input.setup.providerConnectionKey,
-      integrationPrincipalId: input.setup.integrationPrincipal.id,
-    });
-    if (rejoined !== null) return { kind: 'rejoined', connectionId: rejoined };
+    if (recreated.status === 'updated') return { kind: 'created', connectionId };
   }
+
+  const rejoined = await readExistingReservation({
+    context: input.context,
+    reservationRowId,
+    providerPluginId: input.providerPluginId,
+    providerConnectionKey: input.setup.providerConnectionKey,
+    integrationPrincipalId: input.setup.integrationPrincipal.id,
+  });
+  if (rejoined !== null) return { kind: 'rejoined', connectionId: rejoined };
   throw pluginError(
     'channels_connection_create_conflict',
-    'Connection setup repeatedly conflicted before an authoritative connection could be created or re-read.',
+    'Connection setup conflicted before an authoritative connection could be created or re-read.',
     true,
   );
 }

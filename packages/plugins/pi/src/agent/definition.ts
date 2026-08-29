@@ -23,12 +23,6 @@ export const AGENT_DEFINITION = Object.freeze({
           sharedStatePrivacyRiskAcknowledgementRequired: true,
         },
       },
-      supportedKindsByServiceId: {
-        'openai-codex': ['oauth'],
-        openai: ['token'],
-        'claude-subscription': ['oauth', 'token'],
-        anthropic: ['token'],
-      },
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'piSessionId' },
     sessionStorage: { direct: false, persisted: true },

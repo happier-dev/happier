@@ -343,7 +343,7 @@ describe('Channels Session conversations Composer control state', () => {
     });
     state.emit();
     deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(invalidate).toHaveBeenCalledTimes(4);
     expect(state.watch).toHaveBeenNthCalledWith(1, {
       index: 'by-kind',
       prefix: [CHANNEL_STATE_RECORD_KIND.binding],
@@ -354,13 +354,18 @@ describe('Channels Session conversations Composer control state', () => {
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
     }, expect.any(Function));
+    expect(state.watch).toHaveBeenNthCalledWith(3, {
+      index: 'by-kind',
+      prefix: [CHANNEL_STATE_RECORD_KIND.projectionFrontier],
+      order: 'asc',
+    }, expect.any(Function));
     expect(deliveries.watch).toHaveBeenCalledWith({ kind: 'collection' }, expect.any(Function));
 
     observation.dispose();
     state.emit();
     deliveries.emit();
-    expect(invalidate).toHaveBeenCalledTimes(3);
-    expect(state.dispose).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(4);
+    expect(state.dispose).toHaveBeenCalledTimes(3);
     expect(deliveries.dispose).toHaveBeenCalledOnce();
   });
 
@@ -556,6 +561,11 @@ describe('Channels Session conversations Resource', () => {
       prefix: [CHANNEL_STATE_RECORD_KIND.connection],
       order: 'asc',
     }, expect.any(Function));
+    expect(state.watch).toHaveBeenNthCalledWith(3, {
+      index: 'by-kind',
+      prefix: [CHANNEL_STATE_RECORD_KIND.projectionFrontier],
+      order: 'asc',
+    }, expect.any(Function));
     state.emitWatch(0);
     expect(invalidate).toHaveBeenCalledTimes(1);
     state.emitWatch(1);
@@ -563,7 +573,7 @@ describe('Channels Session conversations Resource', () => {
     deliveries.emit();
     expect(invalidate).toHaveBeenCalledTimes(2);
     observation.dispose();
-    expect(state.dispose).toHaveBeenCalledTimes(2);
+    expect(state.dispose).toHaveBeenCalledTimes(3);
   });
 
   it('rereads the mounted Session projection after a connection-only state change', async () => {

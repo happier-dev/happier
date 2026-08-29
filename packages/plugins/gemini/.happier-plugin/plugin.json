@@ -67,6 +67,9 @@
         },
         "connectedAccounts": [
           {
+            "credentialKinds": [
+              "token"
+            ],
             "materializationKinds": [
               "files",
               "environment"

@@ -101,8 +101,8 @@ export const OH_MY_PI_PLUGIN = definePlugin({
           purpose,
           service,
           required: false,
-          materializationKinds: ['environment'] as const,
-          credentialKinds,
+          materializationKinds: ['environment' as const],
+          credentialKinds: [...credentialKinds],
         })),
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],

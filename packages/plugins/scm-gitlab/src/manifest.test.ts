@@ -81,7 +81,7 @@ describe('GitLab plugin manifest', () => {
       .toEqual([INSTANCE_ACCOUNT_BINDING]);
   });
 
-  it('declares each source-native detail plane as a plugin-surfaced account-bound read', () => {
+  it('declares each source-native detail plane as a UI-surfaced account-bound read', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
     for (const id of Object.values(GITLAB_TRIAGE_DETAIL_ACTION_IDS)) {
@@ -90,9 +90,9 @@ describe('GitLab plugin manifest', () => {
       // refused by the host, and the panel would report a contract break the user
       // cannot act on.
       expect(action, `${id} must be declared`).toBeDefined();
-      // `plugin` only: these are this source's own reads, not a surface the
-      // aggregate or another plugin may call.
-      expect(action?.surfaces).toEqual(['plugin']);
+      // `ui` only: the mounted detail body reaches them as present-user
+      // authority; the aggregate and other plugin code are refused.
+      expect(action?.surfaces).toEqual(['ui']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual(['gitlab-api', GITLAB_CONNECTED_ACCOUNT_PURPOSE]);
       // Every detail plane carries a configured instance, so every one binds the
@@ -238,19 +238,14 @@ describe('GitLab merge-request mutation Actions', () => {
     // `mcp` surface the Action is not agent-reachable at all, where a danger level
     // plus `agent: true` would only floor it to a prompt.
     //
-    // Asserted as omissions rather than as an exact array. The exact-array form
-    // this replaces read as the stricter check and was in fact the weaker one: it
-    // pinned `['ui']`, and `['ui']` alone makes these writes reachable by NOBODY.
-    // The only thing that renders them is this source's own mounted detail
-    // artifact, which dispatches as a `plugin` caller, so the host's
-    // `evaluateTargetActionPolicy` refused every press with
-    // `plugin_action_surface_unavailable` before the handler ran. `plugin` is
-    // therefore required, and it grants an agent nothing.
+    // Mounted RPC admission validates the lease and host-stamps `ui`. Being
+    // rendered by a plugin-owned artifact does not widen the invocation to the
+    // plugin/background surface.
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) {
       const surfaces = actions.get(id)?.surfaces;
       expect(surfaces, id).toContain('ui');
-      expect(surfaces, id).toContain('plugin');
+      expect(surfaces, id).not.toContain('plugin');
       expect(surfaces, id).not.toContain('agent');
       expect(surfaces, id).not.toContain('mcp');
       expect(surfaces, id).not.toContain('cli');

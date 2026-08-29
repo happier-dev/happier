@@ -166,19 +166,18 @@ async function openClient(
 }
 
 /**
- * Resolves the one GitHub route from the newest source locator, with a
- * repository-scoped configured instance as the same first-read fallback `get`
- * already owns. Account-wide instances have no configured repository and
- * therefore fail closed when their locator cannot name one.
+ * Resolves the one GitHub route from the newest source locator.
+ *
+ * Configuration scopes scans; it is not evidence that one exact entry belongs
+ * to that repository. Exact get and workspace preparation therefore fail closed
+ * when the selected observation carries no usable route instead of guessing
+ * from the configured scan scope.
  */
 function resolveGithubTriageRoutingToken(
-  configuration: GithubTriageConfigurationV1,
   lastKnownLocator: Readonly<{ routingToken?: unknown }> | undefined,
 ): string | null {
   const observedRoute = parseGithubRoutingToken(lastKnownLocator?.routingToken);
-  return observedRoute === null
-    ? readGithubScanRepositoryKey(configuration)
-    : buildGithubRepositoryKey(observedRoute);
+  return observedRoute === null ? null : buildGithubRepositoryKey(observedRoute);
 }
 
 function isGithubPullRequestEntryRef(entryRef: Readonly<{
@@ -299,7 +298,7 @@ async function authorizeGithubReviewWorkspace(
   if (!resolved.ok) {
     return Object.freeze({ kind: 'refused' as const, reason: 'instanceMoved' as const });
   }
-  const routingToken = resolveGithubTriageRoutingToken(resolved.configuration, request.lastKnownLocator);
+  const routingToken = resolveGithubTriageRoutingToken(request.lastKnownLocator);
   const route = routingToken === null ? null : parseGithubRoutingToken(routingToken);
   if (route === null) {
     return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
@@ -490,10 +489,7 @@ export async function getGithubTriageEntry(
   // recovering one by parsing `collisionScope`. The same owner resolves this route for
   // `get` and review-workspace preparation, so either path fails closed rather than
   // guessing from identity or display text.
-  const routingToken = resolveGithubTriageRoutingToken(
-    resolved.configuration,
-    getInput.lastKnownLocator,
-  );
+  const routingToken = resolveGithubTriageRoutingToken(getInput.lastKnownLocator);
   if (routingToken === null) {
     return Object.freeze({
       kind: 'unresolved' as const,

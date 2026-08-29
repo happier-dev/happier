@@ -92,6 +92,9 @@
         },
         "connectedAccounts": [
           {
+            "credentialKinds": [
+              "token"
+            ],
             "materializationKinds": [
               "environment"
             ],

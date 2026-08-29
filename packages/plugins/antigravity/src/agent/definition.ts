@@ -24,7 +24,6 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
     cloudConnect: null,
     connectedServices: {
       supportedServiceIds: ['gemini'],
-      supportedKindsByServiceId: { gemini: ['token'] },
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'antigravitySessionId' },
     sessionStorage: { direct: false, persisted: true },

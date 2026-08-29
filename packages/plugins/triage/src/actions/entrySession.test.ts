@@ -252,12 +252,13 @@ function createFormalReviewContext(input: Readonly<{
 
 describe('the Session-start Action a mounted header can actually press', () => {
     /**
-     * The reachability contract. A mounted plugin surface dispatches as a
-     * `plugin` caller, so an Action without that surface is refused outright
-     * before its handler is entered — the whole vertical would stay dead behind
-     * a registered handler. `agent` and `mcp` stay absent for the opposite
-     * reason: starting a Session on a person's machine and claiming an entry for
-     * it is a decision a person makes.
+     * The reachability contract. The mounted header reaches the daemon through
+     * the authenticated mounted-UI provenance, which the canonical dispatcher
+     * admits as `ui` authority — an Action without that surface is refused
+     * outright before its handler is entered. `plugin` stays absent so direct
+     * plugin code cannot start sessions, and `agent` and `mcp` stay absent for
+     * the same reachability reason: starting a Session on a person's machine
+     * and claiming an entry for it is a decision a person makes.
      */
     it('is declared on the surface the mounted header dispatches from, and on no automated one', () => {
         for (const localId of [
@@ -265,7 +266,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
         ]) {
             const action = declaredAction(localId);
-            expect(action.surfaces, localId).toEqual(['plugin']);
+            expect(action.surfaces, localId).toEqual(['ui']);
             expect(action.execution, localId).toEqual({ target: 'daemon' });
             // It writes durable Account state and reaches the generic Session
             // creator, so it is never `safe`.
@@ -560,7 +561,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
 describe('the registered formal Review transition', () => {
     it('is a person-invoked daemon Action, never an automated review shortcut', () => {
         const action = declaredAction(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
-        expect(action.surfaces).toEqual(['plugin']);
+        expect(action.surfaces).toEqual(['ui']);
         expect(action.execution).toEqual({ target: 'daemon' });
         expect(action.dangerLevel).toBe('writesLocal');
     });

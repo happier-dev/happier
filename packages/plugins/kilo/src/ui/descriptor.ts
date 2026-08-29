@@ -39,8 +39,6 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
     resume: 'experimental',
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'kilo' },

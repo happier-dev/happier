@@ -25,9 +25,9 @@ import { readReviewerIds } from './mutations.js';
 /**
  * The five Azure DevOps pull-request writes, as a user can actually reach them.
  *
- * Every Action is declared `surfaces: ['ui', 'plugin']` with `placementBindings: ['detailsPanel']`.
- * `plugin` is what makes it reachable at all — a mounted plugin surface dispatches as a plugin
- * caller — while no host reads that placement binding for a source-owned Triage detail renderer;
+ * Every Action is declared `surfaces: ['ui']` with `placementBindings: ['detailsPanel']`.
+ * `ui` is the write's whole product reach: the mounted detail body reaches the daemon as
+ * present-user UI authority — while no host reads that placement binding for a source-owned Triage detail renderer;
  * the browser shell is its one consumer, over a different contribution family. So both the
  * reachability and the control are this surface's own work, and
  * these cases prove what a declaration cannot: that a user can press it, that what leaves carries

@@ -57,10 +57,11 @@ import type {
  * read; there is no generic `mutate({ operation, payload })` and there will not be one
  * (`sources/SCM.md` §3.8).
  *
- * Every one is declared `surfaces: ['ui', 'plugin']`, and that is the human gate. The gate is
+ * Every one is declared `surfaces: ['ui']`, and that is the human gate. The gate is
  * **reachability, not a prompt**: with no `agent` and no `mcp` surface none of them is
- * agent-reachable at all. `plugin` is present because the only caller is this plugin's own mounted
- * detail artifact, which dispatches as a plugin caller.
+ * agent-reachable at all. `ui` is the write's whole product reach: the only caller is this
+ * plugin's own mounted detail artifact, which reaches the daemon as present-user UI
+ * authority through the authenticated mounted provenance.
  *
  * Completion carries three obligations no other forge's merge has (`sources/SCM.md` §6.7):
  *

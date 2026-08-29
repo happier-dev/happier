@@ -71,6 +71,7 @@ function coreContext(services: Readonly<{
         pluginId: 'happier.channels',
       },
     },
+    invokedAtMs: 1_700_000_000_000,
     signal: new AbortController().signal,
     // This fixture only supplies the two genuine system boundaries consumed by
     // the provider Action; its host-stamped caller and cancellation are real.
@@ -190,7 +191,7 @@ describe('Telegram Channel plugin activation', () => {
         additionalProperties: false,
       });
       expect(setup).toMatchObject({
-        surfaces: ['plugin'],
+        surfaces: ConversationProvidersContributionProtocolV1.operations.setup.declaration.surfaces,
         hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],
         inputHints: {
           fields: [

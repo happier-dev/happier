@@ -5975,6 +5975,7 @@ describe('Conversation checkpointed-poll ingress', () => {
             qualifiedId: 'happier.channel.telegram/actions/telegram/poll-updates',
           },
           surface: 'plugin',
+          invokedAtMs: 1_700_000_000_000,
           caller: {
             kind: 'plugin',
             pluginId: 'happier.channels',

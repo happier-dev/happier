@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { Buffer } from 'node:buffer';
 import { cloneElement, type ReactElement } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { RenderContext, ResourceContent } from '@happier-dev/plugin-sdk/ui';
@@ -36,7 +35,10 @@ import { mountThroughReactNativeWebAsync } from '../../../../plugin-ui/src/rnwMo
 import { createHostApiStub } from '../../../../plugin-ui/src/surfaceFixture.testSupport.js';
 import { createUnavailablePluginUiAccountKv } from '../../../../plugin-ui/src/data/accountKv.js';
 import { createUnavailablePluginUiAccountSettings } from '../../../../plugin-ui/src/data/accountSettings.js';
-import { CHANNEL_STATE_COLLECTION } from '../collections.js';
+import {
+  CHANNEL_DELIVERIES_INDEX_ID,
+  CHANNEL_STATE_COLLECTION,
+} from '../collections.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
@@ -114,7 +116,9 @@ function jsonResource(value: unknown, digestDigit: string): ResourceContent {
   return {
     contentType: 'application/json',
     digest: `sha256:${digestDigit.repeat(64)}`,
-    bytes: Uint8Array.from(Buffer.from(JSON.stringify(value), 'utf8')),
+    // Browser-environment suites encode UTF-8 bytes directly; `node:buffer` is
+    // externalized under jsdom and its named imports are undefined.
+    bytes: new TextEncoder().encode(JSON.stringify(value)),
   };
 }
 
@@ -838,6 +842,11 @@ function createOfflineChannelStateFixture() {
     rows,
     batches,
     async get(rowId: string) {
+      const failedGet = stateCollection.failNextGetWith;
+      if (failedGet !== undefined) {
+        stateCollection.failNextGetWith = undefined;
+        throw failedGet;
+      }
       return rows.get(rowId) ?? null;
     },
     async query(request: Readonly<{ index: string; prefix?: readonly string[]; limit?: number }>) {
@@ -848,6 +857,8 @@ function createOfflineChannelStateFixture() {
         .sort((left, right) => left.rowId.localeCompare(right.rowId));
       return { rows: matching, changeCursor: 1 };
     },
+    /** Set to make exactly the next single-row read throw, then clear. */
+    failNextGetWith: undefined as PluginError | undefined,
     /** Set to make exactly the next batch settle ambiguously, then clear. */
     failNextBatchWith: undefined as PluginError | undefined,
     async batch(operations: readonly Readonly<Record<string, unknown>>[]) {
@@ -882,11 +893,23 @@ function createOfflineChannelStateFixture() {
     async get(rowId: string) {
       return deliveryRows.get(rowId) ?? null;
     },
-    async query(request: Readonly<{ index: string; prefix?: readonly string[]; limit?: number }>) {
+    async query(request: Readonly<{
+      index: string;
+      prefix?: readonly unknown[];
+      range?: Readonly<{ lower?: unknown; upper?: unknown }>;
+      limit?: number;
+    }>) {
       assertChannelsTestCollectionQueryLimit(request.limit);
-      if (request.index !== 'by-owner-attention') return { rows: [], changeCursor: 1 };
+      if (request.index !== CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention
+        && request.index !== CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention) {
+        return { rows: [], changeCursor: 1 };
+      }
       const matching = [...deliveryRows.values()]
-        .filter((row) => row.value['connection-id'] === request.prefix?.[0])
+        .filter((row) => row.value['connection-id'] === request.prefix?.[0]
+          && (request.index === CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention
+            || (row.value.attention === true
+              && request.range?.lower === true
+              && request.range?.upper === true)))
         .sort((left, right) => left.rowId.localeCompare(right.rowId));
       return { rows: matching, changeCursor: 1 };
     },
@@ -1756,6 +1779,7 @@ describe('Channels mounted ingress attention recovery', () => {
   it('retries one exact blocked obligation, rereads its bounded Account page, and renders the settled empty state', async () => {
     const blockedObligationId = 'A'.repeat(43);
     const terminalObligationId = 'T'.repeat(43);
+    const recoverableObligationId = 'R'.repeat(43);
     const attentionQuery = vi.fn(async () => {
       const page = attentionQuery.mock.calls.length;
       if (page > 1) return { rows: [], nextCursor: undefined };
@@ -1817,6 +1841,34 @@ describe('Channels mounted ingress attention recovery', () => {
               },
             },
           },
+          {
+            rowId: recoverableObligationId,
+            revision: 9,
+            value: {
+              id: recoverableObligationId,
+              'record-kind': 'ingress-obligation',
+              v: 1,
+              'connection-id': 'connection-1',
+              'binding-id': 'binding-1',
+              terminal: true,
+              attention: true,
+              'created-at': 10,
+              'updated-at': 22,
+              payload: {
+                occurrenceIds: ['occurrence-1'],
+                censusId: 'B'.repeat(43),
+                target: null,
+                sourceAuthority: {
+                  connectionAuthorityEpoch: 1,
+                  bindingRevision: 2,
+                  bindingAuthorityEpoch: 3,
+                },
+                lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null },
+                disposition: 'rejected',
+                nonAdmission: { reason: 'targetUnavailable', senderFeedbackEligible: false },
+              },
+            },
+          },
         ],
         nextCursor: undefined,
         changeCursor: 0,
@@ -1870,6 +1922,10 @@ describe('Channels mounted ingress attention recovery', () => {
 
     try {
       await expect(fixture.findByRole('button', { name: 'Retry saved input' })).resolves.toBeDefined();
+      await expect(fixture.getByText('An incoming message was not accepted.')).resolves.toBeDefined();
+      await expect(fixture.getByText(
+        'An incoming message is waiting for its connection or target to be reachable again.',
+      )).resolves.toBeDefined();
       expect(attentionQuery).toHaveBeenCalledWith({
         index: 'by-attention',
         prefix: [true],
@@ -3240,6 +3296,126 @@ describe('Channels mounted binding creation', () => {
       expect(executeAction.mock.calls.map(([request]) => request.action)).not.toContain(
         'automation.conversation.target.verify',
       );
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('keeps the mounted target-row tree bounded across accumulated Automation pages', async () => {
+    const pageAutomation = (page: number, index: number) => ({
+      automationId: `automation-p${page}-${index}`,
+      label: `Report ${page}-${index}`,
+      execution: { targetType: 'existing_session', enabled: true },
+    });
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
+          : { kind: 'principalCandidates', candidates: [bindingPrincipalCandidate] };
+      }
+      if (action === 'session.list') {
+        const cursor = (input as Readonly<{ cursor?: unknown }>).cursor;
+        if (cursor === undefined) {
+          return {
+            sessions: Array.from({ length: 100 }, (_unused, index) => ({
+              id: `session-p1-${index}`,
+              title: `Session 1-${index}`,
+            })),
+            nextCursor: 'session-page-2',
+          };
+        }
+        if (cursor === 'session-page-2') {
+          return {
+            sessions: Array.from({ length: 100 }, (_unused, index) => ({
+              id: `session-p2-${index}`,
+              title: `Session 2-${index}`,
+            })),
+            nextCursor: null,
+          };
+        }
+        return { sessions: [], nextCursor: null };
+      }
+      if (action === 'automation.conversation.targets.list') {
+        const cursor = (input as Readonly<{ cursor?: unknown }>).cursor;
+        if (cursor === undefined) {
+          return {
+            items: Array.from({ length: 100 }, (_unused, index) => pageAutomation(1, index)),
+            nextCursor: 'page-1',
+          };
+        }
+        if (cursor === 'page-1') {
+          return {
+            items: Array.from({ length: 100 }, (_unused, index) => pageAutomation(2, index)),
+            nextCursor: null,
+          };
+        }
+        return { items: [], nextCursor: null };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-target-pages',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    try {
+      await openBindingEndpointSelection(fixture);
+      await selectPrincipalAndOpenTarget(fixture);
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: 'session.list',
+          input: { limit: 100, includeLastMessagePreview: false },
+        }));
+      });
+      await fixture.press(await fixture.getByRole('button', { name: 'Show more Sessions' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: 'session.list',
+          input: { limit: 100, includeLastMessagePreview: false, cursor: 'session-page-2' },
+        }));
+      });
+      await enterTextByTestId('channels-binding-target-search', 'Session 2-99');
+      await expect(fixture.getByRole('button', { name: 'Session 2-99' })).resolves.toBeDefined();
+      await enterTextByTestId('channels-binding-target-search', '');
+      await fixture.press(await fixture.getByRole('button', { name: 'Show Automations' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: 'automation.conversation.targets.list',
+          input: { limit: 100 },
+        }));
+      });
+      await fixture.press(await fixture.getByRole('button', { name: 'Show more Automations' }));
+      await vi.waitFor(() => {
+        expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+          action: 'automation.conversation.targets.list',
+          input: { limit: 100, cursor: 'page-1' },
+        }));
+      });
+
+      await enterTextByTestId('channels-binding-target-search', 'Report 2-99');
+      await expect(fixture.getByRole('button', { name: 'Report 2-99' })).resolves.toBeDefined();
+
+      // Every accumulated candidate stays reachable through the one virtualized
+      // target owner, but the mounted row tree stays bounded instead of growing
+      // one static row per candidate across pages.
+      const mountedTargetRows = document.querySelectorAll(
+        '[data-testid^="channels-binding-target-session:"], [data-testid^="channels-binding-target-automation:"]',
+      );
+      expect(mountedTargetRows.length).toBeGreaterThan(0);
+      expect(mountedTargetRows.length).toBeLessThan(100);
     } finally {
       await fixture.dispose();
     }
@@ -6099,6 +6275,80 @@ describe('Channels offline Account-local binding policy', () => {
         inputMode: 'directMentionsOnly',
         authorityEpoch: 2,
       });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('keeps the ambiguous write locked when the reconciling reread itself fails', async () => {
+    const account = createOfflineChannelStateFixture();
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-offline-binding-policy-unknown-reread-unavailable',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(account.dataClient),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Edit binding' }));
+      account.collection.failNextBatchWith = new PluginError({
+        code: 'plugin_collection_cancelled',
+        message: 'The binding policy write was cancelled after it crossed the mutation boundary.',
+      });
+      await fixture.press(await fixture.getByRole('radio', {
+        name: 'Direct mentions only',
+        state: { checked: false },
+      }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
+
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-account-local-binding-outcome-unknown"]'))
+          .not.toBeNull();
+      });
+      expect(account.collection.batches).toHaveLength(1);
+
+      // The reconciling reread is also cancelled: the exact reread never proved
+      // the write's outcome, so the ambiguous-write lock must stay latched and
+      // no second write may be admitted from the retained bytes.
+      account.collection.failNextGetWith = new PluginError({
+        code: 'plugin_collection_cancelled',
+        message: 'The reconciling reread was cancelled after it crossed the read boundary.',
+      });
+      await fixture.press(await fixture.getByRole('button', { name: 'Reload' }));
+
+      await vi.waitFor(() => {
+        expect(account.collection.batches).toHaveLength(1);
+        expect(document.querySelector('[data-testid="channels-account-local-binding-outcome-unknown"]'))
+          .not.toBeNull();
+        expect(account.collection.failNextGetWith).toBeUndefined();
+      });
+      const retainedSave = document.querySelector<HTMLButtonElement>(
+        '[data-testid="channels-account-local-binding-save"]',
+      );
+      expect(retainedSave).not.toBeNull();
+      expect(retainedSave?.disabled).toBe(true);
+      expect(document.querySelector('[data-testid="channels-account-local-binding-outcome-unknown"]'))
+        .not.toBeNull();
+
+      // A later reread that reaches the owner still reconciles the latch.
+      await fixture.press(await fixture.getByRole('button', { name: 'Reload' }));
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="channels-account-local-binding-outcome-unknown"]'))
+          .toBeNull();
+      });
+      await expect(fixture.getByRole('radio', {
+        name: 'Direct mentions only',
+        state: { checked: true },
+      })).resolves.toBeDefined();
     } finally {
       await fixture.dispose();
     }

@@ -68,6 +68,51 @@ export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA =
     TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
   );
 
+/**
+ * The Automation composer's create arm presentation. It lives beside the
+ * setup owner so the manifest the host enforces and the keys the locales
+ * ship cannot drift apart.
+ */
+export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS = {
+  title: {
+    key: 'channels.telegram.automation.setup.title',
+    fallback: 'Choose a Telegram chat to watch',
+  },
+  description: {
+    key: 'channels.telegram.automation.setup.description',
+    fallback: 'Pick the Telegram bot and the chat whose messages should start this Automation.',
+  },
+  submitLabel: {
+    key: 'channels.telegram.automation.setup.submit',
+    fallback: 'Use this chat',
+  },
+  fields: [
+    {
+      path: 'credentialRef',
+      title: {
+        key: 'channels.telegram.automation.setup.credential',
+        fallback: 'Telegram bot account',
+      },
+      widget: 'select',
+      connectedAccountOptions: true,
+      required: true,
+    },
+    {
+      path: 'chatId',
+      title: {
+        key: 'channels.telegram.automation.setup.chat',
+        fallback: 'Chat ID',
+      },
+      widget: 'text',
+      description: {
+        key: 'channels.telegram.automation.setup.chat.description',
+        fallback: 'The numeric Telegram chat id, or an @channelusername the bot can reach.',
+      },
+      required: true,
+    },
+  ],
+} as const;
+
 type TelegramAutomationSourceConfig = Readonly<{ botId: string; chatId: string }>;
 
 export function buildTelegramAutomationSourceInstanceId(input: TelegramAutomationSourceConfig): string {

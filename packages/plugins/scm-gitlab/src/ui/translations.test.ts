@@ -101,4 +101,27 @@ describe('the GitLab surface catalog', () => {
       }
     }
   });
+
+  it('localizes the mounted publication, mutation, file, and discussion chrome', () => {
+    const localizedChromeKeys = Object.keys(ENGLISH).filter((key) => (
+      key.startsWith('plugins.gitlab.ui.publication.')
+      || key.startsWith('plugins.gitlab.ui.files.')
+      || key.startsWith('plugins.gitlab.ui.discussion.')
+      || key.startsWith('plugins.gitlab.ui.mutations.issue.')
+      || key.startsWith('plugins.gitlab.ui.mutations.reviewers.')
+      || key.startsWith('plugins.gitlab.ui.mutations.assignees.')
+      || key.startsWith('plugins.gitlab.ui.mutations.labels.')
+      || key.startsWith('plugins.gitlab.ui.mutations.discussion.')
+      || key === 'plugins.gitlab.ui.paginationUnfollowable'
+    ));
+    expect(localizedChromeKeys.length).toBeGreaterThan(60);
+    const englishAliases: string[] = [];
+    for (const locale of LOCALES.filter((candidate) => candidate !== 'en')) {
+      for (const key of localizedChromeKeys) {
+        expect(messages(locale)[key], `${locale}/${key}`).toEqual(expect.any(String));
+        if (messages(locale)[key] === ENGLISH[key]) englishAliases.push(`${locale}/${key}`);
+      }
+    }
+    expect(englishAliases).toEqual([]);
+  });
 });

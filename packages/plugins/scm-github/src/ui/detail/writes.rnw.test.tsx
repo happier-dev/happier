@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // The package compiles JSX with the classic runtime, so `React` must be in scope.
 import React, { act } from 'react';
+import { Animated } from 'react-native';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
@@ -106,6 +107,7 @@ const APPLIED_OBSERVATION = {
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 let nextResult: JsonValue = { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION };
+let nextActionGate: Promise<JsonValue> | null = null;
 let nextActionError: unknown | null = null;
 let completedMutations = 0;
 
@@ -185,7 +187,7 @@ async function mountDetail(
               cursor: null,
             } as JsonValue;
           }
-          return nextResult;
+          return nextActionGate === null ? nextResult : await nextActionGate;
         },
       },
     }) as PluginUiTestkit;
@@ -222,6 +224,7 @@ afterEach(async () => {
   recorded.splice(0);
   completedMutations = 0;
   nextResult = { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION };
+  nextActionGate = null;
   nextActionError = null;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -240,6 +243,121 @@ afterEach(async () => {
  * active here.
  */
 describe('the mounted GitHub write controls', () => {
+  it('keeps the lifecycle glyph static while merge is pending or refused', async () => {
+    let settle!: (value: JsonValue) => void;
+    const animation = vi.spyOn(Animated, 'timing');
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    nextActionGate = new Promise<JsonValue>((resolve) => { settle = resolve; });
+
+    await act(async () => {
+      await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
+    });
+    const merge = await detail.getByRole('button', { name: 'Merge pull request' });
+    const press = detail.press(merge);
+    await Promise.resolve();
+    expect(animation).not.toHaveBeenCalled();
+    settle({ kind: 'refused', reason: 'not_mergeable' });
+    await act(async () => { await press; });
+    expect(animation).not.toHaveBeenCalled();
+  });
+
+  it('keeps the lifecycle glyph static for uncertain and definite dispatch failures', async () => {
+    const animation = vi.spyOn(Animated, 'timing');
+    const uncertain = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    nextResult = { kind: 'uncertain' };
+    await act(async () => {
+      await uncertain.press(await uncertain.getByRole('radio', { name: 'Create a merge commit' }));
+      await uncertain.press(await uncertain.getByRole('button', { name: 'Merge pull request' }));
+    });
+    expect(animation).not.toHaveBeenCalled();
+
+    const failed = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    nextActionError = new PluginError({ code: 'github_unavailable', message: 'GitHub refused the request.' });
+    await act(async () => {
+      await failed.press(await failed.getByRole('radio', { name: 'Create a merge commit' }));
+      await failed.press(await failed.getByRole('button', { name: 'Merge pull request' }));
+    });
+    expect(animation).not.toHaveBeenCalled();
+  });
+
+  it('starts the restrained signature only after an authoritative merged observation arrives', async () => {
+    const animation = vi.spyOn(Animated, 'timing');
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+
+    expect(animation).not.toHaveBeenCalled();
+    await act(async () => {
+      await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
+      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+    });
+
+    expect(animation).toHaveBeenCalled();
+    expect((await detail.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+      .toBe(true);
+  });
+
+  it('does not celebrate an already-satisfied merge but still reconciles the exact observation', async () => {
+    const animation = vi.spyOn(Animated, 'timing');
+    nextResult = { kind: 'applied', effect: 'alreadySatisfied', observation: APPLIED_OBSERVATION };
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+
+    await act(async () => {
+      await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
+      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+    });
+
+    expect(animation).not.toHaveBeenCalled();
+    expect(completedMutations).toBe(1);
+    expect((await detail.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+      .toBe(true);
+  });
+
+  it('does not let another entry\'s confirmed merge drive this entry\'s signature', async () => {
+    const animation = vi.spyOn(Animated, 'timing');
+    nextResult = {
+      kind: 'applied',
+      effect: 'changed',
+      observation: {
+        ...APPLIED_OBSERVATION,
+        localRef: { ...APPLIED_OBSERVATION.localRef, entryId: '9999' },
+      },
+    } as JsonValue;
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+
+    await act(async () => {
+      await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
+      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+    });
+
+    expect(animation).not.toHaveBeenCalled();
+  });
+
+  it('replaces the confirmed merged glyph immediately when reduced motion is enabled', async () => {
+    const animation = vi.spyOn(Animated, 'timing');
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({
+        identity: {
+          pluginId: GITHUB_PLUGIN_ID,
+          pluginVersion: '0.0.0',
+          viewId: 'github-triage-detail',
+          generation: 'github-triage-detail-reduced-motion',
+        },
+        surface: (context) => renderSurface(context),
+        surfaceContext: createSurfaceContextFixture({ reducedMotion: true }),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        launchInput: launchInput({ presentation: 'active', nativeLabel: 'Open' }),
+        handlers: { executeAction: async () => nextResult },
+      }) as PluginUiTestkit;
+    });
+    mounted.push(fixture);
+    await act(async () => {
+      await fixture.press(await fixture.getByRole('radio', { name: 'Create a merge commit' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Merge pull request' }));
+    });
+
+    expect(animation).not.toHaveBeenCalled();
+  });
+
   it('mounts every approved Overview mutation including canonical review publication', async () => {
     const detail = await mountDetail(
       { presentation: 'active', nativeLabel: 'Draft' },
@@ -508,6 +626,23 @@ describe('the mounted GitHub write controls', () => {
       .resolves.toBeUndefined();
     await expect(detail.queryByRole('button', { name: 'Close pull request' }))
       .resolves.toBeUndefined();
+  });
+
+  it('offers no impossible reopen after the authoritative observation says merged', async () => {
+    const detail = await mountDetail({ presentation: 'closed', nativeLabel: 'Merged' });
+
+    await expect(detail.queryByRole('button', { name: 'Reopen pull request' }))
+      .resolves.toBeUndefined();
+  });
+
+  it('offers reopen for a completed issue', async () => {
+    const detail = await mountDetail(
+      { presentation: 'resolved', nativeLabel: 'Closed as completed' },
+      'issue',
+    );
+
+    await expect(detail.getByRole('button', { name: 'Reopen issue' }))
+      .resolves.toMatchObject({ role: 'button' });
   });
 
   it('will not merge until a method is chosen, and dispatches nothing meanwhile', async () => {

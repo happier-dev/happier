@@ -17,9 +17,6 @@ import {
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
-/** Labels rendered inline before the remainder is summarized. */
-export const GITLAB_MAX_INLINE_LABELS = 3;
-
 const ELLIPSIS = '…';
 const ELLIPSIS_UTF8_BYTES = new TextEncoder().encode(ELLIPSIS).byteLength;
 
@@ -53,17 +50,11 @@ export function boundGitlabRowFactText(value: string): BoundedText {
 }
 
 /**
- * `a, b, c +4` — the deterministic label summary.
- *
- * `truncated` reports only that the summary text itself had to be cut. The `+N`
- * suffix is ordinary rendering that announces its own remainder and loses nothing,
- * so it is deliberately not a truncation event: a flag that fires on every row with
- * four labels stops meaning anything at the row it was built to warn about.
+ * A deterministic label summary bounded only by the published row-fact byte
+ * contract. The provider supplies the labels and the protocol supplies the real
+ * carrier boundary; an additional count ceiling would hide short labels that fit.
  */
 export function summarizeGitlabLabels(labels: readonly string[]): BoundedText {
   if (labels.length === 0) return { text: '', truncated: false };
-  const inline = labels.slice(0, GITLAB_MAX_INLINE_LABELS);
-  const remainder = labels.length - inline.length;
-  const joined = remainder > 0 ? `${inline.join(', ')} +${remainder}` : inline.join(', ');
-  return boundGitlabRowFactText(joined);
+  return boundGitlabRowFactText(labels.join(', '));
 }

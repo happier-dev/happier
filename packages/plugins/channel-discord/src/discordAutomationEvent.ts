@@ -270,12 +270,19 @@ export function createDiscordAutomationMessagePayload(input: Readonly<{
  * One Event candidate bound to the same Gateway ingress passed to Channels.
  * It is evidence only: the Channels core owns durable admission, retry, and
  * checkpoint settlement before this provider's stateless bridge is invoked.
+ *
+ * The integration's own messages — including Automation result deliveries
+ * written back into the watched channel — never become a candidate, so the
+ * Channels census cannot freeze an Event obligation for them and no second
+ * admission can occur. The core already terminalizes these same observations
+ * for binding commands; this drops only the provider-owned Event candidate.
  */
 export function createDiscordAutomationEventCandidate(input: Readonly<{
   applicationId: string;
   observation: ConversationNormalizedIngressV1;
 }>): ConversationIngressAutomationEventCandidateV1 | null {
   if (input.observation.kind !== 'fullText') return null;
+  if (input.observation.observation.actor.isIntegrationSelf) return null;
   const payload = createDiscordAutomationMessagePayload({ observation: input.observation.observation });
   if (payload === null) return null;
   return {

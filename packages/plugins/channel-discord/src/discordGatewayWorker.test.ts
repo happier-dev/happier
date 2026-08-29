@@ -272,6 +272,22 @@ describe('Discord Gateway worker', () => {
           embeds: [],
         },
       },
+      {
+        op: 0,
+        s: 5,
+        t: 'MESSAGE_CREATE',
+        d: {
+          id: 'message-automation-result-1',
+          channel_id: 'channel-1',
+          guild_id: 'guild-1',
+          timestamp: '2024-01-01T00:02:00.000Z',
+          type: 0,
+          content: 'Automation result delivered back to Discord',
+          author: { id: 'bot-1', bot: true },
+          attachments: [],
+          embeds: [],
+        },
+      },
     ]);
     const openWebSocket = vi.fn(async () => socket);
     const getGatewayBot = vi.fn(async () => gatewayBot());
@@ -392,6 +408,26 @@ describe('Discord Gateway worker', () => {
           observation: {
             occurrenceId: 'discord:message:message-role-revoked-1',
             message: { addressingEvidence: 'none' },
+          },
+        },
+      },
+    });
+    expect(admitObservation.mock.calls[2]?.[0]).toMatchObject({
+      entry: {
+        eventCandidate: null,
+        observation: {
+          kind: 'fullText',
+          observation: {
+            occurrenceId: 'discord:message:message-automation-result-1',
+            actor: {
+              principalId: 'discord:user:bot-1',
+              kind: 'bot',
+              isIntegrationSelf: true,
+            },
+            message: {
+              id: 'message-automation-result-1',
+              text: 'Automation result delivered back to Discord',
+            },
           },
         },
       },

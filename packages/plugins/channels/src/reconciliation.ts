@@ -36,15 +36,22 @@ import {
 
 /*
  * Keep the two Account-backed projections on one observed Account revision.
- * A bounded retry fails closed under continuous mutation instead of publishing
- * a connection/binding combination that never existed.
+ * The single authoritative pass fails closed under continuous mutation by
+ * surfacing the existing retryable outcome instead of publishing a
+ * connection/binding combination that never existed.
  */
-const MAX_RECONCILIATION_SNAPSHOT_ATTEMPTS = 3;
-
 type ReconciliationCollectionRead = Readonly<{
   values: readonly JsonValue[];
-  changeCursor: number | null;
+  changeCursor: number;
 }>;
+
+function reconciliationSnapshotChangedError(): PluginError {
+  return new PluginError({
+    code: 'channels_reconciliation_snapshot_changed',
+    message: 'Channel reconciliation state changed during its authoritative read.',
+    retryable: true,
+  });
+}
 
 type PluginCaller = Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
 
@@ -333,9 +340,9 @@ async function readCollectionValuesByKind(input: Readonly<{
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const values: JsonValue[] = [];
   let cursor: string | undefined;
-  let changeCursor: number | undefined;
+  let observedCursor: number | undefined;
 
-  do {
+  for (;;) {
     const remaining = input.limit - values.length;
     if (remaining <= 0) {
       throw new Error(`Channel reconciliation ${input.kind} rows exceed the account limit.`);
@@ -347,18 +354,19 @@ async function readCollectionValuesByKind(input: Readonly<{
       limit: Math.min(remaining, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1),
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
-    if (changeCursor !== undefined && page.changeCursor !== changeCursor) {
-      return { values: [], changeCursor: null };
+    if (observedCursor !== undefined && page.changeCursor !== observedCursor) {
+      throw reconciliationSnapshotChangedError();
     }
-    changeCursor = page.changeCursor;
+    observedCursor = page.changeCursor;
     values.push(...page.rows.map((row) => row.value));
     if (values.length > input.limit) {
       throw new Error(`Channel reconciliation ${input.kind} rows exceed the account limit.`);
     }
+    if (page.nextCursor === undefined) {
+      return { values, changeCursor: page.changeCursor };
+    }
     cursor = page.nextCursor;
-  } while (cursor !== undefined);
-
-  return { values, changeCursor: changeCursor ?? null };
+  }
 }
 
 async function readCurrentReconciliationState(
@@ -367,39 +375,35 @@ async function readCurrentReconciliationState(
   connections: readonly ConversationReconciliationConnectionStateV1[];
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
 }>> {
-  for (let attempt = 0; attempt < MAX_RECONCILIATION_SNAPSHOT_ATTEMPTS; attempt += 1) {
-    const [connectionRead, bindingRead] = await Promise.all([
-      readCollectionValuesByKind({
-        context,
-        kind: CHANNEL_STATE_RECORD_KIND.connection,
-        limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
-      }),
-      readCollectionValuesByKind({
-        context,
-        kind: CHANNEL_STATE_RECORD_KIND.binding,
-        limit: MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
-      }),
-    ]);
-    if (connectionRead.changeCursor === null
-      || connectionRead.changeCursor !== bindingRead.changeCursor) {
-      continue;
-    }
-    return {
-      connections: connectionRead.values.flatMap((value) => {
-        const connection = connectionStateFromCollectionValue(value);
-        return connection === undefined ? [] : [connection];
-      }),
-      bindingPolicies: bindingRead.values.flatMap((value) => {
-        const binding = bindingPolicyFromCollectionValue(value);
-        return binding === undefined ? [] : [binding];
-      }),
-    };
+  // One authoritative pass owns the answer. Cursor movement during the read —
+  // within either scan or between the two — surfaces the existing retryable
+  // outcome to the operation/supervisor retry owners instead of an unowned
+  // local attempt count masking the contention.
+  const [connectionRead, bindingRead] = await Promise.all([
+    readCollectionValuesByKind({
+      context,
+      kind: CHANNEL_STATE_RECORD_KIND.connection,
+      limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+    }),
+    readCollectionValuesByKind({
+      context,
+      kind: CHANNEL_STATE_RECORD_KIND.binding,
+      limit: MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
+    }),
+  ]);
+  if (connectionRead.changeCursor !== bindingRead.changeCursor) {
+    throw reconciliationSnapshotChangedError();
   }
-  throw new PluginError({
-    code: 'channels_reconciliation_snapshot_changed',
-    message: 'Channel reconciliation state changed during its authoritative read.',
-    retryable: true,
-  });
+  return {
+    connections: connectionRead.values.flatMap((value) => {
+      const connection = connectionStateFromCollectionValue(value);
+      return connection === undefined ? [] : [connection];
+    }),
+    bindingPolicies: bindingRead.values.flatMap((value) => {
+      const binding = bindingPolicyFromCollectionValue(value);
+      return binding === undefined ? [] : [binding];
+    }),
+  };
 }
 
 export function listConversationProviderConnectionsForCaller(input: Readonly<{

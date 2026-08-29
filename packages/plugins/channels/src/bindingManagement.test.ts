@@ -1573,6 +1573,57 @@ describe('Channels target-persisting binding management', () => {
         connectionId: 'connection-1',
         bindingId: 'binding-1',
         updatedAt: 21,
+        category: 'informational',
+      }],
+    });
+  });
+
+  it('projects the closed recoverable category for terminal rows whose frozen reason is an availability fact', async () => {
+    const read = Reflect.get(management, 'readConversationIngressAttentionPage');
+    expect(read).toEqual(expect.any(Function));
+    if (typeof read !== 'function') return;
+
+    const query = vi.fn(async () => ({
+      rows: [{
+        rowId: 'R'.repeat(43),
+        revision: 9,
+        value: {
+          id: 'R'.repeat(43),
+          'record-kind': 'ingress-obligation',
+          v: 1,
+          'connection-id': 'connection-1',
+          'binding-id': 'binding-1',
+          terminal: true,
+          attention: true,
+          'created-at': 10,
+          'updated-at': 22,
+          payload: {
+            occurrenceIds: ['occurrence-1'],
+            censusId: 'B'.repeat(43),
+            target: null,
+            sourceAuthority: {
+              connectionAuthorityEpoch: 1,
+              bindingRevision: 2,
+              bindingAuthorityEpoch: 3,
+            },
+            lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null },
+            disposition: 'rejected',
+            nonAdmission: { reason: 'targetUnavailable', senderFeedbackEligible: false },
+          },
+        },
+      }],
+      changeCursor: 1,
+    }));
+
+    await expect(read({ collection: { query } })).resolves.toEqual({
+      obligations: [{
+        kind: 'terminal',
+        obligationId: 'R'.repeat(43),
+        revision: 9,
+        connectionId: 'connection-1',
+        bindingId: 'binding-1',
+        updatedAt: 22,
+        category: 'recoverable',
       }],
     });
   });

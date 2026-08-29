@@ -1,4 +1,8 @@
-import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type {
+  JsonValue,
+  PluginAutomationRunCause,
+  PluginInvocationContext,
+} from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -41,16 +45,21 @@ class MemoryAccountCollection {
   }
 }
 
+type ConversationAutomationRunCause = Extract<
+  PluginAutomationRunCause,
+  Readonly<{ kind: 'conversation' }>
+>;
+
 const caller = {
   kind: 'automationRun',
   automationId: 'automation-1',
   runId: 'run-1',
   cause: {
     kind: 'conversation',
-    occurrenceKey: 'conversation:binding:message-1',
+    occurrenceKey: 'a'.repeat(43) as ConversationAutomationRunCause['occurrenceKey'],
     occurredAt: 1_700_000_000_000,
   },
-} as const;
+} as const satisfies NonNullable<PluginInvocationContext['caller']>;
 
 const source = {
   kind: 'automationResult',
@@ -119,8 +128,11 @@ describe('Conversation Automation result delivery admission', () => {
     await state.put({
       id: 'binding-1',
       'record-kind': 'binding',
+      v: 1,
       'connection-id': 'connection-1',
       'binding-id': 'binding-1',
+      'created-at': 1_700_000_000_000,
+      'updated-at': 1_700_000_000_000,
       payload: {
         authorityEpoch: 7,
         enabled: true,
@@ -131,7 +143,12 @@ describe('Conversation Automation result delivery admission', () => {
           automationId: 'automation-1',
           policy: { resultDelivery: 'finalResult' },
         },
+        allowedPrincipalIds: ['principal-1'],
+        allowBotSenders: false,
+        inputMode: 'allAllowedMessages',
+        inboundDebounceMs: 0,
         linkPreviewPolicy: 'suppress',
+        senderFeedback: 'off',
       },
     }, { expectedRevision: 'absent' });
 
@@ -142,10 +159,10 @@ describe('Conversation Automation result delivery admission', () => {
       services: {
         storage: {
           account: {
-            collection(name: string) {
-              if (name === CHANNEL_STATE_COLLECTION) return state;
-              if (name === CHANNEL_DELIVERIES_COLLECTION) return deliveries;
-              throw new Error(`Unexpected Collection ${name}`);
+            collection(definition: Readonly<{ id: string }>) {
+              if (definition.id === CHANNEL_STATE_COLLECTION.id) return state;
+              if (definition.id === CHANNEL_DELIVERIES_COLLECTION.id) return deliveries;
+              throw new Error(`Unexpected Collection ${definition.id}`);
             },
           },
         },

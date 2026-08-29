@@ -83,6 +83,21 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
     });
   });
 
+  it('reads session bindings only under the canonical qualified service key', () => {
+    expect(resolveCodexChatGptRefreshSelectionFromMetadata({
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      },
+    })).toBeNull();
+  });
+
   it('consumes the typed binding projected from legacy Codex runtime descriptors by the host', () => {
     expect(resolveCodexChatGptRefreshSelectionFromMetadata({
       connectedServices: {
@@ -105,7 +120,38 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
     });
   });
 
-  it('builds refresh failure classification from profile and group bridge selections', () => {
+  it('resolves profile child selections onto the provider-local refresh wire identity', () => {
+    expect(resolveCodexChatGptRefreshSelectionFromChildSelection({
+      kind: 'profile',
+      serviceId: 'openai-codex',
+      profileId: 'work',
+    })).toEqual({
+      selection: {
+        kind: 'profile',
+        serviceId: 'openai-codex',
+        profileId: 'work',
+      },
+      recoveryGroupId: null,
+    });
+  });
+
+  it('rejects child selections that do not carry the provider-local service id', () => {
+    expect(resolveCodexChatGptRefreshSelectionFromChildSelection({
+      kind: 'profile',
+      serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'work',
+    })).toBeNull();
+    expect(resolveCodexChatGptRefreshSelectionFromChildSelection({
+      kind: 'group',
+      serviceId: 'happier.agent.codex/openai-codex',
+      groupId: 'main',
+      activeProfileId: 'primary',
+      fallbackProfileId: 'backup',
+      generation: 4,
+    })).toBeNull();
+  });
+
+  it('builds refresh failure classifications from profile and group bridge selections', () => {
     const resolution = resolveCodexChatGptRefreshSelectionFromChildSelection({
       kind: 'group',
       serviceId: 'openai-codex',
@@ -131,7 +177,9 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
     });
     expect(createCodexChatGptBridgeRefreshFailureClassification(resolution)).toMatchObject({
       kind: 'refresh_failed',
-      serviceId: 'openai-codex',
+      // Host-facing attribution carries the canonical qualified Plugin
+      // contribution key, while the bridge selection above stays provider-local.
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'primary',
       groupId: 'main',
       source: 'provider_runtime_marker',

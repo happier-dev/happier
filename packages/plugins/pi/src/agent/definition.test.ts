@@ -8,11 +8,13 @@ describe('Pi AGENT_DEFINITION', () => {
   it('declares native-extension Happier tool delivery', () => {
     expect(AGENT_DEFINITION.core.tools).toEqual({ delivery: 'native_extension', support: 'experimental' });
   });
-  it('advertises Claude subscription credentials as OAuth-or-token', () => {
-    expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId['claude-subscription']).toEqual([
-      'oauth',
-      'token',
-    ]);
+  it('publishes Claude subscription credential eligibility through the public declaration', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+        credentialKinds: ['oauth', 'token'],
+      }),
+    ]));
   });
 
   it('probes every direct Pi provider credential admitted by the launch environment', () => {
@@ -31,8 +33,7 @@ describe('Pi AGENT_DEFINITION', () => {
     expect(AGENT_DEFINITION.core.sessionCapabilities.usageLimitRecovery).toEqual({
       checkNow: 'unsupported',
     });
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities.sessions).toMatchObject({
-      usageLimitRecovery: undefined,
-    });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities.sessions)
+      .not.toHaveProperty('usageLimitRecovery');
   });
 });

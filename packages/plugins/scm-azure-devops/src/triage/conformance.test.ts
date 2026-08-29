@@ -4,6 +4,7 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
   TriageSourceDescriptorV1Schema,
+  TriageSourcesContributionProtocolV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -15,6 +16,7 @@ import {
 import { AZURE_DEVOPS_BASE_CONFIGURATION_FIELD } from '../auth/azureDevopsConnectedAccountRuntime.js';
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS } from './actions.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS } from './detailActions.js';
+import { AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS } from './mutationActions.js';
 import {
   AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
@@ -111,7 +113,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       .toEqual(['azure-devops']);
   });
 
-  it('declares each source-native detail plane as a plugin-surfaced account-bound read', () => {
+  it('declares each source-native detail plane as a UI-surfaced account-bound read', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
     for (const actionId of Object.values(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS)) {
@@ -120,9 +122,12 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       // refused by the host, and the panel would report a contract break the
       // user cannot act on.
       expect(action, `${actionId} must be declared`).toBeDefined();
-      // `plugin` only: these are this source's own reads, not a surface the
-      // aggregate or another plugin may call.
-      expect(action?.surfaces).toEqual(['plugin']);
+      // `ui` only: the mounted detail body reaches them as present-user
+      // authority; the aggregate and other plugin code are refused. The
+      // explicit empty list is the canonical mounted-only placement decision
+      // and is preserved on the wire.
+      expect(action?.surfaces).toEqual(['ui']);
+      expect(action?.placementBindings).toEqual([]);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess)
         .toEqual([
@@ -137,11 +142,39 @@ describe('Azure DevOps Triage source contribution conformance', () => {
         purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
       }]);
     }
+    // The two source-protocol reads above stay daemon-reachable through `plugin`
+    // — the Triage daemon consumes them — and mounted-UI-reachable through `ui`,
+    // and both declare the same mounted-only placement the detail planes carry:
+    // the explicit empty list withdraws them from global placement discovery
+    // without disabling either invocation surface.
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances)?.placementBindings).toEqual([]);
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get)?.placementBindings).toEqual([]);
     // They are NOT source-protocol roles. The contribution also binds the optional source-owned
     // preparation and final-verification roles, but no detail plane becomes a provider operation.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
       .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
+    // And the mounted-only list is exact: discovery, the authoritative read and
+    // the five detail planes, and nothing else.
+    expect(
+      PLUGIN_MANIFEST.contributes.actions
+        .filter((action) => action.placementBindings !== undefined
+          && action.placementBindings.length === 0)
+        .map((action) => action.id)
+        .sort(),
+    ).toEqual([
+      AZURE_DEVOPS_TRIAGE_ACTION_IDS.get,
+      AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances,
+      ...Object.values(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS),
+    ].sort());
+  });
+
+  it('places every enabled write in the details panel and nowhere else', () => {
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+
+    for (const actionId of Object.values(AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS)) {
+      expect(actions.get(actionId)?.placementBindings, actionId).toEqual(['detailsPanel']);
+    }
   });
 
   it('declares the deployment field as a configured service base, not a bare origin', () => {
@@ -184,9 +217,16 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     expect(contribution?.protocol).toEqual({ id: 'happier.triage/sources', version: 1 });
     expect(Object.values(contribution?.operations ?? {}).sort())
       .toEqual([...Object.values(AZURE_DEVOPS_TRIAGE_ACTION_IDS)].sort());
+    const requiredSurfacesByActionId = new Map([
+      [AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances, TriageSourcesContributionProtocolV1.operations.listInstances.declaration.surfaces],
+      [AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan, TriageSourcesContributionProtocolV1.operations.scan.declaration.surfaces],
+      [AZURE_DEVOPS_TRIAGE_ACTION_IDS.get, TriageSourcesContributionProtocolV1.operations.get.declaration.surfaces],
+      [AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace, TriageSourcesContributionProtocolV1.operations.prepareReviewWorkspace.declaration.surfaces],
+      [AZURE_DEVOPS_TRIAGE_ACTION_IDS.verifyReviewWorkspace, TriageSourcesContributionProtocolV1.operations.verifyReviewWorkspace.declaration.surfaces],
+    ] as const);
     for (const actionId of Object.values(contribution?.operations ?? {})) {
       const action = actions.get(actionId);
-      expect(action?.surfaces).toEqual(['plugin']);
+      expect(action?.surfaces).toEqual(requiredSurfacesByActionId.get(actionId));
       expect(action?.dangerLevel).toBe(
         actionId === AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace
           ? 'writesLocal'

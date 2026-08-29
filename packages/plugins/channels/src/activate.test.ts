@@ -2,6 +2,7 @@ import {
   definePlugin,
   PluginError,
   type JsonValue,
+  type PluginAutomationRunCause,
   type PluginInvocationContext,
   type PluginServices,
 } from '@happier-dev/plugin-sdk';
@@ -717,7 +718,7 @@ describe('Channels core activation', () => {
       // whole family disappeared from the manifest. Five are Session-scoped:
       // transcript activity plus the four producers behind the Session
       // destination, Session info, and its two Composer chips.
-      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(25);
+      expect(expected.filter((entry) => entry.family === 'actions')).toHaveLength(26);
       expect(expected.filter((entry) => entry.family === 'resources')).toHaveLength(8);
       expect(expected.filter((entry) => entry.family === 'backgroundServices')).toHaveLength(2);
       expect(activation.registrations()).toEqual(expected);
@@ -885,6 +886,110 @@ describe('Channels core activation', () => {
       expect(collection.rows.get(created.connectionId)).toBe(persistedConnection);
     } finally {
       await providerReader.dispose();
+      await core.dispose();
+      await setupProvider.dispose();
+    }
+  });
+
+  it('surfaces the existing retryable create conflict after one authoritative reservation attempt', async () => {
+    // A perpetually racing offline writer owns the deterministic reservation row
+    // during the atomic create and retracts it again before the authoritative
+    // reread. The typed retryable conflict — not an unowned local attempt
+    // count — is the recovery contract.
+    let batchCount = 0;
+    let reservationRowId: string | undefined;
+    const collection = createMutableChannelStateCollection({
+      onBeforeBatch: (operations, rows) => {
+        batchCount += 1;
+        if (reservationRowId === undefined) {
+          for (const operation of operations) {
+            if (operation.kind === 'put'
+              && operation.value['record-kind'] === CHANNEL_STATE_RECORD_KIND.connectionReservation) {
+              reservationRowId = operation.value.id;
+              break;
+            }
+          }
+        }
+        if (reservationRowId === undefined) return;
+        rows.set(reservationRowId, {
+          rowId: reservationRowId,
+          revision: 7,
+          value: {
+            id: reservationRowId,
+            'record-kind': CHANNEL_STATE_RECORD_KIND.connectionReservation,
+            'connection-id': 'connection-under-race',
+            'created-at': 1,
+            'updated-at': 1,
+            payload: {
+              providerPluginId: 'happier.channel.socket-test',
+              providerConnectionKey: 'socket:round-trip',
+              integrationPrincipalId: 'socket-round-trip-principal',
+            },
+          },
+        });
+      },
+      onGet: (rowId) => {
+        if (reservationRowId !== undefined && rowId === reservationRowId) {
+          collection.rows.delete(reservationRowId);
+        }
+      },
+    });
+    const providerSetupInput = { installation: 'socket-create-race' } as const;
+    const providerSetup = {
+      v: 1,
+      credentialRef: null,
+      providerConnectionKey: 'socket:round-trip',
+      providerConfigVersion: 1,
+      providerConfig: { installation: 'socket-create-race' },
+      integrationPrincipal: { id: 'socket-round-trip-principal', label: 'Socket round trip' },
+      supportedTransports: ['socket'],
+      recommendedTransport: 'socket',
+      overlapSafety: 'safe',
+      replayContinuity: 'none',
+      outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
+    } as const;
+    const setupProvider = await createPluginTestkit({
+      manifest: PROVIDER_SOCKET_SETUP_TEST_MANIFEST,
+      module: {
+        activate(api) {
+          api.actions.register(SOCKET_PROVIDER_ACTION_ID.setup, async () => providerSetup);
+          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionTest, async () => ({
+            kind: 'ready',
+            integrationPrincipal: providerSetup.integrationPrincipal,
+            providerConnectionKey: providerSetup.providerConnectionKey,
+          }));
+          api.actions.register(SOCKET_PROVIDER_ACTION_ID.messageDeliver, async () => ({ kind: 'delivered' }));
+          api.actions.register(SOCKET_PROVIDER_ACTION_ID.connectionStop, async () => ({ kind: 'notRunning' }));
+          api.backgroundServices.register('socket-supervisor', async () => {});
+        },
+      },
+    });
+    const core = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+      services: {
+        storage: storageWithEmptyChannelDeliveries(collection),
+      },
+      actionTargets: [setupProvider],
+      targetedContributionContributors: [setupProvider],
+    });
+
+    try {
+      await expect(core.invokeAction(
+        CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+        {
+          providerSelection: targetedSocketProviderSelection(core),
+          providerSetupInput,
+          credentialRef: null,
+          selectedTransport: 'socket',
+          maximumObservationAgeMs: 60_000,
+        },
+      )).rejects.toMatchObject({
+        code: 'channels_connection_create_conflict',
+        retryable: true,
+      });
+      expect(batchCount).toBe(1);
+    } finally {
       await core.dispose();
       await setupProvider.dispose();
     }
@@ -1077,8 +1182,11 @@ describe('Channels core activation', () => {
     await state.put({
       id: 'binding-1',
       'record-kind': 'binding',
+      v: 1,
       'connection-id': 'connection-1',
       'binding-id': 'binding-1',
+      'created-at': 1_700_000_000_000,
+      'updated-at': 1_700_000_000_000,
       payload: {
         authorityEpoch: 7,
         enabled: true,
@@ -1089,7 +1197,12 @@ describe('Channels core activation', () => {
           automationId: 'automation-1',
           policy: { resultDelivery: 'finalResult' },
         },
+        allowedPrincipalIds: ['principal-1'],
+        allowBotSenders: false,
+        inputMode: 'allAllowedMessages',
+        inboundDebounceMs: 0,
         linkPreviewPolicy: 'suppress',
+        senderFeedback: 'off',
       },
     }, { expectedRevision: 'absent' });
     // Storage is the genuine host boundary. The registered Action retains the
@@ -1122,7 +1235,10 @@ describe('Channels core activation', () => {
         runId: 'run-1',
         cause: {
           kind: 'conversation',
-          occurrenceKey: 'conversation:binding:message-1',
+          occurrenceKey: 'a'.repeat(43) as Extract<
+            PluginAutomationRunCause,
+            Readonly<{ kind: 'conversation' }>
+          >['occurrenceKey'],
           occurredAt: 1_700_000_000_000,
         },
       },
@@ -3212,17 +3328,13 @@ describe('Channels core activation', () => {
         const kind = request.prefix?.[0];
         if (kind === 'connection') connectionQueryCount += 1;
         if (kind === 'binding') bindingQueryCount += 1;
-        const firstConnectionRead = kind === 'connection' && connectionQueryCount === 1;
         return {
           rows: stateRows
             .filter((row) => row['record-kind'] === kind)
-            .map((row) => firstConnectionRead && row.id === exactConnection.id
-              ? { ...row, payload: { ...row.payload, enabled: false } }
-              : row)
             .map((value, index) => ({ rowId: value.id, revision: index + 1, value })),
           changeCursor: forceSnapshotDrift
             ? (kind === 'connection' ? connectionQueryCount * 2 : bindingQueryCount * 2 + 1)
-            : (firstConnectionRead ? 1 : 2),
+            : 2,
         };
       },
     };
@@ -3283,9 +3395,9 @@ describe('Channels core activation', () => {
       expect(await list({}, context)).toEqual(expected);
       expect(await read({ connectionId: exactConnection.id }, context)).toEqual(expected);
       expect(await read({ connectionId: samePluginDifferentMaterialization.id }, context)).toEqual({});
-      expect(connectionQueryCount).toBe(4);
-      expect(bindingQueryCount).toBe(4);
-      expect(querySignals).toHaveLength(8);
+      expect(connectionQueryCount).toBe(3);
+      expect(bindingQueryCount).toBe(3);
+      expect(querySignals).toHaveLength(6);
       expect(querySignals.every((signal) => signal === context.signal)).toBe(true);
 
       forceSnapshotDrift = true;
@@ -3293,8 +3405,11 @@ describe('Channels core activation', () => {
         code: 'channels_reconciliation_snapshot_changed',
         retryable: true,
       });
-      expect(connectionQueryCount).toBe(7);
-      expect(bindingQueryCount).toBe(7);
+      // One authoritative pass owns the answer: cursor movement surfaces the
+      // existing retryable outcome instead of quietly re-scanning the whole
+      // Account behind an unowned local attempt count.
+      expect(connectionQueryCount).toBe(4);
+      expect(bindingQueryCount).toBe(4);
     } finally {
       await activation.dispose();
     }

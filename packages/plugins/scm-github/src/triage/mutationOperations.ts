@@ -98,18 +98,18 @@ async function claimPublicationPlan(
  * rematerializes that exact account inside one request closure, rereads the
  * provider entity before any effect, and returns the re-observed entity.
  *
- * They are declared `surfaces: ['ui', 'plugin']`, and the ABSENCE of `agent` and
+ * They are declared `surfaces: ['ui']`, and the ABSENCE of `agent` and
  * `mcp` is the human gate: an agent cannot reach them at all — no prompt to
  * approve, no tool, no exposure. There is no list of exempted callers here and
- * none may be added. `plugin` is present because a mounted plugin surface always
- * dispatches as a plugin caller, so without it the write is refused before it
- * runs; it widens nothing, because host confirmation keys off the separately
- * computed invocation surface.
- *
- * Nothing between them is shared mutable state. There is no queue, no receipt, no
+ * none may be added. `ui` is the write's whole product reach: the daemon
+ * derives the invoking surface from the authenticated mounted-UI provenance,
+ * so this source's own mounted detail body reaches each write as present-user
+ * authority while direct plugin code — ActionsService — checks only the
+ * `plugin` surface and is refused here; nothing between the press and the
+ * provider write is shared mutable state. There is no queue, no receipt, no
  * lease, no in-flight registry, and no retry timer: an ambiguous outcome is
- * reported as uncertain and the user decides, because a retry would re-decide on
- * their behalf against state they never saw.
+ * reported as uncertain and the user decides, because a retry would re-decide
+ * on their behalf against state they never saw.
  */
 
 const INVALID_INPUT_FAILURE: TriageSourceFailureV1 = Object.freeze({

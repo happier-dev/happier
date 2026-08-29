@@ -83,7 +83,7 @@ describe('GitLab detail UI build configuration', () => {
 
     expect(reviewsStart).toBeGreaterThanOrEqual(0);
     expect(reviewsEnd).toBeGreaterThan(reviewsStart);
-    expect(reviewsSource).toContain('<DiscussionsSection input={input} />');
+    expect(reviewsSource).toContain('<DiscussionsSection input={input} proposals={proposals} />');
     expect(reviewsSource).not.toContain('<ScrollArea>');
   });
 });

@@ -727,6 +727,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -999,7 +1002,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Set up Discord Channels"
       },
@@ -1114,6 +1118,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -1228,7 +1235,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Test Discord connection"
       },
@@ -1360,6 +1368,9 @@
           ],
           "type": "object"
         },
+        "placementBindings": [
+          "commandPalette"
+        ],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -1631,7 +1642,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Resolve Discord destination"
       },
@@ -2808,8 +2820,7 @@
         "scope": {
           "methods": [
             "GET",
-            "POST",
-            "PATCH"
+            "POST"
           ],
           "targets": [
             {

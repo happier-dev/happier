@@ -38,8 +38,6 @@ export const GROK_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'grok' },
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'grok', viewBox: '0 0 1024 1024', paths: GROK_ICON_PATHS },

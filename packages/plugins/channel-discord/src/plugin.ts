@@ -151,7 +151,9 @@ function createDiscordPlugin() {
         reason: 'Verify Discord application identity and send messages through Discord REST.',
         scope: {
           targets: [{ kind: 'fixedOrigin', origin: 'https://discord.com' }],
-          methods: ['GET', 'POST', 'PATCH'],
+          // The REST codec issues GET reads and POST sends only; it never
+          // PATCHes (archived threads rely on the core-owned recovery outcome).
+          methods: ['GET', 'POST'],
         },
       },
       {

@@ -25,6 +25,7 @@ import { readCodexRuntimeRateLimitsSnapshot } from '../../quota/runtimeRateLimit
 import { resolveCodexUsageSubjectRef } from '../../usage/identity.js';
 import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../../usage/snapshot.js';
 import { buildCodexCloudAuthFile } from '../../openai/cloud/authFile.js';
+import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../constants.js';
 
 type RuntimeAuthTargetInput = AgentConnectedAccountRuntimeAuthTargetV1;
 type RuntimeAuthHotApplyInput = AgentConnectedAccountRuntimeAuthHotApplyInputV1;
@@ -91,8 +92,8 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
       const selection = readRecord(input.selection);
       return classifyCodexConnectedServiceAuthFailure({
         providerErrorPath: true,
-        // Canonical qualified Plugin contribution key.
-        serviceId: 'happier.agent.codex/openai-codex',
+        // Canonical qualified Plugin contribution key of the failing service.
+        serviceId: CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY,
         profileId: readString(selection?.activeProfileId ?? selection?.profileId),
         groupId: readString(selection?.groupId),
         error: input.error,

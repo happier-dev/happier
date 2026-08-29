@@ -27,6 +27,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -699,7 +700,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Discover Sentry organizations"
       },
@@ -2969,6 +2971,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -3358,7 +3361,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read one Sentry issue projection"
       },
@@ -3598,6 +3601,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -3771,7 +3775,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read retained Sentry occurrences"
       },
@@ -4037,6 +4041,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -4797,7 +4802,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read one Sentry occurrence"
       },
@@ -5044,6 +5049,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5215,7 +5221,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read one Sentry tag distribution"
       },
@@ -5475,6 +5481,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6197,7 +6204,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Read a Sentry issue"
       }

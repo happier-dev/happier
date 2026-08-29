@@ -82,6 +82,10 @@
         },
         "connectedAccounts": [
           {
+            "credentialKinds": [
+              "oauth",
+              "token"
+            ],
             "materializationKinds": [
               "httpHeaders",
               "environment"
@@ -93,6 +97,9 @@
             }
           },
           {
+            "credentialKinds": [
+              "oauth"
+            ],
             "materializationKinds": [
               "httpHeaders"
             ],
@@ -103,6 +110,9 @@
             }
           },
           {
+            "credentialKinds": [
+              "token"
+            ],
             "materializationKinds": [
               "environment"
             ],
@@ -113,6 +123,9 @@
             }
           },
           {
+            "credentialKinds": [
+              "token"
+            ],
             "materializationKinds": [
               "environment"
             ],

@@ -53,6 +53,7 @@ import {
   createStubGithubTransport,
   readRecordedJsonBody,
   type RecordedGithubRequest,
+  type StubGithubTransport,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
 
@@ -965,11 +966,11 @@ describe('GitHub pull-request review publication', () => {
   });
 });
 
-function writes(stub: ReturnType<typeof transportFor>): readonly RecordedGithubRequest[] {
+function writes(stub: StubGithubTransport): readonly RecordedGithubRequest[] {
   return stub.requests.filter((request) => request.method !== 'GET');
 }
 
-function entryReads(stub: ReturnType<typeof transportFor>): readonly RecordedGithubRequest[] {
+function entryReads(stub: StubGithubTransport): readonly RecordedGithubRequest[] {
   return stub.requests.filter((request) => request.method === 'GET'
     && new URL(request.url).pathname === PULL_REQUEST_PATH);
 }

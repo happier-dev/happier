@@ -426,6 +426,15 @@ describe('Channels core manifest', () => {
           ],
         },
         {
+          id: CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention,
+          fields: [
+            { field: CHANNEL_DELIVERIES_FIELD.connectionId, direction: 'asc' },
+            { field: CHANNEL_DELIVERIES_FIELD.attention, direction: 'asc' },
+            { field: CHANNEL_DELIVERIES_FIELD.bindingId, direction: 'asc' },
+            { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
+          ],
+        },
+        {
           id: CHANNEL_DELIVERIES_INDEX_ID.byRetryDue,
           fields: [
             { field: CHANNEL_DELIVERIES_FIELD.terminal, direction: 'asc' },

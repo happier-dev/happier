@@ -1,5 +1,6 @@
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -68,6 +69,7 @@ function providerActionContext(input: Readonly<{
       qualifiedId: `happier.channel.discord/actions/${DISCORD_CHANNEL_ACTION_IDS.setup}`,
     },
     surface: 'plugin',
+    invokedAtMs: 1_700_000_000_000,
     caller: {
       kind: 'plugin',
       pluginId: input.callerPluginId,
@@ -160,7 +162,7 @@ describe('Discord Channel plugin activation', () => {
         ({ id }) => id === DISCORD_CHANNEL_ACTION_IDS.setup,
       );
       expect(setup).toMatchObject({
-        surfaces: ['plugin'],
+        surfaces: ConversationProvidersContributionProtocolV1.operations.setup.declaration.surfaces,
         hostAccess: ['discord-rest', DISCORD_BOT_CREDENTIAL_PURPOSE],
         inputHints: {
           fields: [{

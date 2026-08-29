@@ -96,6 +96,7 @@ export const CHANNEL_DELIVERIES_FIELD = {
 
 export const CHANNEL_DELIVERIES_INDEX_ID = {
   byOwnerAttention: 'by-owner-attention',
+  byConnectionAttention: 'by-connection-attention',
   byRetryDue: 'by-retry-due',
 } as const;
 
@@ -2107,6 +2108,15 @@ export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
         { field: CHANNEL_DELIVERIES_FIELD.connectionId, direction: 'asc' },
         { field: CHANNEL_DELIVERIES_FIELD.bindingId, direction: 'asc' },
         { field: CHANNEL_DELIVERIES_FIELD.attention, direction: 'asc' },
+        { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
+      ],
+    },
+    {
+      id: CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention,
+      fields: [
+        { field: CHANNEL_DELIVERIES_FIELD.connectionId, direction: 'asc' },
+        { field: CHANNEL_DELIVERIES_FIELD.attention, direction: 'asc' },
+        { field: CHANNEL_DELIVERIES_FIELD.bindingId, direction: 'asc' },
         { field: CHANNEL_DELIVERIES_FIELD.id, direction: 'asc' },
       ],
     },

@@ -304,6 +304,11 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Lists the Sentry organizations each connected Sentry account can reach.',
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
+      // Mounted-only placement. `plugin` stays because the Triage daemon
+      // consumes it and `ui` because this source's own mounted surfaces hold
+      // present-user authority; the explicit empty list only withdraws the
+      // Action from global placement discovery — it disables no invocation.
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
@@ -329,10 +334,12 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads the live summary, the tag distribution, or the recorded activity of'
         + ' one Sentry issue.',
       scopes: ['global'],
-      // The published Triage roles declare the `plugin` surface; these
-      // source-native reads are invoked the same way, by this source's own
-      // mounted detail body.
-      surfaces: ['plugin'],
+      // Only this source's own mounted detail body invokes these source-native
+      // reads, through the mounted Plugin UI host — present-user authority.
+      // The explicit empty list keeps global placement discovery from offering
+      // them a destination while the mounted invocation stays untouched.
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryReadIssueInputV1Schema.jsonSchema,
@@ -346,7 +353,8 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads one page of the events Sentry retained for one issue in the queried'
         + ' window.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryIssueEventsInputV1Schema.jsonSchema,
@@ -360,7 +368,8 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads the representative or one selected occurrence of a Sentry issue as a'
         + ' redacted projection.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryReadEventInputV1Schema.jsonSchema,
@@ -373,7 +382,8 @@ export const SENTRY_PLUGIN = definePlugin({
       title: 'Read one Sentry tag distribution',
       description: 'Reads one page of the value distribution of a single tag key on one issue.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: 'safe',
       inputSchema: SentryTagValuesInputV1Schema.jsonSchema,
@@ -387,6 +397,11 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Reads one Sentry issue authoritatively through its configured organization.',
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
+      // Mounted-only placement. `plugin` stays because the Triage daemon
+      // consumes it and `ui` because this source's own mounted surfaces hold
+      // present-user authority; the explicit empty list only withdraws the
+      // Action from global placement discovery — it disables no invocation.
+      placementBindings: [],
       execution: { target: 'daemon' },
       dangerLevel: sources.operations.get.declaration.dangerLevel,
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,

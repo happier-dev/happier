@@ -33,10 +33,6 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
           sharedStatePrivacyRiskAcknowledgementRequired: true,
         },
       },
-      supportedKindsByServiceId: {
-        'claude-subscription': ['oauth', 'token'],
-        anthropic: ['token'],
-      },
     },
     resume: {
       vendorResume: 'supported' as const,

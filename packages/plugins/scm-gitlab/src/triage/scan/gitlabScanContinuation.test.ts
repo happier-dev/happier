@@ -101,7 +101,7 @@ describe('the GitLab scan continuation codec', () => {
       .not.toBeNull();
   });
 
-  it('preserves a wide valid frontier and leaves size to the Action envelope', () => {
+  it('refuses a frontier that cannot fit the canonical Action envelope', () => {
     const wide: GitlabLaneRequest[] = Array.from({ length: 400 }, (_unused, index) => ({
       laneId: 'authored',
       kindId: 'merge-request',
@@ -110,13 +110,9 @@ describe('the GitLab scan continuation codec', () => {
       involvement: 'author',
     }));
 
-    const continuation = encodeGitlabScanContinuation(frontierOf(wide));
-    expect(continuation).not.toBeNull();
-    expect(continuation === null ? null : decodeGitlabScanContinuation({
-      continuation,
-      origin: GITLAB_COM,
-      lanes: wide,
-    })).not.toBeNull();
+    // The shared protocol owns the real carrier bound. This source must fail
+    // closed rather than truncate an opaque frontier that it could not resume.
+    expect(encodeGitlabScanContinuation(frontierOf(wide))).toBeNull();
   });
 
   it('keeps loop evidence constant-size however deep one lane walks', () => {

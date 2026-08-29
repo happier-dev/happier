@@ -19,6 +19,7 @@ import {
 import {
   admitTelegramAutomationEvent,
   TELEGRAM_AUTOMATION_MESSAGE_PAYLOAD_SCHEMA,
+  TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
   TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
   TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA,
   TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA,
@@ -271,33 +272,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         path: 'credentialRef',
         purpose: TELEGRAM_BOT_CREDENTIAL_PURPOSE,
       }],
-      inputHints: {
-        title: { key: 'channels.telegram.automation.setup.title', fallback: 'Choose a Telegram chat to watch' },
-        description: {
-          key: 'channels.telegram.automation.setup.description',
-          fallback: 'Pick the Telegram bot and the chat whose messages should start this Automation.',
-        },
-        submitLabel: { key: 'channels.telegram.automation.setup.submit', fallback: 'Use this chat' },
-        fields: [
-          {
-            path: 'credentialRef',
-            title: { key: 'channels.telegram.automation.setup.credential', fallback: 'Telegram bot account' },
-            widget: 'select',
-            connectedAccountOptions: true,
-            required: true,
-          },
-          {
-            path: 'chatId',
-            title: { key: 'channels.telegram.automation.setup.chat', fallback: 'Chat ID' },
-            widget: 'text',
-            description: {
-              key: 'channels.telegram.automation.setup.chat.description',
-              fallback: 'The numeric Telegram chat id, or an @channelusername the bot can reach.',
-            },
-            required: true,
-          },
-        ],
-      },
+      inputHints: TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_HINTS,
       run: setupTelegramChatEventSource,
     },
     [TELEGRAM_AUTOMATION_MESSAGE_ADMIT_ACTION_ID]: {

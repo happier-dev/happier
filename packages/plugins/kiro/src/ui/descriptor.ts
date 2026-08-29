@@ -41,8 +41,6 @@ export const KIRO_UI_DESCRIPTOR = Object.freeze({
     resume: 'experimental',
   },
   behavior: {},
-  session: {},
-  message: {},
   components: { slots: [] },
   assets: {
     svgIcon: { assetId: 'kiro' },

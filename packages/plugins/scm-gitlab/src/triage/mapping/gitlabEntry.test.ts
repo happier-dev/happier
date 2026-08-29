@@ -235,6 +235,13 @@ describe('observed revision', () => {
 });
 
 describe('semantic bounds', () => {
+  it('uses the published byte boundary rather than an invented label-count ceiling', () => {
+    expect(summarizeGitlabLabels(['one', 'two', 'three', 'four'])).toEqual({
+      text: 'one, two, three, four',
+      truncated: false,
+    });
+  });
+
   it('keeps an oversize valid entry visible, bounded, and flagged rather than dropping it', () => {
     const entry = mapMergeRequest({
       ...rowOf(mergeRequestList[0]),
@@ -262,8 +269,7 @@ describe('semantic bounds', () => {
     }
     // Every decoded label survives on the entry: only the projection is summarized.
     expect(entry.snapshot.labels).toHaveLength(300);
-    expect(summarizeGitlabLabels(entry.snapshot.labels).text)
-      .toBe('label-0, label-1, label-2 +297');
+    expect(summarizeGitlabLabels(entry.snapshot.labels).truncated).toBe(true);
     expect(entry.projectionTruncated).toBe(true);
   });
 

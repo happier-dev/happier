@@ -109,11 +109,11 @@ const mounted: PluginUiTestkit[] = [];
 
 function withFeedbackPageEvidence(value: JsonValue): JsonValue {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
-  if (value.kind === 'unavailable') return value;
+  if ('kind' in value && value.kind === 'unavailable') return value;
   return {
     ...value,
-    omittedRowCount: value.omittedRowCount ?? 0,
-    projectionTruncated: value.projectionTruncated ?? false,
+    omittedRowCount: 'omittedRowCount' in value ? value.omittedRowCount : 0,
+    projectionTruncated: 'projectionTruncated' in value ? value.projectionTruncated : false,
   } as JsonValue;
 }
 

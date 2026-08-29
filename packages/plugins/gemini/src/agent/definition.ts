@@ -44,9 +44,6 @@ export const AGENT_DEFINITION = Object.freeze({
     cloudConnect: { vendorKey: 'gemini', status: 'wired' },
     connectedServices: {
       supportedServiceIds: ['gemini'],
-      supportedKindsByServiceId: {
-        gemini: ['token'],
-      },
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'geminiSessionId' },
     sessionStorage: { direct: false, persisted: true },

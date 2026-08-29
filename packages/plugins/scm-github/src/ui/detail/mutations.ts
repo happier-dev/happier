@@ -111,6 +111,10 @@ export const GITHUB_MERGE_METHODS_V1: readonly GithubMergeMethodV1[] = Object.fr
 export type GithubPullRequestMutationIdV1 = 'merge' | 'close' | 'reopen';
 
 type ObservedState = TriageDetailSurfaceInputV1['observation']['snapshot']['state'];
+type ObservedEntryLocalRef = Pick<
+  TriageDetailSurfaceInputV1['observation']['entryRef'],
+  'kindId' | 'collisionScope' | 'entryId'
+>;
 
 const OPEN_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['merge', 'close']);
 const ISSUE_OPEN_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze(['close']);
@@ -124,12 +128,11 @@ const NO_MUTATIONS: readonly GithubPullRequestMutationIdV1[] = Object.freeze([])
  * merge to refuse there: a control whose every press the provider refuses is worse
  * than no control.
  *
- * The branch is on the projected `presentation` state and never on `nativeLabel`.
- * The native label is GitHub's own word kept for display, and deciding what a user
- * may write from display text would make one relabelled string change behaviour.
- * A closed pull request therefore offers `reopen` whether or not it was merged;
- * a merged one is refused `state_changed` by the write's own fresh read, which is
- * the answer that source was built to give and the one that stays true.
+ * GitHub's canonical mapper preserves merged versus merely closed only in its
+ * native state label, so that provider fact is load-bearing for reopen: a merged
+ * pull request can never be reopened and must not offer a guaranteed refusal.
+ * Issue `resolved` is GitHub's canonical completed-issue presentation and remains
+ * reopenable just like its other closed reasons.
  */
 export function githubOfferedMutationsV1(params: Readonly<{
   kindId: GithubTriageKindIdV1;
@@ -141,11 +144,15 @@ export function githubOfferedMutationsV1(params: Readonly<{
     // An issue cannot be merged, and GitHub closes one as completed, not planned
     // or duplicate — a reason the reader supplies, not one this build picks.
     if (params.state.presentation === 'active') return ISSUE_OPEN_MUTATIONS;
-    return params.state.presentation === 'closed' ? CLOSED_MUTATIONS : NO_MUTATIONS;
+    return params.state.presentation === 'closed' || params.state.presentation === 'resolved'
+      ? CLOSED_MUTATIONS
+      : NO_MUTATIONS;
   }
   if (params.kindId !== 'pull-request') return NO_MUTATIONS;
   if (params.state.presentation === 'active') return OPEN_MUTATIONS;
-  if (params.state.presentation === 'closed') return CLOSED_MUTATIONS;
+  if (params.state.presentation === 'closed') {
+    return params.state.nativeLabel === 'Merged' ? NO_MUTATIONS : CLOSED_MUTATIONS;
+  }
   return NO_MUTATIONS;
 }
 /**
@@ -413,7 +420,14 @@ function localRefOf(input: TriageDetailSurfaceInputV1) {
  * presented as something to simply press again.
  */
 export type GithubMutationOutcomeV1 =
-  | Readonly<{ kind: 'applied'; effect: 'changed' | 'alreadySatisfied' }>
+  | Readonly<{
+    kind: 'applied';
+    effect: 'changed' | 'alreadySatisfied';
+    /** Exact state from the Action's confirming observation, when that result carries one. */
+    confirmedState: ObservedState | null;
+    /** Identity paired with `confirmedState`; prevents another entry's answer driving this UI. */
+    confirmedEntryRef: ObservedEntryLocalRef | null;
+  }>
   | Readonly<{
     kind: 'publication';
     publishedCount: number;
@@ -493,9 +507,20 @@ export function projectGithubMutationOutcomeV1(
     });
   }
   if (parsed.kind === 'applied') {
+    const confirmedObservation = 'observation' in parsed && parsed.observation.kind === 'present'
+      ? parsed.observation
+      : null;
     return Object.freeze({
       kind: 'applied' as const,
       effect: 'effect' in parsed ? parsed.effect : 'changed',
+      confirmedState: confirmedObservation?.snapshot.state ?? null,
+      confirmedEntryRef: confirmedObservation === null
+        ? null
+        : Object.freeze({
+          kindId: confirmedObservation.localRef.kindId,
+          collisionScope: confirmedObservation.localRef.collisionScope,
+          entryId: confirmedObservation.localRef.entryId,
+        }),
     });
   }
   if (parsed.kind === 'pending') return Object.freeze({ kind: 'pending' as const });
@@ -525,7 +550,9 @@ export function githubMutationMayHaveChangedProviderStateV1(
   if (outcome === null) return false;
   switch (outcome.kind) {
     case 'applied':
-      return outcome.effect === 'changed';
+      // `alreadySatisfied` sends no outward write, but its exact confirming read
+      // can still be newer than the mounted observation and must reconcile it.
+      return true;
     case 'publication':
       return outcome.publishedCount > 0
         || outcome.uncertainCount > 0

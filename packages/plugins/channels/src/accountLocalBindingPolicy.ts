@@ -51,6 +51,11 @@ import {
   transitionConversationBinding,
   type ConversationBindingStateV1,
 } from './bindingTransition.js';
+import {
+  CONVERSATION_NON_ADMISSION_REASONS,
+  projectConversationNonAdmissionPresentationCategory,
+  type ConversationNonAdmissionReason,
+} from './commandPolicy.js';
 
 const MANAGEMENT_SUMMARY_MAX_CODE_POINTS = 28;
 
@@ -186,6 +191,8 @@ export type ConversationIngressTerminalAttentionRow = Readonly<{
   connectionId: string;
   bindingId: string;
   updatedAt: number;
+  /** Closed presentation category projected from the frozen nonAdmission fact. */
+  category: 'informational' | 'recoverable';
 }>;
 
 export type ConversationIngressOccurrenceConflictAttentionRow = Readonly<{
@@ -1168,6 +1175,41 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
     const isTerminal = terminal === true
       && dueAt === undefined
       && phase === 'terminal';
+    const readTerminalAttentionCategory = (): 'informational' | 'recoverable' => {
+      // terminalIngressObligationValue pairs attention with a frozen
+      // nonAdmission fact, so an attention row without one is informational
+      // history by construction, while a non-null value must be exactly the
+      // closed persisted shape before its category is projected.
+      const nonAdmission = isChannelStateJsonRecord(payload)
+        ? ownChannelStateValue(payload, 'nonAdmission')
+        : undefined;
+      if (nonAdmission === undefined || nonAdmission === null) return 'informational';
+      if (!isChannelStateJsonRecord(nonAdmission)
+        || Object.keys(nonAdmission).length !== 2) {
+        throw policyError(
+          'channels_ingress_attention_row_invalid',
+          'The Channels ingress attention index returned a non-canonical nonAdmission fact.',
+        );
+      }
+      const reason = ownChannelStateValue(nonAdmission, 'reason');
+      if (typeof reason !== 'string'
+        || !(CONVERSATION_NON_ADMISSION_REASONS as readonly string[]).includes(reason)) {
+        throw policyError(
+          'channels_ingress_attention_row_invalid',
+          'The Channels ingress attention index returned a non-canonical nonAdmission reason.',
+        );
+      }
+      if (ownChannelStateValue(nonAdmission, 'senderFeedbackEligible') !== true
+        && ownChannelStateValue(nonAdmission, 'senderFeedbackEligible') !== false) {
+        throw policyError(
+          'channels_ingress_attention_row_invalid',
+          'The Channels ingress attention index returned a non-canonical nonAdmission feedback fact.',
+        );
+      }
+      return projectConversationNonAdmissionPresentationCategory(
+        reason as ConversationNonAdmissionReason,
+      );
+    };
     if (typeof id !== 'string'
       || id !== row.rowId
       || recordKind !== CHANNEL_STATE_RECORD_KIND.ingressObligation
@@ -1191,6 +1233,7 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
         connectionId,
         bindingId,
         updatedAt,
+        category: readTerminalAttentionCategory(),
       };
     }
     return {

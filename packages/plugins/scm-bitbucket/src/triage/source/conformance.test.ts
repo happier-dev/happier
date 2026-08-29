@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS } from './actions.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from './detailActions.js';
+import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from './mutationActions.js';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE, BITBUCKET_TRIAGE_DESCRIPTOR } from './descriptor.js';
 
 /**
@@ -63,13 +64,13 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(contribution?.id).toBe('bitbucket-forge');
     expect(contribution?.target).toEqual({ pluginId: 'happier.triage', pointId: 'sources' });
     expect(contribution?.protocol).toEqual({ id: 'happier.triage/sources', version: 1 });
-    for (const actionId of [
-      BITBUCKET_TRIAGE_ACTION_IDS.listInstances,
-      BITBUCKET_TRIAGE_ACTION_IDS.scan,
-      BITBUCKET_TRIAGE_ACTION_IDS.get,
-    ]) {
+    for (const [actionId, requiredSurfaces] of [
+      [BITBUCKET_TRIAGE_ACTION_IDS.listInstances, TriageSourcesContributionProtocolV1.operations.listInstances.declaration.surfaces],
+      [BITBUCKET_TRIAGE_ACTION_IDS.scan, TriageSourcesContributionProtocolV1.operations.scan.declaration.surfaces],
+      [BITBUCKET_TRIAGE_ACTION_IDS.get, TriageSourcesContributionProtocolV1.operations.get.declaration.surfaces],
+    ] as const) {
       const action = actions.get(actionId);
-      expect(action?.surfaces).toEqual(['plugin']);
+      expect(action?.surfaces).toEqual(requiredSurfaces);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
     }
@@ -119,7 +120,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     }]);
   });
 
-  it('declares each source-native detail plane as a plugin-surfaced account-bound read', () => {
+  it('declares each source-native detail plane as a UI-surfaced account-bound read', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
     for (const id of Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS)) {
@@ -128,9 +129,9 @@ describe('Bitbucket Triage source contribution conformance', () => {
       // refused by the host, and the panel would report a contract break the user
       // cannot act on.
       expect(action, `${id} must be declared`).toBeDefined();
-      // `plugin` only: these are this source's own reads, not a surface the
-      // aggregate or another plugin may call.
-      expect(action?.surfaces).toEqual(['plugin']);
+      // `ui` only: the mounted detail body reaches them as present-user
+      // authority; the aggregate and other plugin code are refused.
+      expect(action?.surfaces).toEqual(['ui']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
       // Every detail plane carries a configured instance, so every one binds the
@@ -140,12 +141,40 @@ describe('Bitbucket Triage source contribution conformance', () => {
         purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
       }]);
     }
+    // The two source-protocol reads above stay daemon-reachable through `plugin`
+    // — the Triage daemon consumes them — and mounted-UI-reachable through `ui`,
+    // and both declare the same mounted-only placement the detail planes carry:
+    // the explicit empty list withdraws them from global placement discovery
+    // without disabling either invocation surface.
+    expect(actions.get(BITBUCKET_TRIAGE_ACTION_IDS.listInstances)?.placementBindings).toEqual([]);
+    expect(actions.get(BITBUCKET_TRIAGE_ACTION_IDS.get)?.placementBindings).toEqual([]);
     // The provider-specific detail planes remain outside the source protocol;
     // Selected-PR preparation and its final verification are the only optional
     // shared source roles; provider-specific detail reads stay ordinary Actions.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
       .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
+    // And the mounted-only list is exact: discovery, the authoritative read and
+    // the five detail planes, and nothing else.
+    expect(
+      PLUGIN_MANIFEST.contributes.actions
+        .filter((action) => action.placementBindings !== undefined
+          && action.placementBindings.length === 0)
+        .map((action) => action.id)
+        .sort(),
+    ).toEqual([
+      BITBUCKET_TRIAGE_ACTION_IDS.get,
+      BITBUCKET_TRIAGE_ACTION_IDS.listInstances,
+      ...Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS),
+    ].sort());
+  });
+
+  it('places every enabled write in the details panel and nowhere else', () => {
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+
+    for (const actionId of Object.values(BITBUCKET_TRIAGE_MUTATION_ACTION_IDS)) {
+      expect(actions.get(actionId)?.placementBindings, actionId).toEqual(['detailsPanel']);
+    }
   });
 
   it('binds the exact account path on every configured source Action that receives one', () => {

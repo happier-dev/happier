@@ -65,6 +65,7 @@ function coreContext(
         pluginId: 'happier.channels',
       },
     },
+    invokedAtMs: 1_700_000_000_000,
     signal: options.signal ?? new AbortController().signal,
     services: {
       connectedAccounts: {

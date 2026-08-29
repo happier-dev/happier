@@ -240,6 +240,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -422,7 +423,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Configure PostHog error issues"
       },
@@ -450,6 +451,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -1122,7 +1124,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Discover PostHog organizations"
       },
@@ -3386,6 +3389,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -3657,7 +3661,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read sampled PostHog occurrences"
       },
@@ -3896,6 +3900,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -4057,7 +4062,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read PostHog issue activity"
       },
@@ -4378,6 +4383,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -4468,7 +4474,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Reveal captured PostHog code variables"
       },
@@ -4727,6 +4733,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -5449,7 +5456,8 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
         ],
         "title": "Read a PostHog error issue"
       }

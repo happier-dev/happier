@@ -912,6 +912,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -2766,7 +2767,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin",
+          "ui",
           "voice"
         ],
         "title": {
@@ -2950,6 +2951,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -2981,7 +2983,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Pin or unpin an entry"
       },
@@ -3020,6 +3022,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -3138,11 +3141,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the pinned entries"
       },
       {
+        "confirmation": {
+          "body": "This records the entry as work for the selected session in this Happier Account. You can unlink it later.",
+          "confirmLabel": "Link entry",
+          "title": "Link this entry to the session?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Records that a pull request, issue or error group is being worked on in one session.",
         "execution": {
@@ -3272,6 +3280,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -3300,11 +3309,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Link an entry to a session"
       },
       {
+        "confirmation": {
+          "body": "This creates or rejoins the selected session, records this entry as its work, and opens the session.",
+          "confirmLabel": "Start session",
+          "title": "Start a session on this entry?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.",
         "execution": {
@@ -4586,6 +4600,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6251,11 +6266,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Start a session on an entry"
       },
       {
+        "confirmation": {
+          "body": "This rereads the selected pull request and starts the chosen review engine.",
+          "confirmLabel": "Start review",
+          "title": "Start this pull request review?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Rereads the selected pull request and starts the chosen review engine.",
         "execution": {
@@ -6630,6 +6650,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -6694,11 +6715,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Start a pull request review"
       },
       {
+        "confirmation": {
+          "body": "This removes the saved relationship from this Happier Account. It does not end or delete the session.",
+          "confirmLabel": "Unlink entry",
+          "title": "Unlink this entry from the session?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Removes the record that a pull request, issue or error group is being worked on in one session.",
         "execution": {
@@ -6781,6 +6807,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -6812,11 +6839,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Unlink an entry from a session"
       },
       {
+        "confirmation": {
+          "body": "This creates, reconfigures, removes, or restores the selected source in this Happier Account.",
+          "confirmLabel": "Apply change",
+          "title": "Apply this source change?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.",
         "execution": {
@@ -7330,6 +7362,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7482,7 +7515,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Configure a source"
       },
@@ -7509,6 +7542,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -7757,6 +7791,7 @@
           "global"
         ],
         "surfaces": [
+          "ui",
           "plugin"
         ],
         "title": "Read the sources you configured"
@@ -7850,6 +7885,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -8097,7 +8133,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the durable facts of one entry"
       },
@@ -8214,6 +8250,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
@@ -8961,7 +8998,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Re-read an entry after a provider change"
       },
@@ -8985,6 +9022,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -9269,11 +9307,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the saved views"
       },
       {
+        "confirmation": {
+          "body": "This creates, renames, removes, or selects a saved PRs & Issues view in this Happier Account.",
+          "confirmLabel": "Apply change",
+          "title": "Apply this saved-view change?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Creates, renames, removes or selects one saved filter and order view.",
         "execution": {
@@ -9839,6 +9882,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -10148,7 +10192,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Save, update, delete or select a view"
       },
@@ -10172,6 +10216,7 @@
           ],
           "type": "object"
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -10362,11 +10407,16 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Read the configured actions"
       },
       {
+        "confirmation": {
+          "body": "This adds, changes, removes, enables, disables, or reorders an entry action in this Happier Account.",
+          "confirmLabel": "Apply change",
+          "title": "Apply this configured-action change?"
+        },
         "dangerLevel": "writesLocal",
         "description": "Creates, renames, disables, reconfigures, removes or reorders one configured action.",
         "execution": {
@@ -10758,6 +10808,7 @@
             }
           ]
         },
+        "placementBindings": [],
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -10992,7 +11043,7 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "ui"
         ],
         "title": "Add, change, remove or reorder an action"
       }
@@ -11290,7 +11341,10 @@
               "get": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -12256,7 +12310,10 @@
               "listInstances": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin",
+                    "ui"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -12947,7 +13004,9 @@
               "prepareReviewWorkspace": {
                 "action": {
                   "dangerLevel": "writesLocal",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -13508,7 +13567,9 @@
               "scan": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",
@@ -15518,7 +15579,9 @@
               "verifyReviewWorkspace": {
                 "action": {
                   "dangerLevel": "safe",
-                  "surface": "plugin"
+                  "surfaces": [
+                    "plugin"
+                  ]
                 },
                 "input": {
                   "kind": "protocolDefined",

@@ -59,10 +59,6 @@ export const AGENT_DEFINITION = Object.freeze({
           sharedStatePrivacyRiskAcknowledgementRequired: true,
         },
       },
-      supportedKindsByServiceId: {
-        'openai-codex': ['oauth'],
-        openai: ['token'],
-      },
     },
     resume: { vendorResume: 'experimental' as const, vendorResumeIdField: 'codexSessionId' },
     sessionStorage: { direct: true, persisted: true },

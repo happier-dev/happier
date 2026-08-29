@@ -7,6 +7,7 @@ import {
   DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
   DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,
   DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+  createDiscordAutomationEventCandidate,
   createDiscordAutomationMessagePayload,
   createDiscordAutomationMessageSourceInstanceId,
   parseDiscordAutomationMessageSourceConfig,
@@ -79,6 +80,57 @@ describe('Discord Automation Event contribution', () => {
       actorKind: 'human',
       actorPrincipalId: 'discord:user:77',
     });
+  });
+
+  it('drops the integration’s own observations so a result delivered back to the watched channel cannot re-admit', () => {
+    const applicationId = '111222333444555666';
+    const selfObservation = {
+      v: 1,
+      occurrenceId: 'discord:message:9002',
+      occurredAt: 1_725_000_000_000,
+      transport: { kind: 'socket' },
+      endpoint: { kind: 'shared', audience: 'shared', id: 'discord:channel:4242' },
+      actor: {
+        principalId: `discord:application:${applicationId}`,
+        kind: 'integration',
+        isIntegrationSelf: true,
+      },
+      message: {
+        id: '9002',
+        addressingEvidence: 'none',
+        contentProvenance: 'viaBot',
+        providerTimestamp: 1_725_000_000_000,
+        text: 'Automation result: the deploy passed',
+      },
+    } as const;
+    expect(createDiscordAutomationEventCandidate({
+      applicationId,
+      observation: { kind: 'fullText', observation: selfObservation },
+    })).toBeNull();
+
+    // A human author in the same watched channel still produces the candidate.
+    const humanCandidate = createDiscordAutomationEventCandidate({
+      applicationId,
+      observation: {
+        kind: 'fullText',
+        observation: {
+          ...selfObservation,
+          occurrenceId: 'discord:message:9001',
+          actor: { principalId: 'discord:user:77', kind: 'human', isIntegrationSelf: false },
+          message: {
+            ...selfObservation.message,
+            id: '9001',
+            addressingEvidence: 'directIntegrationMention',
+            contentProvenance: 'original',
+            text: 'hello @happier',
+          },
+        },
+      },
+    });
+    expect(humanCandidate).toEqual(expect.objectContaining({
+      eventRef: { pluginId: 'happier.channel.discord', localId: DISCORD_AUTOMATION_MESSAGE_EVENT_ID },
+      payload: expect.objectContaining({ actorKind: 'human', messageId: '9001' }),
+    }));
   });
 
   it('parses only its own source-config contract and derives one stable source identity', () => {

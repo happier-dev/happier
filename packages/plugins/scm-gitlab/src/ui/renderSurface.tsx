@@ -56,6 +56,7 @@ import {
   useExecutePluginAction,
   useReviewCommentProposalsForEntry,
   useSurfaceContext,
+  type PluginTranslate,
   type ReviewCommentProposalReadV1,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
@@ -225,7 +226,14 @@ function PagedFooter({
           values={{ count: state.omittedRowCount }}
         />
       )}
-      {incomplete === null ? null : <Text variant="caption" tone="neutral">{incomplete}</Text>}
+      {incomplete === null ? null : (
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey="plugins.gitlab.ui.paginationUnfollowable"
+          fallback={incomplete}
+        />
+      )}
       {state.canLoadMore
         ? (
           <Button
@@ -507,13 +515,27 @@ function CommentsPanel({
 
 /* ---------------------------------------------------------------------- Changes */
 
-function changedFileSubtitle(row: GitlabProjectedChangedFileRowV1): string {
-  if (row.tooLarge === true) return 'Too large for GitLab to return a diff.';
-  if (row.collapsed === true) return 'GitLab collapsed this file; it can be fetched on request.';
-  if (row.deletedFile) return 'Deleted';
-  if (row.newFile) return 'Added';
-  if (row.renamedFile && row.previousPath !== undefined) return `Renamed from ${row.previousPath}`;
-  return 'Modified';
+function changedFileSubtitle(
+  text: PluginTranslate,
+  row: GitlabProjectedChangedFileRowV1,
+): string {
+  if (row.tooLarge === true) {
+    return text('plugins.gitlab.ui.files.tooLarge', 'Too large for GitLab to return a diff.');
+  }
+  if (row.collapsed === true) {
+    return text(
+      'plugins.gitlab.ui.files.collapsed',
+      'GitLab collapsed this file; it can be fetched on request.',
+    );
+  }
+  if (row.deletedFile) return text('plugins.gitlab.ui.files.deleted', 'Deleted');
+  if (row.newFile) return text('plugins.gitlab.ui.files.added', 'Added');
+  if (row.renamedFile && row.previousPath !== undefined) {
+    return text('plugins.gitlab.ui.files.renamed', 'Renamed from {previous}', {
+      previous: row.previousPath,
+    });
+  }
+  return text('plugins.gitlab.ui.files.modified', 'Modified');
 }
 
 function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
@@ -623,7 +645,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
       renderItem={(row) => (
         <Item
           title={row.path}
-          subtitle={changedFileSubtitle(row)}
+          subtitle={changedFileSubtitle(text, row)}
           accessoryOutsidePressable
           accessory={<Row gap="small">
             <Action.Copy value={row.path} variant="plain" accessibilityLabel={text('plugins.gitlab.ui.copyValue', 'Copy {item}', { item: row.path })} />
@@ -863,10 +885,15 @@ function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV
   );
 }
 
-function discussionHeadline(row: GitlabProjectedDiscussionRowV1): string {
+function discussionHeadline(
+  text: PluginTranslate,
+  row: GitlabProjectedDiscussionRowV1,
+): string {
   const first = row.notes[0];
-  const author = first?.author ?? 'Someone';
-  return row.individualNote ? `${author} · comment` : `${author} · thread`;
+  const author = first?.author ?? text('plugins.gitlab.ui.someone', 'Someone');
+  return row.individualNote
+    ? `${author} · ${text('plugins.gitlab.ui.discussion.comment', 'comment')}`
+    : `${author} · ${text('plugins.gitlab.ui.discussion.thread', 'thread')}`;
 }
 
 /**
@@ -938,17 +965,30 @@ function DiscussionRow({ input, row, proposals }: Readonly<{
   row: GitlabProjectedDiscussionRowV1;
   proposals: ReviewCommentProposalReadV1;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const [expanded, setExpanded] = React.useState(false);
   const hasEarlier = hasEarlierGitlabDiscussionRepliesV1(row.notes);
   const shown = projectGitlabDiscussionRepliesV1(row.notes, expanded);
   const bodies = shown.map((note) => note.body).filter((body) => body !== '').join(' — ');
   const subtitle = row.omittedNoteCount === 0
     ? bodies
-    : `${bodies} (${String(row.omittedNoteCount)} further reply/replies were not published)`;
+    : `${bodies} ${text(
+      'plugins.gitlab.ui.discussion.omittedReplies',
+      '({count} further reply/replies were not published)',
+      { count: row.omittedNoteCount },
+    )}`;
   return (
     <Stack gap="small">
-      <Item title={discussionHeadline(row)} subtitle={subtitle} />
-      {hasEarlier ? <Button title={expanded ? 'Show latest replies' : 'Show earlier replies'} variant="plain" onPress={() => setExpanded((value) => !value)} /> : null}
+      <Item title={discussionHeadline(text, row)} subtitle={subtitle} />
+      {hasEarlier ? (
+        <Button
+          title={expanded
+            ? text('plugins.gitlab.ui.discussion.showLatest', 'Show latest replies')
+            : text('plugins.gitlab.ui.discussion.showEarlier', 'Show earlier replies')}
+          variant="plain"
+          onPress={() => setExpanded((value) => !value)}
+        />
+      ) : null}
       {row.individualNote ? null : <GitlabDiscussionResolutionControl input={input} discussionId={row.id} resolved={row.notes[0]?.resolved === true} />}
       {row.individualNote ? null : (
         <GitlabThreadReplyPublicationControl

@@ -2,6 +2,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { z } from 'zod';
 
 import type { CodexConnectedServiceRuntimeFailureClassification } from '../../runtime/auth/failure.js';
+import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../constants.js';
 
 const connectedServiceProfileIdSchema = z.string()
   .min(1)
@@ -13,15 +14,24 @@ const connectedServiceAuthGroupIdSchema = z.string()
   .max(64)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u, 'Invalid connected service account group id');
 
+/**
+ * Provider-local service id of the Codex Connected Account service on the
+ * refresh bridge wire. The daemon refresh admission parses `serviceId` with
+ * the closed `ConnectedServiceId` enum and requires the request and selection
+ * ids to match exactly, so every refresh selection here carries this local id
+ * unchanged — never the qualified Plugin contribution key.
+ */
+const OPENAI_CODEX_SERVICE_LOCAL_ID = 'openai-codex';
+
 export const CodexChatGptAuthTokensRefreshSelectionSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
-    serviceId: z.literal('openai-codex'),
+    serviceId: z.literal(OPENAI_CODEX_SERVICE_LOCAL_ID),
     profileId: connectedServiceProfileIdSchema,
   }),
   z.object({
     kind: z.literal('group'),
-    serviceId: z.literal('openai-codex'),
+    serviceId: z.literal(OPENAI_CODEX_SERVICE_LOCAL_ID),
     groupId: connectedServiceAuthGroupIdSchema,
     activeProfileId: connectedServiceProfileIdSchema,
     fallbackProfileId: connectedServiceProfileIdSchema,
@@ -81,9 +91,8 @@ function readDirectMetadataBinding(facts: CodexChatGptRefreshSessionFacts): Code
   const bindingsByServiceId = connectedServices && isRecord(connectedServices.bindingsByServiceId)
     ? connectedServices.bindingsByServiceId
     : null;
-  const serviceKey = 'happier.agent.codex/openai-codex';
-  const binding = bindingsByServiceId && isRecord(bindingsByServiceId[serviceKey])
-    ? bindingsByServiceId[serviceKey]
+  const binding = bindingsByServiceId && isRecord(bindingsByServiceId[CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY])
+    ? bindingsByServiceId[CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY]
     : null;
   if (binding?.source === 'connected' && binding.selection === 'group') {
     const groupId = connectedServiceAuthGroupIdSchema.safeParse(binding.groupId);
@@ -128,7 +137,7 @@ export function resolveCodexChatGptRefreshSelectionFromMetadata(
     return {
       selection: {
         kind: 'profile',
-        serviceId: 'openai-codex',
+        serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
         profileId: binding.profileId,
       },
       recoveryGroupId: binding.groupId,
@@ -137,7 +146,7 @@ export function resolveCodexChatGptRefreshSelectionFromMetadata(
   return {
     selection: {
       kind: 'profile',
-      serviceId: 'openai-codex',
+      serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
       profileId: binding.profileId,
     },
     recoveryGroupId: null,
@@ -145,11 +154,11 @@ export function resolveCodexChatGptRefreshSelectionFromMetadata(
 }
 
 function readCodexChatGptRefreshChildSelection(selection: unknown): CodexChatGptRefreshChildSelection | null {
-  if (!isRecord(selection) || selection.serviceId !== 'openai-codex') return null;
+  if (!isRecord(selection) || selection.serviceId !== OPENAI_CODEX_SERVICE_LOCAL_ID) return null;
   if (selection.kind === 'profile' && typeof selection.profileId === 'string') {
     return {
       kind: 'profile',
-      serviceId: 'happier.agent.codex/openai-codex',
+      serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
       profileId: selection.profileId,
     };
   }
@@ -163,7 +172,7 @@ function readCodexChatGptRefreshChildSelection(selection: unknown): CodexChatGpt
   ) {
     return {
       kind: 'group',
-      serviceId: 'happier.agent.codex/openai-codex',
+      serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
       groupId: selection.groupId,
       activeProfileId: selection.activeProfileId,
       fallbackProfileId: selection.fallbackProfileId,
@@ -182,7 +191,7 @@ export function resolveCodexChatGptRefreshSelectionFromChildSelection(
     return {
       selection: {
         kind: 'profile',
-        serviceId: 'happier.agent.codex/openai-codex',
+        serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
         profileId: childSelection.profileId,
       },
       recoveryGroupId: null,
@@ -191,7 +200,7 @@ export function resolveCodexChatGptRefreshSelectionFromChildSelection(
   return {
     selection: {
       kind: 'group',
-      serviceId: 'happier.agent.codex/openai-codex',
+      serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
       groupId: childSelection.groupId,
       activeProfileId: childSelection.activeProfileId,
       fallbackProfileId: childSelection.fallbackProfileId,
@@ -207,8 +216,9 @@ export function createCodexChatGptBridgeRefreshFailureClassification(
   const { selection } = resolution;
   return {
     kind: 'refresh_failed',
-    // Canonical qualified Plugin contribution key.
-    serviceId: 'happier.agent.codex/openai-codex',
+    // Canonical qualified Plugin contribution key of the failing service; the
+    // selection itself stays on the provider-local refresh wire identity.
+    serviceId: CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY,
     profileId: selection.kind === 'group' ? selection.activeProfileId : selection.profileId,
     groupId: selection.kind === 'group' ? selection.groupId : resolution.recoveryGroupId,
     resetsAtMs: null,

@@ -517,6 +517,11 @@ function createGithubPlugin() {
       description: 'Lists the GitHub accounts each authorized connection can reach.',
       scopes: ['global'],
       surfaces: sources.operations.listInstances.declaration.surfaces,
+      // Mounted-only placement. `plugin` stays because the Triage daemon
+      // consumes it and `ui` because this source's own mounted surfaces hold
+      // present-user authority; the explicit empty list only withdraws the
+      // Action from global placement discovery — it disables no invocation.
+      placementBindings: [],
       dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
       execution: { target: 'daemon' },
       inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
@@ -542,6 +547,11 @@ function createGithubPlugin() {
       description: 'Authoritatively reads one GitHub pull request or issue for a configured account.',
       scopes: ['global'],
       surfaces: sources.operations.get.declaration.surfaces,
+      // Mounted-only placement. `plugin` stays because the Triage daemon
+      // consumes it and `ui` because this source's own mounted surfaces hold
+      // present-user authority; the explicit empty list only withdraws the
+      // Action from global placement discovery — it disables no invocation.
+      placementBindings: [],
       dangerLevel: sources.operations.get.declaration.dangerLevel,
       execution: { target: 'daemon' },
       inputSchema: sources.operations.get.declaration.input.schema.jsonSchema,
@@ -576,14 +586,17 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: verifyGithubTriageReviewWorkspace,
     },
-    // The six source-native detail planes. The published Triage roles declare
-    // the `plugin` surface; these reads are invoked the same way, by this
-    // source's own mounted detail body and by nothing else.
+    // The five source-native detail planes. Only this source's own mounted
+    // detail body invokes them, through the mounted Plugin UI host — present
+    // user authority — so they declare `ui` and nothing else, and the explicit
+    // empty placement list keeps global discovery from offering them a
+    // destination while the mounted invocation stays untouched.
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline]: {
       title: 'Read a GitHub timeline page',
       description: 'Reads one bounded page of the event timeline of one pull request or issue.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       dangerLevel: 'safe',
       execution: { target: 'daemon' },
       inputSchema: GithubTimelineInputV1Schema.jsonSchema,
@@ -597,7 +610,8 @@ function createGithubPlugin() {
       description: 'Reads one bounded page of the files one pull request changes, with their'
         + ' counts and whether GitHub supplied a patch for each.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       dangerLevel: 'safe',
       execution: { target: 'daemon' },
       inputSchema: GithubChangedFilesInputV1Schema.jsonSchema,
@@ -611,7 +625,8 @@ function createGithubPlugin() {
       description: 'Reads one independently paged pull-request feedback connection: issue comments,'
         + ' review threads, review bodies, outstanding requests, or one thread\'s earlier replies.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       dangerLevel: 'safe',
       execution: { target: 'daemon' },
       inputSchema: GithubFeedbackInputV1Schema.jsonSchema,
@@ -625,7 +640,8 @@ function createGithubPlugin() {
       description: 'Reads the check runs and commit statuses of one pull request at its current'
         + ' head revision.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       dangerLevel: 'safe',
       execution: { target: 'daemon' },
       inputSchema: GithubChecksInputV1Schema.jsonSchema,
@@ -639,7 +655,8 @@ function createGithubPlugin() {
       description: 'Reads who has reviewed one pull request and whose review is still awaited,'
         + ' from the two review resources GitHub publishes them on.',
       scopes: ['global'],
-      surfaces: ['plugin'],
+      surfaces: ['ui'],
+      placementBindings: [],
       dangerLevel: 'safe',
       execution: { target: 'daemon' },
       inputSchema: GithubReviewsInputV1Schema.jsonSchema,
@@ -648,26 +665,23 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, readGithubReviews),
     },
-    // The pull-request mutations. Omitting `agent` and `mcp` is the human
-    // gate: it makes them unreachable from an agent at all, which is a stronger
-    // guarantee than flooring a danger level to a prompt.
+    // The bound pull-request and issue mutations. Omitting `agent` and `mcp` is
+    // the human gate: it makes them unreachable from an agent at all, which is a
+    // stronger guarantee than flooring a danger level to a prompt.
     //
-    // `plugin` is present alongside `ui` and is REQUIRED for the feature to work
-    // at all, not a widening of that gate. A mounted plugin surface always
-    // dispatches as a plugin caller, so `executeContributedAction` resolves
-    // `actionSurface` to `plugin` and refuses anything that does not declare it —
-    // which is why the six detail reads already declare `['plugin']`. The human
-    // gate is untouched because it keys off `invocationSurface` ('ui' from the
-    // dispatcher), a value computed separately from `actionSurface`, so host
-    // confirmation still fires for every one of these writes.
-    // Each declares the same `github-api` grant and the same connected-account
-    // purpose as every read, and rebinds the exact configured account.
+    // `ui` is the only other surface and it is the product's whole reach for
+    // these writes: the daemon ingress derives the invoking surface from the
+    // authenticated mounted-UI provenance, so a mounted Plugin UI press is
+    // admitted as UI authority while direct plugin code — ActionsService —
+    // checks only the `plugin` surface and is refused here. Each declares the
+    // same `github-api` grant and the same connected-account purpose as every
+    // read, and rebinds the exact configured account.
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge]: {
       title: 'Merge this pull request',
       description: 'Merges one GitHub pull request at the exact head revision you are looking at,'
         + ' using a merge method this repository allows.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
       confirmation: {
@@ -697,7 +711,7 @@ function createGithubPlugin() {
       description: 'Closes one open GitHub pull request without merging it. Its branch and commits'
         + ' are left untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -725,7 +739,7 @@ function createGithubPlugin() {
       title: 'Reopen this pull request',
       description: 'Reopens one closed, unmerged GitHub pull request.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -758,7 +772,7 @@ function createGithubPlugin() {
       description: 'Takes one GitHub pull request out of draft at the exact head revision you are'
         + ' looking at, which notifies every requested reviewer and starts its checks.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -787,7 +801,7 @@ function createGithubPlugin() {
       title: 'Submit this pull request review',
       description: 'Publishes one canonical Happier review proposal and its verdict against the exact base and head revisions you are looking at.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -815,7 +829,7 @@ function createGithubPlugin() {
       title: 'Publish this pull request review comment',
       description: 'Publishes one canonical Happier review proposal at its exact pinned GitHub diff anchor.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -834,7 +848,7 @@ function createGithubPlugin() {
       title: 'Reply to this pull request review thread',
       description: 'Publishes one canonical Happier proposal as a reply to the exact GitHub review thread.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -853,7 +867,7 @@ function createGithubPlugin() {
       title: 'Comment on this GitHub issue',
       description: 'Publishes one canonical Happier proposal into the exact GitHub issue conversation.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -873,7 +887,7 @@ function createGithubPlugin() {
       description: 'Merges the base branch into one GitHub pull request’s branch, guarded by the'
         + ' exact head revision you are looking at.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -904,7 +918,7 @@ function createGithubPlugin() {
       description: 'Asks exactly the named GitHub users and teams to review this pull request,'
         + ' leaving reviewers somebody else requested untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
       confirmation: {
@@ -934,7 +948,7 @@ function createGithubPlugin() {
       description: 'Stops asking exactly the named GitHub users and teams to review this pull'
         + ' request, leaving every reviewer you did not name untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -976,7 +990,7 @@ function createGithubPlugin() {
       description: 'Marks one line-anchored review thread on this GitHub pull request resolved,'
         + ' or reopens one that was resolved.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1010,7 +1024,7 @@ function createGithubPlugin() {
       title: 'Close this issue',
       description: 'Closes one open GitHub issue with the reason you choose, which everyone watching it sees.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1038,7 +1052,7 @@ function createGithubPlugin() {
       title: 'Reopen this issue',
       description: 'Reopens one closed GitHub issue.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1066,7 +1080,7 @@ function createGithubPlugin() {
       title: 'Assign people to this issue',
       description: 'Assigns exactly the named GitHub users to this issue, leaving everyone somebody else assigned untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1094,7 +1108,7 @@ function createGithubPlugin() {
       title: 'Unassign people from this issue',
       description: 'Unassigns exactly the named GitHub users from this issue, leaving everyone you did not name untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1122,7 +1136,7 @@ function createGithubPlugin() {
       title: 'Add labels to this issue',
       description: 'Adds exactly the named labels to this issue, leaving every label somebody else added untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {
@@ -1150,7 +1164,7 @@ function createGithubPlugin() {
       title: 'Remove a label from this issue',
       description: 'Removes exactly one named label from this issue, leaving every other label untouched.',
       scopes: ['global'],
-      surfaces: ['ui', 'plugin'],
+      surfaces: ['ui'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
       confirmation: {

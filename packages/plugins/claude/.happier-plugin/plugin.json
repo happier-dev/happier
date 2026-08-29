@@ -239,6 +239,10 @@
         },
         "connectedAccounts": [
           {
+            "credentialKinds": [
+              "oauth",
+              "token"
+            ],
             "materializationKinds": [
               "environment",
               "files",
@@ -249,6 +253,9 @@
             "service": "claude-subscription"
           },
           {
+            "credentialKinds": [
+              "token"
+            ],
             "materializationKinds": [
               "environment"
             ],

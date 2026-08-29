@@ -1,4 +1,4 @@
-import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
+import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   ConversationProviderConnectionsSnapshotV1Schema,
@@ -7,6 +7,7 @@ import {
 
 import {
   listConversationProviderConnectionsForCaller,
+  readConversationBindingInputModesNoLongerDeliverable,
   readConversationProviderConnectionForCaller,
   type ConversationReconciliationConnectionStateV1,
 } from './reconciliation.js';
@@ -444,5 +445,49 @@ describe('Conversation provider reconciliation', () => {
       ...invocation,
       connections: [duplicate, { ...duplicate, providerConfig: { duplicate: true } }],
     })).toThrow('one exact key per connection ID');
+  });
+
+  it('fails closed with the retryable snapshot outcome when one binding read drifts mid-scan', async () => {
+    // 200 rows per page (PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1) forces the 256-row
+    // binding read onto a second page whose changed cursor must never silently
+    // collapse into an empty "every mode deliverable" answer.
+    const bindingRow = {
+      rowId: 'binding-1',
+      revision: 1,
+      value: {
+        id: 'binding-1',
+        'record-kind': 'binding',
+        'connection-id': 'connection-1',
+        'binding-id': 'binding-1',
+        payload: {},
+      },
+    };
+    let queryCount = 0;
+    const collection = {
+      async query(_request: unknown, _options?: unknown) {
+        queryCount += 1;
+        return queryCount === 1
+          ? {
+            rows: Array.from({ length: 200 }, () => bindingRow),
+            nextCursor: 'binding-200',
+            changeCursor: 11,
+          }
+          : { rows: [], nextCursor: undefined, changeCursor: 12 };
+      },
+    };
+    const context = {
+      signal: new AbortController().signal,
+      services: { storage: { account: { collection: () => collection } } },
+    } as unknown as PluginInvocationContext;
+
+    await expect(readConversationBindingInputModesNoLongerDeliverable({
+      context,
+      connectionId: 'connection-1',
+      sharedEndpointInputModes: ['directMentionsOnly'],
+    })).rejects.toMatchObject({
+      code: 'channels_reconciliation_snapshot_changed',
+      retryable: true,
+    });
+    expect(queryCount).toBe(2);
   });
 });

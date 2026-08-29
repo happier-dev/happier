@@ -887,7 +887,7 @@ function serializeConversationOutwardDeliveryRecord(input: Readonly<{
 }
 
 /**
- * Reads one bounded page from the existing owner/attention index. This is not
+ * Reads one bounded page from the connection/attention index. This is not
  * an attention Resource or a second projection: every row is revalidated by
  * the same strict parser that guards custody writes before its minimal UI
  * representation is returned.
@@ -929,13 +929,18 @@ export async function readConversationOutwardDeliveryResolutionPage(input: Reado
   let page: Awaited<ReturnType<ChannelDeliveriesCollection['query']>>;
   try {
     page = await input.deliveriesCollection.query({
-      index: collections.CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
+      index: collections.CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention,
       prefix: [input.connectionId],
+      // The declared index orders [connection, attention, binding, id], so the
+      // range applies to the next component after the connection prefix and
+      // selects unresolved rows across every binding. The strict custody
+      // parser and actionable-state filter below stay the exactness owners.
+      range: { lower: true, upper: true },
       order: 'asc',
       limit,
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
     }, input.signal === undefined ? undefined : { signal: input.signal });
-  } catch {
+  } catch (error) {
     if (input.signal?.aborted) {
       assertDeliveryResolutionCurrent(input);
     }

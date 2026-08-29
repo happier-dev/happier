@@ -4,11 +4,17 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
 describe('OpenCode AGENT_DEFINITION', () => {
-  it('advertises Claude subscription OAuth plus native setup-token while the Anthropic Console key stays token-only', () => {
-    expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId['claude-subscription'])
-      .toEqual(['oauth', 'token']);
-    expect(AGENT_DEFINITION.core.connectedServices.supportedKindsByServiceId.anthropic)
-      .toEqual(['token']);
+  it('publishes credential-kind eligibility through the public connected-account declarations', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+        credentialKinds: ['oauth', 'token'],
+      }),
+      expect.objectContaining({
+        service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+        credentialKinds: ['token'],
+      }),
+    ]));
   });
 
   it('publishes the recovered OpenCode runtime capabilities from the plugin-owned definition', () => {
