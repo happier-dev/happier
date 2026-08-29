@@ -26,6 +26,7 @@ import {
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
+    active?: boolean;
 }
 
 export type SessionDraftTextSnapshot = Readonly<{
@@ -59,7 +60,8 @@ export function useDraft(
     const lastSessionScope = useRef<ServerAccountScope | null>(null);
     const latestValue = useRef<string>(value);
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
-    const isFocused = useIsFocused();
+    const routeFocused = useIsFocused();
+    const active = options.active ?? routeFocused;
     const session = sessionId ? storage.getState().sessions[sessionId] : null;
     const storedDraft = draftSnapshot?.document.composer.text.value ?? null;
     const forkInitialPrompt = readForkInitialPromptV1(session?.metadata);
@@ -266,7 +268,7 @@ export function useDraft(
             return;
         }
 
-        if (!isFocused) return;
+        if (!active) return;
 
         const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
         if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
@@ -305,7 +307,7 @@ export function useDraft(
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, isFocused, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
+    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
 
     // Auto-save with smart debouncing
     useEffect(() => {

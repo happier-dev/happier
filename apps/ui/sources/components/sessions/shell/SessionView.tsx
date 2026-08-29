@@ -4151,7 +4151,7 @@ function SessionViewLoaded({
         clearDraftCurrentness,
         draftSnapshot,
         draftScope,
-    } = useDraft(sessionId, message, setMessage);
+    } = useDraft(sessionId, message, setMessage, { active: surfaceFocused });
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftSnapshot?.conflict ?? null);
     const messageRef = React.useRef(message);
     React.useEffect(() => {

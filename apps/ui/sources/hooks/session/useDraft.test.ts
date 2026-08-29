@@ -281,7 +281,7 @@ type HarnessState = Readonly<{
   rerender: () => void;
 }>;
 
-async function renderHarness(params: { initialSessionId: string }): Promise<{
+async function renderHarness(params: { initialSessionId: string; active?: boolean }): Promise<{
   getCurrent: () => HarnessState;
   unmount: () => void;
 }> {
@@ -291,7 +291,10 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
     const [sessionId, setSessionId] = React.useState(params.initialSessionId);
     const [value, setValue] = React.useState('');
     const [, setTick] = React.useState(0);
-    const draftApi = useDraft(sessionId, value, setValue, { autoSaveInterval: 60_000 });
+    const draftApi = useDraft(sessionId, value, setValue, {
+      autoSaveInterval: 60_000,
+      ...(typeof params.active === 'boolean' ? { active: params.active } : {}),
+    });
     React.useLayoutEffect(() => {
       onHarnessLayoutEffect?.();
     });
@@ -458,6 +461,15 @@ describe('useDraft', () => {
     await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('draft-3');
+    harness.unmount();
+  });
+
+  it('hydrates a visible session surface even when its navigation route is not focused', async () => {
+    isFocused = false;
+
+    const harness = await renderHarness({ initialSessionId: 's1', active: true });
+
+    expect(harness.getCurrent().value).toBe('draft-1');
     harness.unmount();
   });
 

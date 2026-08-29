@@ -4,6 +4,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 
 import {
     SessionDraftRuntimeHydrationGate,
+    materializeVisibleExistingSessionDraft,
     materializeSessionDraftSocketWake,
     parseSessionDraftSocketWake,
 } from './sessionDraftSyncRuntime';
@@ -128,5 +129,41 @@ describe('sessionDraftSyncRuntime', () => {
             readActiveScope: () => activeScope,
             materializeExact,
         })).resolves.toBe(false);
+    });
+
+    it('refreshes the visible existing-session draft after repository runtime hydration', async () => {
+        const ensureRuntimeReady = vi.fn(async () => undefined);
+        const materializeExact = vi.fn(async () => undefined);
+
+        await expect(materializeVisibleExistingSessionDraft({
+            sessionId: 'session-a',
+            capturedScope: SCOPE,
+            readActiveScope: () => SCOPE,
+            ensureRuntimeReady,
+            materializeExact,
+        })).resolves.toBe(true);
+
+        expect(ensureRuntimeReady).toHaveBeenCalledOnce();
+        expect(materializeExact).toHaveBeenCalledWith(SCOPE, {
+            kind: 'session',
+            sessionId: 'session-a',
+        });
+    });
+
+    it('does not refresh a visible draft after its server/account scope changes', async () => {
+        let activeScope: ServerAccountScope | null = SCOPE;
+        const materializeExact = vi.fn(async () => undefined);
+
+        await expect(materializeVisibleExistingSessionDraft({
+            sessionId: 'session-a',
+            capturedScope: SCOPE,
+            readActiveScope: () => activeScope,
+            ensureRuntimeReady: async () => {
+                activeScope = { serverId: 'server-b', accountId: 'account-a' };
+            },
+            materializeExact,
+        })).resolves.toBe(false);
+
+        expect(materializeExact).not.toHaveBeenCalled();
     });
 });
