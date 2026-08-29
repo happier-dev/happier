@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { selectExactCanonicalCiRun, selectExactSuccessfulCiRun } from './verify-existing-ci.mjs';
+import { buildWorkflowRunsEndpoint, selectExactCanonicalCiRun, selectExactSuccessfulCiRun } from './verify-existing-ci.mjs';
 
 const sha = 'a'.repeat(40);
+
+test('asks GitHub for the exact source SHA instead of reading a large recent-run window', () => {
+  assert.equal(
+    buildWorkflowRunsEndpoint('happier-dev/happier', 'tests.yml', 'dev', sha),
+    `repos/happier-dev/happier/actions/workflows/tests.yml/runs?branch=dev&head_sha=${sha}&event=push&per_page=100`,
+  );
+});
 
 test('selects only a successful same-repository push CI run for the exact source and branch', () => {
   const selected = selectExactSuccessfulCiRun([

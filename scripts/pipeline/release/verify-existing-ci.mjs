@@ -33,8 +33,12 @@ export function selectExactSuccessfulCiRun(runs, expected) {
   return run;
 }
 
-function fetchWorkflowRuns(repository, workflow, sourceBranch) {
-  const endpoint = `repos/${repository}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(sourceBranch)}&event=push&per_page=100`;
+export function buildWorkflowRunsEndpoint(repository, workflow, sourceBranch, sourceSha) {
+  return `repos/${repository}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(sourceBranch)}&head_sha=${encodeURIComponent(sourceSha)}&event=push&per_page=100`;
+}
+
+function fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha) {
+  const endpoint = buildWorkflowRunsEndpoint(repository, workflow, sourceBranch, sourceSha);
   const result = spawnSync('gh', ['api', endpoint], { encoding: 'utf8', env: process.env });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(String(result.stderr || result.stdout || '').trim());
@@ -62,7 +66,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (!['dev', 'preview', 'main'].includes(sourceBranch)) throw new Error('--source-branch must be dev, preview, or main');
   if (!/^[A-Za-z0-9_.-]+\.ya?ml$/u.test(workflow)) throw new Error('--workflow must be a workflow filename');
   const expected = { repository, sourceSha, sourceBranch };
-  let runs = fetchWorkflowRuns(repository, workflow, sourceBranch);
+  let runs = fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha);
   const observed = selectExactCanonicalCiRun(runs, expected);
   if (observed.status !== 'completed') {
     process.stderr.write(`Waiting for exact-SHA push CI ${observed.id} (${observed.status})...\n`);
@@ -71,7 +75,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (watched.status !== 0) {
       throw new Error(`Exact-SHA push CI ${observed.id} did not complete successfully`);
     }
-    runs = fetchWorkflowRuns(repository, workflow, sourceBranch);
+    runs = fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha);
   }
   const run = selectExactSuccessfulCiRun(runs, expected);
   const output = { runId: Number(run.id), runUrl: String(run.html_url ?? ''), sourceSha, sourceBranch };
