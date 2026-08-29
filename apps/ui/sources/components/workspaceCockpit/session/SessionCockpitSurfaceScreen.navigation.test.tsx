@@ -221,6 +221,9 @@ function createCockpitPluginProjection(input: Readonly<{
             serverId: 'server-1',
             generation: 4,
             interactionEnabled: true,
+            // The canonical union producer stamps projection phase; currentness
+            // is never inferred from the model or the interaction boolean.
+            phase: 'current',
             executionOrigin: {
                 serverIdentityId: 'srv_account_one',
                 materializationRef: {

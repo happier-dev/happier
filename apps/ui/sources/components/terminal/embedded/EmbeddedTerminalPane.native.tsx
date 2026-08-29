@@ -98,11 +98,11 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     );
     const [nativeRendererFailed, setNativeRendererFailed] = React.useState(false);
     const [webViewRecoveryNonce, requestWebViewRecovery] = React.useReducer((value: number) => value + 1, 0);
-    React.useEffect(() => {
-        setNativeRendererFailed(false);
-    }, [selectedRenderer]);
     const quarantineActive = nativeRendererQuarantine?.renderer === selectedRenderer
         && nativeRendererQuarantine.expiresAtMs > Date.now();
+    React.useEffect(() => {
+        setNativeRendererFailed(false);
+    }, [quarantineActive, selectedRenderer]);
     React.useEffect(() => {
         if (nativeRendererQuarantine && nativeRendererQuarantine.expiresAtMs <= Date.now()) {
             setNativeRendererQuarantine(null);

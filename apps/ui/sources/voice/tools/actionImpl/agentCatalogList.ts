@@ -351,6 +351,7 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
 export async function listAgentModelsForVoiceTool(params: Readonly<{
   agentId?: string;
   machineId?: string;
+  serverId?: string;
   limit?: number;
   backendTargetKey?: string;
 }>): Promise<unknown> {
@@ -411,7 +412,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
   }
 
   const machineId = normalizeId(params.machineId);
-  const serverId = normalizeId(getActiveServerSnapshot()?.serverId) || null;
+  const serverId = normalizeId(params.serverId) || normalizeId(getActiveServerSnapshot()?.serverId) || null;
   const canonicalTargetKey = backendTarget
     ? resolveBackendTargetKeyV2(backendTarget)
     : resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId });

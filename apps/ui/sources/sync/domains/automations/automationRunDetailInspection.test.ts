@@ -95,6 +95,7 @@ function createPlainRecipe() {
             kind: 'existingSession' as const,
             sessionId: 'session-1',
         },
+        assignmentMachineIds: ['machine-1'],
     };
 }
 

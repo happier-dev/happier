@@ -187,20 +187,20 @@ vi.mock('@/modal', async () => {
 
 const DRAFT = {
     targetType: 'existing_session',
+    executionTarget: null,
     directory: '/repo/project',
     checkoutCreationDraft: null,
+    organizationPlacement: { folderId: null, tagIds: [] },
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
-    agentId: null,
-    backendTarget: null,
+    agentTarget: null,
     transcriptStorage: 'direct',
     profileId: null,
     environmentVariables: null,
     resumeSessionId: null,
     permissionMode: 'default',
     permissionModeUpdatedAt: null,
-    modelId: null,
-    modelUpdatedAt: null,
+    modelSelection: null,
     mcpSelection: null,
     connectedServices: {
         v: 1,
@@ -209,8 +209,8 @@ const DRAFT = {
     terminal: null,
     windowsRemoteSessionLaunchMode: null,
     windowsRemoteSessionConsole: null,
-    experimentalCodexAcp: null,
-    codexBackendMode: null,
+    windowsTerminalWindowName: null,
+    runtimeDescriptorV1: null,
     acpSessionModeId: null,
     sessionConfigOptionOverrides: null,
     existingSessionId: 's1',
@@ -226,7 +226,12 @@ const DRAFT = {
             definition: {
                 kind: 'schedule',
                 enabled: true,
-                schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                schedule: {
+                    kind: 'interval',
+                    everyMs: 60 * 60_000,
+                    scheduleExpr: null,
+                    timezone: null,
+                },
             },
         }],
     },
@@ -292,6 +297,13 @@ describe('ExistingSessionAutomationComposer', () => {
             submitAccessibilityLabel="Save"
             isSubmitDisabled={false}
         />);
+
+        const agentInputProps = agentInputSpy.mock.lastCall?.[0] as Readonly<{
+            onPermissionModeChange?: unknown;
+            onModelModeChange?: unknown;
+        }>;
+        expect(agentInputProps.onPermissionModeChange).toBeUndefined();
+        expect(agentInputProps.onModelModeChange).toBeUndefined();
 
         const ref = {
             kind: 'automationAuthoring' as const,

@@ -25,8 +25,16 @@ export function hasMatchingAutomationDefinitionSummary(
 }
 
 function summaryFromDetail(detail: AutomationDefinitionDetail): AutomationDefinitionListItem {
-    const { executionRecipe: _executionRecipe, templateCiphertext: _templateCiphertext, ...summary } = detail;
-    return summary;
+    const {
+        executionRecipe: _executionRecipe,
+        templateCiphertext: _templateCiphertext,
+        triggers,
+        ...summary
+    } = detail;
+    return {
+        ...summary,
+        triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger),
+    };
 }
 
 function summaryFromDefinition(definition: AutomationDefinition): AutomationDefinitionListItem {
@@ -36,7 +44,9 @@ function summaryFromDefinition(definition: AutomationDefinition): AutomationDefi
 
 function hasMatchingPrivateTriggerBinding(
     summaryTrigger: AutomationDefinitionListItem['triggers'][number],
-    detailTrigger: AutomationDefinitionDetail['triggers'][number],
+    detailTrigger:
+        | AutomationDefinitionListItem['triggers'][number]
+        | AutomationDefinitionDetail['triggers'][number],
 ): boolean {
     if (
         summaryTrigger.id !== detailTrigger.id
@@ -105,9 +115,19 @@ export function attachAutomationDefinitionDetail(
     for (const summaryTrigger of summary.triggers) {
         const detailTrigger = detailTriggersById.get(summaryTrigger.id);
         if (!detailTrigger || !hasMatchingPrivateTriggerBinding(summaryTrigger, detailTrigger)) return null;
-        triggers.push(detailTrigger.kind === 'pluginEvent' && summaryTrigger.kind === 'pluginEvent'
-            ? { ...detailTrigger, ...summaryTrigger, triggerDefinitionEnvelope: detailTrigger.triggerDefinitionEnvelope }
-            : { ...detailTrigger, ...summaryTrigger });
+        if (detailTrigger.kind === 'pluginEvent' && summaryTrigger.kind === 'pluginEvent') {
+            triggers.push({
+                ...detailTrigger,
+                ...summaryTrigger,
+                triggerDefinitionEnvelope: detailTrigger.triggerDefinitionEnvelope,
+            });
+        } else if (detailTrigger.kind === 'schedule' && summaryTrigger.kind === 'schedule') {
+            triggers.push({ ...detailTrigger, ...summaryTrigger, triggerDefinitionEnvelope: null });
+        } else if (detailTrigger.kind === 'sessionLifecycle' && summaryTrigger.kind === 'sessionLifecycle') {
+            triggers.push({ ...detailTrigger, ...summaryTrigger, triggerDefinitionEnvelope: null });
+        } else {
+            return null;
+        }
     }
     return createAutomationDefinitionFromDetail({
         ...detail,

@@ -5,6 +5,9 @@ import {
     type SyncedSessionAuthoringValueV1,
 } from '@happier-dev/protocol';
 
+import { resolveAgentExecutionTargetForPersistedSelection } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -28,3 +31,42 @@ export function projectSyncedSessionAuthoringFields(value: unknown): Partial<Syn
     return projected as Partial<SyncedSessionAuthoringValueV1>;
 }
 
+/**
+ * Projects the UI New Session draft (canonical plus retired compatibility
+ * selections) onto the catalogued synchronized authoring fields. The canonical
+ * `executionTarget`/`agentTarget` selections win; the retired flat vocabulary
+ * only feeds their derivation and is never projected itself.
+ */
+export function projectNewSessionDraftSyncedAuthoringFields(params: Readonly<{
+    draft: NewSessionDraft;
+    scopeServerId: string;
+}>): Partial<SyncedSessionAuthoringValueV1> {
+    const draft = params.draft;
+    const executionTarget = draft.executionTarget ?? (draft.selectedMachineId
+        ? {
+            serverId: draft.targetServerId?.trim() || params.scopeServerId,
+            machineId: draft.selectedMachineId,
+        }
+        : null);
+    return projectSyncedSessionAuthoringFields({
+        targetType: 'new_session',
+        executionTarget,
+        ...(draft.selectedPath ? { directory: draft.selectedPath } : {}),
+        ...(draft.checkoutCreationDraft ? { checkoutCreationDraft: draft.checkoutCreationDraft } : {}),
+        ...(draft.organizationPlacement ? { organizationPlacement: draft.organizationPlacement } : {}),
+        agentTarget: draft.agentTarget
+            ?? resolveAgentExecutionTargetForPersistedSelection({
+                backendTarget: draft.backendTarget ?? null,
+                fallbackAgentId: draft.agentType,
+            }),
+        ...(draft.transcriptStorage !== undefined ? { transcriptStorage: draft.transcriptStorage } : {}),
+        profileId: draft.selectedProfileId,
+        ...(draft.resumeSessionId ? { resumeSessionId: draft.resumeSessionId } : {}),
+        permissionMode: draft.permissionMode,
+        ...(draft.modelSelection !== undefined ? { modelSelection: draft.modelSelection } : {}),
+        ...(draft.mcpSelection !== undefined ? { mcpSelection: draft.mcpSelection } : {}),
+        ...(draft.runtimeDescriptorV1 !== undefined ? { runtimeDescriptorV1: draft.runtimeDescriptorV1 } : {}),
+        acpSessionModeId: draft.acpSessionModeId,
+        ...(draft.automationDraft ? { automation: draft.automationDraft } : {}),
+    });
+}

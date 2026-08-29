@@ -709,11 +709,14 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         DEFAULT_AGENT_ID: 'codex',
         isBundledAgentId: (value: unknown) => value === 'codex' || value === 'claude',
         resolveAgentIdFromCliDetectKey: () => 'codex',
-        getAgentCore: (_agentId: string) => ({
+        getAgentCore: (agentId: string) => ({
+            // Keep the real bundled core facts (displayNameKey etc.) so catalog
+            // presentation keeps its AgentCoreConfig contract under the mock.
+            ...(actual.getAgentCore(agentId) ?? {}),
             model: { defaultMode: 'default', allowedModes: ['default', 'gpt-5'], supportsFreeform: true },
             resume: { supportsVendorResume: agentResumeSupportState.supportsVendorResume, experimental: false },
             sessionStorage: { direct: true, persisted: true },
-            cli: { detectKey: String(_agentId) },
+            cli: { detectKey: String(agentId) },
         }),
         buildResumeCapabilityOptionsFromUiState: ({ settings }: any) => ({ accountSettings: settings }),
         getAgentResumeExperimentsFromSettings: () => ({}),

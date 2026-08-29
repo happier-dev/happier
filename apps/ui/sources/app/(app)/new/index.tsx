@@ -6,6 +6,7 @@ import { useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
+import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { useResolveNewSessionOrdinaryEntryRoute } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
@@ -45,6 +46,7 @@ function NewSessionScreenInner(props: Readonly<{
     draftId: string;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     statusTrailingActions?: React.ReactNode;
+    automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
 }>) {
     const model = useNewSessionScreenModel(props);
 
@@ -72,6 +74,7 @@ function NewSessionContent(props: Readonly<{
     draftId: string;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     statusTrailingActions?: React.ReactNode;
+    automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
 }>) {
     const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
 
@@ -86,7 +89,9 @@ function NewSessionContent(props: Readonly<{
     );
 }
 
-function NewSessionScreen() {
+function NewSessionScreen(props: Readonly<{
+    automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
+}>) {
     const router = useRouter();
     const { dataId, draftId: routeDraftId, draftOrigin, machineId, directory } = useLocalSearchParams<{
         dataId?: string;
@@ -220,15 +225,18 @@ function NewSessionScreen() {
             draftId={draftIdentity.draftId}
             statusBadges={statusBadges}
             statusTrailingActions={statusTrailingActions}
+            automationExactTurnRetarget={props.automationExactTurnRetarget ?? null}
         />
     );
 }
 
-function NewSessionScreenWithComposerBannerScope() {
+function NewSessionScreenWithComposerBannerScope(props: Readonly<{
+    automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
+}>) {
     const { draftId } = useLocalSearchParams<{ draftId?: string }>();
     return (
         <ComposerBannerCollapseProvider key={typeof draftId === 'string' ? draftId : 'new-session'}>
-            <NewSessionScreen />
+            <NewSessionScreen automationExactTurnRetarget={props.automationExactTurnRetarget ?? null} />
         </ComposerBannerCollapseProvider>
     );
 }

@@ -84,6 +84,12 @@ function placement(input: Readonly<{
                     qualifiedId: `com.example.bound-shell/${input.rendererId}`,
                     generation: 'bound-shell-generation-1',
                 }),
+                declarativeInventory: Object.freeze({
+                    actions: Object.freeze([]),
+                    destinations: Object.freeze([]),
+                    settings: Object.freeze([]),
+                    uiQueries: Object.freeze([]),
+                }),
                 nodes: Object.freeze([]),
                 root: Object.freeze({
                     kind: 'text',

@@ -38,7 +38,7 @@ import {
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
-  applyAgentKindRestrictionsToQualifiedProfileOptions,
+  applyProjectedCredentialKindRestrictions,
   buildQualifiedConnectedAccountGroupOptionsByServiceId,
   buildQualifiedConnectedAccountProfileOptionsByServiceId,
   resolveProjectedConnectedAccountServiceKeys,
@@ -131,15 +131,15 @@ export function useNewSessionConnectedServices(params: Readonly<{
   ), [connectedAccounts]);
 
   const connectedServiceProfileOptionsByServiceId = React.useMemo(() => (
-    applyAgentKindRestrictionsToQualifiedProfileOptions({
+    applyProjectedCredentialKindRestrictions({
       optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
         accounts: accountProfile?.connectedAccountsV4 ?? [],
         supportedServiceIds: supportedConnectedServiceIds,
         labelsByKey: settings.connectedServicesProfileLabelByKey,
       }),
-      agentCore,
+      connectedAccounts,
     })
-  ), [accountProfile?.connectedAccountsV4, agentCore, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
+  ), [accountProfile?.connectedAccountsV4, connectedAccounts, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
 
   const connectedServiceAccountGroupOptionsByServiceId = React.useMemo(() => (
     buildQualifiedConnectedAccountGroupOptionsByServiceId({

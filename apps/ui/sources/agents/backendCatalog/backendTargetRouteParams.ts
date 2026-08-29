@@ -20,7 +20,7 @@ export type SerializedBackendTargetRouteParams = Partial<Readonly<{
     backendTargetKey: string;
 }>>;
 
-function stripBackendTargetSourceKind(target: PersistedBackendTargetRefV2): PersistedBackendTargetRefV2 {
+export function stripBackendTargetSourceKind(target: PersistedBackendTargetRefV2): PersistedBackendTargetRefV2 {
     if (target.kind === 'agent') return target;
     // `sourceKind` is legacy split-brain vocabulary (built-in vs plugin vs configured).
     // Route params must not carry it; `configuredBackendId` is the only needed carrier.

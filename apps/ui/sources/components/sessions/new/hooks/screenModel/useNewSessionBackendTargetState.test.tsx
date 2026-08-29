@@ -153,7 +153,7 @@ describe('useNewSessionBackendTargetState', () => {
         await renderScreen(React.createElement(Probe));
 
         expect(observed).not.toBeNull();
-        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:codex');
+        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.codex/codex');
     });
 
     it('prefers an available configured backend target over built-in defaults when no explicit target is stored', async () => {

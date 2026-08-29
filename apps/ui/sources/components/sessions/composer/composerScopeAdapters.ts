@@ -167,11 +167,37 @@ export function composerReferencesFromStructuredMentions(input: Readonly<{
     mentions: readonly ComposerStructuredInputMention[];
 }>): readonly ComposerMentionRef[] {
     const references = input.mentions.flatMap((mention) => {
-        if (input.text.slice(mention.start, mention.end) !== mention.tokenText) return [];
+        // Admission mirrors the canonical Protocol owner (`admitMentionRefsV1ForText`):
+        // a reference survives while its exact token occurs in the current text.
+        // Stale recorded offsets (a draft replaced outside a structured edit) are
+        // re-anchored to the occurrence nearest the previous position; a token
+        // that no longer occurs drops the reference.
+        const anchored = resolveMentionTokenOccurrence(input.text, mention);
+        if (!anchored) return [];
         const reference = readReferenceFromMention(mention);
-        return reference ? [{ ...reference, start: mention.start, end: mention.end }] : [];
+        return reference ? [{ ...reference, start: anchored.start, end: anchored.end }] : [];
     });
     return references.sort((left, right) => left.start - right.start || left.end - right.end);
+}
+
+function resolveMentionTokenOccurrence(text: string, mention: ComposerStructuredInputMention): Readonly<{ start: number; end: number }> | null {
+    if (!text.includes(mention.tokenText)) return null;
+    if (text.slice(mention.start, mention.end) === mention.tokenText) {
+        return { start: mention.start, end: mention.end };
+    }
+    let nearest: Readonly<{ start: number; end: number }> | null = null;
+    let searchFrom = 0;
+    while (searchFrom <= text.length) {
+        const start = text.indexOf(mention.tokenText, searchFrom);
+        if (start === -1) break;
+        const end = start + mention.tokenText.length;
+        if (nearest === null
+            || Math.abs(start - mention.start) < Math.abs(nearest.start - mention.start)) {
+            nearest = { start, end };
+        }
+        searchFrom = start + 1;
+    }
+    return nearest;
 }
 
 function rebaseStoredMention(
@@ -206,6 +232,49 @@ function createOpaqueMention(reference: ComposerMentionRef): ComposerUnknownMent
         start: reference.start,
         end: reference.end,
     };
+}
+
+/**
+ * Place positionless Message references into a fresh document's text, once, at
+ * the seed boundary.
+ *
+ * A persisted template (an Automation edit seed's stored message-level refs)
+ * carries no occurrence ranges — the Message wire is deliberately positionless.
+ * Before such a reference can live in an editable draft it needs the exact
+ * UTF-16 `[start, end)` occurrence it binds, and choosing it is a one-time
+ * placement decision, not an ongoing reconciliation: after placement the
+ * document's exact-range custody owns the occurrence, and later reads never
+ * re-search the text. Each token takes the leftmost unoccupied occurrence, so
+ * two references rendering the same token bind two distinct occurrences, and
+ * a token the text does not contain is dropped instead of being silently
+ * relocated onto an unrelated occurrence.
+ */
+export function placePositionlessComposerReferences(input: Readonly<{
+    text: string;
+    references: readonly MentionRefV1[];
+}>): readonly ComposerMentionRef[] {
+    const occupied: Array<Readonly<{ start: number; end: number }>> = [];
+    const placed: ComposerMentionRef[] = [];
+    for (const reference of input.references) {
+        if (reference.token.length === 0) continue;
+        let searchFrom = 0;
+        let start = -1;
+        while (searchFrom <= input.text.length) {
+            const index = input.text.indexOf(reference.token, searchFrom);
+            if (index < 0) break;
+            const end = index + reference.token.length;
+            const overlaps = occupied.some((range) => index < range.end && end > range.start);
+            if (!overlaps) {
+                start = index;
+                break;
+            }
+            searchFrom = index + 1;
+        }
+        if (start < 0) continue;
+        occupied.push({ start, end: start + reference.token.length });
+        placed.push({ ...reference, start, end: start + reference.token.length });
+    }
+    return placed.sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
 /**

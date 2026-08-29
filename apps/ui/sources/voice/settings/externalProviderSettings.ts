@@ -2,6 +2,7 @@ import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
   PersistedConnectedServiceBindingsV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type ConnectedServiceId,
   type PluginSettingFieldV2,
   type VoiceProviderSettings,
@@ -141,7 +142,11 @@ export function createExternalVoiceProviderSettingsDescriptor(
       if (rawBinding !== null) {
         const parsed = PersistedConnectedServiceBindingsV1Schema.safeParse(rawBinding);
         if (!parsed.success) return null;
-        const requiredServiceIds = new Set(connectedServicesBinding.serviceIds);
+        const requiredServiceIds = new Set(connectedServicesBinding.serviceIds.map((serviceId) => {
+          const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+          if (!serviceKey) throw new Error('invalid_external_voice_provider_connected_service');
+          return serviceKey;
+        }));
         const bindings = Object.entries(parsed.data.bindingsByServiceId);
         if (bindings.length !== requiredServiceIds.size
           || bindings.some(([serviceId, binding]) => (

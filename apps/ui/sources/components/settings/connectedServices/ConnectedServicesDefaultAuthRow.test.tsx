@@ -5,6 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from './connectedServicesTestHelpers';
 import type {
     AccountProfile,
+    PluginProjectedAgentConnectedAccountPurposeV2,
 } from '@happier-dev/protocol';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
@@ -15,6 +16,12 @@ const CLAUDE_SERVICE_KEY = 'happier.agent.claude/anthropic';
 const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
 const ENCODED_CLAUDE_SERVICE_KEY = encodeURIComponent(CLAUDE_SERVICE_KEY);
 const ENCODED_CODEX_SERVICE_KEY = encodeURIComponent(CODEX_SERVICE_KEY);
+const CLAUDE_ACCOUNT_PURPOSES: readonly PluginProjectedAgentConnectedAccountPurposeV2[] = [
+    { purpose: 'primary', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+];
+const CODEX_ACCOUNT_PURPOSES: readonly PluginProjectedAgentConnectedAccountPurposeV2[] = [
+    { purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, credentialKinds: ['oauth'] },
+];
 
 type CapturedDefaultAuthModalProps = Readonly<{
     setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
@@ -187,7 +194,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: null }}
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
                 connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
                 connectedAccountGroupsV4={[]}
@@ -229,7 +236,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: null }}
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
                 connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
                 connectedAccountGroupsV4={[]}
@@ -276,7 +283,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: { supportedServiceIds: ['anthropic'] } }}
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
                 // No machine projection passed: the released bundled scalar
                 // declaration is the only source and must land qualified.
                 connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
@@ -310,7 +317,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="claude"
                 agentTitle="Claude"
-                agentCore={{ connectedServices: null }}
+                connectedAccountPurposes={CLAUDE_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CLAUDE_SERVICE_KEY]}
                 connectedAccountsV4={[CLAUDE_V4_ACCOUNT]}
                 connectedAccountGroupsV4={[]}
@@ -349,7 +356,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: null }}
+                connectedAccountPurposes={CODEX_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
                 connectedAccountsV4={[v4Account({
                     pluginId: 'happier.agent.codex',
@@ -395,7 +402,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: null }}
+                connectedAccountPurposes={CODEX_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
                 connectedAccountsV4={[v4Account({
                     pluginId: 'happier.agent.codex',
@@ -436,7 +443,7 @@ describe('ConnectedServicesDefaultAuthRow', () => {
             <ConnectedServicesDefaultAuthRow
                 agentId="codex"
                 agentTitle="Codex"
-                agentCore={{ connectedServices: null }}
+                connectedAccountPurposes={CODEX_ACCOUNT_PURPOSES}
                 connectedAccountServiceKeys={[CODEX_SERVICE_KEY]}
                 connectedAccountsV4={[v4Account({
                     pluginId: 'happier.agent.codex',

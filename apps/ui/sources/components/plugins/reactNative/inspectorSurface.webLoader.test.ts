@@ -48,10 +48,11 @@ import { createReactNativeWebLoaderBackend } from './webLoaderBackend.web';
 // `generatePluginUiHostRuntimeExternalModuleSource`) is a real module in the
 // build graph, not an `external:true` entry — its generated
 // `globalThis[...]`-reading source gets inlined at the specifier's use site,
-// so the final output never contains a literal `from "react"` (which
-// `hasForbiddenImport` correctly rejects — verified by the earlier failing
-// run before this fix). No `import` statement for react/react-native-web
-// survives compilation, matching the real preset's contract.
+// so the final output does not need a runtime React package lookup. Import
+// closure is owned by the managed builder and real module instantiation; the
+// loader deliberately does not inspect raw source text. No `import` statement
+// for react/react-native-web survives compilation, matching the real preset's
+// contract.
 const COMPILED_INSPECTOR_SURFACE = `
 const __rt = globalThis["__happierPluginHostRuntime__"];
 if (!__rt || !("react" in __rt)) { throw new Error("host runtime react missing"); }

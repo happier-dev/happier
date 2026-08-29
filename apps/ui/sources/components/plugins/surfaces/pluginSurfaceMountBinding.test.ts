@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
     ComposerSurfaceMountBindingV1Schema,
     normalizePluginUiDestinationBindingV1,
+    normalizePluginUiInlineSurfaceBindingV1,
     type PluginUiDestinationBindingV1,
+    type PluginUiInlineSurfaceBindingV1,
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -63,6 +65,18 @@ function destinationBinding(): PluginUiDestinationBindingV1 {
         target: { kind: 'session', sessionIdPath: '/sessionId' },
     });
     if (!binding) throw new Error('fixture destination binding must be admitted');
+    return binding;
+}
+
+function inlineSurfaceBinding(): PluginUiInlineSurfaceBindingV1 {
+    const binding = normalizePluginUiInlineSurfaceBindingV1({
+        pluginId: 'acme.reviews',
+        surfaceId: 'triage-inline',
+        rendererId: 'review-panel',
+        role: 'sessionSubagentLaunch',
+        target: { kind: 'session', sessionIdPath: '/sessionId' },
+    });
+    if (!binding) throw new Error('fixture inline binding must be admitted');
     return binding;
 }
 
@@ -195,6 +209,27 @@ describe('readPluginSurfaceMountBinding', () => {
         expect(mount.destinationBinding).toBe(binding);
     });
 
+    it('carries an exact admitted inline surface without cloning binding facts', () => {
+        const binding = inlineSurfaceBinding();
+        const descriptor = {
+            pluginId: 'acme.reviews',
+            descriptorId: 'triage-inline',
+            binding,
+        } as const;
+        const renderer = {
+            kind: 'reactNative',
+            contributionId: 'review-panel',
+        } as const;
+
+        const mount = readPluginSurfaceMountBinding({ descriptor, renderer });
+
+        expect(mount).toMatchObject({ kind: 'inline', inlineBinding: binding });
+        if (!mount || mount.kind !== 'inline') throw new Error('fixture mount must be inline');
+        expect(mount.descriptor).toBe(descriptor);
+        expect(mount.renderer).toBe(renderer);
+        expect(mount.inlineBinding).toBe(binding);
+    });
+
     it('projects the public destination mount only from the admitted binding', () => {
         const binding = destinationBinding();
         const mount = readPluginSurfaceMountBinding({
@@ -228,6 +263,21 @@ describe('readPluginSurfaceMountBinding', () => {
         })).toBeNull();
         expect(readPluginSurfaceMountBinding({
             descriptor: { ...descriptor, descriptorId: 'other-destination' },
+            renderer: { kind: 'reactNative', contributionId: 'review-panel' },
+        })).toBeNull();
+
+        const inlineBinding = inlineSurfaceBinding();
+        const inlineDescriptor = {
+            pluginId: 'acme.reviews',
+            descriptorId: 'triage-inline',
+            binding: inlineBinding,
+        } as const;
+        expect(readPluginSurfaceMountBinding({
+            descriptor: inlineDescriptor,
+            renderer: { kind: 'reactNative', contributionId: 'other-renderer' },
+        })).toBeNull();
+        expect(readPluginSurfaceMountBinding({
+            descriptor: { ...inlineDescriptor, descriptorId: 'other-surface' },
             renderer: { kind: 'reactNative', contributionId: 'review-panel' },
         })).toBeNull();
     });

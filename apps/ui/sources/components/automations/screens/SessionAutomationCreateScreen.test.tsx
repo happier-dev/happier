@@ -11,7 +11,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const syncSpies = vi.hoisted(() => ({
-    saveAutomationEditorDraft: vi.fn(async (_input: any) => ({})),
+    saveAutomationEditorDraft: vi.fn(async (_input: any, _options?: any) => ({})),
     refreshAutomations: vi.fn(async () => {}),
     getSessionEncryptionKeyBase64ForResume: vi.fn((_sessionId: string) => 'dek-base64'),
     getCredentials: vi.fn(() => ({ token: 't' })),
@@ -98,6 +98,9 @@ installAutomationScreensCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSession: () => sessionState.session,
+            useSessions: () => Object.values(
+                (storageState.value as { sessions?: Record<string, unknown> }).sessions ?? {},
+            ),
             useActiveServerAccountScope: () => (
                 (storageState.value as { profileScope?: unknown }).profileScope ?? null
             ),
@@ -139,6 +142,34 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string) => hydrateReadyState.ready
         ? { kind: 'available', sessionId }
         : { kind: 'loading', sessionId, reason: 'store-miss' },
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => {
+        const scope = (storageState.value as {
+            profileScope?: { serverId: string; accountId: string };
+        }).profileScope;
+        if (!scope) return null;
+        return {
+            scope,
+            isCurrent: () => {
+                const current = (storageState.value as {
+                    profileScope?: { serverId: string; accountId: string };
+                }).profileScope;
+                return current?.serverId === scope.serverId && current.accountId === scope.accountId;
+            },
+            onRetire: () => ({ dispose: () => undefined }),
+        };
+    },
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>(),
+    getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+}));
+
+vi.mock('@/hooks/server/useAutomationsSupport', () => ({
+    useAutomationsSupport: () => ({ enabled: true }),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -372,17 +403,15 @@ describe('SessionAutomationCreateScreen', () => {
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Create automation')).toBeUndefined();
     });
 
-    it('moves automation settings into the shared AgentInput automation chip', async () => {
+    it('mounts the canonical plural Automation editor directly above the shared composer', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        expect(screen.findAllByType('Switch')).toHaveLength(0);
-
-        const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
-        expect(automationChip).toBeTruthy();
-        expect(automationChip?.collapsedContentPopover?.renderContent).toBeTypeOf('function');
+        expect(screen.findByProps({ testID: 'automation-plural-editor' })).toBeTruthy();
+        expect(screen.findAllByType('Switch')).toHaveLength(1);
+        expect(latestComposerProps.value?.extraActionChips).toBeUndefined();
     });
 
     it('can create an existing-session automation in a paused state', async () => {
@@ -391,10 +420,7 @@ describe('SessionAutomationCreateScreen', () => {
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
         await flushRender();
 
-        const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
-        const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
-        const popoverScreen = await renderScreen(popoverContent);
-        const toggle = popoverScreen.findByType('Switch');
+        const toggle = screen.findByType('Switch');
         await act(async () => {
             invokeTestInstanceHandler(toggle, 'onValueChange', false);
         });
@@ -435,10 +461,7 @@ describe('SessionAutomationCreateScreen', () => {
 
         await setComposerText('Do the thing');
 
-        const automationChip = latestComposerProps.value?.extraActionChips?.find((chip: any) => chip.controlId === 'automation');
-        const popoverContent = automationChip?.collapsedContentPopover?.renderContent?.();
-        const popoverScreen = await renderScreen(popoverContent);
-        const name = popoverScreen.findByProps({ testID: 'automation-name' });
+        const name = screen.findByProps({ testID: 'automation-name' });
         await act(async () => {
             name.props.onChangeText('My automation');
         });
@@ -450,9 +473,10 @@ describe('SessionAutomationCreateScreen', () => {
         expect(input.executionRecipe.target).toEqual({ kind: 'existingSession', sessionId: 's1' });
         expect(input.assignments).toEqual([{ machineId: 'm-target', enabled: true, priority: 100 }]);
         expect(input.executionRecipe.template).toEqual({ t: 'encrypted', c: 'ciphertext-base64' });
-        expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledWith(expect.objectContaining({
-            existingSessionId: 's1',
-        }));
+        expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledWith({
+            v: 1,
+            prompt: 'Do the thing',
+        });
     });
 
     it('creates an existing-session automation from persisted session metadata when machine inventory has not hydrated yet', async () => {
@@ -489,7 +513,7 @@ describe('SessionAutomationCreateScreen', () => {
         }));
     });
 
-    it('inherits the session runtime fields into the existing-session automation template', async () => {
+    it('keeps mutable Session runtime fields out of the frozen existing-session prompt program', async () => {
         sessionState.session = {
             id: 's1',
             active: true,
@@ -520,6 +544,11 @@ describe('SessionAutomationCreateScreen', () => {
                 },
             },
         };
+        setStorageForSession({
+            session: sessionState.session,
+            projectMachineId: 'm1',
+            includeProject: true,
+        });
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
@@ -531,34 +560,14 @@ describe('SessionAutomationCreateScreen', () => {
         await submitComposer();
 
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledTimes(1);
-        expect(syncSpies.encryption.encryptAutomationTemplateRaw.mock.calls[0][0]).toEqual(expect.objectContaining({
-            directory: '/tmp/project',
+        expect(syncSpies.encryption.encryptAutomationTemplateRaw.mock.calls[0][0]).toEqual({
+            v: 1,
             prompt: 'Send the latest automation QA summary into this session.',
-            displayText: 'Send the latest automation QA summary into this session.',
-            backendTarget: expect.objectContaining({
-                kind: 'backend',
-                backendId: 'review-bot',
-                configuredBackendId: 'review-bot',
-            }),
-            profileId: 'profile-1',
-            permissionMode: 'safe-yolo',
-            permissionModeUpdatedAt: 123,
-            modelSelection: expect.objectContaining({
-                updatedAt: 456,
-                ref: expect.objectContaining({
-                    modelId: 'gpt-5',
-                }),
-            }),
-            terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
-            codexBackendMode: 'acp',
-            existingSessionId: 's1',
-            sessionEncryptionMode: 'e2ee',
-            sessionEncryptionKeyBase64: 'dek-base64',
-            sessionEncryptionVariant: 'dataKey',
-        }));
+        });
     });
 
-    it('navigates to the session automations list after creation instead of relying on history back', async () => {
+    it('navigates to the created Automation detail using the committed identity', async () => {
+        syncSpies.saveAutomationEditorDraft.mockResolvedValueOnce({ id: 'automation-created' });
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
         const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
@@ -569,8 +578,142 @@ describe('SessionAutomationCreateScreen', () => {
         await submitComposer();
 
         expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/s1/automations');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/automations/automation-created');
         expect(routerBackSpy).not.toHaveBeenCalled();
+    });
+
+    it('consumes a committed create response even when the exact source turn completes in flight', async () => {
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+
+        await setComposerText('Do the thing when this turn finishes');
+
+        const name = screen.findByProps({ testID: 'automation-name' });
+        await act(async () => {
+            name.props.onChangeText('Exact turn automation');
+        });
+
+        // One exact-turn row sourced from the other working session.
+        const sourceSession = {
+            id: 's2',
+            serverId: 'server-1',
+            active: true,
+            latestTurnId: 'turn-9',
+            latestTurnStatus: 'in_progress',
+            encryptionMode: 'e2ee',
+            metadata: { machineId: 'm1', path: '/tmp/project', homeDir: '/tmp' },
+        };
+        storageState.value.sessions = {
+            ...(storageState.value.sessions as Record<string, unknown>),
+            s2: sourceSession,
+        };
+        const editorElement = screen.find((node) => (
+            node.props.variant === 'embedded'
+            && node.props.value?.executionRecipe?.target?.kind === 'existingSession'
+        ));
+        const editorDraft = editorElement.props.value;
+        await act(async () => {
+            editorElement.props.onChange({
+                ...editorDraft,
+                triggers: [...editorDraft.triggers, {
+                    clientId: '00000000-0000-4000-8000-000000000009',
+                    persisted: null,
+                    definition: {
+                        kind: 'sessionLifecycle',
+                        enabled: true,
+                        event: 'parentTurnCompleted',
+                        scope: { kind: 'exactTurn', sourceSessionId: 's2', sourceTurnId: 'turn-9' },
+                        consumption: 'once',
+                    },
+                }],
+            });
+        });
+
+        let releaseSave: (() => void) | null = null;
+        syncSpies.saveAutomationEditorDraft.mockImplementationOnce(() => new Promise((resolve) => {
+            releaseSave = () => resolve({ id: 'automation-exact-turn' });
+        }));
+
+        await submitComposer();
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
+        const saveOptions = syncSpies.saveAutomationEditorDraft.mock.calls[0][1] as {
+            isCurrent?: () => boolean;
+        };
+        expect(typeof saveOptions?.isCurrent).toBe('function');
+        expect(saveOptions.isCurrent?.()).toBe(true);
+
+        // The canonical Session settlement completes the source turn before the
+        // HTTP response resumes. The response fence owns Account/server/editor
+        // lifetime, not source-turn state, so the committed response stays
+        // consumable and the admitted trigger is not reported stale.
+        storageState.value.sessions = {
+            ...(storageState.value.sessions as Record<string, unknown>),
+            s2: { ...sourceSession, latestTurnStatus: 'completed' },
+        };
+        await act(async () => {});
+        expect(saveOptions.isCurrent?.()).toBe(true);
+
+        await act(async () => {
+            releaseSave?.();
+        });
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/automations/automation-exact-turn');
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses an exact-turn create when the drafted source turn is already complete before submission', async () => {
+        const sourceSession = {
+            id: 's2',
+            serverId: 'server-1',
+            active: true,
+            latestTurnId: 'turn-9',
+            latestTurnStatus: 'in_progress',
+            encryptionMode: 'e2ee',
+            metadata: { machineId: 'm1', path: '/tmp/project', homeDir: '/tmp' },
+        };
+        storageState.value.sessions = {
+            ...(storageState.value.sessions as Record<string, unknown>),
+            s2: sourceSession,
+        };
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+        await setComposerText('Do the thing when this turn finishes');
+
+        const editorElement = screen.find((node) => (
+            node.props.variant === 'embedded'
+            && node.props.value?.executionRecipe?.target?.kind === 'existingSession'
+        ));
+        const editorDraft = editorElement.props.value;
+        await act(async () => {
+            editorElement.props.onChange({
+                ...editorDraft,
+                triggers: [...editorDraft.triggers, {
+                    clientId: '00000000-0000-4000-8000-000000000010',
+                    persisted: null,
+                    definition: {
+                        kind: 'sessionLifecycle',
+                        enabled: true,
+                        event: 'parentTurnCompleted',
+                        scope: { kind: 'exactTurn', sourceSessionId: 's2', sourceTurnId: 'turn-9' },
+                        consumption: 'once',
+                    },
+                }],
+            });
+        });
+        storageState.value.sessions = {
+            ...(storageState.value.sessions as Record<string, unknown>),
+            s2: { ...sourceSession, latestTurnStatus: 'completed' },
+        };
+
+        await submitComposer();
+
+        expect(syncSpies.saveAutomationEditorDraft).not.toHaveBeenCalled();
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'automations.exactTurn.staleTitle',
+            'automations.exactTurn.staleBody',
+        );
     });
 
     it('creates a plaintext existing-session automation without requiring a resume key', async () => {
@@ -611,13 +754,10 @@ describe('SessionAutomationCreateScreen', () => {
         expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
         const input = syncSpies.saveAutomationEditorDraft.mock.calls[0][0];
         expect(input.executionRecipe.target).toEqual({ kind: 'existingSession', sessionId: 's_plain' });
-        expect(input.executionRecipe.template).toEqual(expect.objectContaining({
+        expect(input.executionRecipe.template).toEqual({
             t: 'plain',
-            v: expect.objectContaining({
-                existingSessionId: 's_plain',
-                sessionEncryptionMode: 'plain',
-            }),
-        }));
+            v: { v: 1, prompt: 'Hello' },
+        });
         expect(syncSpies.encryption.encryptAutomationTemplateRaw).not.toHaveBeenCalled();
     });
 
@@ -698,64 +838,6 @@ describe('SessionAutomationCreateScreen', () => {
         expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
     });
 
-    it('uses the shared agent input controls to override permission and model for existing-session automations', async () => {
-        sessionState.session = {
-            id: 's1',
-            active: true,
-            encryptionMode: 'e2ee',
-            permissionMode: 'readOnly',
-            permissionModeUpdatedAt: 10,
-            modelMode: 'claude-sonnet-4',
-            modelModeUpdatedAt: 20,
-            metadata: {
-                machineId: 'm1',
-                path: '/tmp/project',
-                homeDir: '/tmp',
-                flavor: 'claude',
-                claudeSessionId: 'claude-session-1',
-                claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
-            },
-        };
-
-        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
-
-        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
-        await flushRender();
-
-        const {
-            updateSessionAuthoringDraftModelMode,
-            updateSessionAuthoringDraftPermissionMode,
-            updateSessionAuthoringDraftPrompt,
-        } = await import('@/components/sessions/authoring/draft/updateSessionAuthoringDraftFields');
-        await act(async () => {
-            const composer = getComposerProps();
-            composer.onChangeDraft((current: any) => current
-                ? updateSessionAuthoringDraftPrompt(current, 'Send the automation heartbeat')
-                : current);
-            composer.onChangeDraft((current: any) => current
-                ? updateSessionAuthoringDraftPermissionMode(current, 'acceptEdits', 1)
-                : current);
-            composer.onChangeDraft((current: any) => current
-                ? updateSessionAuthoringDraftModelMode(current, 'gpt-5', 1)
-                : current);
-            await composer.onSubmit();
-        });
-
-        expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledTimes(1);
-        expect(syncSpies.encryption.encryptAutomationTemplateRaw.mock.calls[0]?.[0]).toEqual(
-            expect.objectContaining({
-                prompt: 'Send the automation heartbeat',
-                displayText: 'Send the automation heartbeat',
-                permissionMode: 'acceptEdits',
-                modelSelection: expect.objectContaining({
-                    ref: expect.objectContaining({
-                        modelId: 'gpt-5',
-                    }),
-                }),
-            }),
-        );
-    });
-
     it('retires the mounted editor draft when the active account scope changes', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
@@ -773,11 +855,11 @@ describe('SessionAutomationCreateScreen', () => {
         await act(async () => {
             screen.findByProps({ testID: 'automation-trigger-kind-schedule' }).props.onPress();
         });
-        const triggerRows = () => screen.findAll((node) => (
-            typeof node.props.testID === 'string'
-            && node.props.testID.startsWith('automation-trigger-row-')
-        ));
-        expect(triggerRows()).toHaveLength(1);
+        const editorValue = () => screen.find((node) => (
+            node.props.variant === 'embedded'
+            && node.props.value?.executionRecipe?.target?.kind === 'existingSession'
+        )).props.value;
+        expect(editorValue().triggers).toHaveLength(1);
 
         storageState.value = {
             ...storageState.value,
@@ -790,7 +872,7 @@ describe('SessionAutomationCreateScreen', () => {
         // successor account starts from a fresh draft and can never inherit or
         // save the predecessor's name or triggers.
         expect(screen.findByProps({ testID: 'automation-name' }).props.value).toBe('Scheduled message');
-        expect(triggerRows()).toHaveLength(0);
+        expect(editorValue().triggers).toHaveLength(0);
         expect(syncSpies.saveAutomationEditorDraft).not.toHaveBeenCalled();
     });
 });

@@ -476,7 +476,9 @@ describe('composer presentation host handlers', () => {
         stageDeferred.resolve?.(composerMediaHandle);
 
         await expect(pendingPick).resolves.toMatchObject({ code: 'stale_surface' });
-        expect(releaseComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle);
+        // A late completed pick never created an attachment instance, so the
+        // retirement must not fabricate a claimant (claimant-only release).
+        expect(releaseComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle, undefined);
     });
 
     it('lets an already accepted release settle after the mounted host retires', async () => {

@@ -1388,6 +1388,8 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         // local context, feedback and host-Action presentation. It must not
         // advertise a daemon-contributed Action merely because the renderer is
         // mounted; that binding requires the exact daemon admission separately.
+        // `openNewSession` is locally served from the current Account lifetime,
+        // so it stays installed beside the other local methods.
         expect(controller.installedMethods).toEqual([
             'context',
             'executeAction',
@@ -1397,6 +1399,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
             'readClipboard',
             'writeClipboard',
             'openExternalLink',
+            'openNewSession',
         ]);
         expect(controller.interactive).toBe(true);
         await expect(controller.hostApi.handleRequest(request('executeAction', {

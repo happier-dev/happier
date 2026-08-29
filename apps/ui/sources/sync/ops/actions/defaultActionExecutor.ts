@@ -71,6 +71,7 @@ import {
   listAgentConfigOptionsForActions,
   listAgentSessionModesForActions,
   listSpawnConnectedServicesForActions,
+  resolveSessionSpawnAgentInventorySelectionForActions,
 } from './agentInventoryActionDeps';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
@@ -158,7 +159,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
   currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
   }>): ReturnType<typeof createActionExecutor> {
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
-    type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
+    type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
 
   const resolveSessionMachineId = (sessionId: string, metadata: { machineId?: unknown } | null | undefined): string => {
     const controlMachineId = readMachineControlTargetForSession(sessionId)?.machineId ?? '';
@@ -208,6 +209,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
         surface: ctx.surface ?? null,
       }),
     ...createUiExecutionRunActionDeps(),
+    resolveSessionSpawnAgentInventorySelection: resolveSessionSpawnAgentInventorySelectionForActions,
     runtimeActionExecute: createDefaultRuntimeActionExecutor(opts?.runtimeActions),
     accountPluginDataEraseAction: async ({ input, signal }) => await executeAccountPluginDataEraseAction(
       input,
@@ -480,8 +482,8 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
       return await listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId });
     },
     agentsModelsList: async (args) => {
-      const { agentId, machineId, limit, backendTargetKey } = args as AgentsModelsListArgs;
-      return await listAgentModelsForVoiceTool({ agentId, machineId, limit, backendTargetKey });
+      const { agentId, machineId, serverId, limit, backendTargetKey } = args as AgentsModelsListArgs;
+      return await listAgentModelsForVoiceTool({ agentId, machineId, serverId, limit, backendTargetKey });
     },
     agentsConfigOptionsList: async (args) => await listAgentConfigOptionsForActions(args),
     agentsSessionModesList: async (args) => await listAgentSessionModesForActions(args),

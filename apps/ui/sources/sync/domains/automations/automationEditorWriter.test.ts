@@ -11,7 +11,7 @@ import {
     reconcileAutomationDefinition,
 } from '@/sync/api/automations/apiAutomations';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
-import type { AutomationEditorDraft } from './automationEditorDraft';
+import { automationEditorDraftFromDetail, type AutomationEditorDraft } from './automationEditorDraft';
 import { AutomationEditorSaveStaleError, saveAutomationEditorDraft } from './automationEditorWriter';
 
 vi.mock('@/sync/api/automations/apiAutomations', () => ({
@@ -119,6 +119,7 @@ function detail(triggers: AutomationDefinitionDetail['triggers']): AutomationDef
         updatedAt: timestamp,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: timestamp }],
         triggers,
+        retiredTriggers: [],
         executionRecipe: recipe,
     };
 }
@@ -197,6 +198,64 @@ describe('saveAutomationEditorDraft', () => {
             ],
             removedTriggers: [{ triggerId: 'turn-1', expectedRevision: 5 }],
         }));
+    });
+
+    it('keeps two stable trigger ids across one edit/disable/remove save and the reload that follows it', async () => {
+        const final = {
+            ...detail([scheduleTrigger('schedule-1', 3), lifecycleTrigger('turn-2', 1)]),
+            retiredTriggers: [{ id: triggerId('turn-1'), kind: 'sessionLifecycle' as const, revision: 5, retiredAt: timestamp }],
+        };
+        vi.mocked(reconcileAutomationDefinition).mockResolvedValue(final);
+
+        // One plural-editor save: edit the interval, disable the schedule row,
+        // and remove the lifecycle row in the same submit.
+        const saved = await saveAutomationEditorDraft({
+            credentials,
+            draft: draft({
+                name: 'Review work now',
+                removedTriggers: [{ id: triggerId('turn-1'), revision: 5 }],
+                triggers: [
+                    {
+                        clientId: 'stable-schedule-row',
+                        persisted: { id: triggerId('schedule-1'), revision: 2 },
+                        isDirty: true,
+                        definition: { ...scheduleDefinition, enabled: false },
+                    },
+                    {
+                        clientId: 'stable-lifecycle-row',
+                        persisted: { id: triggerId('turn-2'), revision: 1 },
+                        definition: lifecycleDefinition,
+                    },
+                ],
+            }),
+        });
+        expect(vi.mocked(reconcileAutomationDefinition).mock.calls[0]?.[2]).toMatchObject({
+            triggers: [
+                { kind: 'existing', triggerId: 'schedule-1', expectedRevision: 2, enabled: false },
+                { kind: 'existing', triggerId: 'turn-2', expectedRevision: 1 },
+            ],
+            removedTriggers: [{ triggerId: 'turn-1', expectedRevision: 5 }],
+        });
+
+        // Reload: the exact saved server bytes hydrate back into the editor
+        // with both surviving trigger identities and their post-save revisions.
+        const reloaded = automationEditorDraftFromDetail(saved, new Map([
+            ['schedule-1', { definition: { ...scheduleDefinition, enabled: false } }],
+            ['turn-2', { definition: lifecycleDefinition }],
+        ]));
+        expect(reloaded).not.toBeNull();
+        expect(reloaded?.triggers.map((row) => ({
+            clientId: row.clientId,
+            persisted: row.persisted,
+        }))).toEqual([
+            { clientId: 'schedule-1', persisted: { id: triggerId('schedule-1'), revision: 3 } },
+            { clientId: 'turn-2', persisted: { id: triggerId('turn-2'), revision: 1 } },
+        ]);
+        expect(reloaded?.removedTriggers).toEqual([]);
+        // The removed row stays retired on the saved bytes and is never
+        // resurrected into the mutable trigger set by the reload.
+        expect(saved.triggers.some((row) => row.id === 'turn-1')).toBe(false);
+        expect(saved.retiredTriggers.map((row) => row.id)).toEqual([triggerId('turn-1')]);
     });
 
     it('does not rewrite clean persisted triggers while saving Automation metadata', async () => {

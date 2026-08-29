@@ -1,13 +1,15 @@
 import {
     ComposerAttachmentDraftV1Schema,
     StrictJsonValueSchema,
-    convertBackendTargetRefV2ToV1,
-    readBackendTargetRefV2,
     type StrictJsonValue,
 } from '@happier-dev/protocol';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
-
-import { projectSyncedSessionAuthoringFields } from '@/sync/domains/input/drafts/sessionAuthoringDraftProjection';
+import {
+    projectNewSessionDraftSyncedAuthoringFields,
+    projectSyncedSessionAuthoringFields,
+} from '@/sync/domains/input/drafts/sessionAuthoringDraftProjection';
+import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
+import { resolveDraftBackendTarget } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import {
@@ -39,10 +41,9 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
             return parsed.success ? [parsed.data] : [];
         })
         : [];
-    const machineId = authoring.machineId ?? null;
-    const backendTarget = authoring.backendTarget
-        ? readBackendTargetRefV2(authoring.backendTarget)
-        : authoring.backendTarget;
+    const executionTarget = authoring.executionTarget ?? null;
+    const agentTarget = authoring.agentTarget ?? null;
+    const backendTarget = resolveDraftBackendTarget({ agentTarget }) ?? undefined;
     const localState = snapshot.localSupplement.newSessionLocalState;
     return {
         input: typeof snapshot.document.composer.text.value === 'string'
@@ -52,9 +53,19 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
         ...(snapshot.localSupplement.launchUserAttemptId
             ? { launchUserAttemptId: snapshot.localSupplement.launchUserAttemptId }
             : {}),
-        selectedMachineId: machineId,
+        selectedMachineId: executionTarget?.machineId ?? null,
         selectedPath: authoring.directory ?? null,
-        targetServerId: authoring.serverId ?? null,
+        targetServerId: executionTarget?.serverId ?? null,
+        executionTarget,
+        agentTarget,
+        agentType: resolveNewSessionCompatAgentType({
+            backendTarget,
+            persistedAgentId: null,
+            selectedBuiltInAgentId: 'codex',
+        }),
+        ...(backendTarget !== undefined
+            ? { backendTarget }
+            : {}),
         ...(authoring.checkoutCreationDraft ? { checkoutCreationDraft: authoring.checkoutCreationDraft } : {}),
         ...(localState?.windowsRemoteSessionLaunchModeOverride
             ? { windowsRemoteSessionLaunchModeOverride: localState.windowsRemoteSessionLaunchModeOverride }
@@ -65,10 +76,6 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
         selectedSecretIdByProfileIdByEnvVarName: localState?.selectedSecretIdByProfileIdByEnvVarName ?? null,
         sessionOnlySecretValueEncByProfileIdByEnvVarName:
             localState?.sessionOnlySecretValueEncByProfileIdByEnvVarName ?? null,
-        agentType: authoring.agentId ?? 'codex',
-        ...(backendTarget !== undefined
-            ? { backendTarget }
-            : {}),
         ...(authoring.transcriptStorage === 'direct' || authoring.transcriptStorage === 'persisted'
             ? { transcriptStorage: authoring.transcriptStorage }
             : {}),
@@ -84,26 +91,8 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
     };
 }
 
-function projectNewSessionDraftAuthoring(draft: NewSessionDraft) {
-    return projectSyncedSessionAuthoringFields({
-        targetType: 'new_session',
-        ...(draft.selectedMachineId ? { machineId: draft.selectedMachineId } : {}),
-        ...(draft.targetServerId ? { serverId: draft.targetServerId } : {}),
-        ...(draft.selectedPath ? { directory: draft.selectedPath } : {}),
-        ...(draft.checkoutCreationDraft ? { checkoutCreationDraft: draft.checkoutCreationDraft } : {}),
-        agentId: draft.agentType,
-        ...(draft.backendTarget !== undefined && draft.backendTarget !== null
-            ? { backendTarget: convertBackendTargetRefV2ToV1(draft.backendTarget) }
-            : {}),
-        ...(draft.transcriptStorage !== undefined ? { transcriptStorage: draft.transcriptStorage } : {}),
-        profileId: draft.selectedProfileId,
-        ...(draft.resumeSessionId ? { resumeSessionId: draft.resumeSessionId } : {}),
-        permissionMode: draft.permissionMode,
-        ...(draft.modelSelection !== undefined ? { modelSelection: draft.modelSelection } : {}),
-        ...(draft.mcpSelection !== undefined ? { mcpSelection: draft.mcpSelection } : {}),
-        acpSessionModeId: draft.acpSessionModeId,
-        ...(draft.automationDraft ? { automation: draft.automationDraft } : {}),
-    });
+function projectNewSessionDraftAuthoring(draft: NewSessionDraft, scopeServerId: string) {
+    return projectNewSessionDraftSyncedAuthoringFields({ draft, scopeServerId });
 }
 
 export function writeNewSessionDraftToRepository(input: Readonly<{
@@ -118,7 +107,7 @@ export function writeNewSessionDraftToRepository(input: Readonly<{
         patch: {
             text: draft.input,
             attachments: (draft.composerAttachments ?? []).map(strictJson),
-            authoring: projectNewSessionDraftAuthoring(draft),
+            authoring: projectNewSessionDraftAuthoring(draft, input.scope.serverId),
         },
         materializationIntent: 'userEdit',
     });
@@ -147,7 +136,7 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
     writeNewSessionDraft({
         scope: input.scope,
         draftId: input.draftId,
-        patch: { authoring: projectNewSessionDraftAuthoring(draft) },
+        patch: { authoring: projectNewSessionDraftAuthoring(draft, input.scope.serverId) },
         materializationIntent: 'userEdit',
     });
     writeSessionDraftLocalSupplement({

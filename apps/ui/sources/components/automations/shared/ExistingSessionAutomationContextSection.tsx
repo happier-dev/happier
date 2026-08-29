@@ -2,8 +2,8 @@ import React from 'react';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import type { ExistingSessionAutomationAuthoringContext } from '@/components/sessions/authoring/context/sessionAuthoringContext';
-import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -68,8 +68,9 @@ export function ExistingSessionAutomationContextSection(props: Readonly<{
 
     const rows: React.JSX.Element[] = [];
     if (capabilities.backend === 'inherited') {
-        const backendLabel = resolveExecutionRunBackendLabel(context.draft.backendTarget)
-            ?? (typeof context.draft.agentId === 'string' ? context.draft.agentId : null);
+        const agentId = context.draft.agentTarget?.identity.localId ?? null;
+        const displayNameKey = agentId ? getAgentCore(agentId)?.displayNameKey : null;
+        const backendLabel = displayNameKey ? t(displayNameKey) : agentId;
         if (backendLabel) {
             rows.push(
                 <Item

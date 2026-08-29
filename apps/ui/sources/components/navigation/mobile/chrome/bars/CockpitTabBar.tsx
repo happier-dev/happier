@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -109,7 +109,7 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
 export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface>) {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     // Idle stand-in so the row's animated style is unconditional: a bar that swapped
     // between `View` and `Animated.View` would remount its tabs.
     const idleProgress = useSharedValue(0);
@@ -135,7 +135,6 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                             hitSlop={8}
                             style={[styles.tab, {
                                 minWidth: metrics.tabMinWidth,
-                                minHeight: metrics.tabMinHeight,
                                 paddingVertical: metrics.tabPaddingVertical,
                                 paddingHorizontal: metrics.tabPaddingHorizontal,
                             }]}
@@ -179,7 +178,7 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
     onPress: () => void;
 }>>((props, ref) => {
     const { theme } = useUnistyles();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
     return (
         <Pressable
             ref={ref as React.Ref<never>}
@@ -188,7 +187,6 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
             hitSlop={8}
             style={[styles.tab, {
                 minWidth: metrics.tabMinWidth,
-                minHeight: metrics.tabMinHeight,
                 paddingVertical: metrics.tabPaddingVertical,
                 paddingHorizontal: metrics.tabPaddingHorizontal,
             }]}

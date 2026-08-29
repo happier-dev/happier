@@ -190,15 +190,29 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
             if (!sameComposerDocumentRef(input.ref, currentness.ref)) return false;
             const repositoryCurrentness = repositoryCurrentnessByCapture.get(currentness);
             if (!repositoryCurrentness) return false;
+            const fieldIds = ['composer.text', 'composer.mentions', 'composer.attachments'] as const;
+            // References are text-bound, matching the ephemeral document owner:
+            // mentions clear exactly when the accepted text clears, and a text
+            // edited after capture keeps its still-binding mentions while the
+            // exact-range reconciliation drops only unbindable ones.
+            const current = captureSessionDraftCurrentness({
+                scope: input.scope,
+                address,
+                fieldIds: [...fieldIds],
+            });
+            const capturedTextMutationId = repositoryCurrentness.mutationIds['composer.text'];
+            const textWillClear = capturedTextMutationId !== undefined
+                && current.mutationIds['composer.text'] === capturedTextMutationId;
             const beforeClear = captureSessionDraftCurrentness({
                 scope: input.scope,
                 address,
-                fieldIds: ['composer.text', 'composer.mentions', 'composer.attachments'],
+                fieldIds: [...fieldIds],
             });
             void clearSessionDraftCurrentness({
                 scope: input.scope,
                 address,
                 currentness: repositoryCurrentness,
+                fieldIds: textWillClear ? [...fieldIds] : ['composer.attachments'],
             });
             const afterClear = captureSessionDraftCurrentness({
                 scope: input.scope,

@@ -744,6 +744,21 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             });
             expect(surfaceState.xtermProps).not.toBeNull();
             expect(surfaceState.termuxProps).toBeNull();
+
+            localSettingState.terminalNativeRendererQuarantine = null;
+            await act(async () => {
+                screen.tree?.update(
+                    <EmbeddedTerminalPane
+                        title="Terminal"
+                        controller={makeController()}
+                        terminalRef={{ current: null }}
+                        testIdPrefix="terminal"
+                        enableNativeRendererQaCrashControl={true}
+                    />,
+                );
+            });
+
+            expect(surfaceState.termuxProps).not.toBeNull();
         } finally {
             now.mockRestore();
         }

@@ -1,7 +1,9 @@
 import * as React from 'react';
 
+import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
+    replaceExactTurnAutomationRowsWithCurrentTurns,
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
@@ -27,6 +29,15 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     persistedDraftEntryIntent: string | null | undefined;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
+    /**
+     * Explicit "Use current turn" adoption for the mounted exact-turn binding.
+     * Request identity changes only when the user adopts again; the request is
+     * applied through this incumbent automation-draft owner and never silently
+     * re-fires on later live-turn advances.
+     */
+    exactTurnRetargetRequest?: ExactTurnAutomationPrefill | null;
+    /** Live current parent-turn reader, injected by the owning screen model. */
+    readExactTurn?: (sourceSessionId: string) => ExactTurnAutomationPrefill | null;
 }>): Readonly<{
     promptStore: NewSessionPromptStore;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
@@ -121,6 +132,25 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
             enabled: true,
         });
     }, [params.automationFeatureEnabled, isForcedAutomationRoute]);
+
+    // Explicit "Use current turn": advance only the exact-turn rows through
+    // this incumbent automation-draft owner; every other field, row, and edit
+    // survives. Applying through setAutomationDraft marks the draft
+    // user-authored, so later hydration echoes can never silently revert the
+    // adopted turn back to the stale prefill. The reader is held in a ref so a
+    // changing live turn alone can never re-fire this effect.
+    const readExactTurnRef = React.useRef(params.readExactTurn);
+    readExactTurnRef.current = params.readExactTurn;
+    React.useEffect(() => {
+        if (!params.exactTurnRetargetRequest) return;
+        setAutomationDraft((current) => {
+            const replacement = replaceExactTurnAutomationRowsWithCurrentTurns({
+                automation: current,
+                readExactTurn: (sourceSessionId) => readExactTurnRef.current?.(sourceSessionId) ?? null,
+            });
+            return replacement.changed ? replacement.automation : current;
+        });
+    }, [params.exactTurnRetargetRequest, setAutomationDraft]);
 
     return {
         promptStore,

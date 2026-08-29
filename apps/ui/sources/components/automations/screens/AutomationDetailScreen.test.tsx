@@ -4,13 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationSourceSelectorIdV1Schema,
     AutomationDefinitionDetailSchema,
+    AutomationDefinitionListItemSchema,
+    AutomationEventSourceCatalogStatusSchema,
+    AutomationEventSourceStatusV1Schema,
+    AutomationPluginEventTriggerProjectionSchema,
     AutomationTriggerIdSchema,
-    AutomationTriggerListItemSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     type AutomationEventSourceCatalogStatus,
     type AutomationEventSourceStatusV1,
     type AutomationTriggerListItem,
 } from '@happier-dev/protocol';
+import { createAutomationDefinitionFromDetail, createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
+import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import {
     createCapturingLegendListMock,
     findTestInstanceByTypeContainingText,
@@ -18,29 +23,6 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
-
-type AutomationScreenFixture = {
-    id: string;
-    name: string;
-    enabled: boolean;
-    description: string | null;
-    triggers: AutomationTriggerListItem[];
-    retiredTriggers: Array<{
-        id: string;
-        kind: 'schedule' | 'pluginEvent' | 'sessionLifecycle';
-        revision: number;
-        retiredAt: number;
-    }>;
-    targetType: 'newSession' | 'existingSession' | 'executionRun';
-    existingSessionId: string | null;
-    templateVersion: number;
-    detail:
-        | { kind: 'unloaded'; templateVersion: number }
-        | { kind: 'available'; templateVersion: number; value: unknown }
-        | { kind: 'unavailable'; templateVersion: number; code: string };
-    linkedExistingSessionId: string | null;
-    assignments: Array<{ machineId: string; enabled: boolean; priority: number }>;
-};
 
 type FetchAutomationRuns = (
     automationId: string,
@@ -53,7 +35,7 @@ type EventTriggerFixture = Extract<AutomationTriggerListItem, Readonly<{ kind: '
 function eventTriggerFixture(
     overrides: Partial<EventTriggerFixture> = {},
 ): EventTriggerFixture {
-    return AutomationTriggerListItemSchema.parse({
+    return AutomationPluginEventTriggerProjectionSchema.parse({
         id: AutomationTriggerIdSchema.parse('event-trigger-1'),
         revision: 1,
         enabled: true,
@@ -73,12 +55,12 @@ function eventTriggerFixture(
 function eventSourceStatusFixture(
     overrides: Partial<AutomationEventSourceStatusV1> = {},
 ): AutomationEventSourceStatusV1 {
-    return {
+    return AutomationEventSourceStatusV1Schema.parse({
         automationId: 'a1',
         triggerId: AutomationTriggerIdSchema.parse('event-trigger-1'),
         triggerRevision: 1,
         eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
-        sourceSelectorId: '11111111-1111-4111-8111-111111111111',
+        sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111'),
         reporterMaterializationRef: {
             pluginId: 'happier.scm.github',
             machineId: 'watcher-machine',
@@ -95,21 +77,20 @@ function eventSourceStatusFixture(
         skippedCount: 6,
         revision: 7,
         ...overrides,
-    };
+    });
 }
 
 function eventSourceCatalogStatusFixture(
     overrides: Partial<AutomationEventSourceCatalogStatus> = {},
 ): AutomationEventSourceCatalogStatus {
-    return {
-        reporterImmutableGenerationId: 'github-generation-1',
+    return AutomationEventSourceCatalogStatusSchema.parse({
         observedRevision: '7',
         adoptedRevision: '7',
         state: 'current',
         scanStartedAt: null,
         nextRetryAt: null,
         ...overrides,
-    };
+    });
 }
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -127,6 +108,7 @@ const eventRuntimeProjectionState = vi.hoisted(() => ({
     immutableGenerationId: 'github-generation-1',
 }));
 const syncSpies = vi.hoisted(() => ({
+    getCredentials: vi.fn(() => null),
     refreshAutomations: vi.fn(async () => {}),
     refreshAutomationDefinitionDetail: vi.fn(async () => {}),
     fetchAutomationRuns: vi.fn<FetchAutomationRuns>(async () => ({ nextCursor: null })),
@@ -138,25 +120,9 @@ const syncSpies = vi.hoisted(() => ({
     replaceAutomationAssignments: vi.fn(async () => {}),
 }));
 const automationState = vi.hoisted(() => ({
-    automation: {
-        id: 'a1',
-        name: 'Nightly',
-        enabled: true,
-        description: null as string | null,
-        triggers: [{
-            id: 'schedule-trigger-1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
-            kind: 'schedule' as const,
-            schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null as string | null },
-            nextRunAt: null,
-        }],
-        retiredTriggers: [] as AutomationScreenFixture['retiredTriggers'],
-        targetType: 'newSession' as const,
-        existingSessionId: null as string | null,
-        templateVersion: 1,
-        detail: { kind: 'unloaded' as const, templateVersion: 1 },
-        linkedExistingSessionId: null as string | null,
-        assignments: [] as Array<{ machineId: string; enabled: boolean; priority: number }>,
-    },
+    // Every test installs a schema-parsed value in beforeEach. This placeholder
+    // exists only because the module mock is hoisted before imported schemas.
+    automation: undefined as unknown as AutomationDefinition,
     missing: false,
 }));
 const machinesState = vi.hoisted(() => ({
@@ -284,7 +250,9 @@ installAutomationScreensCommonModuleMocks({
         return createStorageModuleStub({
             storage: createLiveStorageStoreMock(() => ({
                 automationRunsByAutomationId: { a1: automationRunsState.list },
+                profileScope: { serverId: 'server-1', accountId: 'account-1' },
             })),
+            useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
             useAutomation: () => (automationState.missing ? null : automationState.automation),
             useAutomationRuns: () => automationRunsState.list,
             useAutomationRunNextCursor: () => automationRunCursorState.nextCursor,
@@ -345,6 +313,14 @@ vi.mock('@/components/ui/icons/Icon', () => ({
 
 vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
     ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => ({
+        scope: { serverId: 'server-1', accountId: 'account-1' },
+        isCurrent: () => true,
+        onRetire: () => ({ dispose: () => undefined }),
+    }),
 }));
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
@@ -421,7 +397,7 @@ describe('AutomationDetailScreen', () => {
         runHistoryListMock.state.reset();
         routeParamsState.id = 'a1';
         automationState.missing = false;
-        automationState.automation = {
+        automationState.automation = createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
             id: 'a1',
             name: 'Nightly',
             enabled: true,
@@ -436,10 +412,11 @@ describe('AutomationDetailScreen', () => {
             targetType: 'newSession',
             existingSessionId: null,
             templateVersion: 1,
-            detail: { kind: 'unloaded', templateVersion: 1 },
-            linkedExistingSessionId: null,
             assignments: [],
-        };
+            lastRunAt: null,
+            createdAt: 1,
+            updatedAt: 1,
+        }));
         machinesState.list = [];
         automationRunsState.list = [];
         automationRunCursorState.nextCursor = null;
@@ -486,7 +463,7 @@ describe('AutomationDetailScreen', () => {
 
     function currentEventDefinitionForEditor(
         targetType: 'existingSession' | 'executionRun',
-    ): AutomationScreenFixture {
+    ): AutomationDefinition {
         const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
             '11111111-1111-4111-8111-111111111111',
         );
@@ -534,7 +511,7 @@ describe('AutomationDetailScreen', () => {
                     binding: {
                         v: 1,
                         automationId: 'a1',
-                        triggerId: 'event-trigger-1',
+                        triggerId: AutomationTriggerIdSchema.parse('event-trigger-1'),
                         triggerRevision: 1,
                         triggerKind: 'pluginEvent',
                         eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
@@ -566,28 +543,19 @@ describe('AutomationDetailScreen', () => {
                 target,
             },
         });
-        return {
-            id: 'a1',
-            name: 'Nightly',
-            enabled: true,
-            description: null,
-            triggers: detail.triggers,
-            targetType,
-            existingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
-            templateVersion: 3,
-            detail: { kind: 'available', templateVersion: 3, value: detail },
-            linkedExistingSessionId: targetType === 'existingSession' ? 'session-existing' : null,
-            assignments: [],
-        };
+        return createAutomationDefinitionFromDetail(detail);
     }
 
     it('renders retired trigger tombstones as read-only history outside the live editor set', async () => {
-        automationState.automation.retiredTriggers = [{
-            id: 'retired-event-1',
-            kind: 'pluginEvent',
-            revision: 4,
-            retiredAt: 9,
-        }];
+        automationState.automation = {
+            ...automationState.automation,
+            retiredTriggers: [{
+                id: AutomationTriggerIdSchema.parse('retired-event-1'),
+                kind: 'pluginEvent',
+                revision: 4,
+                retiredAt: 9,
+            }],
+        };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
         const screen = await renderScreen(React.createElement(AutomationDetailScreen));
 
@@ -599,15 +567,23 @@ describe('AutomationDetailScreen', () => {
 
     it('blurs the active element before navigating to edit automation', async () => {
         // The retained editor is available only for a direct V2-compatible schedule detail.
+        const {
+            detail: _detail,
+            linkedExistingSessionId: _linkedExistingSessionId,
+            triggers,
+            ...summary
+        } = automationState.automation;
+        const legacyDetail = AutomationDefinitionDetailSchema.parse({
+            ...summary,
+            triggers: triggers.map((trigger) => ({ ...trigger, triggerDefinitionEnvelope: null })),
+            templateCiphertext: 'template',
+        });
         automationState.automation = {
             ...automationState.automation,
             detail: {
                 kind: 'available',
                 templateVersion: 1,
-                value: {
-                    ...automationState.automation,
-                    templateCiphertext: 'template',
-                },
+                value: legacyDetail,
             },
         };
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
@@ -883,7 +859,7 @@ describe('AutomationDetailScreen', () => {
         automationState.automation = {
             ...automationState.automation,
             triggers: [{
-                id: 'turn-trigger-1',
+                id: AutomationTriggerIdSchema.parse('turn-trigger-1'),
                 revision: 5,
                 enabled: true,
                 createdAt: 1,
@@ -904,15 +880,15 @@ describe('AutomationDetailScreen', () => {
         const screen = await renderScreen(React.createElement(AutomationDetailScreen));
 
         expect(screen.getTextContent()).toContain('Running from this turn');
-        expect(screen.getTextContent()).toContain('run-from-turn');
-        expect(screen.getTextContent()).toContain('session-source');
-        expect(screen.getTextContent()).toContain('turn-exact');
+        expect(screen.findByProps({ accessibilityLabel: 'Matching run' }).props.subtitle).toBe('run-from-turn');
+        expect(screen.findByProps({ accessibilityLabel: 'Source session' }).props.subtitle).toBe('session-source');
+        expect(screen.findByProps({ accessibilityLabel: 'Exact source turn' }).props.subtitle).toBe('turn-exact');
     });
 
     it('shows the durable-push endpoint a webhook Automation actually observes', async () => {
         automationState.automation = {
             ...automationState.automation,
-            assignments: [{ machineId: 'execution-machine', enabled: true, priority: 0 }],
+            assignments: [{ machineId: 'execution-machine', enabled: true, priority: 0, updatedAt: null }],
             triggers: [eventTriggerFixture({
                 sourceStatus: eventSourceStatusFixture({
                     reporterMaterializationRef: {
@@ -950,7 +926,7 @@ describe('AutomationDetailScreen', () => {
     it('does not substitute an execution assignment or stale status reporter for webhook observation placement', async () => {
         automationState.automation = {
             ...automationState.automation,
-            assignments: [{ machineId: 'execution-machine', enabled: true, priority: 0 }],
+            assignments: [{ machineId: 'execution-machine', enabled: true, priority: 0, updatedAt: null }],
             triggers: [eventTriggerFixture({
                 sourceStatus: eventSourceStatusFixture({
                     reporterMaterializationRef: {
@@ -979,20 +955,14 @@ describe('AutomationDetailScreen', () => {
     });
 
     it('renders the bounded Event source status from the canonical projection', async () => {
-        const sourceStatus = {
-            automationId: 'a1',
-            triggerId: 'event-trigger-1',
-            triggerRevision: 1,
-            eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
-            sourceSelectorId: 'selector-1',
+        const sourceStatus = eventSourceStatusFixture({
             reporterMaterializationRef: {
                 pluginId: 'happier.scm.github',
                 machineId: 'watcher-1',
                 materializationId: 'materialization-1',
             },
-            reporterImmutableGenerationId: 'github-generation-1',
-            state: 'backingOff' as const,
-            code: 'rateLimited' as const,
+            state: 'backingOff',
+            code: 'rateLimited',
             lastObservedAt: 1,
             lastDispositionAt: 2,
             nextRetryAt: 3,
@@ -1000,15 +970,14 @@ describe('AutomationDetailScreen', () => {
             admittedCount: 5,
             skippedCount: 6,
             revision: 7,
-        };
-        const sourceCatalogStatus = {
-            reporterImmutableGenerationId: 'github-generation-1',
+        });
+        const sourceCatalogStatus = eventSourceCatalogStatusFixture({
             observedRevision: '9',
             adoptedRevision: '7',
-            state: 'reconciliationLate' as const,
+            state: 'reconciliationLate',
             scanStartedAt: 1,
             nextRetryAt: 3,
-        };
+        });
         automationState.automation = {
             ...automationState.automation,
             triggers: [eventTriggerFixture({
@@ -1125,7 +1094,7 @@ describe('AutomationDetailScreen', () => {
     });
 
     it('offers the shared plural editor for a current schedule recipe', async () => {
-        const strictScheduleDetail = {
+        const strictScheduleDetail = AutomationDefinitionDetailSchema.parse({
             id: 'a1',
             name: 'Nightly',
             description: null,
@@ -1173,19 +1142,9 @@ describe('AutomationDetailScreen', () => {
             createdAt: 1,
             updatedAt: 1,
             assignments: [],
-        };
-        expect(AutomationDefinitionDetailSchema.safeParse(strictScheduleDetail).success).toBe(true);
-        automationState.automation = {
-            ...automationState.automation,
-            targetType: 'executionRun',
-            existingSessionId: null,
-            templateVersion: 3,
-            detail: {
-                kind: 'available',
-                templateVersion: 3,
-                value: strictScheduleDetail,
-            },
-        };
+            retiredTriggers: [],
+        });
+        automationState.automation = createAutomationDefinitionFromDetail(strictScheduleDetail);
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
         const screen = await renderScreen(React.createElement(AutomationDetailScreen));
@@ -1565,7 +1524,7 @@ describe('AutomationDetailScreen', () => {
         });
     });
 
-    it('keeps the current detail route loading while an earlier route refresh settles', async () => {
+    it('settles definition loading independently from an earlier route history refresh', async () => {
         const firstRouteRefresh = createDeferred<{ nextCursor: string | null }>();
         const secondRouteRefresh = createDeferred<{ nextCursor: string | null }>();
         syncSpies.fetchAutomationRuns.mockImplementation((automationId: string) => (
@@ -1592,7 +1551,8 @@ describe('AutomationDetailScreen', () => {
             await firstRouteRefresh.promise;
         });
 
-        expect(screen.findAllByType('ActivitySpinner' as any)).toHaveLength(1);
+        expect(screen.findAllByType('ActivitySpinner' as any)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('automations.detail.notFound');
 
         await act(async () => {
             secondRouteRefresh.resolve({ nextCursor: null });
@@ -1674,6 +1634,34 @@ describe('AutomationDetailScreen', () => {
             await Promise.resolve();
         });
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('unlocks definition mutations after authoritative detail refresh without waiting for Run history', async () => {
+        const detailRefresh = createDeferred();
+        const historyRefresh = createDeferred<{ nextCursor: string | null }>();
+        syncSpies.refreshAutomationDefinitionDetail.mockImplementationOnce(() => detailRefresh.promise);
+        syncSpies.fetchAutomationRuns.mockImplementationOnce(() => historyRefresh.promise);
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            await Promise.resolve();
+        });
+        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'Run now')?.props.disabled).toBe(true);
+
+        await act(async () => {
+            detailRefresh.resolve();
+            await detailRefresh.promise;
+            await Promise.resolve();
+        });
+        expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledWith('a1');
+        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'Run now')?.props.disabled).toBe(false);
+        expect(findTestInstanceByTypeContainingText(screen, 'Pressable', 'automations.detail.pauseAutomation')?.props.disabled).toBe(false);
+
+        await act(async () => {
+            historyRefresh.resolve({ nextCursor: null });
+            await historyRefresh.promise;
+        });
     });
 
     it('continues run history from the server-provided cursor instead of stopping at the first page', async () => {
@@ -1832,9 +1820,10 @@ describe('AutomationDetailScreen', () => {
     });
 
     it('hides the machine-assignment warning once at least one machine is enabled', async () => {
-        automationState.automation.assignments = [
-            { machineId: 'm1', enabled: true, priority: 1 },
-        ];
+        automationState.automation = {
+            ...automationState.automation,
+            assignments: [{ machineId: 'm1', enabled: true, priority: 1, updatedAt: null }],
+        };
         machinesState.list = [
             {
                 id: 'm1',

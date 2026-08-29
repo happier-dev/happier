@@ -205,6 +205,7 @@ function createTriageVoiceProjection() {
     description: declaration.description,
     scopes: declaration.scopes,
     surfaces: declaration.surfaces,
+    placementBindings: declaration.placementBindings,
     execution: declaration.execution,
     inputSchema: declaration.inputSchema,
     outputSchema: declaration.resultSchema,

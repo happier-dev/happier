@@ -77,6 +77,12 @@ describe('PluginMachineMatrixSection', () => {
             kind: 'available',
             availabilityCursor: 7,
             materializations: [materialization('machine-a'), materialization('machine-b')],
+            // Reporting identity: both machines are included in this snapshot,
+            // so neither is silently unknown to the matrix.
+            snapshots: [
+                { serverIdentityId: 'srv_one', machineId: 'machine-a', revision: 1, materializations: [] },
+                { serverIdentityId: 'srv_one', machineId: 'machine-b', revision: 1, materializations: [] },
+            ],
         };
     });
 

@@ -144,7 +144,7 @@ describe('Item web testID forwarding', () => {
         expect(view.props['data-testid']).toBe('settings-static-row');
     });
 
-    it('exposes a stable selected-state attribute for interactive web rows', async () => {
+    it('does not expose aria-selected on an ordinary interactive button row', async () => {
         const { Item } = await import('./Item');
         const screen = await renderScreen(<Item
                     testID="settings-notifications-sounds-account-happier"
@@ -155,7 +155,8 @@ describe('Item web testID forwarding', () => {
 
         const row = screen.findByTestId('settings-notifications-sounds-account-happier');
         expect(row).toBeTruthy();
-        expect(row?.props['aria-selected']).toBe(true);
+        expect(row?.props.accessibilityState?.selected).toBeUndefined();
+        expect(row?.props['aria-selected']).toBeUndefined();
     });
 
     it('exposes checked radio semantics and activates a radio row with Space without swallowing the event', async () => {

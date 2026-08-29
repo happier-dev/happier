@@ -25,17 +25,35 @@ export function readExactActiveParentTurn(
         : null;
 }
 
-export function parseExactTurnAutomationPrefill(input: Readonly<{
+/**
+ * Tri-state route outcome. `absent` means the route carries no exact-turn
+ * intent at all (a plain composer/edit is correct). `invalid` means the route
+ * carries a partial or empty exact-turn intent: the user asked for
+ * "when this turn finishes" but the identity is incomplete, so the surface
+ * must say so explicitly instead of silently composing without the trigger.
+ */
+export type ExactTurnAutomationPrefillRoute = Readonly<
+    | { kind: 'absent' }
+    | { kind: 'invalid' }
+    | { kind: 'valid'; prefill: ExactTurnAutomationPrefill }
+>;
+
+export function parseExactTurnAutomationPrefillRoute(input: Readonly<{
     sourceSessionId?: unknown;
     sourceTurnId?: unknown;
     sourceServerId?: unknown;
-}>): ExactTurnAutomationPrefill | null {
+}>): ExactTurnAutomationPrefillRoute {
+    const expressesExactTurnIntent = ['sourceSessionId', 'sourceTurnId', 'sourceServerId']
+        .some((key) => Object.prototype.hasOwnProperty.call(input, key));
+    if (!expressesExactTurnIntent) return { kind: 'absent' };
     const sourceSessionId = nonEmpty(input.sourceSessionId);
     const sourceTurnId = nonEmpty(input.sourceTurnId);
     const sourceServerId = nonEmpty(input.sourceServerId);
-    return sourceSessionId && sourceTurnId && sourceServerId
-        ? Object.freeze({ sourceSessionId, sourceTurnId, sourceServerId })
-        : null;
+    if (!sourceSessionId || !sourceTurnId || !sourceServerId) return { kind: 'invalid' };
+    return {
+        kind: 'valid',
+        prefill: Object.freeze({ sourceSessionId, sourceTurnId, sourceServerId }),
+    };
 }
 
 export function areExactTurnAutomationPrefillsEqual(

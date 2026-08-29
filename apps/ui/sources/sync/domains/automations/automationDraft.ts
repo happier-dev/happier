@@ -55,6 +55,53 @@ export const DEFAULT_NEW_SESSION_AUTOMATION_DRAFT: NewSessionAutomationDraft = {
     triggers: [],
 };
 
+export type ExactTurnAutomationRowsReplacement = Readonly<{
+    /** Draft with exact-turn rows advanced to the current turns; identity-stable when unchanged. */
+    automation: NewSessionAutomationDraft;
+    /** True when at least one exact-turn row's source turn moved. */
+    changed: boolean;
+    /** False when any exact-turn row's source Session has no current active parent turn. */
+    canReplace: boolean;
+}>;
+
+/**
+ * The one exact-turn row replacement for the Session-inline Automation draft.
+ * Each exact-turn row adopts the live current parent turn of its own source
+ * Session; every other draft field, trigger row, and edit survives untouched.
+ * The current-turn reader is injected so this domain owner never depends on
+ * the Session UI layer.
+ */
+export function replaceExactTurnAutomationRowsWithCurrentTurns(params: Readonly<{
+    automation: NewSessionAutomationDraft;
+    readExactTurn: (sourceSessionId: string) => Readonly<{ sourceTurnId: string }> | null;
+}>): ExactTurnAutomationRowsReplacement {
+    let canReplace = true;
+    let changed = false;
+    const triggers = params.automation.triggers.map((trigger) => {
+        const definition = trigger.definition;
+        if (definition.kind !== 'sessionLifecycle' || definition.scope.kind !== 'exactTurn') return trigger;
+        const exact = params.readExactTurn(definition.scope.sourceSessionId);
+        if (!exact) {
+            canReplace = false;
+            return trigger;
+        }
+        if (exact.sourceTurnId === definition.scope.sourceTurnId) return trigger;
+        changed = true;
+        return {
+            ...trigger,
+            definition: {
+                ...definition,
+                scope: { ...definition.scope, sourceTurnId: exact.sourceTurnId },
+            },
+        };
+    });
+    return {
+        automation: changed ? { ...params.automation, triggers } : params.automation,
+        changed,
+        canReplace,
+    };
+}
+
 function sanitizeTriggerRows(input: unknown): ReadonlyArray<NewSessionAutomationTriggerDraft> {
     if (!Array.isArray(input)) return [];
     const seen = new Set<string>();

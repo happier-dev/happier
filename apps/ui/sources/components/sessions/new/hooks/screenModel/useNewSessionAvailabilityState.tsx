@@ -75,7 +75,7 @@ export function resolveNewSessionDeclarationAvailabilityFacts(params: Readonly<{
         if (entry.kind === 'configuredBackend') continue;
         const id = entry.agentId;
         if (!id || Object.prototype.hasOwnProperty.call(installableDepKeyCountByAgentId, id)) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, params.settings);
+        const experiments = getAgentResumeExperimentsFromSettings(id, params.settings, params.selectedMachineId);
         installableDepKeyCountByAgentId[id] = getNewSessionRelevantInstallableDepKeys({
             agentId: id,
             settings: params.settings,
@@ -206,7 +206,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const wizardInstallableDeps = React.useMemo(() => {
         if (!params.selectedMachineId || !behaviorAgentId) return [];
 
-        const experiments = getAgentResumeExperimentsFromSettings(behaviorAgentId, params.settings);
+        const experiments = getAgentResumeExperimentsFromSettings(behaviorAgentId, params.settings, params.selectedMachineId);
         const relevantKeys = getNewSessionRelevantInstallableDepKeys({
             agentId: behaviorAgentId,
             settings: params.settings,

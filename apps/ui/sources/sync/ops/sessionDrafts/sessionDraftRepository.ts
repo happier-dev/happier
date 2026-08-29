@@ -774,15 +774,19 @@ export class SessionDraftRepository {
         scope: SessionDraftRepositoryScope;
         address: SessionDraftAddressV1;
         currentness: SessionDraftCurrentness;
+        /** Absent clears every field the capture still owns; present narrows it. */
+        fieldIds?: readonly string[];
     }>): boolean {
         if (!addressesEqual(params.address, params.currentness.address)) return false;
         const replica = this.readReplica(params.scope, params.address);
         if (!replica?.localRawDocument) return false;
+        const included = params.fieldIds ? new Set<string>(params.fieldIds) : null;
         let document = replica.localRawDocument;
         let pending = [...replica.pendingFieldMutations];
         let changed = false;
         for (const path of listFieldPaths(document)) {
             const key = pathKey(path);
+            if (included && !included.has(key)) continue;
             const capturedMutationId = params.currentness.mutationIds[key];
             const current = getField(document, path);
             if (!capturedMutationId || current?.mutationId !== capturedMutationId) continue;
@@ -821,6 +825,8 @@ export class SessionDraftRepository {
         scope: SessionDraftRepositoryScope;
         address: SessionDraftAddressV1;
         currentness: SessionDraftCurrentness;
+        /** Absent clears every field the capture still owns; present narrows it. */
+        fieldIds?: readonly string[];
     }>): Promise<boolean> {
         const changed = this.clearSessionDraftCurrentnessLocal(params);
         if (!changed) return false;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -51,7 +51,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
     const handlePress = React.useCallback((event?: unknown) => {
         const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
@@ -67,9 +67,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
                 accessibilityRole="button"
                 accessibilityLabel={t('newSession.title')}
                 onPress={handlePress}
-                // No `hitSlop`: the capsule is the full bar height, so even the smallest tab-bar
-                // size paints a target at the platform minimum, and slop here would overlap the
-                // neighbouring tab's own slop across the 8pt gap.
+                // Keep this capsule's hit area out of the neighbouring tab's expanded press area.
                 style={({ pressed }) => [styles.press, pressed ? styles.pressed : null]}
             >
                 <Icon name="plus" size={metrics.iconSize} color={theme.colors.text.primary} />

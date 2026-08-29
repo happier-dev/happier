@@ -37,7 +37,9 @@ const brandPresentationState = vi.hoisted(() => ({
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
     useInstalledPluginBrandPresentation: (input: Record<string, unknown>) => {
         brandPresentationState.input = input;
-        return brandPresentationState.presentation;
+        return input.installedPackage
+            ? brandPresentationState.presentation
+            : null;
     },
 }));
 

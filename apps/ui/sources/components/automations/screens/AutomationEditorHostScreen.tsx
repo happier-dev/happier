@@ -37,11 +37,13 @@ import {
     createAutomationEditorLifetimeIdentity,
     isAutomationEditorLifetimeIdentityCurrent,
     createAutomationEditorTriggerClientId,
+    requireAutomationEditorDraftIdentity,
     shouldValidateAutomationEditorLifecycleTrigger,
     type AutomationEditorDraft,
     type AutomationEditorTriggerDefinitionSeed,
 } from '@/sync/domains/automations/automationEditorDraft';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage, useActiveServerAccountScope, useAutomation, useSessions } from '@/sync/domains/state/storage';
@@ -145,10 +147,12 @@ function appendExactTurnPrefill(
 
 function replaceLifecycleRowsWithCurrentTurns(draft: AutomationEditorDraft): AutomationEditorDraft | null {
     let changed = false;
-    const triggers = draft.triggers.map((trigger) => {
+    const triggers: AutomationEditorDraft['triggers'][number][] = [];
+    for (const trigger of draft.triggers) {
         const definition = trigger.definition;
         if (definition?.kind !== 'sessionLifecycle' || !shouldValidateAutomationEditorLifecycleTrigger(trigger)) {
-            return trigger;
+            triggers.push(trigger);
+            continue;
         }
         const current = readExactActiveParentTurn(
             storage.getState().sessions[definition.scope.sourceSessionId],
@@ -158,23 +162,25 @@ function replaceLifecycleRowsWithCurrentTurns(draft: AutomationEditorDraft): Aut
             draft.executionRecipe.target.kind === 'existingSession'
             && draft.executionRecipe.target.sessionId === current.sourceSessionId
         ) return null;
-        if (current.sourceTurnId === definition.scope.sourceTurnId) return trigger;
-        changed = true;
-        return {
-            ...trigger,
-            isDirty: trigger.persisted !== null || trigger.isDirty === true,
-            definition: {
-                ...definition,
-                scope: {
-                    ...definition.scope,
-                    sourceSessionId: current.sourceSessionId,
-                    sourceTurnId: current.sourceTurnId,
+        if (current.sourceTurnId === definition.scope.sourceTurnId) {
+            triggers.push(trigger);
+        } else {
+            changed = true;
+            triggers.push({
+                ...trigger,
+                isDirty: trigger.persisted !== null || trigger.isDirty === true,
+                definition: {
+                    ...definition,
+                    scope: {
+                        ...definition.scope,
+                        sourceSessionId: current.sourceSessionId,
+                        sourceTurnId: current.sourceTurnId,
+                    },
                 },
-            },
-        };
-    });
-    if (triggers.some((trigger) => trigger === null)) return null;
-    return changed ? { ...draft, triggers: triggers as AutomationEditorDraft['triggers'] } : draft;
+            });
+        }
+    }
+    return changed ? { ...draft, triggers } : draft;
 }
 
 export function AutomationEditorHostScreen(props: Readonly<{
@@ -189,36 +195,50 @@ export function AutomationEditorHostScreen(props: Readonly<{
     const editorLifetimeIdentity = activeAccountScope?.serverId === activeServer.serverId
         ? createAutomationEditorLifetimeIdentity(activeAccountScope, props.automationId)
         : null;
+    // The mounted exact-turn binding is established once at mount and changes
+    // only through the explicit adopt-current-turn action below. Route params
+    // stay URL truth; they are never the mutation owner for the mounted draft.
+    const [exactTurnBinding, setExactTurnBinding] = React.useState<ExactTurnAutomationPrefill | null>(
+        () => props.exactTurnPrefill ?? null,
+    );
+    const exactTurnBindingRef = React.useRef(exactTurnBinding);
+    exactTurnBindingRef.current = exactTurnBinding;
     const exactTurnSupport = useAutomationsSupport({
         scopeKind: 'spawn',
-        serverId: props.exactTurnPrefill?.sourceServerId ?? activeServer.serverId,
+        serverId: exactTurnBinding?.sourceServerId ?? activeServer.serverId,
     });
     const exactTurnSupportRef = React.useRef(exactTurnSupport.enabled);
     exactTurnSupportRef.current = exactTurnSupport.enabled;
-    const sourceSession = props.exactTurnPrefill
-        ? sessions.find((session) => session.id === props.exactTurnPrefill!.sourceSessionId) ?? null
-        : null;
-    const exactTurnAuthority = React.useMemo(() => props.exactTurnPrefill
+    const accountScopeKey = activeAccountScope ? serverAccountScopeKeySuffix(activeAccountScope) : null;
+    const exactTurnAuthority = React.useMemo(() => exactTurnBinding
         ? captureSessionAutomationAuthority({
-            session: sourceSession,
-            routeSessionId: props.exactTurnPrefill.sourceSessionId,
-            routeServerId: props.exactTurnPrefill.sourceServerId,
+            // Capture-time identity facts only; isCurrent() re-reads live store
+            // truth, so the captured session must not be a render-phase object
+            // whose identity churns on every transcript update.
+            session: storage.getState().sessions[exactTurnBinding.sourceSessionId] ?? null,
+            routeSessionId: exactTurnBinding.sourceSessionId,
+            routeServerId: exactTurnBinding.sourceServerId,
             activeServerId: activeServer.serverId,
             automationsEnabled: exactTurnSupport.enabled,
             accountLifetime: captureActiveServerAccountScopeLifetime(),
             readCurrent: () => ({
-                session: storage.getState().sessions[props.exactTurnPrefill!.sourceSessionId] ?? null,
-                routeSessionId: props.exactTurnPrefill!.sourceSessionId,
-                routeServerId: props.exactTurnPrefill!.sourceServerId,
+                session: storage.getState().sessions[exactTurnBinding.sourceSessionId] ?? null,
+                routeSessionId: exactTurnBinding.sourceSessionId,
+                routeServerId: exactTurnBinding.sourceServerId,
                 activeServerId: getActiveServerSnapshot().serverId,
                 automationsEnabled: exactTurnSupportRef.current,
             }),
         })
         : null, [
+        // The Account-scope key (serverId+accountId) is the semantic Account
+        // identity owned by the Account scope domain: a same-server Account
+        // switch rebinds the authority instead of holding the retired A-era
+        // lifetime forever.
+        accountScopeKey,
         activeServer.serverId,
         exactTurnSupport.enabled,
-        props.exactTurnPrefill,
-        sourceSession,
+        exactTurnBinding?.sourceServerId,
+        exactTurnBinding?.sourceSessionId,
     ]);
     const [draft, setDraft] = React.useState<AutomationEditorDraft | null>(null);
     const [draftLifetimeIdentity, setDraftLifetimeIdentity] = React.useState<string | null>(null);
@@ -261,7 +281,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
                 ? automationEditorDraftFromDetail(refreshed.detail.value, seeds)
                 : null;
             if (!hydrated) throw new Error('Automation definition is unavailable');
-            const observed = props.exactTurnPrefill ?? null;
+            const observed = exactTurnBindingRef.current;
             const current = observed
                 ? readExactActiveParentTurn(storage.getState().sessions[observed.sourceSessionId])
                 : null;
@@ -290,7 +310,12 @@ export function AutomationEditorHostScreen(props: Readonly<{
             if (alive && accountLifetime?.isCurrent()) setLoadError(true);
         });
         return () => { alive = false; };
-    }, [editorLifetimeIdentity, exactTurnAuthority, props.automationId, props.exactTurnPrefill, reloadGeneration]);
+        // Rehydration is keyed by the mounted definition/Account identity, the
+        // authority binding, and the automation id — never by route params or
+        // the prefill object. The mounted binding is read through a ref so an
+        // explicit adopt-current-turn cannot rehydrate unsaved work away.
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by semantic mounted identity, see exactTurnBinding above.
+    }, [editorLifetimeIdentity, exactTurnAuthority, props.automationId, reloadGeneration]);
 
     const sessionOptions = React.useMemo(() => sessions
         .filter((session) => session.serverId === activeServer.serverId)
@@ -311,14 +336,19 @@ export function AutomationEditorHostScreen(props: Readonly<{
         const capturedDraft = latestDraftRef.current;
         const capturedDraftLifetimeIdentity = draftLifetimeIdentity;
         const accountLifetime = captureActiveServerAccountScopeLifetime();
-        const observed = props.exactTurnPrefill ?? null;
-        const exactTurnIsCurrent = () => !observed || (
-            exactTurnAuthority?.isCurrent() === true
-            && areExactTurnAutomationPrefillsEqual(
+        const observed = exactTurnBinding;
+        // Request/response lifetime facts. The source turn itself is NOT
+        // re-read here: pre-request eligibility below decides from the live
+        // turn once, and after the server has committed, the exact-turn state
+        // the server validated is authoritative. Re-reading the turn after the
+        // response would reject a committed save merely because the transcript
+        // learned about the completion first.
+        const exactTurnAuthorityIsCurrent = () => !observed || exactTurnAuthority?.isCurrent() === true;
+        const exactTurnMatchesObservedTurn = () => !observed
+            || areExactTurnAutomationPrefillsEqual(
                 observed,
                 readExactActiveParentTurn(storage.getState().sessions[observed.sourceSessionId]),
-            )
-        );
+            );
         const lifecycleAuthorities = capturedDraft && accountLifetime
             ? capturedDraft.triggers.flatMap((trigger) => {
                 if (!shouldValidateAutomationEditorLifecycleTrigger(trigger)) return [];
@@ -346,13 +376,17 @@ export function AutomationEditorHostScreen(props: Readonly<{
         const lifecycleRows = capturedDraft?.triggers.filter(
             shouldValidateAutomationEditorLifecycleTrigger,
         ).length ?? 0;
-        const lifecycleTurnsAreCurrent = () => lifecycleAuthorities.length === lifecycleRows
-            && lifecycleAuthorities.every(({ authority, definition }) => (
-                authority.isCurrent()
-                && readExactActiveParentTurn(
+        const lifecycleAuthoritiesAreCurrent = () => lifecycleAuthorities.length === lifecycleRows
+            && lifecycleAuthorities.every(({ authority }) => authority.isCurrent());
+        const lifecycleTurnsMatchDraft = () => lifecycleAuthorities.length === lifecycleRows
+            && lifecycleAuthorities.every(({ definition }) => (
+                readExactActiveParentTurn(
                     storage.getState().sessions[definition.scope.sourceSessionId],
                 )?.sourceTurnId === definition.scope.sourceTurnId
             ));
+        // Pre-request eligibility: evaluated once, from live turn truth, before
+        // anything is sent. A turn that completes only after this point is
+        // settled by the server's own typed admission check, never locally.
         if (
             !capturedDraft
             || !accountLifetime
@@ -364,8 +398,10 @@ export function AutomationEditorHostScreen(props: Readonly<{
                 props.automationId,
             )
             || submitting
-            || !exactTurnIsCurrent()
-            || !lifecycleTurnsAreCurrent()
+            || !exactTurnAuthorityIsCurrent()
+            || !exactTurnMatchesObservedTurn()
+            || !lifecycleAuthoritiesAreCurrent()
+            || !lifecycleTurnsMatchDraft()
         ) {
             if (observed) setStalePrefill(observed);
             if (capturedDraft && !observed && lifecycleRows > 0) {
@@ -385,8 +421,8 @@ export function AutomationEditorHostScreen(props: Readonly<{
         const isCurrent = () => mountedRef.current
             && accountLifetime.isCurrent()
             && capturedDraftLifetimeIdentity === editorLifetimeIdentity
-            && exactTurnIsCurrent()
-            && lifecycleTurnsAreCurrent()
+            && exactTurnAuthorityIsCurrent()
+            && lifecycleAuthoritiesAreCurrent()
             && latestDraftRef.current === capturedDraft;
         setSubmitting(true);
         try {
@@ -419,7 +455,36 @@ export function AutomationEditorHostScreen(props: Readonly<{
         } finally {
             if (mountedRef.current) setSubmitting(false);
         }
-    }, [draftLifetimeIdentity, editorLifetimeIdentity, exactTurnAuthority, props.automationId, props.exactTurnPrefill, router, submitting]);
+    }, [draftLifetimeIdentity, editorLifetimeIdentity, exactTurnAuthority, exactTurnBinding, props.automationId, router, submitting]);
+
+    // Explicit "Use current turn": the only path that mutates the mounted
+    // binding. It advances just the exact lifecycle row(s) through the
+    // incumbent draft owner (plus the binding row when hydration dropped it)
+    // and preserves every other unsaved draft field, row, and dirty state.
+    const adoptCurrentTurn = React.useCallback(async () => {
+        if (!stalePrefill) return;
+        const current = readExactActiveParentTurn(
+            storage.getState().sessions[stalePrefill.sourceSessionId],
+        );
+        if (!current) {
+            await Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
+            return;
+        }
+        const captured = latestDraftRef.current;
+        if (!captured) return;
+        const appended = appendExactTurnPrefill(captured, current);
+        const replacement = replaceLifecycleRowsWithCurrentTurns(appended);
+        if (!replacement) {
+            await Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
+            return;
+        }
+        setDraft(replacement);
+        setStalePrefill(null);
+        setExactTurnBinding(current);
+        // Route params remain URL truth only; the mounted draft above was the
+        // mutation owner, so no hydration may re-run from this change.
+        router.setParams(buildExactTurnAutomationRouteParams(current));
+    }, [router, stalePrefill]);
 
     if (!draft || draftLifetimeIdentity !== editorLifetimeIdentity) {
         return (
@@ -451,17 +516,10 @@ export function AutomationEditorHostScreen(props: Readonly<{
                             kind="warning"
                             title={t('automations.exactTurn.staleTitle')}
                             reason={t('automations.exactTurn.staleBody')}
-                            {...(() => {
-                                const current = readExactActiveParentTurn(
-                                    storage.getState().sessions[stalePrefill.sourceSessionId],
-                                );
-                                return current ? {
-                                    action: {
-                                        label: t('automations.exactTurn.useCurrentTurn'),
-                                        onPress: () => router.setParams(buildExactTurnAutomationRouteParams(current)),
-                                    },
-                                } : {};
-                            })()}
+                            action={{
+                                label: t('automations.exactTurn.useCurrentTurn'),
+                                onPress: () => { void adoptCurrentTurn(); },
+                            }}
                             accessibilitySemantics="alert"
                         />
                     ) : null}
@@ -481,7 +539,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
                         renderPluginEventEditor={(editorProps) => (
                             <PluginEventAutomationEditor
                                 key={editorProps.clientId}
-                                automationId={draft.automationId ?? draft.pendingAutomationId!}
+                                automationId={requireAutomationEditorDraftIdentity(draft)}
                                 clientId={editorProps.clientId}
                                 value={editorProps.value}
                                 seed={eventEditSeeds.get(editorProps.clientId) ?? null}

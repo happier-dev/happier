@@ -110,7 +110,7 @@ function createReconfigurationHarness() {
   const controller = {
     getSnapshot: vi.fn(() => snapshot),
     setOutputFocusState: vi.fn(async (): Promise<'applied' | 'unsupported'> => 'applied'),
-    setMuted: vi.fn(async () => undefined),
+    setMuted: vi.fn(async (_sessionId: string, _muted: boolean) => undefined),
     suspendInput: vi.fn(async () => {
       await controller.setMuted('voice-global', true);
       let released = false;

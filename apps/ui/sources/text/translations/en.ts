@@ -1147,6 +1147,7 @@ export const en = {
                 eventCatalogUnavailable: 'Event sources are unavailable until this machine finishes loading.',
                 eventSource: 'EVENT SOURCE',
                 chooseEvent: 'Choose an event',
+                searchEvents: 'Search events',
                 noEligibleEvents: 'No eligible Event sources are available on this machine.',
                 source: 'SOURCE',
                 configureSource: 'Configure source',

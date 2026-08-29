@@ -33,6 +33,7 @@ import { Modal } from '@/modal';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
 import {
+    applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountGroupOptionsByServiceId,
     buildQualifiedConnectedAccountProfileOptionsByServiceId,
     resolveProjectedConnectedAccountServiceKeys,
@@ -416,12 +417,15 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     );
 
     const profileOptionsByServiceId = React.useMemo(() => (
-        buildQualifiedConnectedAccountProfileOptionsByServiceId({
+        applyProjectedCredentialKindRestrictions({
+            optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
             accounts: accountProfile?.connectedAccountsV4 ?? [],
             supportedServiceIds: supportedConnectedServiceIds,
             labelsByKey: params.settings.connectedServicesProfileLabelByKey,
+            }),
+            connectedAccounts: params.connectedAccounts,
         })
-    ), [accountProfile?.connectedAccountsV4, params.settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
+    ), [accountProfile?.connectedAccountsV4, params.connectedAccounts, params.settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
 
     const groupOptionsByServiceId = React.useMemo(() => (
         buildQualifiedConnectedAccountGroupOptionsByServiceId({

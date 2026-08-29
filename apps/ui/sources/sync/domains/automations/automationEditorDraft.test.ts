@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     AutomationDefinitionDetailSchema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     type AutomationDefinitionDetail,
 } from '@happier-dev/protocol';
 
@@ -210,7 +211,7 @@ describe('automationEditorDraftFromDetail', () => {
     it('revalidates exact-turn currentness only for new or changed rows', () => {
         const lifecycle = {
             clientId: 'turn-trigger',
-            persisted: { id: 'turn-trigger', revision: 4 },
+            persisted: { id: AutomationTriggerIdSchema.parse('turn-trigger'), revision: 4 },
             definition: {
                 kind: 'sessionLifecycle' as const,
                 enabled: true,

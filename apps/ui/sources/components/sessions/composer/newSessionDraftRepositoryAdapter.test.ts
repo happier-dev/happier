@@ -74,9 +74,29 @@ describe('newSessionDraftRepositoryAdapter', () => {
         expect(snapshot?.document.target).toMatchObject({
             kind: 'newSession',
             authoring: {
-                machineId: { value: 'machine-b' },
+                executionTarget: { value: { serverId: 'server-a', machineId: 'machine-b' } },
                 directory: { value: '/repo' },
+                agentTarget: {
+                    value: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                },
             },
+        });
+    });
+
+    it('round-trips the canonical execution and Agent selection through the repository', () => {
+        const draftId = 'round-trip-draft';
+        writeNewSessionDraftToRepository({
+            scope,
+            draftId,
+            draft: authoringDraft(),
+        });
+
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            selectedMachineId: 'machine-b',
+            targetServerId: 'server-a',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-b' },
+            agentType: 'codex',
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         });
     });
 

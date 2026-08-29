@@ -118,10 +118,17 @@ describe('migrateLegacySessionDrafts', () => {
                     instanceId: 'attachment-a',
                     value: { safe: true },
                 })],
-                authoring: expect.objectContaining({ machineId: 'machine-a', directory: '/workspace/repo' }),
+                authoring: expect.objectContaining({
+                    executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+                    directory: '/workspace/repo',
+                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                }),
             }),
         }));
         expect(mocks.writeNew.mock.calls[0]?.[0].patch.authoring).not.toEqual(expect.objectContaining({
+            machineId: expect.anything(),
+            agentId: expect.anything(),
+            backendTarget: expect.anything(),
             sessionConfigOptionOverrides: expect.anything(),
             selectedSecretId: expect.anything(),
             sessionOnlySecretValueEncByProfileIdByEnvVarName: expect.anything(),

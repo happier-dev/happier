@@ -5,9 +5,10 @@ import { SelectionListScreen, type SelectionListOption, type SelectionListStep }
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
-import { useAutomations, useSession } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useAutomations, useSession } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storage';
 import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { sync } from '@/sync/sync';
@@ -42,6 +43,7 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
     const router = useRouter();
     const sourceSession = useSession(props.observed.sourceSessionId);
     const activeServer = useActiveServerSnapshot();
+    const activeAccountScope = useActiveServerAccountScope();
     const support = useAutomationsSupport({ scopeKind: 'spawn', serverId: props.observed.sourceServerId });
     const supportRef = React.useRef(support.enabled);
     supportRef.current = support.enabled;
@@ -51,8 +53,15 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
     const [refreshGeneration, setRefreshGeneration] = React.useState(0);
     const current = readExactActiveParentTurn(sourceSession);
     const observedIsCurrent = areExactTurnAutomationPrefillsEqual(current, props.observed);
+    const accountScopeKey = activeAccountScope ? serverAccountScopeKeySuffix(activeAccountScope) : null;
     const authority = React.useMemo(() => captureSessionAutomationAuthority({
-        session: sourceSession,
+        // Capture-time identity facts only; isCurrent() re-reads live store
+        // truth, so the memo must not depend on the render-phase Session
+        // object whose identity churns on every transcript update of the
+        // running source turn. The Account-scope key (serverId+accountId) is
+        // the semantic Account identity: a same-server Account switch rebinds
+        // the authority instead of holding the retired lifetime forever.
+        session: storage.getState().sessions[props.observed.sourceSessionId] ?? null,
         routeSessionId: props.observed.sourceSessionId,
         routeServerId: props.observed.sourceServerId,
         activeServerId: activeServer.serverId,
@@ -65,7 +74,13 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
             activeServerId: getActiveServerSnapshot().serverId,
             automationsEnabled: supportRef.current,
         }),
-    }), [activeServer.serverId, props.observed.sourceServerId, props.observed.sourceSessionId, sourceSession, support.enabled]);
+    }), [
+        accountScopeKey,
+        activeServer.serverId,
+        props.observed.sourceServerId,
+        props.observed.sourceSessionId,
+        support.enabled,
+    ]);
 
     React.useEffect(() => {
         if (!authority) return;

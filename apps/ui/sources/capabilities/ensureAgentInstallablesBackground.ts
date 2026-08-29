@@ -103,7 +103,7 @@ export async function ensureAgentInstallablesBackground(
         loadDaemonMergedProjectionInputs: depsOverrides.loadDaemonMergedProjectionInputs ?? loadDaemonMergedProjectionInputs,
     };
 
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
+    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, opts.machineId);
     const relevantKeys = getNewSessionRelevantInstallableDepKeys({
         agentId: opts.agentId,
         settings: opts.settings,

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 
 import {
-    applyAgentKindRestrictionsToQualifiedProfileOptions,
+    applyProjectedCredentialKindRestrictions,
     resolveProjectedConnectedAccountServiceKeys,
 } from './qualifiedConnectedAccountServiceOptions';
 
@@ -13,15 +13,11 @@ const CLAUDE_SUBSCRIPTION_SERVICE_KEY = 'happier.agent.claude/claude-subscriptio
 // legacy mapping — a bundled Agent author fact cannot exist for it.
 const NOVEL_SERVICE_KEY = 'acme.review/reviewer-service';
 
-/** Released bundled Agent fact shape (cf. opencode/ohMyPi: token-only subscription auth). */
-const CLAUDE_SUBSCRIPTION_TOKEN_ONLY_CORE = {
-    connectedServices: {
-        supportedServiceIds: ['claude-subscription'],
-        supportedKindsByServiceId: {
-            'claude-subscription': ['token'],
-        },
-    },
-} as const;
+const CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE = [{
+    purpose: 'primary',
+    service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+    credentialKinds: ['token'],
+}] as const;
 
 function profileOption(params: Readonly<{
     profileId: string;
@@ -37,16 +33,16 @@ function profileOption(params: Readonly<{
     };
 }
 
-describe('applyAgentKindRestrictionsToQualifiedProfileOptions', () => {
-    it('marks a bundled service option unsupported when the Agent core restricts its credential kind', () => {
-        const restricted = applyAgentKindRestrictionsToQualifiedProfileOptions({
+describe('applyProjectedCredentialKindRestrictions', () => {
+    it('marks a bundled service option unsupported from its public purpose declaration', () => {
+        const restricted = applyProjectedCredentialKindRestrictions({
             optionsByServiceId: {
                 [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: [
                     profileOption({ profileId: 'max', kind: 'oauth' }),
                     profileOption({ profileId: 'api', kind: 'token' }),
                 ],
             },
-            agentCore: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_CORE,
+            connectedAccounts: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE,
         });
 
         expect(restricted[CLAUDE_SUBSCRIPTION_SERVICE_KEY]).toEqual([
@@ -55,21 +51,21 @@ describe('applyAgentKindRestrictionsToQualifiedProfileOptions', () => {
         ]);
     });
 
-    it('resolves the bundled kind restriction without consulting the live projection registry', () => {
-        // Deliberately no `installConnectedAccountDescriptorProjection` in this
-        // suite: the released bundled kind fact is a generated catalog
-        // compatibility fact, not a live registry entry, so a loading/retired
-        // registry snapshot must never silently drop the restriction.
-        const restricted = applyAgentKindRestrictionsToQualifiedProfileOptions({
+    it('applies the same restriction to a novel external purpose declaration', () => {
+        const restricted = applyProjectedCredentialKindRestrictions({
             optionsByServiceId: {
-                [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: [
-                    profileOption({ profileId: 'max', kind: 'oauth' }),
+                [NOVEL_SERVICE_KEY]: [
+                    profileOption({ profileId: 'reviewer', kind: 'oauth' }),
                 ],
             },
-            agentCore: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_CORE,
+            connectedAccounts: [{
+                purpose: 'primary',
+                service: { pluginId: 'acme.review', localId: 'reviewer-service' },
+                credentialKinds: ['token'],
+            }],
         });
 
-        expect(restricted[CLAUDE_SUBSCRIPTION_SERVICE_KEY]?.[0]?.status).toBe('unsupported_kind');
+        expect(restricted[NOVEL_SERVICE_KEY]?.[0]?.status).toBe('unsupported_kind');
     });
 
     it('keeps a novel external service option unrestricted while the same Agent core restricts bundled kinds', () => {
@@ -82,9 +78,9 @@ describe('applyAgentKindRestrictionsToQualifiedProfileOptions', () => {
             ],
         } as const;
 
-        const restricted = applyAgentKindRestrictionsToQualifiedProfileOptions({
+        const restricted = applyProjectedCredentialKindRestrictions({
             optionsByServiceId: options,
-            agentCore: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_CORE,
+            connectedAccounts: CLAUDE_SUBSCRIPTION_TOKEN_ONLY_PURPOSE,
         });
 
         expect(restricted[CLAUDE_SUBSCRIPTION_SERVICE_KEY]?.[0]?.status).toBe('unsupported_kind');
@@ -98,9 +94,9 @@ describe('applyAgentKindRestrictionsToQualifiedProfileOptions', () => {
             ],
         } as const;
 
-        expect(applyAgentKindRestrictionsToQualifiedProfileOptions({
+        expect(applyProjectedCredentialKindRestrictions({
             optionsByServiceId: options,
-            agentCore: null,
+            connectedAccounts: [],
         })).toEqual(options);
     });
 });

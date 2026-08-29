@@ -185,6 +185,10 @@ describe('resolveExistingSessionAutomationAvailability', () => {
                             providerSessionId: 'opencode-session-1',
                         },
                     },
+                    nativeResumeIdentityV1: {
+                        v: 1,
+                        vendorResumeId: 'opencode-session-1',
+                    },
                 },
             },
             machineIdOverride: 'm1',

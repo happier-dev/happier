@@ -93,7 +93,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
     const sessionsBadgeEnabled = useSetting('tabBarSessionsBadgeEnabled');
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
 
     const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
         const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
@@ -141,7 +141,6 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                             testID={`tabbar-tab-${tab.key}`}
                             style={[styles.tab, {
                                 minWidth: metrics.tabMinWidth,
-                                minHeight: metrics.tabMinHeight,
                                 paddingVertical: metrics.tabPaddingVertical,
                                 paddingHorizontal: metrics.tabPaddingHorizontal,
                             }]}

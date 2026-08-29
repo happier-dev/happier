@@ -281,7 +281,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
         frameProps.length = 0;
         const first = createHandle();
         const second = createHandle();
-        const artifactDigest = `sha256:${'b'.repeat(64)}`;
+        const artifactDigest: `sha256:${string}` = `sha256:${'b'.repeat(64)}`;
         const readyDiagnosticTestId = [
             'plugin-hosted-web-native-ready',
             'acme.preview',

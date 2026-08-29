@@ -4,51 +4,47 @@ import { resolveTabBarMetrics } from './tabBarMetrics';
 
 describe('resolveTabBarMetrics', () => {
     it('scales the icon with size', () => {
-        expect(resolveTabBarMetrics('compact', true, 'ios').iconSize).toBe(18);
-        expect(resolveTabBarMetrics('regular', true, 'ios').iconSize).toBe(22);
-        expect(resolveTabBarMetrics('large', true, 'ios').iconSize).toBe(26);
+        expect(resolveTabBarMetrics('compact', true).iconSize).toBe(20);
+        expect(resolveTabBarMetrics('regular', true).iconSize).toBe(24);
+        expect(resolveTabBarMetrics('large', true).iconSize).toBe(28);
     });
 
-    it('makes compact tabs narrower than regular tabs without shrinking platform touch targets', () => {
-        const compactIos = resolveTabBarMetrics('compact', false, 'ios');
-        const regularIos = resolveTabBarMetrics('regular', false, 'ios');
-        const compactAndroid = resolveTabBarMetrics('compact', false, 'android');
+    it('makes compact tabs visually narrower than regular tabs', () => {
+        const compact = resolveTabBarMetrics('compact', false);
+        const regular = resolveTabBarMetrics('regular', false);
 
-        expect(compactIos.tabMinWidth).toBe(44);
-        expect(compactIos.tabMinWidth).toBeLessThan(regularIos.tabMinWidth);
-        expect(compactIos.tabMinHeight).toBe(44);
-        expect(compactAndroid.tabMinWidth).toBe(48);
-        expect(compactAndroid.tabMinHeight).toBe(48);
+        expect(compact.tabMinWidth).toBe(44);
+        expect(compact.tabMinWidth).toBeLessThan(regular.tabMinWidth);
     });
 
     it('adds vertical padding in icon-only mode for a balanced height', () => {
-        expect(resolveTabBarMetrics('regular', false, 'ios').tabPaddingVertical)
-            .toBeGreaterThan(resolveTabBarMetrics('regular', true, 'ios').tabPaddingVertical);
+        expect(resolveTabBarMetrics('regular', false).tabPaddingVertical)
+            .toBeGreaterThan(resolveTabBarMetrics('regular', true).tabPaddingVertical);
     });
 
     it('aligns horizontal padding to the vertical (base) padding', () => {
         for (const size of ['compact', 'regular', 'large'] as const) {
-            const labeled = resolveTabBarMetrics(size, true, 'ios');
+            const labeled = resolveTabBarMetrics(size, true);
             expect(labeled.tabPaddingHorizontal).toBe(labeled.tabPaddingVertical);
         }
-        expect(resolveTabBarMetrics('compact', true, 'ios').tabPaddingHorizontal).toBe(3);
-        expect(resolveTabBarMetrics('regular', true, 'ios').tabPaddingHorizontal).toBe(5);
-        expect(resolveTabBarMetrics('large', true, 'ios').tabPaddingHorizontal).toBe(7);
+        expect(resolveTabBarMetrics('compact', true).tabPaddingHorizontal).toBe(3);
+        expect(resolveTabBarMetrics('regular', true).tabPaddingHorizontal).toBe(5);
+        expect(resolveTabBarMetrics('large', true).tabPaddingHorizontal).toBe(7);
     });
 
     it('rounds the active pill more when labels are shown (taller tab)', () => {
-        expect(resolveTabBarMetrics('regular', true, 'ios').activePillRadius)
-            .toBeGreaterThan(resolveTabBarMetrics('regular', false, 'ios').activePillRadius);
-        expect(resolveTabBarMetrics('large', false, 'ios').activePillRadius)
-            .toBeGreaterThan(resolveTabBarMetrics('compact', false, 'ios').activePillRadius);
+        expect(resolveTabBarMetrics('regular', true).activePillRadius)
+            .toBeGreaterThan(resolveTabBarMetrics('regular', false).activePillRadius);
+        expect(resolveTabBarMetrics('large', false).activePillRadius)
+            .toBeGreaterThan(resolveTabBarMetrics('compact', false).activePillRadius);
     });
 
     it('passes showLabels through', () => {
-        expect(resolveTabBarMetrics('regular', true, 'ios').showLabels).toBe(true);
-        expect(resolveTabBarMetrics('regular', false, 'ios').showLabels).toBe(false);
+        expect(resolveTabBarMetrics('regular', true).showLabels).toBe(true);
+        expect(resolveTabBarMetrics('regular', false).showLabels).toBe(false);
     });
 
     it('falls back to regular for an unknown size', () => {
-        expect(resolveTabBarMetrics('huge' as never, true, 'ios').iconSize).toBe(22);
+        expect(resolveTabBarMetrics('huge' as never, true).iconSize).toBe(24);
     });
 });

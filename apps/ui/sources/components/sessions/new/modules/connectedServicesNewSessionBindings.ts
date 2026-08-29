@@ -17,19 +17,10 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { getLegacyConnectedServiceRegistryEntry, resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-
-function resolveUnsupportedProfileSubtitleKey(serviceId: ConnectedServiceId):
-  | 'connectedServices.defaultAuth.warning.connected_service_unsupported'
-  | 'connectedServices.detail.connectSetupTokenSubtitle' {
-  const entry = getLegacyConnectedServiceRegistryEntry(serviceId);
-  return entry.supportsToken && entry.tokenKind === 'setup-token'
-    ? 'connectedServices.detail.connectSetupTokenSubtitle'
-    : 'connectedServices.defaultAuth.warning.connected_service_unsupported';
-}
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 export {
-  buildConnectedServiceProfileOptionsByServiceId,
+  buildSharedConnectedServiceProfileOptionsByServiceId as buildConnectedServiceProfileOptionsByServiceId,
   buildSharedConnectedServiceAccountGroupOptionsByServiceId as buildConnectedServiceAccountGroupOptionsByServiceId,
   isConnectedServiceProfileOptionSelectable,
   isConnectedServiceProfileStatusSelectable,
@@ -41,15 +32,6 @@ export type {
   ConnectedServicesProfileOption,
   ConnectedServicesProfileOptionsByServiceId,
 };
-
-function buildConnectedServiceProfileOptionsByServiceId(
-  params: Parameters<typeof buildSharedConnectedServiceProfileOptionsByServiceId>[0],
-): ConnectedServicesProfileOptionsByServiceId {
-  return buildSharedConnectedServiceProfileOptionsByServiceId({
-    ...params,
-    resolveUnsupportedSubtitleKey: resolveUnsupportedProfileSubtitleKey,
-  });
-}
 
 export function buildConnectedServicesBindingsPayload(params: Readonly<{
   /** Qualified keys on current callers; released bundled scalar ids are translated through the generated built-in mapping. */

@@ -871,6 +871,61 @@ describe('PluginReactNativeSurface', () => {
         }
     });
 
+    it('fences a healthy module that settles after the load deadline without durable crash evidence', async () => {
+        vi.useFakeTimers();
+        const watchdog = createPluginReactNativeWatchdog({});
+        const reportFailure = vi.fn(async () => ({
+            ok: true as const,
+            token: crashStateToken,
+            disabled: false as const,
+        }));
+        const deferredModule = createDeferred<PluginReactNativeSurfaceModule>();
+        const load = vi.fn(() => deferredModule.promise);
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+
+        try {
+            const screen = await renderScreen(<PluginReactNativeSurface
+                surfaceId="surface_1"
+                renderContext={defaultRenderContext}
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                load={load}
+                loadPolicy={{ source: 'installedArtifact' }}
+                cacheKey="cache_slow_healthy"
+                loadTimeoutMs={100}
+                watchdog={watchdog}
+                crashStateToken={crashStateToken}
+                crashReportScopeKey={crashReportScopeKey}
+                reportFailure={reportFailure}
+                            />);
+            await flushHookEffects({ cycles: 1, turns: 2 });
+
+            await flushHookEffects({ cycles: 1, turns: 1, advanceTimersMs: 100 });
+            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+            expect(screen.findByTestId('plugin-rn-ui-unavailable-action')).toBeTruthy();
+
+            // The same bytes eventually evaluate fine: the late settlement is
+            // fenced, the mount stays on the explicit retry, and the durable
+            // crash owner never learns about a mere waiting-budget expiry.
+            await act(async () => {
+                deferredModule.resolve({
+                    renderSurface: () => React.createElement('PluginNativeSurface', {
+                        testID: 'plugin-native-slow-healthy',
+                    }),
+                });
+                await deferredModule.promise;
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            expect(screen.findByTestId('plugin-native-slow-healthy')).toBeNull();
+            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+            expect(reportFailure).not.toHaveBeenCalled();
+            expect(watchdog.readPending({ token: crashStateToken, scopeKey: crashReportScopeKey }))
+                .toHaveLength(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('retries a startup failure with a fresh mount and fences an old loader settlement', async () => {
         vi.useFakeTimers();
         let rejectFirstLoad!: (error: Error) => void;

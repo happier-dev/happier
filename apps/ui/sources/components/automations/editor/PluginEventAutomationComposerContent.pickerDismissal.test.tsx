@@ -143,8 +143,8 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
         eventCatalogStatus: 'ready',
         selectedEvent: event,
         selectEvent: vi.fn(),
-        getPluginPresentation: () => ({
-            eventKey: 'acme.github:events/repository',
+        getPluginPresentation: (candidate) => ({
+            eventKey: `${candidate.event.identity.pluginId}:${candidate.event.identity.localId}`,
             displayName: 'Acme GitHub',
             availability: 'available',
             installedPackage: null,
@@ -237,6 +237,10 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
 
         const search = screen.findByTestId('automation-event-search');
         expect(search).toBeTruthy();
+        // The picker's search copy must come from the composer's own trigger
+        // namespace; a cross-namespace key (e.g. the exact-turn "Search
+        // automations" copy) renders the wrong surface copy and fails here.
+        expect(search?.props.placeholder).toBe('automations.form.trigger.searchEvents');
         expect(screen.findByTestId('automation-event-selection-list:section:events:virtualized')).toBeTruthy();
         expect(selectionListLegendMock.state.props?.data).toHaveLength(eligibleEvents.length);
 

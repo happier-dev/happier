@@ -23,6 +23,7 @@ import {
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
+    active?: boolean;
     /**
      * The existing Session composer may advance its semantic revision as soon
      * as visible text changes. The debounced persistence write receives the
@@ -56,7 +57,8 @@ export function useDraft(
     const lastSessionId = useRef<string | null>(null);
     const latestValue = useRef<string>(value);
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
-    const isFocused = useIsFocused();
+    const routeFocused = useIsFocused();
+    const active = options.active ?? routeFocused;
     const draftScope = useActiveServerAccountScope();
     const resolvedSessionId = normalizeSessionId(sessionId);
     const session = resolvedSessionId ? storage.getState().sessions[resolvedSessionId] : null;
@@ -269,7 +271,7 @@ export function useDraft(
             return;
         }
 
-        if (!isFocused) return;
+        if (!active) return;
 
         const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
         if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
@@ -308,7 +310,7 @@ export function useDraft(
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, isFocused, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, storedDraft]);
+    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, storedDraft]);
 
     useEffect(() => {
         if (!draftScope || !resolvedSessionId) return;

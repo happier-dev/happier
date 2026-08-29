@@ -27,6 +27,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Modal } from '@/modal';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
+import { readExactActiveParentTurn, type ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
     getProfileEnvironmentVariables,
@@ -205,6 +206,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
     draftId: string;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
     statusTrailingActions?: React.ReactNode;
+    /**
+     * Explicit "Use current turn" adoption for the mounted exact-turn
+     * Automation binding (New Automation route). Applied through the incumbent
+     * automation-draft owner; route params are never the mutation owner.
+     */
+    automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
 }>): NewSessionScreenModel {
     const { theme, rt } = useUnistyles();
     const router = useRouter();
@@ -1103,6 +1110,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // Path selection
     //
 
+    const readExactTurn = React.useCallback((sourceSessionId: string) => (
+        readExactActiveParentTurn(storage.getState().sessions[sourceSessionId])
+    ), []);
     const {
         promptStore,
         setSessionPrompt,
@@ -1117,6 +1127,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         persistedDraftEntryIntent: scopedPersistedDraft?.entryIntent,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
+        exactTurnRetargetRequest: input?.automationExactTurnRetarget ?? null,
+        readExactTurn,
     });
     const [isCreatingLocally, setIsCreating] = React.useState(false);
     const actionOperationReconciliationCallbacksRef = React.useRef<Readonly<{

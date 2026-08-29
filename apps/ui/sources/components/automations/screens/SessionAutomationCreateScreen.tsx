@@ -19,6 +19,7 @@ import { materializeNewSessionAutomationEditorDraft } from '@/sync/domains/autom
 import {
     createAutomationEditorLifetimeIdentity,
     isAutomationEditorLifetimeIdentityCurrent,
+    requireAutomationEditorDraftIdentity,
     type AutomationEditorDraft,
 } from '@/sync/domains/automations/automationEditorDraft';
 import { buildAutomationRecipeFromSessionAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
@@ -151,7 +152,9 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                 name: latestEditorRef.current.name,
                 description: latestEditorRef.current.description ?? '',
                 triggers: latestEditorRef.current.triggers.flatMap((trigger) => (
-                    trigger.definition ? [{ ...trigger }] : []
+                    trigger.definition
+                        ? [{ clientId: trigger.clientId, definition: trigger.definition }]
+                        : []
                 )),
             },
         }));
@@ -236,7 +239,13 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                 sourceTurnId: definition.scope.sourceTurnId,
             }] : [];
         });
-        if (sourceAuthorities.length !== sourceDefinitions.length) {
+        const sourceTurnsMatchDraft = sourceAuthorities.length === sourceDefinitions.length
+            && sourceAuthorities.every((entry) => (
+                readExactActiveParentTurn(
+                    storage.getState().sessions[entry.sourceSessionId],
+                )?.sourceTurnId === entry.sourceTurnId
+            ));
+        if (!sourceTurnsMatchDraft) {
             const replacement = replaceWithCurrentExactTurns(currentEditor, props.sessionId);
             if (replacement && await Modal.confirm(
                 t('automations.exactTurn.staleTitle'),
@@ -252,18 +261,22 @@ export function SessionAutomationCreateScreen(props: Readonly<{
             && capturedEditorLifetimeIdentity === editorLifetimeIdentity
             && latestDraftRef.current === currentDraft
             && latestEditorRef.current === currentEditor
-            && sourceAuthorities.every((entry) => (
-                entry.authority.isCurrent()
-                && readExactActiveParentTurn(storage.getState().sessions[entry.sourceSessionId])?.sourceTurnId
-                    === entry.sourceTurnId
-            ));
+            // Pre-request eligibility above already proved every lifecycle row
+            // matched the live exact turn. The response lifetime must not
+            // re-read the turn: a completion that reaches the transcript after
+            // the server commit is authoritative settled truth, not a reason
+            // to reject the committed save.
+            && sourceAuthorities.every((entry) => entry.authority.isCurrent());
         try {
+            const encryption = sync.encryption;
             const recipe = await buildAutomationRecipeFromSessionAuthoring({
                 credentials: sync.getCredentials(),
                 templateVersion: 1,
                 prompt: currentDraft.prompt.trim(),
                 target: { kind: 'existingSession', sessionId: props.sessionId },
-                ...(sync.encryption ? { encryptRaw: (value: unknown) => sync.encryption!.encryptAutomationTemplateRaw(value) } : {}),
+                ...(encryption
+                    ? { encryptRaw: (value: unknown) => encryption.encryptAutomationTemplateRaw(value) }
+                    : {}),
                 isCurrent,
             });
             const saved = await sync.saveAutomationEditorDraft({
@@ -335,7 +348,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                                 renderPluginEventEditor={(editorProps) => (
                                     <PluginEventAutomationEditor
                                         key={editorProps.clientId}
-                                        automationId={editorDraft.pendingAutomationId!}
+                                        automationId={requireAutomationEditorDraftIdentity(editorDraft)}
                                         clientId={editorProps.clientId}
                                         value={editorProps.value}
                                         seed={null}

@@ -194,10 +194,15 @@ export function createEphemeralComposerDocumentOwner(input: Readonly<{
         clearAccepted: (currentness) => {
             if (!sameComposerDocumentRef(input.ref, currentness.ref)) return false;
             const textCurrent = textMutationRevision === currentness.textMutationRevision;
-            const mentionsCurrent = structuredInputMentionsMutationRevision
-                === currentness.structuredInputMentionsMutationRevision;
             const attachmentsCurrent = composerAttachmentsMutationRevision
                 === currentness.composerAttachmentsMutationRevision;
+            // References are text-bound: their exact `[start, end)` occurrence
+            // exists only inside the text they were admitted with. Clearing the
+            // accepted text therefore clears every mention with it — including
+            // newer text-bound ones, which could not bind to anything — while a
+            // surviving text keeps its mentions and lets the exact-range
+            // reconciliation drop only those whose occurrence no longer binds.
+            const nextText = textCurrent ? '' : document.text;
             // "Cleared" is whether this accepted snapshot actually removed
             // something. Reporting true after an A -> B -> A edit, whose text is
             // no longer current and whose other fields were already empty, told
@@ -205,8 +210,8 @@ export function createEphemeralComposerDocumentOwner(input: Readonly<{
             // one was untouched.
             const revisionBeforeClear = revision;
             replaceDocument({
-                text: textCurrent ? '' : document.text,
-                structuredInputMentions: mentionsCurrent ? [] : document.structuredInputMentions,
+                text: nextText,
+                structuredInputMentions: nextText === '' ? [] : document.structuredInputMentions,
                 composerAttachments: attachmentsCurrent ? [] : document.composerAttachments,
             });
             return revision !== revisionBeforeClear;

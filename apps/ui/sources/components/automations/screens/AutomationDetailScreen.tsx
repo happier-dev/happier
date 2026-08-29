@@ -346,7 +346,7 @@ function AutomationTriggerOverview(props: Readonly<{
             />
             <Item
                 testID="automation-detail-event-filter"
-                title={t('settingsPlugins.eventAutomationComposer.trigger.eventFilter')}
+                title={t('automations.form.trigger.eventFilter')}
                 subtitle={filterSummary}
                 subtitleLines={0}
                 showChevron={false}
@@ -560,23 +560,33 @@ export function AutomationDetailScreen() {
     const clearingRunHistory = clearingRunHistoryState.generation === routeGeneration
         && clearingRunHistoryState.value;
     const runNowPending = runNowState === 'submitting';
-    const mutationsEnabled = !refreshFailed;
+    // Cached detail rows stay visible during a pending authoritative refresh,
+    // but mutations stay disabled until that refresh succeeds.
+    const mutationsEnabled = !loading && !refreshFailed;
 
     const refresh = React.useCallback(async () => {
         if (!automationId) return;
         const request = { automationId, generation: routeGeneration };
+        let authoritativeDefinitionSettled = false;
         try {
             setLoadingState({ generation: request.generation, value: true });
             setRefreshFailureState({ generation: request.generation, value: false });
             await sync.refreshAutomations();
             if (!isCurrentRoute(request.automationId, request.generation)) return;
-            await Promise.all([
-                sync.refreshAutomationDefinitionDetail(request.automationId),
-                sync.fetchAutomationRuns(request.automationId),
-            ]);
+            await sync.refreshAutomationDefinitionDetail(request.automationId);
+            if (!isCurrentRoute(request.automationId, request.generation)) return;
+            authoritativeDefinitionSettled = true;
+            // Run history has its own paged read owner. It may continue loading
+            // after the definition/list projection is authoritative; keeping
+            // every unrelated mutation locked on that secondary read would
+            // turn a history transport delay into false definition staleness.
+            setLoadingState({ generation: request.generation, value: false });
+            await sync.fetchAutomationRuns(request.automationId);
         } catch {
             if (!isCurrentRoute(request.automationId, request.generation)) return;
-            setRefreshFailureState({ generation: request.generation, value: true });
+            if (!authoritativeDefinitionSettled) {
+                setRefreshFailureState({ generation: request.generation, value: true });
+            }
         } finally {
             if (isCurrentRoute(request.automationId, request.generation)) {
                 setLoadingState({ generation: request.generation, value: false });

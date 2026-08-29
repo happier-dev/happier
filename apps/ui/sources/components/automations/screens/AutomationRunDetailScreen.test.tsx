@@ -362,7 +362,7 @@ describe('AutomationRunDetailScreen', () => {
 
         const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
 
-        expect(screen.getTextContent()).toContain('Session turn completed');
+        expect(screen.findByProps({ title: 'Cause', detail: 'Session turn completed' })).toBeTruthy();
         expect(screen.getTextContent()).toContain('turn-trigger-retired · revision 7');
         expect(screen.getTextContent()).toContain('Trigger retired');
         expect(screen.getTextContent()).toContain('session-source');

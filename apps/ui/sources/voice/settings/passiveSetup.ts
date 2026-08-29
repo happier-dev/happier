@@ -193,7 +193,6 @@ export function projectVoiceProviderConnectedServicesCredentialFact(
 
   const profileOptionsByServiceId = buildConnectedServiceProfileOptionsByServiceId({
     accountProfileConnectedServicesV2: input.accountProfileConnectedServicesV2,
-    agentCore: null,
     supportedConnectedServiceIds: bindingDeclaration.serviceIds,
     labelsByKey: { ...input.labelsByKey },
   });

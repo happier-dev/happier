@@ -241,6 +241,9 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
         },
         "connectedAccounts": [
           {
+            "credentialKinds": [
+              "oauth"
+            ],
             "materializationKinds": [
               "files"
             ],

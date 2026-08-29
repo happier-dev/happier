@@ -455,7 +455,13 @@ function createBuiltInTargetEntry(agentId: string, params: MergedProjectionInput
             mergedProviderProjectionById: params.mergedProviderProjectionById,
             mergedBackendProjectionById: params.mergedBackendProjectionById,
         })
-        : [];
+        : !isBuiltInAgent && formatBackendTargetKeyV2(backendCarrierTarget) !== backendTargetKey
+            // The current machine projection proves this exact runtime carrier
+            // belongs to this qualified external Agent. Preserve that bounded
+            // predecessor mapping without teaching the global key parser to
+            // guess identities for arbitrary unknown backend ids.
+            ? [backendCarrierTarget]
+            : [];
 
     if (isBuiltInAgent) {
         const core = getAgentCore(agentId);

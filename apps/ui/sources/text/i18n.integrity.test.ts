@@ -973,6 +973,22 @@ describe('i18n integrity', () => {
             .filter(({ key }) => requiredPrefixes.some((prefix) => key.startsWith(prefix)));
         expect(missing).toEqual([]);
 
+        // The recipe composer's execution-target controls live at the canonical
+        // automations namespace; these exact leaves must be native in every
+        // locale (the composer renders them on every authoring surface).
+        const requiredExactKeys = [
+            'automations.form.trigger.target',
+            'automations.form.trigger.targetNewSession',
+            'automations.form.trigger.targetExistingSession',
+            'automations.form.trigger.targetExecutionRun',
+            'automations.form.trigger.chooseExistingSession',
+            'automations.form.trigger.executionNoTools',
+            'automations.form.trigger.executionReadOnly',
+        ];
+        const missingExact = locales.flatMap((locale) => findMissingKeys(en, locale))
+            .filter(({ key }) => requiredExactKeys.includes(key));
+        expect(missingExact).toEqual([]);
+
         const interpolationCases = [
             { key: 'automations.pluralEditor.turnCompletedSource', args: [{ session: 'SESSION_MARKER', ordinal: 17 }], markers: ['SESSION_MARKER', '17'] },
             { key: 'automations.list.sessionLifecycleParentTurn', args: [{ sessionId: 'SESSION_ID_MARKER' }], markers: ['SESSION_ID_MARKER'] },

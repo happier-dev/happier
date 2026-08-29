@@ -38,6 +38,8 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     forward: 'arrow-right',
     more: 'dots-three',
     search: 'magnifying-glass',
+    'change-open': 'git-pull-request',
+    'change-complete': 'git-merge',
 });
 
 /** Glyph rendered for a missing or non-canonical semantic icon token. */

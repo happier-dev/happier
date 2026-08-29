@@ -10,13 +10,20 @@ import {
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { isPluginError, PluginError, type PluginReference } from '@happier-dev/plugin-sdk';
-import type { ResourceSubscriptionEvent, SurfaceContext } from '@happier-dev/plugin-sdk/ui';
+import type {
+    PluginUiHostApi,
+    PluginUiHostMethodV1,
+    ResourceSubscriptionEvent,
+    SurfaceContext,
+} from '@happier-dev/plugin-sdk/ui';
 import { describe, expect, it, vi } from 'vitest';
 
+import { PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1 } from '@/components/plugins/hostApi/outwardEffectSettlement';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import {
     createPluginSurfaceHostApi,
     type PluginSurfaceHostApiHandlers,
+    type PluginSurfaceHostApiRequestOptions,
 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 import {
     createPluginSurfaceOpenableContentHandlers,
@@ -318,6 +325,7 @@ describe('canonical React Native plugin Host API adapter', () => {
         let requestSignal: AbortSignal | undefined;
         let resolveEstablishment: ((value: PluginUiJsonValueV1) => void) | undefined;
         const disposedSubscriptionIds: string[] = [];
+        const hostLeaseEvents: string[] = [];
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface: createPluginSurfaceContextFixture({
                 mount: canonicalRightPaneMount,
@@ -333,13 +341,17 @@ describe('canonical React Native plugin Host API adapter', () => {
                     subscriptionId = candidate;
                     requestSignal = options?.signal;
                     return await new Promise<PluginUiJsonValueV1>((resolve) => {
-                        resolveEstablishment = resolve;
+                        resolveEstablishment = (value) => {
+                            hostLeaseEvents.push(`admitted:${candidate}`);
+                            resolve(value);
+                        };
                     });
                 }
                 if (request.method === 'disposeHostResource') {
                     const candidate = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)
                         ?.subscriptionId;
                     if (typeof candidate !== 'string') throw new Error('expected_composer_subscription_id');
+                    hostLeaseEvents.push(`disposed:${candidate}`);
                     disposedSubscriptionIds.push(candidate);
                 }
                 return null;
@@ -360,10 +372,15 @@ describe('canonical React Native plugin Host API adapter', () => {
                 code: 'unavailable',
                 diagnostics: [{ code: 'aborted', severity: 'error' }],
             });
+            expect(disposedSubscriptionIds).toEqual([]);
             resolveEstablishment?.(null);
             await vi.waitFor(() => {
                 expect(disposedSubscriptionIds).toContain(subscriptionId);
             });
+            expect(hostLeaseEvents).toEqual([
+                `admitted:${subscriptionId}`,
+                `disposed:${subscriptionId}`,
+            ]);
         } finally {
             controller.abort();
             resolveEstablishment?.(null);
@@ -579,6 +596,7 @@ describe('canonical React Native plugin Host API adapter', () => {
         const successorDigest = PluginUiArtifactDigestV1Schema.parse(`sha256:${'b'.repeat(64)}`);
         const invalidatedDigest = PluginUiArtifactDigestV1Schema.parse(`sha256:${'c'.repeat(64)}`);
         const disposedSubscriptionIds: string[] = [];
+        const firstLeaseEvents: string[] = [];
         const successorEvents: ResourceSubscriptionEvent[] = [];
         let firstSubscriptionId: string | undefined;
         let successorSubscriptionId: string | undefined;
@@ -602,7 +620,10 @@ describe('canonical React Native plugin Host API adapter', () => {
                         firstSubscriptionId = subscriptionId;
                         firstSignal = options?.signal;
                         return await new Promise<PluginUiJsonValueV1>((resolve) => {
-                            resolveFirstWatch = resolve;
+                            resolveFirstWatch = (value) => {
+                                firstLeaseEvents.push(`admitted:${subscriptionId}`);
+                                resolve(value);
+                            };
                         });
                     }
                     successorSubscriptionId = subscriptionId;
@@ -612,6 +633,9 @@ describe('canonical React Native plugin Host API adapter', () => {
                     const subscriptionId = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)
                         ?.subscriptionId;
                     if (typeof subscriptionId !== 'string') throw new Error('expected_resource_subscription_id');
+                    if (subscriptionId === firstSubscriptionId) {
+                        firstLeaseEvents.push(`disposed:${subscriptionId}`);
+                    }
                     disposedSubscriptionIds.push(subscriptionId);
                 }
                 return null;
@@ -637,6 +661,7 @@ describe('canonical React Native plugin Host API adapter', () => {
                 code: 'unavailable',
                 diagnostics: [{ code: 'aborted', severity: 'error' }],
             });
+            expect(disposedSubscriptionIds).not.toContain(firstSubscriptionId);
             expect(adapter.publishResourceSubscriptionEvent({
                 version: 1,
                 subscriptionId: firstSubscriptionId!,
@@ -661,6 +686,10 @@ describe('canonical React Native plugin Host API adapter', () => {
                 expect(disposedSubscriptionIds).toContain(firstSubscriptionId!);
                 expect(disposedSubscriptionIds).not.toContain(successorSubscriptionId!);
             });
+            expect(firstLeaseEvents).toEqual([
+                `admitted:${firstSubscriptionId}`,
+                `disposed:${firstSubscriptionId}`,
+            ]);
             expect(adapter.publishResourceSubscriptionEvent({
                 version: 1,
                 subscriptionId: successorSubscriptionId!,
@@ -959,6 +988,162 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
 
         controller.abort();
         expect(openSurface).toHaveBeenCalledTimes(1);
+    });
+
+    // The withdrawal policy is GENERIC at the request carrier: every probe —
+    // spanning the outward-effect, decision, read and Composer families — gets
+    // the same prompt settlement, with no per-method allowlist. Family
+    // membership is read from the CANONICAL classification owner, never
+    // re-declared here.
+    describe('caller-withdrawal policy across method families (UI-D02)', () => {
+        const composerRef = { kind: 'session', sessionId: 'session-1' } as const;
+
+        function probeAdapter(
+            method: PluginUiHostMethodV1,
+            handle: (signal: AbortSignal | undefined) => Promise<PluginUiJsonValueV1>,
+        ) {
+            const host = createPluginSurfaceHostApi({
+                surfaceContext: surface,
+                handlers: {
+                    [method]: async (_request, options) => handle(options?.signal),
+                },
+            });
+            return createCanonicalPluginReactNativeHostApiAdapter({
+                surface: canonicalSurface,
+                requestSurface: surface,
+                requestIdPrefix: `rn-withdrawal-${method}`,
+                handleRequest: host.handleRequest,
+                installedMethods: host.installedMethods,
+            });
+        }
+
+        const withdrawalProbes = [
+            {
+                method: 'openNewSession',
+                invoke: (api: PluginUiHostApi, signal: AbortSignal) =>
+                    api.openNewSession({ prompt: 'Repair CI' }, { signal }),
+                winning: null,
+            },
+            {
+                method: 'executeAction',
+                invoke: (api: PluginUiHostApi, signal: AbortSignal) =>
+                    api.executeAction('plugin.preview.op', null, { signal }),
+                winning: { applied: true },
+            },
+            {
+                method: 'applyComposer',
+                invoke: (api: PluginUiHostApi, signal: AbortSignal) =>
+                    api.applyComposer(
+                        composerRef,
+                        { expectedRevision: 3, operations: [{ kind: 'text.clear' }] },
+                        { signal },
+                    ),
+                winning: { status: 'applied', revision: 4 },
+            },
+            {
+                method: 'confirm',
+                invoke: (api: PluginUiHostApi, signal: AbortSignal) =>
+                    api.confirm('Delete the preview?', { signal }),
+                winning: { confirmed: true },
+            },
+            {
+                method: 'readResource',
+                invoke: (api: PluginUiHostApi, signal: AbortSignal) =>
+                    api.readResource('plugin.preview.resource', { signal }),
+                winning: {
+                    contentType: 'text/plain',
+                    digest: `sha256:${'a'.repeat(64)}`,
+                    bytesBase64: 'aGVsbG8=',
+                },
+            },
+            {
+                method: 'openSurface',
+                invoke: (api: PluginUiHostApi, signal: AbortSignal) =>
+                    api.openSurface('plugin.preview.details', undefined, { signal }),
+                winning: null,
+            },
+        ] as const satisfies readonly {
+            method: PluginUiHostMethodV1;
+            invoke: (api: PluginUiHostApi, signal: AbortSignal) => Promise<unknown>;
+            winning: PluginUiJsonValueV1;
+        }[];
+
+        it('draws its probes from the canonical settlement classification', () => {
+            // The retired-success regression (openNewSession) and the families
+            // the policy must serve are owned by the classifier, not this file.
+            expect(PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1).toContain('openNewSession');
+            expect(PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1).not.toContain('confirm');
+            expect(PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1).not.toContain('readResource');
+        });
+
+        it.each(withdrawalProbes)(
+            'settles caller withdrawal promptly for $method and fences its late response',
+            async ({ method, invoke }) => {
+                const controller = new AbortController();
+                let seenSignal: AbortSignal | undefined;
+                let settleHandler: ((value: PluginUiJsonValueV1) => void) | undefined;
+                const adapter = probeAdapter(method, async (signal) => {
+                    seenSignal = signal;
+                    return await new Promise<PluginUiJsonValueV1>((resolve) => {
+                        settleHandler = () => resolve(null);
+                    });
+                });
+                const settlements: unknown[] = [];
+                const pending = invoke(adapter.api, controller.signal);
+                void pending.then(
+                    (value) => settlements.push({ kind: 'result', value }),
+                    (error: unknown) => settlements.push({ kind: 'error', error }),
+                );
+
+                try {
+                    await vi.waitFor(() => expect(seenSignal).toBeTypeOf('object'));
+                    controller.abort();
+
+                    await vi.waitFor(() => expect(settlements).toHaveLength(1), { timeout: 250 });
+                    expect(settlements[0]).toMatchObject({
+                        kind: 'error',
+                        error: {
+                            code: 'unavailable',
+                            diagnostics: [{ code: 'aborted', severity: 'error' }],
+                        },
+                    });
+
+                    settleHandler?.(null);
+                    await vi.waitFor(() => expect(settlements).toHaveLength(1));
+                    expect(settlements[0]).toMatchObject({ kind: 'error' });
+                } finally {
+                    settleHandler?.(null);
+                    await pending.catch(() => undefined);
+                }
+            },
+        );
+
+        it.each(withdrawalProbes.filter((probe) => (
+            (PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1 as readonly string[]).includes(probe.method)
+        )))(
+            'preserves a $method settlement that won before caller withdrawal',
+            async ({ method, invoke, winning }) => {
+                const controller = new AbortController();
+                const handle = vi.fn(async () => winning);
+                const adapter = probeAdapter(method, handle);
+                const settlements: unknown[] = [];
+                const pending = invoke(adapter.api, controller.signal);
+                void pending.then(
+                    (value) => settlements.push({ kind: 'result', value }),
+                    (error: unknown) => settlements.push({ kind: 'error', error }),
+                );
+                await vi.waitFor(() => expect(settlements).toHaveLength(1));
+                expect(settlements[0]).toMatchObject({ kind: 'result' });
+
+                // A withdrawal that arrives after the owner settled cannot
+                // un-settle an accepted outward effect or re-dispatch it.
+                controller.abort();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                expect(settlements).toHaveLength(1);
+                expect(settlements[0]).toMatchObject({ kind: 'result' });
+                expect(handle).toHaveBeenCalledTimes(1);
+            },
+        );
     });
 
     it('routes target-scoped selection through the sole 1.0 contract', async () => {
@@ -1395,7 +1580,15 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         );
         await vi.waitFor(() => expect(executeAction).toHaveBeenCalledTimes(8));
         terminalLifetime.abort('terminal_dispatch_abandoned');
-        await expect(pending).resolves.toEqual({ cancelled: true });
+        // Caller withdrawal settles promptly at the request carrier — even for a
+        // terminal dispatch whose mounted dispatcher would cooperatively answer
+        // `{ cancelled: true }`. The signal still reaches the dispatcher so it
+        // can retire its work, and its late cooperative answer is inert; the
+        // one-shot consumption below is unchanged by the withdrawal.
+        await expect(pending).rejects.toMatchObject({
+            code: 'unavailable',
+            diagnostics: [{ code: 'aborted', severity: 'error' }],
+        });
         expect(cancellationSeen).toBe(terminalLifetime.signal);
         await expect(adapter.api.executeAction(outerAction, outerInput, {
             selectedActionInput: carrier(cancelled),

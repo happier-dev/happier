@@ -244,7 +244,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
     );
     const eventSelectionStep = React.useMemo<SelectionListStep>(() => ({
         id: 'automation-events',
-        inputPlaceholder: t('automations.exactTurn.searchPlaceholder'),
+        inputPlaceholder: t('automations.form.trigger.searchEvents'),
         emptyStateLabel: t('automations.form.trigger.noEligibleEvents'),
         sections: [{
             kind: 'static',

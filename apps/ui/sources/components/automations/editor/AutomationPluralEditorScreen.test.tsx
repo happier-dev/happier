@@ -7,7 +7,6 @@ import {
 } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
-import { Text } from '@/components/ui/text/Text';
 import { createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
 import type { AutomationEditorDraft } from '@/sync/domains/automations/automationEditorDraft';
 
@@ -29,19 +28,30 @@ installAutomationComponentCommonModuleMocks({
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
+        return createTextModuleMock({
+            translate: (key: string, params?: Record<string, unknown>) => key === 'automations.pluralEditor.triggerEnabledLabel'
+                ? `${key}: ${String(params?.title ?? '')}`
+                : key,
+        });
     },
 });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
-vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: (props: Record<string, unknown> & { children?: React.ReactNode; rightElement?: React.ReactNode }) => (
+        React.createElement('Item', props, props.children, props.rightElement)
+    ),
+}));
 vi.mock('@/components/ui/lists/ItemGroupColumns', () => createPassThroughModule(['ItemGroupColumns', 'ItemGroupColumn']));
 vi.mock('@/components/ui/forms/Switch', () => createPassThroughModule(['Switch']));
 vi.mock('@/components/ui/forms/FieldItem', () => createPassThroughModule(['FieldItem']));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
 vi.mock('@/components/ui/selectionList', () => createPassThroughModule(['SelectionList']));
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
-vi.mock('@/components/ui/icons/Icon', () => createPassThroughModule(['Icon']));
+vi.mock('@/components/ui/icons/Icon', async () => {
+    const { createPassThroughModule: createModule } = await import('@/dev/testkit/mocks/components');
+    return createModule(['Icon']);
+});
 vi.mock('@/components/ui/popover', () => ({ usePopoverBoundaryRef: () => ({ current: null }) }));
 vi.mock('@/modal', () => ({ Modal: { confirm: vi.fn(async () => true) } }));
 vi.mock('./AutomationRecipeComposer', () => createPassThroughModule(['AutomationRecipeComposer']));
@@ -141,7 +151,12 @@ describe('AutomationPluralEditorScreen', () => {
             />,
         );
 
-        expect(screen.findAllByProps({ testID: /^automation-trigger-row-/ })).toHaveLength(4);
+        expect(screen.findAll((instance) => (
+            String(instance.type) === 'Item'
+            &&
+            typeof instance.props.testID === 'string'
+            && instance.props.testID.startsWith('automation-trigger-row-')
+        ))).toHaveLength(4);
         expect(screen.findByProps({ testID: 'automation-trigger-enabled-schedule-a' }).props.value).toBe(true);
         expect(screen.findByProps({ testID: 'automation-trigger-enabled-schedule-b' }).props.value).toBe(false);
         expect(screen.findByProps({ testID: 'automation-trigger-enabled-turn-c' }).props.value).toBe(true);
@@ -428,7 +443,7 @@ describe('AutomationPluralEditorScreen', () => {
                 onChange={onChange}
                 renderPluginEventEditor={(props) => {
                     complete = props.onComplete;
-                    return <Text testID="canonical-plugin-event-editor">Event editor</Text>;
+                    return React.createElement('Text', { testID: 'canonical-plugin-event-editor' }, 'Event editor');
                 }}
             />,
         );

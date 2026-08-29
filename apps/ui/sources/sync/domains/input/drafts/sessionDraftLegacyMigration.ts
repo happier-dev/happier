@@ -30,7 +30,7 @@ import {
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
-import { projectSyncedSessionAuthoringFields } from './sessionAuthoringDraftProjection';
+import { projectNewSessionDraftSyncedAuthoringFields } from './sessionAuthoringDraftProjection';
 
 function asStrictJsonValue(value: unknown): StrictJsonValue {
     return value as StrictJsonValue;
@@ -88,38 +88,17 @@ function buildExistingPatch(
     return { patch, fullyProjected };
 }
 
-function buildNewPatch(draft: NewSessionDraft): Readonly<{
+function buildNewPatch(draft: NewSessionDraft, scopeServerId: string): Readonly<{
     text: string;
     attachments?: readonly StrictJsonValue[];
-    authoring: ReturnType<typeof projectSyncedSessionAuthoringFields>;
+    authoring: ReturnType<typeof projectNewSessionDraftSyncedAuthoringFields>;
 }> {
     return {
         text: draft.input,
         ...(draft.composerAttachments !== undefined
             ? { attachments: draft.composerAttachments.map(asStrictJsonValue) }
             : {}),
-        authoring: projectSyncedSessionAuthoringFields({
-            targetType: 'new_session',
-            ...(draft.selectedMachineId ? { machineId: draft.selectedMachineId } : {}),
-            ...(draft.targetServerId ? { serverId: draft.targetServerId } : {}),
-            ...(draft.selectedPath ? { directory: draft.selectedPath } : {}),
-            ...(draft.checkoutCreationDraft ? { checkoutCreationDraft: draft.checkoutCreationDraft } : {}),
-            agentId: draft.agentType,
-            ...(draft.backendTarget !== undefined ? { backendTarget: draft.backendTarget } : {}),
-            ...(draft.transcriptStorage !== undefined ? { transcriptStorage: draft.transcriptStorage } : {}),
-            profileId: draft.selectedProfileId,
-            ...(draft.resumeSessionId ? { resumeSessionId: draft.resumeSessionId } : {}),
-            permissionMode: draft.permissionMode,
-            ...(draft.modelSelection !== undefined
-                ? { modelSelection: draft.modelSelection }
-                : draft.modelMode !== undefined
-                    ? { modelId: draft.modelMode === 'default' ? null : draft.modelMode }
-                    : {}),
-            ...(draft.mcpSelection !== undefined ? { mcpSelection: draft.mcpSelection } : {}),
-            ...(draft.runtimeDescriptorV1 !== undefined ? { runtimeDescriptorV1: draft.runtimeDescriptorV1 } : {}),
-            acpSessionModeId: draft.acpSessionModeId,
-            ...(draft.automationDraft ? { automation: draft.automationDraft } : {}),
-        }),
+        authoring: projectNewSessionDraftSyncedAuthoringFields({ draft, scopeServerId }),
     };
 }
 
@@ -168,7 +147,7 @@ export async function migrateLegacySessionDrafts(scope: ServerAccountScope): Pro
         writeNewSessionDraft({
             scope,
             draftId,
-            patch: buildNewPatch(legacyNewDraft),
+            patch: buildNewPatch(legacyNewDraft, scope.serverId),
             materializationIntent: 'seeded',
         });
         writeSessionDraftLocalSupplement({

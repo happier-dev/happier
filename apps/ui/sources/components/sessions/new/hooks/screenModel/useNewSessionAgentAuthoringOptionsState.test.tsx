@@ -374,6 +374,28 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         expect(hook.getCurrent().sessionConfigOptionOverrides).toBeNull();
     });
 
+    it('rekeys a persisted legacy backend-keyed model selection onto the canonical Agent target', async () => {
+        const codexTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const canonicalKey = resolveBackendTargetKeyV2(codexTarget);
+        const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
+            agentType: 'codex',
+            backendTargetKey: canonicalKey,
+            allowTargetlessDraftEngineSelection: false,
+            hydratedTempAuthoringDraft: null,
+            hydratedPersistedAuthoringDraft: {
+                agentTarget: codexTarget,
+                modelSelection: nativeSelection('backend:codex', 'gpt-5.5', 42),
+                acpSessionModeId: null,
+                sessionConfigOptionOverrides: null,
+            },
+            rememberedEngineSelection: null,
+        }));
+
+        expect(hook.getCurrent().modelMode).toBe('gpt-5.5');
+        expect(hook.getCurrent().modelSelection?.ref.agentTargetKey).toBe(canonicalKey);
+        expect(hook.getCurrent().modelSelection?.ref.modelId).toBe('gpt-5.5');
+    });
+
     it('ignores persisted draft engine state when the selected backend target differs', async () => {
         const codexTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
         const opencodeTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } } as const;

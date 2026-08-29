@@ -416,7 +416,7 @@ describe('external Voice provider activation', () => {
               globalConnectedServices: {
                 v: 1,
                 bindingsByServiceId: {
-                  'openai-codex': {
+                  'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'codex-account-a',
@@ -444,7 +444,7 @@ describe('external Voice provider activation', () => {
                 globalConnectedServices: {
                   v: 1,
                   bindingsByServiceId: {
-                    'openai-codex': {
+                    'happier.agent.codex/openai-codex': {
                       source: 'connected',
                       selection: 'profile',
                       profileId: 'must-be-ignored-by-direct',
@@ -517,7 +517,7 @@ describe('external Voice provider activation', () => {
                 globalConnectedServices: {
                   v: 1,
                   bindingsByServiceId: {
-                    'openai-codex': {
+                    'happier.agent.codex/openai-codex': {
                       source: 'connected',
                       selection: 'profile',
                       profileId: 'codex-account-a',
@@ -540,7 +540,7 @@ describe('external Voice provider activation', () => {
     const connectedServices = Object.freeze({
       v: 1 as const,
       bindingsByServiceId: Object.freeze({
-        'openai-codex': Object.freeze({
+        'happier.agent.codex/openai-codex': Object.freeze({
           source: 'connected' as const,
           selection: 'profile' as const,
           profileId: 'codex-account-a',

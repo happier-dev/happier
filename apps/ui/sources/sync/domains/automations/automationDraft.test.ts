@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AutomationStoredDefinitionExecutionRecipeV1Schema } from '@happier-dev/protocol';
 
 import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
@@ -49,23 +50,23 @@ describe('automationDraft', () => {
     });
 
     it('materializes every trigger into the one canonical editor draft', () => {
-        const executionRecipe = {
-            v: 1 as const,
+        const executionRecipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
+            v: 1,
             templateVersion: 1,
-            template: { t: 'plain' as const, v: { v: 1 as const, prompt: 'Run.' } },
+            template: { t: 'plain', v: { v: 1, prompt: 'Run.' } },
             triggerEvidence: null,
             target: {
-                kind: 'executionRun' as const,
+                kind: 'executionRun',
                 request: {
-                    intent: 'task' as const,
-                    backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' },
-                    permissionMode: 'read_only' as const,
-                    retentionPolicy: 'ephemeral' as const,
-                    runClass: 'bounded' as const,
-                    ioMode: 'request_response' as const,
+                    intent: 'task',
+                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                    permissionMode: 'read_only',
+                    retentionPolicy: 'ephemeral',
+                    runClass: 'bounded',
+                    ioMode: 'request_response',
                 },
             },
-        };
+        });
         const result = materializeNewSessionAutomationEditorDraft({
             draft: {
                 pendingAutomationId: 'automation-stable-retry-id',

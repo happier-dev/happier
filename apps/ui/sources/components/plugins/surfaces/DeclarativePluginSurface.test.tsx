@@ -88,6 +88,12 @@ function createAccountLifetime(): ActiveServerAccountScopeLifetime {
     });
 }
 
+const accountSecretInventorySetting = Object.freeze({
+    id: 'token',
+    qualifiedId: 'acme.account-secret/token',
+    descriptor: Object.freeze({ scope: 'account', secret: true, schema: Object.freeze({ type: 'string' }) }),
+});
+
 const model = Object.freeze({
     visible: true,
     identity: Object.freeze({
@@ -95,6 +101,19 @@ const model = Object.freeze({
         localId: 'settings',
         qualifiedId: 'acme.account-secret/settings',
         generation: 'generation-account-secret',
+    }),
+    declarativeInventory: Object.freeze({
+        actions: Object.freeze([]),
+        destinations: Object.freeze([]),
+        settings: Object.freeze([Object.freeze({
+            pluginId: 'acme.account-secret',
+            id: 'token',
+            qualifiedId: 'acme.account-secret/token',
+            schema: Object.freeze({ type: 'string' }),
+            secret: true,
+            setting: accountSecretInventorySetting,
+        })]),
+        uiQueries: Object.freeze([]),
     }),
     root: Object.freeze({
         kind: 'group',
@@ -104,10 +123,7 @@ const model = Object.freeze({
             path: 'root.children[0]',
             label: 'Account token',
             control: Object.freeze({ kind: 'secret', settingId: 'token' }),
-            setting: Object.freeze({
-                id: 'token',
-                descriptor: Object.freeze({ scope: 'account', secret: true, schema: Object.freeze({ type: 'string' }) }),
-            }),
+            setting: accountSecretInventorySetting,
         })]),
     }),
 });
@@ -235,6 +251,17 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
             });
         ordinarySettingsBoundary.write.mockResolvedValue({ status: 'unavailable', reason: 'transport' });
 
+        const ordinaryInventorySetting = Object.freeze({
+            id: 'endpoint',
+            qualifiedId: 'acme.ordinary-settings/endpoint',
+            descriptor: Object.freeze({
+                id: 'endpoint',
+                title: 'Endpoint',
+                target: Object.freeze({ kind: 'plugin' }),
+                scope: 'account',
+                schema: Object.freeze({ type: 'string' }),
+            }),
+        });
         const modelForGeneration = (generation: string) => Object.freeze({
             visible: true,
             identity: Object.freeze({
@@ -242,6 +269,19 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
                 localId: 'settings',
                 qualifiedId: 'acme.ordinary-settings/settings',
                 generation,
+            }),
+            declarativeInventory: Object.freeze({
+                actions: Object.freeze([]),
+                destinations: Object.freeze([]),
+                settings: Object.freeze([Object.freeze({
+                    pluginId: 'acme.ordinary-settings',
+                    id: 'endpoint',
+                    qualifiedId: 'acme.ordinary-settings/endpoint',
+                    schema: Object.freeze({ type: 'string' }),
+                    secret: false,
+                    setting: ordinaryInventorySetting,
+                })]),
+                uiQueries: Object.freeze([]),
             }),
             root: Object.freeze({
                 kind: 'group',
@@ -251,16 +291,7 @@ describe('DeclarativePluginSurface ordinary Settings', () => {
                     path: 'root.children[0]',
                     label: 'Endpoint',
                     control: Object.freeze({ kind: 'text', settingId: 'endpoint' }),
-                    setting: Object.freeze({
-                        id: 'endpoint',
-                        descriptor: Object.freeze({
-                            id: 'endpoint',
-                            title: 'Endpoint',
-                            target: Object.freeze({ kind: 'plugin' }),
-                            scope: 'account',
-                            schema: Object.freeze({ type: 'string' }),
-                        }),
-                    }),
+                    setting: ordinaryInventorySetting,
                 })]),
             }),
         });

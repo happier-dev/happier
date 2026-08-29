@@ -112,8 +112,6 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   const profileOptionsByServiceId = React.useMemo(
     () => buildConnectedServiceProfileOptionsByServiceId({
       accountProfileConnectedServicesV2: profile.connectedServicesV2 ?? [],
-      // Voice declarations own eligibility; this projection keeps canonical profile health only.
-      agentCore: null,
       supportedConnectedServiceIds: supportedServiceIds,
       labelsByKey: settings.connectedServicesProfileLabelByKey ?? {},
     }),

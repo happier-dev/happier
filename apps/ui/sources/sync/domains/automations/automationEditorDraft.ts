@@ -97,6 +97,13 @@ export type AutomationEditorDraft = Readonly<{
     triggers: ReadonlyArray<AutomationEditorTriggerDraft>;
 }>;
 
+/** One durable-or-pending identity for editor-owned plugin setup and writes. */
+export function requireAutomationEditorDraftIdentity(draft: AutomationEditorDraft): string {
+    const identity = draft.automationId ?? draft.pendingAutomationId;
+    if (!identity) throw new Error('Automation editor draft has no definition identity');
+    return identity;
+}
+
 /** Account/server plus durable-or-pending definition identity for one mounted draft. */
 export function createAutomationEditorLifetimeIdentity(
     scope: Readonly<{ serverId: string; accountId: string }>,

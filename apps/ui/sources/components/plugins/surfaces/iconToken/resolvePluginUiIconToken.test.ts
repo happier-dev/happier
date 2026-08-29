@@ -27,6 +27,8 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     forward: 'arrow-right',
     more: 'dots-three',
     search: 'magnifying-glass',
+    'change-open': 'git-pull-request',
+    'change-complete': 'git-merge',
 });
 
 describe('resolvePluginUiIconToken', () => {

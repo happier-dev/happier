@@ -1,6 +1,7 @@
 import { resolveModelSelectionIntentFromSessionMetadata, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
     buildBackendTargetKeyV2,
+    parseBackendTargetKeyV2,
     readRuntimeDescriptorV1FromMetadata,
     SessionMcpSelectionV1Schema,
 } from '@happier-dev/protocol';
@@ -20,6 +21,27 @@ import {
 } from './sessionAuthoringNormalization';
 import type { SessionAuthoringSnapshot } from './sessionAuthoringSnapshot';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
+
+function resolvePersistedModelTargetKey(metadata: Record<string, unknown> | null, canonicalTargetKey: string): string {
+    const rawIntent = metadata?.modelSelectionIntentV1;
+    if (!rawIntent || typeof rawIntent !== 'object' || Array.isArray(rawIntent)) return canonicalTargetKey;
+    const rawSelection = (rawIntent as Record<string, unknown>).selection;
+    if (!rawSelection || typeof rawSelection !== 'object' || Array.isArray(rawSelection)) return canonicalTargetKey;
+    const rawTargetKey = (rawSelection as Record<string, unknown>).agentTargetKey;
+    if (typeof rawTargetKey !== 'string' || !rawTargetKey.startsWith('backend:')) return canonicalTargetKey;
+    try {
+        const compatibilityAgentTarget = resolveAgentExecutionTargetForBackendTarget({
+            backendTarget: parseBackendTargetKeyV2(rawTargetKey),
+        });
+        return compatibilityAgentTarget
+            && buildBackendTargetKeyV2(compatibilityAgentTarget) === canonicalTargetKey
+            ? rawTargetKey
+            : canonicalTargetKey;
+    } catch {
+        return canonicalTargetKey;
+    }
+}
 
 export function deriveSessionAuthoringSnapshot(params: Readonly<{
     session: Pick<
@@ -35,11 +57,17 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
     });
     const backendTarget = defaultBackend?.backendTarget ?? null;
     const agentTarget = defaultBackend?.agentTarget ?? null;
-    const agentTargetKey = agentTarget
+    const canonicalAgentTargetKey = agentTarget
         ? buildBackendTargetKeyV2(agentTarget)
         : backendTarget
             ? buildBackendTargetKeyV2(backendTarget)
             : null;
+    // Released Sessions may carry the predecessor backend-key spelling. Read
+    // that exact admitted key only when it canonicalizes to the current Agent
+    // target; new authoring output is re-keyed by its owning adapter below.
+    const agentTargetKey = canonicalAgentTargetKey
+        ? resolvePersistedModelTargetKey(metadata, canonicalAgentTargetKey)
+        : null;
     const permissionOverride = getPermissionModeOverrideForSpawn(params.session as Session);
     const metadataPermission = resolvePermissionIntentFromSessionMetadata(metadata);
     const metadataPermissionMode = metadataPermission?.intent ?? null;

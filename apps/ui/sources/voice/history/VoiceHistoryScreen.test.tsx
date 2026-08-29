@@ -812,7 +812,9 @@ describe('VoiceHistoryScreen', () => {
       expect(screen.getTextContent()).not.toContain('Account A private answer');
     } finally {
       accountBDiscovery.resolve(null);
-      storage.setState((state) => ({ ...state, profileScope: previousScope }) as never);
+      await act(async () => {
+        storage.setState((state) => ({ ...state, profileScope: previousScope }) as never);
+      });
     }
   });
 });

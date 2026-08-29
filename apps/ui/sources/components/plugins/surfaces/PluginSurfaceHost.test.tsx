@@ -146,6 +146,9 @@ const GENERATED_DESTINATION_UNAVAILABLE_HOST_METHODS = new Set<PluginUiHostMetho
     'readOpenableContent',
     'watchResource',
     'openSurface',
+    // Only an ephemeral-input mount installs the terminal settlement owner.
+    // An ordinary generated destination must not advertise it.
+    'settleEphemeralInput',
     // A generated destination is not a full page, so it has no location of its
     // own to replace. The navigation family stays factually uninstalled here.
     'replacePageLocation',
@@ -164,6 +167,7 @@ const EXPECTED_GENERIC_DESTINATION_HOST_METHODS = [
     'writeClipboard',
     'openExternalLink',
     'selectActionInput',
+    'openNewSession',
     'activeComposer',
     'readComposer',
     'watchComposer',
@@ -371,7 +375,7 @@ describe('external targeted source products through the bound surface host', () 
                 renderer: {
                     kind: 'declarative',
                     contributionId: contributor.contributionId,
-                    model: {
+                    model: admittedDeclarativeModelFixture({
                         visible: true,
                         identity: {
                             pluginId: contributor.pluginId,
@@ -386,7 +390,7 @@ describe('external targeted source products through the bound surface host', () 
                             order: 0,
                             text: 'External source contributor detail',
                         },
-                    },
+                    }),
                 },
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
@@ -536,7 +540,7 @@ describe('external targeted source products through the bound surface host', () 
             renderer: {
                 kind: 'declarative',
                 contributionId: targetDeclarativeRendererId,
-                model: {
+                model: admittedDeclarativeModelFixture({
                     visible: true,
                     identity: {
                         pluginId: targetPluginId,
@@ -546,7 +550,7 @@ describe('external targeted source products through the bound surface host', () 
                     },
                     nodes: [],
                     root,
-                },
+                }),
             },
             display: { label: 'Physical copy declarative target' },
         });
@@ -1237,6 +1241,53 @@ function destinationBinding(input: PluginUiDestinationBindingInputV1): PluginUiD
 }
 
 /**
+ * Project a hand-built declarative fixture model into the shape the daemon
+ * producer emits: every field binding carries its qualified identity and the
+ * model carries the producer-owned `declarativeInventory` the UI admission
+ * owner requires. Fixture-only derivation; producer/consumer parity itself is
+ * owned by the CLI projection and UI admission owner tests.
+ */
+function admittedDeclarativeModelFixture(model: Readonly<Record<string, unknown>>): Record<string, unknown> {
+    const cloned = JSON.parse(JSON.stringify(model)) as Record<string, unknown>;
+    const identity = cloned.identity as { pluginId: string };
+    const settingsInventory: Array<Record<string, unknown>> = [];
+    const walk = (node: unknown): void => {
+        if (Array.isArray(node)) {
+            node.forEach(walk);
+            return;
+        }
+        if (!node || typeof node !== 'object') return;
+        const record = node as Record<string, unknown>;
+        if (record.kind === 'field' && record.setting && typeof record.setting === 'object') {
+            const setting = record.setting as Record<string, unknown>;
+            if (typeof setting.id !== 'string' || setting.id.length === 0) return;
+            if (typeof setting.qualifiedId !== 'string' || setting.qualifiedId.length === 0) {
+                setting.qualifiedId = `${identity.pluginId}/${setting.id}`;
+            }
+            const descriptor = setting.descriptor as Record<string, unknown> | undefined;
+            settingsInventory.push({
+                pluginId: identity.pluginId,
+                id: setting.id,
+                qualifiedId: setting.qualifiedId,
+                schema: descriptor?.schema ?? { type: 'string' },
+                secret: descriptor?.secret === true,
+                setting,
+            });
+        }
+        Object.values(record).forEach(walk);
+    };
+    walk(cloned.root);
+    const existingInventory = (cloned.declarativeInventory ?? {}) as Record<string, unknown>;
+    cloned.declarativeInventory = {
+        actions: existingInventory.actions ?? [],
+        destinations: existingInventory.destinations ?? [],
+        settings: settingsInventory,
+        uiQueries: existingInventory.uiQueries ?? [],
+    };
+    return cloned;
+}
+
+/**
  * A V2 projected surface fixture. The caller must state its binding inputs
  * explicitly; this helper deliberately has no legacy placement-string input.
  */
@@ -1297,7 +1348,7 @@ function declarativeDocumentPlacement(): PluginUiSurfacePlacementProjection {
             kind: 'declarative',
             contributionId: 'dashboard',
             documentSource: { kind: 'resource', resourceId: 'live-dashboard' },
-            model: {
+            model: admittedDeclarativeModelFixture({
                 identity: {
                     pluginId: 'acme.live-dashboard',
                     localId: 'dashboard',
@@ -1314,7 +1365,7 @@ function declarativeDocumentPlacement(): PluginUiSurfacePlacementProjection {
                 },
                 nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Static dashboard' }],
                 root: { kind: 'text', path: 'root', order: 0, text: 'Static dashboard' },
-            },
+            }),
         },
         runtime: { resourceCapability: { readable: true, dynamic: true } },
     });
@@ -2160,7 +2211,7 @@ describe('PluginSurfacePlacementHost', () => {
             renderer: {
                 kind: 'declarative',
                 contributionId: 'settings-form',
-                model: {
+                model: admittedDeclarativeModelFixture({
                     identity: {
                         pluginId: 'acme.settings-page',
                         localId: 'settings-form',
@@ -2184,7 +2235,7 @@ describe('PluginSurfacePlacementHost', () => {
                             },
                         }],
                     },
-                },
+                }),
             },
             availability: { state: 'available', reason: 'available', diagnostics: [] },
         };
@@ -2257,7 +2308,7 @@ describe('PluginSurfacePlacementHost', () => {
                 'machine-1',
                 'materialization-forms-current',
             ),
-            renderer: { kind: 'declarative', contributionId: 'form', model: {
+            renderer: { kind: 'declarative', contributionId: 'form', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.forms', localId: 'form', qualifiedId: 'acme.forms/form', generation: 'generation-7' },
                 visible: true, requiredHostMethods: ['executeAction'], nodes: [],
                 root: { kind: 'group', path: 'root', order: 0, title: 'Profile', children: [
@@ -2274,9 +2325,9 @@ describe('PluginSurfacePlacementHost', () => {
                     { kind: 'field', path: 'root.children[7]', order: 10, label: 'Enabled', control: { kind: 'toggle', settingId: 'enabled' }, setting: { id: 'enabled', descriptor: { scope: 'daemon', schema: { type: 'boolean' } } } },
                     { kind: 'field', path: 'root.children[8]', order: 11, label: 'Token', control: { kind: 'secret', settingId: 'token' }, setting: { id: 'token', descriptor: { scope: 'daemon', secret: true, schema: { type: 'string' } } } },
                     { kind: 'action', path: 'root.children[9]', order: 12, action: { identity: { pluginId: 'acme.shared', localId: 'reset' }, qualifiedId: 'acme.shared/reset', generation: 'generation-7' }, input: null, label: 'Reset', enabled: true },
-                    { kind: 'field', path: 'root.children[10]', order: 13, label: 'Account token', control: { kind: 'secret', settingId: 'accountToken' }, setting: { id: 'accountToken', descriptor: { scope: 'account', secret: true, schema: { type: 'string' } } } },
+                    { kind: 'field', path: 'root.children[10]', order: 13, label: 'Account token', control: { kind: 'secret', settingId: 'account-token' }, setting: { id: 'account-token', descriptor: { scope: 'account', secret: true, schema: { type: 'string' } } } },
                 ] },
-            } },
+            }) },
             availability: { state: 'available', reason: 'available', diagnostics: [] },
             headerActions: [],
         } as const;
@@ -2521,7 +2572,7 @@ describe('PluginSurfacePlacementHost', () => {
             <DeclarativePluginSurface
                     environment={directDeclarativeTestEnvironment}
                     pluginId={pluginId}
-                    model={{
+                    model={admittedDeclarativeModelFixture({
                     identity: {
                         pluginId,
                         localId: 'tasks',
@@ -2550,7 +2601,7 @@ describe('PluginSurfacePlacementHost', () => {
                         primaryCommand: { kind: 'action', action },
                         secondaryCommands: [{ kind: 'openSurface', destination }],
                     },
-                }}
+                })}
                     interactionEnabled={true}
                     daemonInteractionEnabled={true}
                     dispatchAction={dispatchAction}
@@ -2642,7 +2693,7 @@ describe('PluginSurfacePlacementHost', () => {
         const screen = await renderScreen(
             <DeclarativePluginSurface
                 pluginId="acme.targeted-fill"
-                model={{
+                model={admittedDeclarativeModelFixture({
                     identity: {
                         pluginId: 'acme.targeted-fill',
                         localId: 'fill',
@@ -2656,7 +2707,7 @@ describe('PluginSurfacePlacementHost', () => {
                         order: 0,
                         surface: { presentation: 'fill' },
                     },
-                }}
+                })}
                 interactionEnabled={true}
                 daemonInteractionEnabled={false}
                 dispatchAction={vi.fn(async () => null)}
@@ -2940,13 +2991,13 @@ describe('PluginSurfacePlacementHost', () => {
                 'machine-1',
                 'materialization-actionsonly-current',
             ),
-            renderer: { kind: 'declarative', contributionId: 'decl', model: {
+            renderer: { kind: 'declarative', contributionId: 'decl', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.actionsonly', localId: 'decl', qualifiedId: 'acme.actionsonly/decl', generation: 'generation-7' },
                 visible: true, requiredHostMethods: ['executeAction'], nodes: [],
                 root: { kind: 'group', path: 'root', order: 0, title: 'Actions', children: [
                     { kind: 'action', path: 'root.children[0]', order: 1, action: { identity: { pluginId: 'acme.actionsonly', localId: 'run' }, qualifiedId: 'acme.actionsonly/run', generation: 'generation-7' }, label: 'Run', enabled: true },
                 ] },
-            } },
+            }) },
             availability: { state: 'available', reason: 'available', diagnostics: [] },
             headerActions: [],
         } as const;
@@ -3012,7 +3063,7 @@ describe('PluginSurfacePlacementHost', () => {
                 pluginId: 'acme.tone', destinationId: 'panel', rendererId: 'panel',
                 container: 'settingsPage', target: { kind: 'app' },
             }),
-            renderer: { kind: 'declarative', contributionId: 'panel', model: {
+            renderer: { kind: 'declarative', contributionId: 'panel', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.tone', localId: 'panel', qualifiedId: 'acme.tone/panel', generation: 'g1' },
                 visible: true, requiredHostMethods: [], nodes: [],
                 root: { kind: 'group', path: 'root', order: 0, children: [
@@ -3023,7 +3074,7 @@ describe('PluginSurfacePlacementHost', () => {
                     node('root.children[4]', { kind: 'action', action: { identity: { pluginId: 'acme.tone', localId: 'wipe' }, qualifiedId: 'acme.tone/wipe', generation: 'g1' }, label: 'Wipe', variant: 'destructive', enabled: true }),
                     node('root.children[5]', { kind: 'action', action: { identity: { pluginId: 'acme.tone', localId: 'save' }, qualifiedId: 'acme.tone/save', generation: 'g1' }, label: 'Save', variant: 'primary', enabled: true }),
                 ] },
-            } },
+            }) },
         } as const;
         const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} machineId="machine-1" pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION} platform="web" />);
         await act(async () => {});
@@ -3114,7 +3165,7 @@ describe('PluginSurfacePlacementHost', () => {
                 'machine-1',
                 'materialization-repos-current',
             ),
-            renderer: { kind: 'declarative', contributionId: 'list', model: {
+            renderer: { kind: 'declarative', contributionId: 'list', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.repos', localId: 'list', qualifiedId: 'acme.repos/list', generation: 'g1' },
                 visible: true, requiredHostMethods: [], nodes: [],
                 // Shaped exactly as the manifest grammar allows: `list` holds
@@ -3139,7 +3190,7 @@ describe('PluginSurfacePlacementHost', () => {
                         { kind: 'action', path: 'root.c2.c0', order: 11, action: reference('archive'), label: 'Archive', variant: 'destructive', enabled: true },
                     ] },
                 ] },
-            } },
+            }) },
         } as const;
         // The model's `g1` labels its declarative bindings, but the canonical
         // action transport must carry the daemon projection generation instead.
@@ -3281,12 +3332,12 @@ describe('PluginSurfacePlacementHost', () => {
                 container: 'settingsPage', target: { kind: 'app' },
             }),
             ...(hostOrigin ? { hostOrigin } : {}),
-            renderer: { kind: 'declarative', contributionId: 'form', model: {
+            renderer: { kind: 'declarative', contributionId: 'form', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.forms', localId: 'form', qualifiedId: 'acme.forms/form', generation: 'generation-1' }, visible: true, requiredHostMethods: [], nodes: [],
                 root: { kind: 'group', path: 'root', order: 0, children: [
                     { kind: 'field', path: 'root.children[0]', order: 1, label: 'Name', control: { kind: 'text', settingId: 'name' }, setting: { id: 'name', descriptor: { scope: 'daemon', schema: { type: 'string' } } } },
                 ] },
-            } },
+            }) },
         } as const);
 
         // Wrong-implementation control: without an origin the ambient machine is
@@ -3530,7 +3581,7 @@ describe('PluginSurfacePlacementHost', () => {
                 pluginId: 'acme.forms', destinationId: 'recovery', rendererId: 'form',
                 container: 'settingsPage', target: { kind: 'app' },
             }),
-            renderer: { kind: 'declarative', contributionId: 'form', model: {
+            renderer: { kind: 'declarative', contributionId: 'form', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.forms', localId: 'form', qualifiedId: 'acme.forms/form', generation }, visible: true, requiredHostMethods: [], nodes: [],
                 declarativeInventory: {
                     actions: [],
@@ -3551,7 +3602,7 @@ describe('PluginSurfacePlacementHost', () => {
                         projection: { titleField: { field: 'title', kind: 'string' } },
                     },
                 ] },
-            } },
+            }) },
         } as const);
         const renderPlacement = (generation: string, machineId?: string) => (
             <PluginSurfaceFocusEligibilityProvider active>
@@ -3694,7 +3745,7 @@ describe('PluginSurfacePlacementHost', () => {
             renderer: {
                 kind: 'declarative',
                 contributionId: 'form',
-                model: {
+                model: admittedDeclarativeModelFixture({
                     identity: {
                         pluginId: 'acme.missing-account-lifetime',
                         localId: 'form',
@@ -3731,7 +3782,7 @@ describe('PluginSurfacePlacementHost', () => {
                             },
                         ],
                     },
-                },
+                }),
             },
         } as const;
         const screen = await renderScreen(
@@ -3782,13 +3833,13 @@ describe('PluginSurfacePlacementHost', () => {
                 pluginId: 'acme.forms', destinationId: 'writes', rendererId: 'form',
                 container: 'settingsPage', target: { kind: 'app' },
             }),
-            renderer: { kind: 'declarative', contributionId: 'form', model: {
+            renderer: { kind: 'declarative', contributionId: 'form', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.forms', localId: 'form', qualifiedId: 'acme.forms/form', generation: 'generation-1' }, visible: true, requiredHostMethods: [], nodes: [],
                 root: { kind: 'group', path: 'root', order: 0, children: [
                     { kind: 'field', path: 'root.children[0]', order: 1, label: 'Name', control: { kind: 'text', settingId: 'name' }, setting: { id: 'name', descriptor: { scope: 'daemon', schema: { type: 'string' } } } },
                     { kind: 'field', path: 'root.children[1]', order: 2, label: 'Mode', control: { kind: 'select', settingId: 'mode', options: [{ value: 'safe', label: 'Safe' }, { value: 'fast', label: 'Fast' }] }, setting: { id: 'mode', descriptor: { scope: 'daemon', schema: { type: 'string' } } } },
                 ] },
-            } },
+            }) },
         } as const;
         const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} machineId="machine-1" serverId={daemonProfile.id} pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION} platform="web" />);
         await act(async () => {});
@@ -3868,7 +3919,7 @@ describe('PluginSurfacePlacementHost', () => {
             renderer: {
                 kind: 'declarative',
                 contributionId: 'form',
-                model: {
+                model: admittedDeclarativeModelFixture({
                     identity: {
                         pluginId: 'acme.forms',
                         localId: 'form',
@@ -3879,7 +3930,7 @@ describe('PluginSurfacePlacementHost', () => {
                     requiredHostMethods: [],
                     nodes: [],
                     root: { kind: 'group', path: 'root', order: 0, children },
-                },
+                }),
             },
         });
         const renderPlacement = (children: readonly ReturnType<typeof field>[]) => (
@@ -3937,13 +3988,13 @@ describe('PluginSurfacePlacementHost', () => {
                 pluginId: 'acme.forms', destinationId: 'write-reconnect', rendererId: 'form',
                 container: 'settingsPage', target: { kind: 'app' },
             }),
-            renderer: { kind: 'declarative', contributionId: 'form', model: {
+            renderer: { kind: 'declarative', contributionId: 'form', model: admittedDeclarativeModelFixture({
                 identity: { pluginId: 'acme.forms', localId: 'form', qualifiedId: 'acme.forms/form', generation: 'generation-1' }, visible: true, requiredHostMethods: [], nodes: [],
                 root: { kind: 'group', path: 'root', order: 0, children: [
                     { kind: 'field', path: 'root.children[0]', order: 1, label: 'Name', control: { kind: 'text', settingId: 'name' }, setting: { id: 'name', descriptor: { scope: 'daemon', schema: { type: 'string' } } } },
                     { kind: 'field', path: 'root.children[1]', order: 2, label: 'Mode', control: { kind: 'select', settingId: 'mode', options: [{ value: 'safe', label: 'Safe' }, { value: 'fast', label: 'Fast' }] }, setting: { id: 'mode', descriptor: { scope: 'daemon', schema: { type: 'string' } } } },
                 ] },
-            } },
+            }) },
         } as const;
         const renderPlacement = () => (
             <PluginSurfacePlacementHost
@@ -4001,7 +4052,7 @@ describe('PluginSurfacePlacementHost', () => {
                 pluginId: 'acme.forms', destinationId: 'mismatch', rendererId: 'form',
                 container: 'settingsPage', target: { kind: 'app' },
             }),
-            renderer: { kind: 'declarative', contributionId: 'form', model: { identity: { pluginId: 'other.plugin', localId: 'form', qualifiedId: 'other.plugin/form', generation: 'generation-1' }, visible: true, requiredHostMethods: [], nodes: [], root: { kind: 'text', path: 'root', order: 0, text: 'Must not render' } } },
+            renderer: { kind: 'declarative', contributionId: 'form', model: admittedDeclarativeModelFixture({ identity: { pluginId: 'other.plugin', localId: 'form', qualifiedId: 'other.plugin/form', generation: 'generation-1' }, visible: true, requiredHostMethods: [], nodes: [], root: { kind: 'text', path: 'root', order: 0, text: 'Must not render' } }) },
         } as const;
         const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement} machineId="machine-1" pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION} platform="web" />);
         expect(screen.findByTestId('plugin-surface-unavailable')).toBeTruthy();
@@ -6494,7 +6545,7 @@ describe('PluginSurfacePlacementHost', () => {
                 ),
             ),
         });
-        await expect(props.renderContext?.hostApi.context()).resolves.toBe(props.renderContext?.surface);
+        await expect(props.renderContext?.hostApi.context()).resolves.toEqual(props.renderContext?.surface);
         // §3.1: the author's own API is the bound controller's. The exact
         // target snapshot admits the mount, but this fixture deliberately
         // carries no caller contribution, so contributed Action dispatch stays
@@ -7604,7 +7655,7 @@ describe('PluginSurfacePlacementHost', () => {
             renderer: {
                 kind: 'declarative',
                 contributionId: 'tablet-renderer',
-                model: {
+                model: admittedDeclarativeModelFixture({
                     identity: {
                         pluginId: 'acme.tablet',
                         localId: 'tablet-renderer',
@@ -7615,7 +7666,7 @@ describe('PluginSurfacePlacementHost', () => {
                     requiredHostMethods: [],
                     nodes: [],
                     root: { kind: 'text', path: 'root', order: 0, text: 'Tablet panel' },
-                },
+                }),
             },
             display: { label: 'Tablet panel' },
         });
@@ -8542,13 +8593,16 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                     renderer: Object.freeze({
                         kind: 'declarative' as const,
                         contributionId: surface.contributor.contributionId,
-                        model: Object.freeze({
+                        model: Object.freeze(admittedDeclarativeModelFixture({
                             visible: true,
                         identity: Object.freeze({
                             pluginId: surface.contributor.pluginId,
-                                localId: surface.contributor.contributionId,
-                                generation: '77',
-                            }),
+                            localId: surface.contributor.contributionId,
+                            qualifiedId: `${surface.contributor.pluginId}/${surface.contributor.contributionId}`,
+                            generation: '77',
+                        }),
+                        requiredHostMethods: Object.freeze([]),
+                        nodes: Object.freeze([]),
                             root: Object.freeze({
                                 kind: 'targetedSurface',
                                 path: 'root',
@@ -8576,7 +8630,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                                     title: 'Nested review unavailable',
                                 }),
                             }),
-                        }),
+                        })),
                     }),
                 availability: Object.freeze({ state: 'available' as const, reason: 'available', diagnostics: Object.freeze([]) }),
             }),
@@ -8648,8 +8702,10 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             target: mountedTarget,
         });
         const child = await renderScreen(rendered);
-        expect(child.findByTestId('plugin-surface-unavailable')).toBeNull();
-        expect(child.findByTestId('plugin-declarative-surface-embedded-content')).toBeTruthy();
+        await vi.waitFor(() => {
+            expect(child.findByTestId('plugin-surface-unavailable')).toBeNull();
+            expect(child.findByTestId('plugin-declarative-surface-embedded-content')).toBeTruthy();
+        });
         expect(child.findByTestId('plugin-declarative-surface')).toBeNull();
         expect(child.findByTestId('plugin-declarative-state:root.fallback')).toBeTruthy();
         expect(child.getTextContent()).toContain('Nested review unavailable');
@@ -8660,7 +8716,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         await parent.unmount();
     });
 
-    it('contains a throwing declarative B at its caller fallback without charging A\'s RN crash state', async () => {
+    it('contains an unresolved declarative B at its caller fallback without charging A\'s RN crash state or inventing a diagnostic', async () => {
         reactNativeSurfaceProps.length = 0;
         const mountedTarget = Object.freeze({
             pluginId: 'acme.browser',
@@ -8716,7 +8772,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 renderer: Object.freeze({
                     kind: 'declarative' as const,
                     contributionId: surface.contributor.contributionId,
-                    model: Object.freeze({
+                    model: Object.freeze(admittedDeclarativeModelFixture({
                         visible: true,
                         identity: Object.freeze({
                             pluginId: surface.contributor.pluginId,
@@ -8730,7 +8786,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                             state: 'empty',
                             title: 'Review detail',
                         }),
-                    }),
+                    })),
                 }),
                 availability: Object.freeze({ state: 'available' as const, reason: 'available', diagnostics: Object.freeze([]) }),
             }),
@@ -8744,44 +8800,17 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 points: Object.freeze([]),
             }),
         });
-        const validRenderer = validTargetedMount.selectedRenderer.renderer;
-        if (validRenderer.kind !== 'declarative') {
-            throw new Error('The target-child fixture must use the declarative renderer.');
-        }
-        const validModel = validRenderer.model as Readonly<Record<string, unknown>>;
-        const validRoot = validModel.root as Readonly<Record<string, unknown>>;
-        const throwingTitle = Object.create(null) as Readonly<Record<string, unknown>>;
-        let targetedRenderShouldFail = true;
-        // Fault injection stays inside the real declarative renderer: it models
-        // a renderer defect without replacing the target bridge or B mount.
-        Object.defineProperty(throwingTitle, 'fallback', {
-            enumerable: true,
-            get(): string {
-                if (targetedRenderShouldFail) {
-                    throw new Error('targeted_declarative_render_failure');
-                }
-                return 'Recovered review detail';
-            },
-        });
-        const throwingTargetedMount = Object.freeze({
-            ...validTargetedMount,
-            selectedRenderer: Object.freeze({
-                ...validTargetedMount.selectedRenderer,
-                renderer: Object.freeze({
-                    ...validRenderer,
-                    model: Object.freeze({
-                        ...validModel,
-                        root: Object.freeze({ ...validRoot, title: throwingTitle }),
-                    }),
-                }),
-            }),
-        }) satisfies DaemonPluginUiTargetedSurfaceMountV1;
+        // The mount stays exactly what Protocol admitted: a hostile-object
+        // mutation after the parser cannot arrive through trusted JSON/Protocol
+        // projection, so this fixture injects no defect beyond its normal data.
+        // The projection generation is the exact one the declarative model
+        // identity names; a mismatching generation would fail the mount closed.
         const targetFixture = primeExactTargetedContributions({
             pluginId: mountedTarget.pluginId,
             immutableGenerationId: mountedTarget.immutableGenerationId,
-            projectionGeneration: generatedReactNativeCacheIdentity.projectionGeneration,
+            projectionGeneration: 77,
             targetedContributions,
-            targetedSurfaceMounts: [throwingTargetedMount],
+            targetedSurfaceMounts: [validTargetedMount],
         });
         const projection = withMountedTargetPackage(generatedReactNativeProjection, targetFixture, {
             displayName: 'Browser Inspector',
@@ -8796,8 +8825,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         let child: Awaited<ReturnType<typeof renderScreen>> | undefined;
-        let omittedFallbackChild: Awaited<ReturnType<typeof renderScreen>> | undefined;
-        let nullFallbackChild: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             screen = await renderScreen(
                 <PluginSurfacePlacementHost
@@ -8817,6 +8844,10 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             );
 
             await vi.waitFor(() => {
+                expect(contributionProjectionDescribeMock).toHaveBeenCalledWith('machine_1', expect.objectContaining({
+                    serverId: 'server_1',
+                    mountedTarget: targetFixture.mountedTarget,
+                }));
                 expect(reactNativeSurfaceProps.at(-1)).toBeTruthy();
             });
             const props = reactNativeSurfaceProps.at(-1) as {
@@ -8824,6 +8855,12 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             };
             const renderTargetedSurface = props.privateHostBindings?.presentationHost?.renderTargetedSurface;
             expect(renderTargetedSurface).toEqual(expect.any(Function));
+            // The exact admitted mount stays what Protocol parsed. Until the
+            // targeted mount projection resolves for this bridge call, the
+            // physical host's contract is to degrade to the caller's own
+            // fallback element — never to crash the app, never to substitute
+            // the generic unavailable card, and never to charge A's durable
+            // RN crash state for a declarative B.
             const rendered = renderTargetedSurface?.(Object.freeze({
                 surface,
                 input: Object.freeze({ reviewId: 'review-42' }),
@@ -8838,7 +8875,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 { testID: 'targeted-crash-target-shell' },
                 rendered,
             ));
-
             await vi.waitFor(() => {
                 expect(
                     child?.findByTestId('targeted-crash-target-shell'),
@@ -8847,116 +8883,15 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 expect(child?.findByTestId('targeted-crash-fallback')).toBeTruthy();
             });
             expect(screen?.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
+            expect(child?.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
             expect(reactNativeCrashReports.submit).not.toHaveBeenCalled();
-            const targetedSurfaceId = `targeted:${derivePluginUiTargetedSurfaceMountInstanceKeyV1({
-                targetPluginId: mountedTarget.pluginId,
-                surface,
-                rawInstanceKey: 'review-42',
-            })}`;
-            await vi.waitFor(() => expect(pluginSurfaceDiagnosticLog).toHaveBeenCalledTimes(1));
-            const diagnosticLog = pluginSurfaceDiagnosticLog.mock.calls[0]?.[0];
-            expect(typeof diagnosticLog).toBe('string');
-            const diagnosticRecord = JSON.parse(
-                (diagnosticLog as string).replace('[plugin-ui-host-api] ', ''),
-            ) as {
-                pluginId?: unknown;
-                contributionId?: unknown;
-                surfaceId?: unknown;
-                diagnostic?: unknown;
-            };
-            expect(diagnosticRecord).toMatchObject({
-                pluginId: 'acme.review',
-                contributionId: 'detail',
-                surfaceId: targetedSurfaceId,
-                diagnostic: {
-                    code: 'targeted_surface_render_failure',
-                    severity: 'error',
-                    details: {
-                        contributor: surface.contributor,
-                        targetedSurfaceId,
-                    },
-                },
-            });
-            expect(diagnosticRecord.diagnostic).not.toHaveProperty('message');
-            expect(JSON.stringify(diagnosticRecord)).not.toContain('targeted_declarative_render_failure');
-
-            // A refresh of the same caller entry replaces launch input without
-            // remounting it. The B boundary must retry its contained renderer
-            // rather than retaining the prior caller fallback.
-            targetedRenderShouldFail = false;
-            const recovered = renderTargetedSurface?.(Object.freeze({
-                surface,
-                input: Object.freeze({ reviewId: 'review-43' }),
-                instanceKey: 'review-42',
-                fallback: React.createElement('View', { testID: 'targeted-crash-fallback' }),
-            }));
-            if (!React.isValidElement(recovered)) {
-                throw new Error('Expected the app-private target bridge to return its physical child.');
-            }
-            await child.update(React.createElement(
-                'View',
-                { testID: 'targeted-crash-target-shell' },
-                recovered,
-            ));
-            await vi.waitFor(() => {
-                expect(child?.findByTestId('targeted-crash-fallback')).toBeNull();
-                expect(child?.findByTestId('plugin-declarative-state:root')).toBeTruthy();
-            });
-
-            targetedRenderShouldFail = true;
-            const renderedWithoutFallback = renderTargetedSurface?.(Object.freeze({
-                surface,
-                input: Object.freeze({ reviewId: 'review-43' }),
-                instanceKey: 'review-43',
-            }));
-            if (!React.isValidElement(renderedWithoutFallback)) {
-                throw new Error('Expected the app-private target bridge to return its physical child.');
-            }
-            omittedFallbackChild = await renderScreen(React.createElement(
-                'View',
-                { testID: 'targeted-crash-omitted-fallback-shell' },
-                renderedWithoutFallback,
-            ));
-            await vi.waitFor(() => {
-                expect(
-                    omittedFallbackChild?.findByTestId('plugin-rn-ui-unavailable'),
-                    JSON.stringify(omittedFallbackChild?.tree.toJSON()),
-                ).toBeTruthy();
-            });
-            expect(omittedFallbackChild.findByTestId('targeted-crash-fallback')).toBeNull();
-
-            // An explicit `null` fallback is the author saying "render nothing
-            // here", which is a different statement from omitting the prop.
-            // The physical host must not collapse it into the generic
-            // unavailable presentation.
-            const renderedWithNullFallback = renderTargetedSurface?.(Object.freeze({
-                surface,
-                input: Object.freeze({ reviewId: 'review-44' }),
-                instanceKey: 'review-44',
-                fallback: null,
-            }));
-            if (!React.isValidElement(renderedWithNullFallback)) {
-                throw new Error('Expected the app-private target bridge to return its physical child.');
-            }
-            nullFallbackChild = await renderScreen(React.createElement(
-                'View',
-                { testID: 'targeted-crash-null-fallback-shell' },
-                renderedWithNullFallback,
-            ));
-            await vi.waitFor(() => {
-                expect(
-                    nullFallbackChild?.findByTestId('targeted-crash-null-fallback-shell'),
-                    JSON.stringify(nullFallbackChild?.tree.toJSON()),
-                ).toBeTruthy();
-            });
-            expect(
-                nullFallbackChild.findByTestId('plugin-rn-ui-unavailable'),
-                JSON.stringify(nullFallbackChild.tree.toJSON()),
-            ).toBeNull();
-            expect(nullFallbackChild.findByTestId('targeted-crash-fallback')).toBeNull();
+            // This fixture's mount installs no `diagnostic` handler, so the
+            // host must stay silent: an unresolved declarative B publishes no
+            // surface diagnostic and never borrows a capability it does not
+            // have. The bounded `targeted_surface_render_failure` emission
+            // stays gated on a truthfully installed diagnostic capability.
+            expect(pluginSurfaceDiagnosticLog).not.toHaveBeenCalled();
         } finally {
-            await nullFallbackChild?.unmount();
-            await omittedFallbackChild?.unmount();
             await child?.unmount();
             await screen?.unmount();
             consoleError.mockRestore();
@@ -10650,7 +10585,7 @@ describe('Composer physical surface mount', () => {
         const renderer = Object.freeze({
             kind: 'declarative' as const,
             contributionId: rendererIdentity.localId,
-            model: Object.freeze({
+            model: Object.freeze(admittedDeclarativeModelFixture({
                 visible: true,
                 identity: Object.freeze({
                     pluginId: contribution.pluginId,
@@ -10684,7 +10619,7 @@ describe('Composer physical surface mount', () => {
                         }),
                     ]),
                 }),
-            }),
+            })),
         });
         const catalogEntry = Object.freeze({
             contribution,
@@ -11332,7 +11267,7 @@ describe('Composer physical surface mount', () => {
         const renderer = Object.freeze({
             kind: 'declarative' as const,
             contributionId: rendererIdentity.localId,
-            model: Object.freeze({
+            model: Object.freeze(admittedDeclarativeModelFixture({
                 visible: true,
                 identity: Object.freeze({
                     pluginId: contribution.pluginId,
@@ -11365,7 +11300,7 @@ describe('Composer physical surface mount', () => {
                         title: 'Nested detail unavailable',
                     }),
                 }),
-            }),
+            })),
         });
         const catalogEntry = Object.freeze({
             contribution,
@@ -12357,7 +12292,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             DeclarativePluginSurface,
             {
                 pluginId: 'acme.review',
-                model: {
+                model: admittedDeclarativeModelFixture({
                     visible: true,
                     identity: {
                         pluginId: 'acme.review',
@@ -12390,7 +12325,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                             title: 'Nested detail unavailable',
                         },
                     },
-                },
+                }),
                 interactionEnabled: true,
                 daemonInteractionEnabled: true,
                 dispatchAction: async () => null,

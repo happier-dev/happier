@@ -5,6 +5,7 @@ import {
     type PluginUiDestinationBindingV1,
     type PluginUiInlineSurfaceBindingV1,
     type PluginUiMountContextV1,
+    type PluginUiSurfaceBindingV1,
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -297,6 +298,17 @@ export function readPluginSurfaceComposerMountBinding<
 }
 
 /**
+ * Prove one already-normalized Registry binding against the canonical grammar
+ * without cloning it. Zod parsing copies object data, so the host must bind
+ * the Registry's exact admitted object rather than a parse-local copy.
+ */
+function isAdmittedPluginUiSurfaceBindingV1(
+    value: unknown,
+): value is PluginUiSurfaceBindingV1 {
+    return PluginUiSurfaceBindingV1Schema.safeParse(value).success;
+}
+
+/**
  * Read one already-normalized physical mount binding without selecting a
  * renderer or inventing a destination. The Registry/CLI remains the only
  * binding admission owner; a mismatch returns `null` so its consumer can fail
@@ -309,39 +321,37 @@ export function readPluginSurfaceMountBinding<
     renderer: Readonly<Record<string, unknown>>;
 }>): PluginSurfaceMountBinding<TDescriptor> | null {
     const binding = input.descriptor.binding;
-    const normalizedBinding = PluginUiSurfaceBindingV1Schema.safeParse(binding);
     const rendererId = readRendererBindingId(input.renderer);
-    if (!normalizedBinding.success || !rendererId) {
+    if (!isAdmittedPluginUiSurfaceBindingV1(binding) || !rendererId) {
         return null;
     }
 
-    const normalized = normalizedBinding.data;
-    if (normalized.kind === 'destination') {
+    if (binding.kind === 'destination') {
         if (
-            normalized.destination.pluginId !== input.descriptor.pluginId
-            || normalized.destination.localId !== input.descriptor.descriptorId
-            || normalized.renderer.pluginId !== input.descriptor.pluginId
-            || normalized.renderer.localId !== rendererId
+            binding.destination.pluginId !== input.descriptor.pluginId
+            || binding.destination.localId !== input.descriptor.descriptorId
+            || binding.renderer.pluginId !== input.descriptor.pluginId
+            || binding.renderer.localId !== rendererId
         ) return null;
         return Object.freeze({
             kind: 'destination',
             descriptor: input.descriptor,
             renderer: input.renderer,
-            destinationBinding: normalized,
+            destinationBinding: binding,
         });
     }
 
     if (
-        normalized.surface.pluginId !== input.descriptor.pluginId
-        || normalized.surface.localId !== input.descriptor.descriptorId
-        || normalized.renderer.pluginId !== input.descriptor.pluginId
-        || normalized.renderer.localId !== rendererId
+        binding.surface.pluginId !== input.descriptor.pluginId
+        || binding.surface.localId !== input.descriptor.descriptorId
+        || binding.renderer.pluginId !== input.descriptor.pluginId
+        || binding.renderer.localId !== rendererId
     ) return null;
 
     return Object.freeze({
         kind: 'inline',
         descriptor: input.descriptor,
         renderer: input.renderer,
-        inlineBinding: normalized,
+        inlineBinding: binding,
     });
 }

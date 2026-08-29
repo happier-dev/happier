@@ -108,7 +108,7 @@ function buildCanonicalAvailableTargetsFromResolvedEntries(
 
 function resolveAvailableBackendTargets(params: Readonly<{
     enabledAgentIds?: ReadonlyArray<unknown>;
-    enabledBuiltInAgentIds: ReadonlyArray<AgentId>;
+    enabledBuiltInAgentIds: ReadonlyArray<BundledAgentId>;
     acpCatalogSettingsV1?: unknown;
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
     daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null;

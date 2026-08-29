@@ -9,15 +9,17 @@ import {
     type ConnectedServicesProfileOptionsByServiceId,
 } from './connectedServicesNewSessionBindings';
 
+const ANTHROPIC_SERVICE_KEY = 'happier.agent.claude/anthropic';
+
 const profileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId = {
-    anthropic: [
+    [ANTHROPIC_SERVICE_KEY]: [
         { profileId: 'primary', status: 'connected', providerEmail: 'primary@example.com' },
         { profileId: 'backup', status: 'connected', providerEmail: 'backup@example.com' },
     ],
 };
 
 const groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId = {
-    anthropic: [
+    [ANTHROPIC_SERVICE_KEY]: [
         {
             groupId: 'team',
             label: 'Team',
@@ -46,7 +48,7 @@ describe('connectedServicesNewSessionBindings', () => {
             accountGroupsFeatureEnabled: true,
         });
 
-        expect(result?.bindingsByServiceId.anthropic).toEqual({
+        expect(result?.bindingsByServiceId[ANTHROPIC_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'group',
             groupId: 'team',
@@ -65,7 +67,7 @@ describe('connectedServicesNewSessionBindings', () => {
             accountGroupsFeatureEnabled: true,
         });
 
-        expect(result?.bindingsByServiceId.anthropic).toEqual({
+        expect(result?.bindingsByServiceId[ANTHROPIC_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'profile',
             profileId: 'primary',
@@ -76,7 +78,7 @@ describe('connectedServicesNewSessionBindings', () => {
         const result = buildConnectedServicesBindingsPayload({
             supportedConnectedServiceIds: ['anthropic'],
             connectedServiceProfileOptionsByServiceId: {
-                anthropic: [
+                [ANTHROPIC_SERVICE_KEY]: [
                     { profileId: 'retryable', status: 'refresh_failed_retryable', providerEmail: 'retryable@example.com' },
                 ],
             },
@@ -88,7 +90,7 @@ describe('connectedServicesNewSessionBindings', () => {
             accountGroupsFeatureEnabled: true,
         });
 
-        expect(result?.bindingsByServiceId.anthropic).toEqual({
+        expect(result?.bindingsByServiceId[ANTHROPIC_SERVICE_KEY]).toEqual({
             source: 'connected',
             selection: 'profile',
             profileId: 'retryable',
@@ -114,7 +116,7 @@ describe('connectedServicesNewSessionBindings', () => {
         expect(result).toEqual({
             v: 1,
             bindingsByServiceId: {
-                anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+                [ANTHROPIC_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'team' },
             },
         });
     });
@@ -124,7 +126,7 @@ describe('connectedServicesNewSessionBindings', () => {
             supportedConnectedServiceIds: ['anthropic'],
             connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
             connectedServiceAccountGroupOptionsByServiceId: {
-                anthropic: [
+                [ANTHROPIC_SERVICE_KEY]: [
                     {
                         groupId: 'team',
                         label: 'Team',
@@ -149,7 +151,7 @@ describe('connectedServicesNewSessionBindings', () => {
         expect(result).toEqual({
             v: 1,
             bindingsByServiceId: {
-                anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+                [ANTHROPIC_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'team' },
             },
         });
     });
@@ -159,7 +161,7 @@ describe('connectedServicesNewSessionBindings', () => {
             supportedConnectedServiceIds: ['anthropic'],
             connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
             connectedServiceAccountGroupOptionsByServiceId: {
-                anthropic: [
+                [ANTHROPIC_SERVICE_KEY]: [
                     {
                         groupId: 'team',
                         label: 'Team',
@@ -184,7 +186,7 @@ describe('connectedServicesNewSessionBindings', () => {
         expect(result).toEqual({
             v: 1,
             bindingsByServiceId: {
-                anthropic: { source: 'connected', selection: 'group', groupId: 'team' },
+                [ANTHROPIC_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'team' },
             },
         });
     });
@@ -286,7 +288,6 @@ describe('connectedServicesNewSessionBindings', () => {
                     },
                 ],
             }],
-            agentCore: AGENTS_CORE.opencode,
             supportedConnectedServiceIds: AGENTS_CORE.opencode.connectedServices?.supportedServiceIds ?? [],
             labelsByKey: {},
         });

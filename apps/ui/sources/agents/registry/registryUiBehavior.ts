@@ -394,6 +394,8 @@ export type NewSessionPreflightContext = Readonly<{
     experiments: AgentResumeExperiments;
     resumeSessionId: string;
     results: CapabilityResults | undefined;
+    /** The machine whose installed Agent declaration owns this read. */
+    machineId?: string | null;
 }>;
 
 export type NewSessionCliSelectabilityContext = Readonly<{
@@ -816,9 +818,13 @@ export function classifyAgentSessionComposerNonSteerablePayload(opts: {
     }) ?? null;
 }
 
-export function getAgentResumeExperimentsFromSettings(agentId: AgentLookupId, settings: Settings): AgentResumeExperiments {
+export function getAgentResumeExperimentsFromSettings(
+    agentId: AgentLookupId,
+    settings: Settings,
+    machineId?: string | null,
+): AgentResumeExperiments {
     const enabled = true;
-    const defs = resolveAgentUiBehavior(agentId).resume?.experimentSwitches ?? [];
+    const defs = resolveAgentUiBehavior(agentId, machineId).resume?.experimentSwitches ?? [];
     if (defs.length === 0) return { enabled, switches: {} };
     const switches: Record<string, boolean> = {};
     for (const def of defs) {
@@ -842,7 +848,7 @@ export function buildResumeCapabilityOptionsFromUiState(opts: {
 }
 
 export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
-    const fn = resolveAgentUiBehavior(ctx.agentId).newSession?.getPreflightIssues;
+    const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.getPreflightIssues;
     return fn ? fn(ctx) : [];
 }
 
@@ -895,7 +901,7 @@ export function buildSpawnSessionExtrasFromUiState(opts: {
 }): AgentSpawnSessionExtras {
     const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).payload?.buildSpawnSessionExtras;
     if (!fn) return {};
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
+    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, opts.machineId);
     return fn({
         agentId: opts.agentId,
         settings: opts.settings,
@@ -924,12 +930,10 @@ export function buildResumeSessionExtrasFromUiState(opts: {
     settings: Settings;
     session?: Session | null;
 }): Record<string, unknown> {
-    const fn = resolveAgentUiBehavior(
-        opts.agentId,
-        resolveOwningMachineIdForSession(opts.session),
-    ).payload?.buildResumeSessionExtras;
+    const owningMachineId = resolveOwningMachineIdForSession(opts.session);
+    const fn = resolveAgentUiBehavior(opts.agentId, owningMachineId).payload?.buildResumeSessionExtras;
     if (!fn) return {};
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
+    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, owningMachineId);
     return fn({ agentId: opts.agentId, experiments, settings: opts.settings, session: opts.session });
 }
 

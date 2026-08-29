@@ -178,7 +178,6 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
         expect(encryptedPayloads[0]).toEqual(expect.objectContaining({
             prompt: 'New message',
             displayText: 'New message',
-            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
@@ -201,6 +200,7 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
             sessionEncryptionKeyBase64: 'dek',
             existingSessionId: 's1',
         }));
+        expect(encryptedPayloads[0]).not.toHaveProperty('agentTarget');
         expect(encryptedPayloads[0]).not.toHaveProperty('experimentalCodexAcp');
         expect(encryptedPayloads[0]).not.toHaveProperty('modelId');
         expect(encryptedPayloads[0]).not.toHaveProperty('modelUpdatedAt');

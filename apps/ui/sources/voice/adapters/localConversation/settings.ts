@@ -27,8 +27,8 @@ const VoiceLocalConversationProviderChatConfigurationSchema = z.object({
  */
 const VoiceAgentSelectionTargetKeySchema = z.preprocess(
   (value) => (typeof value === 'string' && BackendTargetKeyV2Schema.safeParse(value).success ? value : null),
-  z.string().nullable().default(null),
-);
+  z.string().nullable(),
+).default(null);
 const VoiceAgentSelectionIdentitySchema = z.preprocess(
   (value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -37,15 +37,15 @@ const VoiceAgentSelectionIdentitySchema = z.preprocess(
   z.object({
     pluginId: z.string().trim().min(1),
     localId: z.string().trim().min(1),
-  }).nullable().default(null),
-);
+  }).nullable(),
+).default(null);
 const VoiceAgentSelectionProjectionGenerationSchema = z.preprocess(
   (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
   },
-  z.number().int().nonnegative().nullable().default(null),
-);
+  z.number().int().nonnegative().nullable(),
+).default(null);
 
 export const VoiceLocalConversationProviderChatSchema = z.discriminatedUnion('status', [
   z.object({

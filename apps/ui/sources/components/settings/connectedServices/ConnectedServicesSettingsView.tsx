@@ -19,6 +19,7 @@ import {
   useProjectedConnectedServicesRegistry,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
+import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import {
   buildQualifiedPluginContributionKey,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
@@ -113,6 +114,11 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   }, [poolAdoptionDismissedByKey, setPoolAdoptionDismissedByKey]);
   const router = useRouter();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
+  const builtInAgentEntriesById = React.useMemo(() => new Map(
+    getResolvedAgentCatalogEntries({ enabledAgentIds: AGENT_IDS })
+      .filter((entry) => entry.isBuiltIn)
+      .map((entry) => [entry.agentId, entry] as const),
+  ), []);
   const normalizedProviderStateSharingSettings = React.useMemo(
     () => ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSettings),
     [providerStateSharingSettings],
@@ -456,16 +462,17 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       >
         {AGENT_IDS.map((agentId) => {
           const agentCore = getAgentCore(agentId);
-          // Released bundled Agents keep their exact scalar declarations;
-          // the row translates them through the generated built-in mapping.
-          const declaredServices = agentCore.connectedServices?.supportedServiceIds ?? [];
-          if (declaredServices.length === 0) return null;
+          const connectedAccountPurposes = builtInAgentEntriesById.get(agentId)?.connectedAccounts ?? [];
+          const declaredServices = connectedAccountPurposes.map((declaration) => (
+            buildQualifiedPluginContributionKey(declaration.service)
+          ));
+          if (connectedAccountPurposes.length === 0) return null;
           return (
             <ConnectedServicesDefaultAuthRow
               key={agentId}
               agentId={agentId}
               agentTitle={t(agentCore.displayNameKey)}
-              agentCore={agentCore}
+              connectedAccountPurposes={connectedAccountPurposes}
               connectedAccountServiceKeys={declaredServices}
               connectedAccountsV4={qualifiedAccounts}
               connectedAccountGroupsV4={qualifiedGroups}

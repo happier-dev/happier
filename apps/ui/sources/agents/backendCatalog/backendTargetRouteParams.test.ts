@@ -20,7 +20,7 @@ describe('buildBackendTargetRouteParams', () => {
                 kind: 'backend',
                 backendId: 'claude',
             }),
-            backendTargetKey: 'backend:claude',
+            backendTargetKey: 'agent:happier.agent.claude/claude',
         });
     });
 

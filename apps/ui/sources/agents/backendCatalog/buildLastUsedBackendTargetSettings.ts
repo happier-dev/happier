@@ -3,7 +3,11 @@ import {
     type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
-import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import {
+    isBundledAgentId,
+    resolveBundledAgentIdFromContributionIdentity,
+    type AgentId,
+} from '@/agents/catalog/catalog';
 
 export type LastUsedBackendTargetSettingsDelta = Readonly<{
     lastUsedBackendTarget: PersistedBackendTargetRefV2;
@@ -22,8 +26,12 @@ export function buildLastUsedBackendTargetSettings(params: Readonly<{
         ? params.backendTarget
         : writePersistedBackendTargetRefV2(params.backendTarget);
     if (lastUsedBackendTarget.kind === 'agent') {
+        const bundledAgentId = resolveBundledAgentIdFromContributionIdentity(lastUsedBackendTarget.identity);
         return {
-            lastUsedAgent: params.selectedBuiltInAgentId,
+            // Oh My Pi's released flat id is an import-only predecessor seam.
+            // Current writers persist its qualified contribution identity and
+            // explicitly clear the retired field instead of recreating it.
+            lastUsedAgent: bundledAgentId === 'ohMyPi' ? null : params.selectedBuiltInAgentId,
             lastUsedBackendTarget,
         };
     }

@@ -1,16 +1,13 @@
 import {
     buildQualifiedPluginContributionKey,
-    parseQualifiedPluginContributionKey,
-    readBuiltInLegacyConnectedServiceIdForQualifiedService,
     type ConnectedAccountServiceKey,
+    type ConnectedServiceCredentialKind,
     type QualifiedConnectedAccountGroupV4,
     type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
-import {
-    isConnectedServiceProfileKindSupportedForAgent,
-    type AgentCore,
-    type ConnectedServicesAccountGroupOption,
-    type ConnectedServicesProfileOption,
+import type {
+    ConnectedServicesAccountGroupOption,
+    ConnectedServicesProfileOption,
 } from '@happier-dev/agents';
 
 import { connectedServiceProfileKey } from './connectedServiceProfilePreferences';
@@ -105,37 +102,35 @@ export function buildQualifiedConnectedAccountGroupOptionsByServiceId(params: Re
 }
 
 /**
- * Applies released bundled Agents' exact per-service credential-kind
- * restrictions to qualified options — the single bundled/external parity
- * overlay for every session connected-account selection surface.
- *
- * The bundled scalar service id is resolved through the canonical generated
- * built-in identity mapping (never the live projection registry, whose
- * loading/retired snapshots must not gate a bundled catalog fact). A service
- * without a generated legacy member — any novel external plugin service —
- * carries no bundled kind restriction and flows through unrestricted, exactly
- * like a bundled service whose Agent declares none.
+ * Applies each Agent purpose declaration's public credential-kind contract.
+ * Bundled and external Agents flow through the same projected declaration;
+ * absence means unrestricted, and an unknown profile kind remains usable.
  */
-export function applyAgentKindRestrictionsToQualifiedProfileOptions(params: Readonly<{
-    optionsByServiceId: Readonly<Record<string, ConnectedServicesProfileOption[]>>;
-    agentCore: Pick<AgentCore, 'connectedServices'> | null | undefined;
+export function applyProjectedCredentialKindRestrictions(params: Readonly<{
+    optionsByServiceId: Readonly<Record<string, ReadonlyArray<ConnectedServicesProfileOption>>>;
+    connectedAccounts: ReadonlyArray<Readonly<{
+        purpose?: unknown;
+        service: { pluginId: string; localId: string };
+        credentialKinds?: ReadonlyArray<ConnectedServiceCredentialKind>;
+    }>>;
 }>): Readonly<Record<string, ConnectedServicesProfileOption[]>> {
+    const allowedKindsByServiceKey = new Map<string, ReadonlySet<'oauth' | 'token'>>();
+    for (const declaration of params.connectedAccounts) {
+        if (!declaration.credentialKinds?.length) continue;
+        allowedKindsByServiceKey.set(
+            buildQualifiedPluginContributionKey(declaration.service),
+            new Set(declaration.credentialKinds),
+        );
+    }
     const out: Record<string, ConnectedServicesProfileOption[]> = {};
     for (const [serviceKey, serviceOptions] of Object.entries(params.optionsByServiceId)) {
-        const identity = parseQualifiedPluginContributionKey(serviceKey);
-        const legacyServiceId = identity
-            ? readBuiltInLegacyConnectedServiceIdForQualifiedService(identity)
-            : null;
-        out[serviceKey] = legacyServiceId
+        const allowedKinds = allowedKindsByServiceKey.get(serviceKey);
+        out[serviceKey] = allowedKinds
             ? serviceOptions.map((option) => {
-                const kindSupported = isConnectedServiceProfileKindSupportedForAgent({
-                    agentCore: params.agentCore ?? null,
-                    serviceId: legacyServiceId,
-                    kind: option.kind ?? null,
-                });
+                const kindSupported = !option.kind || allowedKinds.has(option.kind);
                 return kindSupported ? option : { ...option, status: 'unsupported_kind' as const };
             })
-            : serviceOptions;
+            : [...serviceOptions];
     }
     return out;
 }

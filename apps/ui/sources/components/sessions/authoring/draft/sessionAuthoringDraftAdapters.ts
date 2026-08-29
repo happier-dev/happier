@@ -7,9 +7,7 @@ import {
     SessionModelSelectionV1Schema,
     buildBackendTargetKeyV2,
     readBackendTargetRefV2,
-    readPersistedAgentContributionIdentityV1,
     readRuntimeDescriptorV1,
-    writePersistedBackendTargetRefV2,
     type AgentExecutionTargetV1,
     type BackendTargetRefV2,
     type SessionModelSelectionV1,
@@ -19,8 +17,13 @@ import {
     type SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
 
-import { DEFAULT_AGENT_ID, isBundledAgentId } from '@/agents/catalog/catalog';
+import {
+    DEFAULT_AGENT_ID,
+    isBundledAgentId,
+    resolveBundledAgentIdFromContributionIdentity,
+} from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveAgentExecutionTargetForPersistedSelection } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
@@ -91,13 +94,7 @@ function resolveCompatibilityAgentTarget(
     backendTarget: BackendTargetRefV2 | null | undefined,
     fallbackAgentId?: unknown,
 ): AgentExecutionTargetV1 | null {
-    if (backendTarget) {
-        const persisted = writePersistedBackendTargetRefV2(stripBackendTargetSourceKind(backendTarget));
-        const parsed = AgentExecutionTargetV1Schema.safeParse(persisted);
-        if (parsed.success) return parsed.data;
-    }
-    const identity = readPersistedAgentContributionIdentityV1(fallbackAgentId);
-    return identity ? AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity }) : null;
+    return resolveAgentExecutionTargetForPersistedSelection({ backendTarget, fallbackAgentId });
 }
 
 function buildExistingSessionAuthoringDraftFromSnapshotData(params: Readonly<{
@@ -259,8 +256,12 @@ function stripBackendTargetSourceKind(target: BackendTargetRefV2): BackendTarget
     return rest;
 }
 
-function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'agentTarget'>): BackendTargetRefV2 | null {
+export function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'agentTarget'>): BackendTargetRefV2 | null {
     if (!draft.agentTarget) return null;
+    const bundledAgentId = resolveBundledAgentIdFromContributionIdentity(draft.agentTarget.identity);
+    if (bundledAgentId) {
+        return { kind: 'backend', backendId: bundledAgentId, sourceKind: 'built_in' };
+    }
     try {
         return stripBackendTargetSourceKind(readBackendTargetRefV2(draft.agentTarget));
     } catch {
@@ -318,29 +319,14 @@ function resolveDraftSpawnBackendTarget(draft: Pick<SessionAuthoringDraft, 'agen
     return backendTarget ? readBackendTargetRefV2(backendTarget) : null;
 }
 
-function resolveNewSessionDraftAgentId(params: Readonly<{
-    agentId?: unknown;
-    backendTarget?: BackendTargetRefV2 | null;
-}>): string | null {
-    if (params.backendTarget) {
-        const candidateAgentId = params.backendTarget.configuredBackendId ? null : params.backendTarget.backendId;
-        if (candidateAgentId && isBundledAgentId(candidateAgentId)) return candidateAgentId;
-        return resolveCatalogAgentIdForBackendTarget(readBackendTargetRefV2(params.backendTarget));
-    }
-    if (typeof params.agentId === 'string' && isBundledAgentId(params.agentId)) {
-        return params.agentId;
-    }
-    return null;
-}
-
 function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
-    backendTarget: BackendTargetRefV2 | null;
+    target: BackendTargetRefV2 | AgentExecutionTargetV1 | null;
     backendNewSessionOptionStateByTargetKey?: Record<string, Record<string, unknown>> | null;
 }>): unknown {
-    if (!params.backendTarget || !params.backendNewSessionOptionStateByTargetKey) {
+    if (!params.target || !params.backendNewSessionOptionStateByTargetKey) {
         return null;
     }
-    const targetKey = resolveBackendTargetKeyV2(params.backendTarget);
+    const targetKey = buildBackendTargetKeyV2(params.target);
     const targetOptions = params.backendNewSessionOptionStateByTargetKey[targetKey];
     if (!targetOptions || typeof targetOptions !== 'object' || Array.isArray(targetOptions)) {
         return null;
@@ -544,7 +530,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         modelUpdatedAt: source.source.modelSelection?.updatedAt,
         mcpSelection: source.source.mcpSelection ?? null,
         connectedServices: normalizeSessionAuthoringConnectedServices(resolveConnectedServicesFromAgentOptionState({
-            backendTarget,
+            target: source.source.agentTarget ?? backendTarget,
             backendNewSessionOptionStateByTargetKey,
         })),
         terminal: null,
@@ -1171,8 +1157,15 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         ? backendTarget.configuredBackendId
             ? normalizedAgentId
             : (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : normalizedAgentId)
-        : normalizedAgentId;
-    const targetKey = backendTarget ? resolveBackendTargetKeyV2(backendTarget) : null;
+        : params.draft.agentTarget
+            ? resolveBundledAgentIdFromContributionIdentity(params.draft.agentTarget.identity)
+            : DEFAULT_AGENT_ID;
+    const persistedAgentTarget = params.draft.agentTarget ?? resolveCompatibilityAgentTarget(null, canonicalAgentId);
+    const targetKey = params.draft.agentTarget
+        ? buildBackendTargetKeyV2(params.draft.agentTarget)
+        : backendTarget
+            ? resolveBackendTargetKeyV2(backendTarget)
+            : null;
     const backendOptionStateByTargetKey = targetKey && (
         params.draft.connectedServices != null
     )
@@ -1191,7 +1184,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         organizationPlacement: params.draft.organizationPlacement,
         checkoutCreationDraft: params.draft.checkoutCreationDraft,
         ...(canonicalAgentId ? { agentType: canonicalAgentId } : {}),
-        ...(params.draft.agentTarget ? { agentTarget: params.draft.agentTarget } : {}),
+        ...(persistedAgentTarget ? { agentTarget: persistedAgentTarget } : {}),
         ...(backendTarget ? { backendTarget } : {}),
         selectedProfileId: params.draft.profileId,
         transcriptStorage: params.draft.transcriptStorage ?? undefined,
@@ -1236,6 +1229,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         persistedAgentId: params.preferredPersistedAgentId,
         selectedBuiltInAgentId: canonicalSelectedBuiltInAgentId,
     });
+    const persistedAgentTarget = params.draft.agentTarget ?? resolveCompatibilityAgentTarget(null, agentType);
     const normalizedBackendNewSessionOptionStateByTargetKey = normalizeBackendNewSessionOptionStateByTargetKey(
         params.backendNewSessionOptionStateByTargetKey,
     );
@@ -1270,7 +1264,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
             sessionOnlySecretValueEncByProfileIdByEnvVarName: params.sessionOnlySecretValueEncByProfileIdByEnvVarName,
         } : {}),
         agentType,
-        agentTarget: params.draft.agentTarget,
+        agentTarget: persistedAgentTarget,
         ...(params.draft.transcriptStorage ? { transcriptStorage: params.draft.transcriptStorage } : {}),
         permissionMode: isPermissionMode(params.draft.permissionMode) ? params.draft.permissionMode : 'default',
         modelSelection: params.draft.modelSelection,

@@ -35,8 +35,6 @@ import { useComposerScopePluginPresentation } from '@/components/sessions/presen
 import { resolveSessionComposerStateFromAuthoringContext } from '@/components/sessions/authoring/context/resolveSessionComposerStateFromAuthoringContext';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
-    updateSessionAuthoringDraftModelMode,
-    updateSessionAuthoringDraftPermissionMode,
     updateSessionAuthoringDraftPrompt,
 } from '@/components/sessions/authoring/draft/updateSessionAuthoringDraftFields';
 import type { ExistingSessionAutomationAuthoringContext } from '@/components/sessions/authoring/context/sessionAuthoringContext';
@@ -44,7 +42,6 @@ import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
-import { nowServerMs } from '@/sync/runtime/time';
 import { t, tLoose } from '@/text';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
@@ -390,17 +387,7 @@ export function ExistingSessionAutomationComposer(props: Readonly<{
                     : formatAgentLikeIdForDisplay(composerState.agentId))
                 : tLoose('common.unknown')}
             permissionMode={composerState.permissionMode}
-            onPermissionModeChange={(mode) => {
-                props.onChangeDraft((current) => current
-                    ? updateSessionAuthoringDraftPermissionMode(current, mode, nowServerMs())
-                    : current);
-            }}
             modelMode={composerState.modelMode}
-            onModelModeChange={(mode) => {
-                props.onChangeDraft((current) => current
-                    ? updateSessionAuthoringDraftModelMode(current, mode, nowServerMs())
-                    : current);
-            }}
             machineName={composerState.machineName}
             currentPath={props.context.draft.directory}
             profileId={profileId}

@@ -1,6 +1,7 @@
 import {
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
+    PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
     PluginUiExecuteActionRequestV1Schema,
     PluginUiEphemeralInputSettlementV1Schema,
     PluginUiAcquireComposerInputLockRequestV1Schema,
@@ -70,6 +71,7 @@ import {
 } from '@happier-dev/plugin-sdk/host/ui';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from '../hostApi/negotiatedMethods';
+import { pluginSurfaceSettlementSurvivesRetirement } from '../hostApi/outwardEffectSettlement';
 import { createPluginUiHostSubscriptionRegistry } from '../hostApi/subscriptions';
 import {
     createPluginSurfaceHostApiPluginErrorData,
@@ -209,9 +211,13 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
 
     /**
      * The direct RN/RNW carrier has no cancellation wire. Caller withdrawal
-     * therefore settles this carrier immediately, while the mounted handler
-     * may finish its own work in the background. A response that wins first
-     * stays authoritative; a later response after withdrawal is inert.
+     * therefore settles this carrier immediately — for EVERY signal-accepting
+     * request, with no per-method allowlist — while the mounted handler may
+     * finish its own work in the background. A response that wins the race
+     * stays authoritative; a later response after withdrawal is inert. The
+     * signal still travels beside the request, so a handler holding something
+     * in front of the user (a confirmation dialog) can retire it and never
+     * report the withdrawal as a user decision.
      */
     function settleWithCallerCancellation<T>(
         settlement: Promise<T>,
@@ -232,14 +238,17 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         });
     }
 
-    const promptCallerCancellationMethods = new Set<PluginUiHostApiRequestMethodV1>([
-        'readResource',
-        'openSurface',
-        'notify',
-        'readClipboard',
-        'writeClipboard',
-        'openExternalLink',
-    ]);
+    /**
+     * Establishment methods whose settlement is a host-RESOURCE lease rather
+     * than an author-visible result. Their post-establishment currentness — and
+     * the exact late-admission host cleanup it owes — is owned by the
+     * subscription establishment paths below, so the plain-request settlement
+     * rule in `request` deliberately leaves them to that owner. This is the
+     * Protocol's canonical subscription family, not a second list.
+     */
+    const subscriptionEstablishmentMethods = new Set<PluginUiHostApiRequestMethodV1>(
+        PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
+    );
 
     async function request(
         rawMethod: PluginUiHostApiRequestMethodV1,
@@ -268,9 +277,27 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             envelope,
             () => params.handleRequest(envelope, options),
         );
-        const response = await (promptCallerCancellationMethods.has(method)
-            ? settleWithCallerCancellation(settlement, options?.signal)
-            : settlement);
+        const response = await (subscriptionEstablishmentMethods.has(method)
+            ? settlement
+            : settleWithCallerCancellation(settlement, options?.signal));
+        // The ONE settlement rule both physical carriers apply (§3.5): a
+        // retirement the carrier only observes AFTER the mounted owner settled
+        // an outward effect must not erase it — the navigation or settlement
+        // already happened, and `stale_surface` would tell the author nothing
+        // happened after something did, inviting a blind retry. Reads and
+        // decisions are answers ABOUT the mount, so the same shared classifier
+        // still refuses them from a mount that can no longer vouch for the
+        // answer. This replaces the per-method post-request `assertActive`
+        // placement it once took: adding a method can no longer require a
+        // second, implicit retirement decision.
+        if (
+            method !== 'disposeHostResource'
+            && (disposed || params.isRequestSurfaceCurrent?.(params.requestSurface) === false)
+            && !subscriptionEstablishmentMethods.has(method)
+            && !pluginSurfaceSettlementSurvivesRetirement({ method, response })
+        ) {
+            throwHostApiError('stale_surface');
+        }
         if (response.kind === 'error') {
             throwHostApiError(response.payload.code, response.payload.diagnostics);
         }
@@ -351,9 +378,10 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             removeAbortListener?.();
             retirePendingSubscription();
             if (abandoned) {
-                // The caller's typed cancellation settles immediately. A host
-                // that nevertheless admits this now-retired request is still
-                // owed its exact subscription cleanup once that late ACK lands.
+                // The outer establishment owner settles caller withdrawal
+                // promptly. If the mounted owner admits the lease afterwards,
+                // retire that exact late acknowledgement only after it exists;
+                // disposing before admission can be a no-op and leak the lease.
                 void establishment.then(
                     () => disposeSettledHostResource(subscriptionId),
                     () => undefined,
@@ -441,10 +469,9 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             removeAbortListener?.();
             retirePendingSubscription();
             if (abandoned) {
-                // The host can still acknowledge a request whose author-side
-                // establishment was cancelled. Retire that late lease through
-                // the one existing generic disposer rather than leaving a
-                // Composer-only cleanup path behind.
+                // Same late-admission custody as the Resource watch: the
+                // caller settles promptly, then an admitted host lease is
+                // disposed only after its acknowledgement exists.
                 void establishment.then(
                     () => disposeSettledHostResource(payload.subscriptionId),
                     () => undefined,
@@ -696,15 +723,21 @@ function readCanonicalComposerContentInspection(value: PluginUiJsonValueV1 | und
  *
  * - `context` / `watchContext` settle from mount-owned facts with nothing
  *   awaited, so the entry check IS the whole window;
- * - all in-flight request calls pass caller cancellation through the one
- *   transport seam, which rejects promptly when withdrawal wins and ignores a
- *   later mounted-handler response;
- * - `confirm` is the only member whose in-flight window is bounded by the USER,
- *   so the signal is forwarded to the mount: aborting dismisses the dialog and
- *   the withdrawal is never reported as a decline;
- * - outward effects (`executeAction`, `notify`, `openSurface`, `writeClipboard`,
- *   `openExternalLink`) preserve a host settlement that wins before caller
- *   withdrawal; cancellation does not promise to roll back a host effect.
+ * - EVERY in-flight request call settles caller withdrawal promptly at the one
+ *   request carrier — no per-method allowlist — and a mounted-handler response
+ *   that loses that race is inert; the signal still travels beside the request,
+ *   so a handler holding something in front of the user (`confirm`) retires it
+ *   and never reports the withdrawal as a user decision;
+ * - a host settlement that wins before withdrawal stays authoritative;
+ *   cancellation does not promise to roll back a host effect;
+ * - post-settlement retirement is decided ONCE by the shared outward-effect
+ *   classifier (`../hostApi/outwardEffectSettlement`) at the request carrier,
+ *   not by per-method `assertActive` placement: an accepted outward effect
+ *   (including `openNewSession` and a terminal `settleEphemeralInput`)
+ *   survives the retirement it caused, while reads and decisions are still
+ *   refused from a mount that can no longer vouch for them. Subscription
+ *   establishments keep their own establishment-currentness owner with its
+ *   exact late-admission host cleanup.
  */
 export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<{
     surface: SurfaceContext;
@@ -940,7 +973,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 parsedRequest.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            assertActive(options?.signal);
             const parsedResult = PluginUiSelectActionInputResultV1Schema.safeParse(result);
             if (!parsedResult.success) {
                 throwHostApiError('invalid_payload', ['select_action_input_response_invalid']);
@@ -1020,7 +1052,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 requestOptions,
             );
-            assertActive(options?.signal);
+            // No post-settlement `assertActive`: opening the New Session screen
+            // routinely retires the requesting surface, so an accepted launch
+            // stays a success (the shared outward-effect classifier owns that
+            // decision at the request carrier).
         },
         settleEphemeralInput: async (settlement, options) => {
             assertActive(options?.signal);
@@ -1032,7 +1067,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            assertActive(options?.signal);
+            // No post-settlement `assertActive`: the mounted owner records the
+            // settlement and closes the ephemeral surface as a consequence, so
+            // the accepted settlement stays a success (the shared outward-effect
+            // classifier owns that decision at the request carrier).
         },
         readResource: async (resource, options) => {
             assertActive(options?.signal);
@@ -1040,7 +1078,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const result = await transport.request('readResource', {
                 resource: canonicalReferencePayload(resource),
             }, options?.signal ? { signal: options.signal } : undefined);
-            assertActive(options?.signal);
             return readCanonicalResource(result);
         },
         statOpenableContent: async (ref, options) => {
@@ -1049,7 +1086,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const result = await transport.request('statOpenableContent', {
                 ref: { kind: ref.kind, handle: ref.handle },
             }, options?.signal ? { signal: options.signal } : undefined);
-            assertActive(options?.signal);
             return readCanonicalOpenableContentStat(result);
         },
         readOpenableContent: async (request, options) => {
@@ -1060,7 +1096,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 expectedRevision: request.expectedRevision,
                 ...(request.maxBytes === undefined ? {} : { maxBytes: request.maxBytes }),
             }, options?.signal ? { signal: options.signal } : undefined);
-            assertActive(options?.signal);
             return readCanonicalOpenableContentRead(result);
         },
         // EU-4b: a real subscription over the mount's daemon-backed
@@ -1103,7 +1138,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 undefined,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            assertActive(options?.signal);
             return readCanonicalActiveComposer(result);
         },
         readComposer: async (ref, options) => {
@@ -1116,7 +1150,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            assertActive(options?.signal);
             return readCanonicalComposer(result);
         },
         watchComposer: async (ref, listener, options) => {
@@ -1200,10 +1233,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            // A staged handle acquired for a retired mount must not re-enter a
-            // live draft. The transfer owner retains completed stages for its
-            // own explicit-release/expiry lifecycle.
-            assertActive(options?.signal);
+            // The settlement rule at the request carrier refuses a staged media
+            // decision from a retired mount, so such a handle can never
+            // re-enter a live draft. The transfer owner retains completed
+            // stages for its own explicit-release/expiry lifecycle.
             return readCanonicalComposerMediaHandle(result);
         },
         inspectComposerContent: async (handle, inspectRequest, options) => {
@@ -1219,7 +1252,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            assertActive(options?.signal);
             return readCanonicalComposerContentInspection(result);
         },
         releaseComposerContent: async (handle, options) => {
@@ -1287,9 +1319,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 ...(options?.title === undefined ? {} : { title: options.title }),
             }, options?.signal ? { signal: options.signal } : undefined);
             // A host that ignored the cancellation still may not answer a
-            // question the author withdrew: the typed failure is the settlement,
-            // never a boolean the plugin would read as the user's decision.
-            assertActive(options?.signal);
+            // question the author withdrew: the request carrier settles a
+            // mid-flight withdrawal as the typed failure — never a boolean the
+            // plugin would read as the user's decision — while the signal
+            // beside the request lets the mount dismiss the open dialog.
             const record = result && typeof result === 'object' && !Array.isArray(result)
                 ? result as Readonly<Record<string, PluginUiJsonValueV1>>
                 : null;
@@ -1314,7 +1347,6 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 undefined,
                 options?.signal ? { signal: options.signal } : undefined,
             );
-            assertActive(options?.signal);
             const decoded = decodePluginUiClipboardReadResult(result);
             if (!decoded.ok) throwHostApiError('invalid_payload', [decoded.diagnostic]);
             return decoded.value;

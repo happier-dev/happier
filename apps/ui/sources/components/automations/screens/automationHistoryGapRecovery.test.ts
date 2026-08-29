@@ -149,7 +149,7 @@ function eventTrigger(
         sourceStatus: eventSourceStatus({
             triggerId: id,
             triggerRevision: revision,
-            sourceSelectorId,
+            sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(sourceSelectorId),
         }),
         sourceCatalogStatus: null,
         ...input,
@@ -213,6 +213,7 @@ function eligibleEvent(
                     sourceContractVersion: 1,
                     supportedObservationTransports: ['checkpointedPull'],
                     sourceConfigSchema: { type: 'object', additionalProperties: false },
+                    setupActionRef: { pluginId: PLUGIN_ID, localId: 'automations/setup' },
                     historyGapResetActionRef: { pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID },
                 },
             },

@@ -197,16 +197,16 @@ export function AutomationRecipeComposer(props: Readonly<{
 
     const target = props.value.executionRecipe.target;
     return (
-        <ItemGroup title={t('settingsPlugins.eventAutomationComposer.trigger.target')}>
+        <ItemGroup title={t('automations.form.trigger.target')}>
             {(['newSession', 'existingSession', 'executionRun'] as const).map((kind) => (
                 <Item
                     key={kind}
                     testID={`automation-recipe-target-${kind}`}
                     title={kind === 'newSession'
-                        ? t('settingsPlugins.eventAutomationComposer.trigger.targetNewSession')
+                        ? t('automations.form.trigger.targetNewSession')
                         : kind === 'existingSession'
-                            ? t('settingsPlugins.eventAutomationComposer.trigger.targetExistingSession')
-                            : t('settingsPlugins.eventAutomationComposer.trigger.targetExecutionRun')}
+                            ? t('automations.form.trigger.targetExistingSession')
+                            : t('automations.form.trigger.targetExecutionRun')}
                     selected={target.kind === kind}
                     disabled={changing || (kind !== 'existingSession' && !machineId)}
                     onPress={kind === 'newSession'
@@ -221,7 +221,7 @@ export function AutomationRecipeComposer(props: Readonly<{
                         testID="automation-recipe-existing-session-picker"
                         rootStep={existingSessionStep}
                         selectedOptionId={target.kind === 'existingSession' ? target.sessionId : null}
-                        listAccessibilityLabel={t('settingsPlugins.eventAutomationComposer.trigger.chooseExistingSession')}
+                        listAccessibilityLabel={t('automations.form.trigger.chooseExistingSession')}
                         onSelect={(sessionId) => { void applyTarget({ kind: 'existingSession', sessionId }); }}
                         onRequestClose={() => setPicker('none')}
                         maxHeight={360}
@@ -234,7 +234,7 @@ export function AutomationRecipeComposer(props: Readonly<{
                     <SelectionList
                         testID="automation-recipe-execution-backend-picker"
                         rootStep={backendStep}
-                        listAccessibilityLabel={t('settingsPlugins.eventAutomationComposer.trigger.targetExecutionRun')}
+                        listAccessibilityLabel={t('automations.form.trigger.targetExecutionRun')}
                         onSelect={(targetKey) => {
                             const backend = backendChoices.find((choice) => choice.targetKey === targetKey);
                             if (!backend) return;
@@ -255,7 +255,7 @@ export function AutomationRecipeComposer(props: Readonly<{
                 <>
                     <Item
                         testID="automation-recipe-execution-permission-no-tools"
-                        title={t('settingsPlugins.eventAutomationComposer.trigger.executionNoTools')}
+                        title={t('automations.form.trigger.executionNoTools')}
                         selected={target.request.permissionMode === 'no_tools'}
                         onPress={() => { void applyTarget({
                             kind: 'executionRun',
@@ -266,7 +266,7 @@ export function AutomationRecipeComposer(props: Readonly<{
                     />
                     <Item
                         testID="automation-recipe-execution-permission-read-only"
-                        title={t('settingsPlugins.eventAutomationComposer.trigger.executionReadOnly')}
+                        title={t('automations.form.trigger.executionReadOnly')}
                         selected={target.request.permissionMode === 'read_only'}
                         onPress={() => { void applyTarget({
                             kind: 'executionRun',

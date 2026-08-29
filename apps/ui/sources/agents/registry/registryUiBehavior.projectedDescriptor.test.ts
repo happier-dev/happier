@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
     canSelectAgentWithoutDetectedCli,
+    getAgentResumeExperimentsFromSettings,
     resolveAgentUiBehavior,
     resolveAgentUiBehaviorFromSessionMetadata,
 } from './registryUiBehavior';
@@ -67,6 +68,41 @@ function sessionOnMachine(machineId: string): Readonly<Record<string, unknown>> 
 describe('daemon-projected agent UI behavior descriptors', () => {
     afterEach(() => {
         clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    it('keys resume experiment reads to the exact machine declaration, never another machine', () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-b',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: {
+                    resume: { experimentSwitches: [{ id: 'acpResume', settingKey: 'codexAcpEnabled' }] },
+                },
+            },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-a',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: {
+                    resume: { experimentSwitches: [{ id: 'legacyResume', settingKey: 'agentResumePaneEnabled' }] },
+                },
+            },
+        });
+        const settings = makeSettings({ codexAcpEnabled: true, agentResumePaneEnabled: false });
+
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-a')).toEqual({
+            enabled: true,
+            switches: { legacyResume: false },
+        });
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-b')).toEqual({
+            enabled: true,
+            switches: { acpResume: true },
+        });
+        // A machine that publishes nothing keeps the neutral floor instead of
+        // adopting whichever machine sorts first.
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-c')).toEqual({
+            enabled: true,
+            switches: {},
+        });
     });
 
     it('resolves a projected descriptor for an external Agent instead of the unknown fallback', () => {

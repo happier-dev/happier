@@ -1,7 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
+
+// Live source-turn truth for the injected exact-turn reader.
+const liveCurrentTurn = vi.hoisted(() => ({ value: 'turn-7' }));
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    storage: {
+        getState: () => ({
+            sessions: {
+                'source-session': {
+                    id: 'source-session',
+                    serverId: 'server-1',
+                    latestTurnId: liveCurrentTurn.value,
+                    latestTurnStatus: 'in_progress',
+                },
+            },
+        }),
+    },
+}));
 
 describe('useNewSessionPromptAutomationState', () => {
     it('keeps a forced automation route enabled when Expo supplies empty seed params', async () => {
@@ -145,5 +163,92 @@ describe('useNewSessionPromptAutomationState', () => {
 
         await hook.rerender();
         expect(hook.getCurrent().automationDraft.enabled).toBe(true);
+    });
+
+    it('applies an explicit exact-turn retarget through the incumbent draft owner, preserving all other fields', async () => {
+        const { useNewSessionPromptAutomationState } = await import('./useNewSessionPromptAutomationState');
+
+        const seedDraft = {
+            pendingAutomationId: 'pending-1',
+            enabled: true,
+            name: 'Drafted name',
+            description: 'Drafted description',
+            triggers: [
+                {
+                    clientId: 'schedule-row',
+                    definition: {
+                        kind: 'schedule',
+                        enabled: true,
+                        schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null },
+                    },
+                },
+                {
+                    clientId: 'turn-row',
+                    definition: {
+                        kind: 'sessionLifecycle',
+                        enabled: true,
+                        event: 'parentTurnCompleted',
+                        scope: { kind: 'exactTurn', sourceSessionId: 'source-session', sourceTurnId: 'turn-7' },
+                        consumption: 'once',
+                    },
+                },
+            ],
+        } as const;
+        let exactTurnRetargetRequest: {
+            sourceSessionId: string;
+            sourceTurnId: string;
+            sourceServerId: string;
+        } | null = null;
+        const readExactTurn = (sourceSessionId: string) => (
+            sourceSessionId === 'source-session'
+                ? { sourceSessionId, sourceTurnId: liveCurrentTurn.value, sourceServerId: 'server-1' }
+                : null
+        );
+
+        const hook = await renderHook(() => useNewSessionPromptAutomationState({
+            prompt: undefined,
+            dataId: undefined,
+            automationParam: undefined,
+            automationFeatureEnabled: true,
+            persistedDraftEntryIntent: null,
+            hydratedTempAuthoringDraft: { automation: seedDraft },
+            hydratedPersistedAuthoringDraft: null,
+            exactTurnRetargetRequest,
+            readExactTurn,
+        }));
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        expect(hook.getCurrent().automationDraft.triggers[1]).toMatchObject({
+            definition: { scope: { kind: 'exactTurn', sourceTurnId: 'turn-7' } },
+        });
+
+        // The user explicitly adopts the advanced current turn.
+        liveCurrentTurn.value = 'turn-8';
+        exactTurnRetargetRequest = {
+            sourceSessionId: 'source-session',
+            sourceTurnId: 'turn-8',
+            sourceServerId: 'server-1',
+        };
+        await hook.rerender();
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        const draft = hook.getCurrent().automationDraft;
+        expect(draft.triggers[1]).toMatchObject({
+            definition: { scope: { kind: 'exactTurn', sourceSessionId: 'source-session', sourceTurnId: 'turn-8' } },
+        });
+        // Every unrelated draft field and row survived the retarget untouched.
+        expect(draft.name).toBe('Drafted name');
+        expect(draft.description).toBe('Drafted description');
+        expect(draft.enabled).toBe(true);
+        expect(draft.triggers[0]).toMatchObject({ clientId: 'schedule-row', definition: { enabled: true } });
+
+        // Without a new explicit request, a later live-turn advance never
+        // retargets the draft silently.
+        liveCurrentTurn.value = 'turn-9';
+        await hook.rerender();
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        expect(hook.getCurrent().automationDraft.triggers[1]).toMatchObject({
+            definition: { scope: { sourceTurnId: 'turn-8' } },
+        });
     });
 });

@@ -771,6 +771,16 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             nextRunPending: '下次執行待定',
         },
         form: {
+            trigger: {
+                target: '執行目標',
+                targetNewSession: '新工作階段',
+                targetExistingSession: '現有工作階段',
+                targetExecutionRun: '執行運行',
+                chooseExistingSession: '選擇工作階段',
+                searchEvents: '搜尋事件',
+                executionNoTools: '無工具',
+                executionReadOnly: '唯讀',
+            },
             placeholders: {
                 name: '總結最近活動',
                 description: '給自己的備註',
@@ -813,6 +823,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 watcherTitle: '事件觀察器',
                 watcherUnwatched: '未設定觀察器',
                 endpointTitle: 'Webhook 端點',
+                observationPlacementTitle: '事件觀察位置',
                 endpointObservingSince: ({ time }: { time: string }) => `自 ${time} 起接收投遞`,
                 transportTitle: "How events arrive",
                 transportCheckpointedPull: "Polling",

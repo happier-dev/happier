@@ -10,8 +10,9 @@ import {
     type ConnectedServiceId,
     type ConnectedServicesDefaultAuthByAgentIdV1,
     type AccountProfile,
+    type PluginProjectedAgentConnectedAccountPurposeV2,
 } from '@happier-dev/protocol';
-import type { AgentCore, ConnectedServicesAccountGroupOption } from '@happier-dev/agents';
+import type { ConnectedServicesAccountGroupOption } from '@happier-dev/agents';
 
 import type {
     ConnectedServicesSelectionOptionAvailability,
@@ -24,7 +25,7 @@ import { NewSessionConnectedServicesSelectionContent } from '@/components/sessio
 import { useActionSettingsNarrowLayout } from '@/components/settings/actions/useActionSettingsNarrowLayout';
 import { t } from '@/text';
 import {
-    applyAgentKindRestrictionsToQualifiedProfileOptions,
+    applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountGroupOptionsByServiceId,
     buildQualifiedConnectedAccountProfileOptionsByServiceId,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
@@ -47,7 +48,7 @@ import {
 export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     agentId: string;
     agentTitle: string;
-    agentCore: Pick<AgentCore, 'connectedServices'>;
+    connectedAccountPurposes: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     connectedAccountServiceKeys?: readonly string[];
     /**
      * Declared Connected Account service keys for this Agent. Current callers
@@ -181,16 +182,16 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         return unique;
     }, [props.connectedAccountServiceKeys]);
 
-    const profileOptionsByServiceId = React.useMemo(() => applyAgentKindRestrictionsToQualifiedProfileOptions({
+    const profileOptionsByServiceId = React.useMemo(() => applyProjectedCredentialKindRestrictions({
         optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
             accounts: props.connectedAccountsV4 ?? [],
             supportedServiceIds: supportedServiceIds,
             labelsByKey: props.settings.connectedServicesProfileLabelByKey,
         }),
-        agentCore: props.agentCore,
+        connectedAccounts: props.connectedAccountPurposes,
     }), [
         props.connectedAccountsV4,
-        props.agentCore,
+        props.connectedAccountPurposes,
         props.settings.connectedServicesProfileLabelByKey,
         supportedServiceIds,
     ]);

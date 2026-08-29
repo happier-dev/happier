@@ -24,6 +24,12 @@ type AutomationListItem = Readonly<{
         schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone: string | null };
         nextRunAt: number | null;
     }>>;
+    retiredTriggers: ReadonlyArray<Readonly<{
+        id: string;
+        kind: 'schedule' | 'pluginEvent' | 'sessionLifecycle';
+        revision: number;
+        retiredAt: number;
+    }>>;
     lastRunAt: number | null;
     targetType: 'newSession' | 'existingSession' | 'executionRun';
     templateVersion: number;

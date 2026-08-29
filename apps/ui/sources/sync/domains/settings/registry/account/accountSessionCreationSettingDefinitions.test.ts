@@ -68,6 +68,19 @@ describe('account session creation setting definitions', () => {
         });
     });
 
+    it('retains a persisted installed-Agent identity without resolving it through the bundled compatibility map', () => {
+        const schema = LOCAL_ACCOUNT_SETTING_DEFINITIONS.lastUsedBackendTarget.schema;
+        const persisted = {
+            kind: 'agent',
+            identity: {
+                pluginId: 'acme.agent.review',
+                localId: 'review',
+            },
+        } as const;
+
+        expect(schema.parse(persisted)).toEqual(persisted);
+    });
+
     it('imports a predecessor Oh My Pi transcript-default key into the qualified identity', () => {
         const schema = ACCOUNT_SETTING_DEFINITIONS
             .newSessionDefaultPersistenceModeByTargetKeyV1.schema;

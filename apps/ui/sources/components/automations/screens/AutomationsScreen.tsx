@@ -146,14 +146,14 @@ export function AutomationsScreen() {
                 <AutomationListGroup
                     {...(item.first ? { title: t('sessionInfo.automationsTitle') } : {})}
                     automations={item.automations}
-                    mutationsEnabled={!refreshFailed}
+                    mutationsEnabled={!loading && !refreshFailed}
                     runNow={runNow}
                     isInvocationCurrent={isInvocationCurrent}
                     virtualizedSegment={{ first: item.first, last: item.last }}
                 />
             </View>
         );
-    }, [isInvocationCurrent, refresh, refreshFailed, runNow, styles.row, theme]);
+    }, [isInvocationCurrent, loading, refresh, refreshFailed, runNow, styles.row, theme]);
 
 
     if (loading && automations.length === 0) {

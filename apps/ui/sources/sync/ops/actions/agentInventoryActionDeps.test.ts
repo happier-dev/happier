@@ -45,8 +45,8 @@ beforeEach(() => {
   machineCapabilitiesInvoke.mockResolvedValue({ supported: false, reason: 'not-supported' });
   machineContributionRegistryProjectionDescribe.mockReset();
   machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' } as never);
-  storage.setState((state) => ({
-    ...state,
+  const state = storage.getState();
+  storage.setState({
     settings: {
       ...state.settings,
       acpCatalogSettingsV1: { v: 2 as const, backends: [] },
@@ -61,11 +61,17 @@ beforeEach(() => {
         },
         status: 'connected',
         kind: 'oauth',
+        authenticationModeId: 'oauth',
+        configurationReady: true,
+        configurationRevision: null,
+        revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         displayName: 'Work account',
+        scopes: [],
       }],
       connectedAccountGroupsV4: [],
     },
-  }));
+  });
 });
 
 afterEach(() => {
@@ -84,7 +90,11 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
             id: 'acme-voice-agent',
             identity: { pluginId: 'acme.voice', localId: 'agent' },
             title: 'Acme Voice Agent',
-            connectedAccounts: [{ purpose: 'models', service: { pluginId: 'openai', localId: 'chatgpt' } }],
+            connectedAccounts: [{
+              purpose: 'models',
+              service: { pluginId: 'openai', localId: 'chatgpt' },
+              credentialKinds: ['oauth'],
+            }],
           },
         },
         backendsById: {},
@@ -95,7 +105,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
 
     const res = await executor.execute(
       'sessions.spawn.connected_services.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1', serverId: 'server-remote' },
       { surface: 'voice' },
     );
 
@@ -107,13 +117,17 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       items: readonly Readonly<{ value: string; label: string }>[];
     };
     expect(result.agentId).toBe('acme-voice-agent');
-    expect(result.supportedServiceIds).toEqual(['openai:chatgpt']);
+    expect(result.supportedServiceIds).toEqual(['openai/chatgpt']);
     expect(result.items).toEqual([
       expect.objectContaining({
-        value: 'openai:chatgpt:profile:acct-work',
+        value: 'openai/chatgpt:profile:acct-work',
         label: 'Work account',
       }),
     ]);
+    expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith(
+      'machine-1',
+      { serverId: 'server-remote' },
+    );
   });
 
   it('answers agents.session_modes.list by probing the selected machine instead of unsupported_action', async () => {
@@ -135,7 +149,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
 
     const res = await executor.execute(
       'agents.session_modes.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1', serverId: 'server-remote' },
       { surface: 'voice' },
     );
 
@@ -152,7 +166,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
       'machine-1',
       expect.objectContaining({ method: 'probeModes' }),
-      expect.anything(),
+      { serverId: 'server-remote' },
     );
   });
 
@@ -182,7 +196,7 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
 
     const res = await executor.execute(
       'agents.config_options.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1', serverId: 'server-remote' },
       { surface: 'voice' },
     );
 
@@ -206,11 +220,31 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
       'machine-1',
       expect.objectContaining({ method: 'probeConfigOptions' }),
-      expect.anything(),
+      { serverId: 'server-remote' },
     );
   });
 
   it('resolves the connected-services options source through the same canonical action options owner', async () => {
+    machineContributionRegistryProjectionDescribe.mockResolvedValue({
+      supported: true,
+      projection: {
+        v: 2,
+        generation: 1,
+        agentsById: {
+          'acme-runtime-agent': {
+            id: 'acme-runtime-agent',
+            identity: { pluginId: 'acme.voice', localId: 'agent' },
+            connectedAccounts: [{
+              purpose: 'models',
+              service: { pluginId: 'openai', localId: 'chatgpt' },
+              credentialKinds: ['oauth'],
+            }],
+          },
+        },
+        backendsById: {},
+        familiesById: {},
+      },
+    } as never);
     const executor = createDefaultActionExecutor();
 
     const res = await executor.execute(
@@ -218,7 +252,12 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
       {
         actionId: 'session.spawn_new',
         fieldPath: 'connectedServices',
-        input: { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent' },
+        optionsSourceId: 'sessions.spawn.connected_services.available',
+        executionTarget: { serverId: 'local', machineId: 'machine-1' },
+        agentTarget: {
+          kind: 'agent',
+          identity: { pluginId: 'acme.voice', localId: 'agent' },
+        },
       },
       { surface: 'voice' },
     );
@@ -226,7 +265,11 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.result).toMatchObject({
-      items: [expect.objectContaining({ value: 'openai:chatgpt:profile:acct-work' })],
+      options: [expect.objectContaining({ value: 'openai/chatgpt:profile:acct-work' })],
     });
+    expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith(
+      'machine-1',
+      { serverId: 'local' },
+    );
   });
 });

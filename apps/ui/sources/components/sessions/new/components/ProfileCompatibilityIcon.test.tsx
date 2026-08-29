@@ -149,8 +149,7 @@ describe('ProfileCompatibilityIcon', () => {
         const externalEntry: ResolvedBackendCatalogEntry = {
             agentCatalogEntry: createResolvedAgentCatalogEntryFixture({
                 agentId: 'acme.review/agent',
-                isBuiltIn: false,
-                iconAgentId: 'codex',
+                overrides: { isBuiltIn: false, iconAgentId: 'codex' },
             }),
             backendTarget: { kind: 'backend', backendId: 'acme-review' },
             backendTargetKey: 'backend:acme-review',

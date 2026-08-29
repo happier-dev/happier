@@ -1,9 +1,9 @@
 import {
-    convertBackendTargetRefV2ToV1,
-    parseQualifiedPluginContributionKey,
-    readBackendTargetRefV2,
+    buildBackendTargetKeyV2,
+    resolveActionBackendTargetSelection,
     type BackendTargetRefV1,
 } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
@@ -13,7 +13,7 @@ import { machineContributionRegistryProjectionDescribe } from '@/sync/ops/machin
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import {
-    applyAgentKindRestrictionsToQualifiedProfileOptions,
+    applyProjectedCredentialKindRestrictions,
     buildQualifiedConnectedAccountGroupOptionsByServiceId,
     buildQualifiedConnectedAccountProfileOptionsByServiceId,
     resolveProjectedConnectedAccountServiceKeys,
@@ -48,6 +48,29 @@ type AgentInventoryProbeTarget = Readonly<{
     backendTargetParam: BackendTargetRefV1 | null;
 }>;
 
+export async function resolveSessionSpawnAgentInventorySelectionForActions(args: Readonly<{
+    agentTarget: AgentExecutionTargetV1;
+    machineId?: string;
+    serverId?: string;
+}>): Promise<Readonly<{ agentId: string; backendTargetKey: string }> | null> {
+    const machineId = normalizeId(args.machineId);
+    if (!machineId) return null;
+    const serverId = normalizeId(args.serverId) || normalizeId(getActiveServerSnapshot()?.serverId);
+    const described = await machineContributionRegistryProjectionDescribe(machineId, {
+        ...(serverId ? { serverId } : {}),
+    });
+    if (!described.supported || described.projection.v !== 2) return null;
+    const entry = Object.values(described.projection.agentsById).find((candidate) => (
+        candidate.identity?.pluginId === args.agentTarget.identity.pluginId
+        && candidate.identity.localId === args.agentTarget.identity.localId
+    ));
+    if (!entry) return null;
+    return {
+        agentId: entry.id,
+        backendTargetKey: buildBackendTargetKeyV2(args.agentTarget),
+    };
+}
+
 type AgentInventoryTargetResolution =
     | Readonly<{ ok: true; target: AgentInventoryProbeTarget }>
     | Readonly<{ ok: false; errorCode: 'invalid_parameters' | 'unknown_agent' }>;
@@ -70,45 +93,25 @@ export function resolveAgentInventoryProbeTarget(args: Readonly<{
 }>): AgentInventoryTargetResolution {
     const providedAgentId = normalizeId(args.agentId);
     const backendTargetKey = normalizeId(args.backendTargetKey);
-
-    let backendTargetParam: BackendTargetRefV1 | null = null;
-    let targetAgentId = providedAgentId;
-
-    if (backendTargetKey) {
-        let parsedV2Target: ReturnType<typeof readBackendTargetRefV2> | null = null;
-        try {
-            parsedV2Target = readBackendTargetRefV2(backendTargetKey);
-        } catch {
-            parsedV2Target = null;
-        }
-        if (parsedV2Target) {
-            backendTargetParam = convertBackendTargetRefV2ToV1(parsedV2Target);
-            if (!targetAgentId && backendTargetParam.kind === 'builtInAgent') {
-                targetAgentId = normalizeId(backendTargetParam.agentId);
-            }
-        } else {
-            if (!backendTargetKey.startsWith('agent:')) {
-                return { ok: false, errorCode: 'invalid_parameters' };
-            }
-            const identity = parseQualifiedPluginContributionKey(backendTargetKey.slice('agent:'.length));
-            // An unparseable qualified identity cannot address a runtime target.
-            if (!identity) {
-                return { ok: false, errorCode: 'invalid_parameters' };
-            }
-            // External target: the probe resolves it from the capability id, so
-            // the caller must supply the exact runtime Agent identity.
-            if (!targetAgentId) {
-                return { ok: false, errorCode: 'unknown_agent' };
-            }
-        }
+    const resolved = resolveActionBackendTargetSelection({
+        ...(providedAgentId ? { agentId: providedAgentId } : {}),
+        ...(backendTargetKey ? { backendTargetKey } : {}),
+    });
+    if (!resolved.ok) {
+        return {
+            ok: false,
+            errorCode: resolved.path === 'agentId' ? 'unknown_agent' : 'invalid_parameters',
+        };
     }
-
-    if (!targetAgentId) {
+    if (!resolved.selection.agentId) {
         return { ok: false, errorCode: 'unknown_agent' };
     }
     return {
         ok: true,
-        target: { agentId: targetAgentId, backendTargetParam },
+        target: {
+            agentId: resolved.selection.agentId,
+            backendTargetParam: resolved.selection.backendTarget,
+        },
     };
 }
 
@@ -116,8 +119,9 @@ async function probeAgentInventory(
     machineId: string,
     target: AgentInventoryProbeTarget,
     method: 'probeModes' | 'probeConfigOptions',
+    requestedServerId?: string,
 ): Promise<Readonly<{ ok: true; result: Record<string, unknown> }> | Readonly<{ ok: false }>> {
-    const serverId = normalizeId(getActiveServerSnapshot()?.serverId);
+    const serverId = normalizeId(requestedServerId) || normalizeId(getActiveServerSnapshot()?.serverId);
     const res = await machineCapabilitiesInvoke(
         machineId,
         {
@@ -169,6 +173,7 @@ function dedupeById(items: readonly Readonly<{ id: string }>[]): readonly Readon
 export type AgentSessionModesListArgs = Readonly<{
     agentId?: string;
     machineId?: string;
+    serverId?: string;
     limit?: number;
     backendTargetKey?: string;
 }>;
@@ -188,7 +193,7 @@ export async function listAgentSessionModesForActions(args: AgentSessionModesLis
         // honest answer and no bundled stand-in.
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
     }
-    const probe = await probeAgentInventory(machineId, target.target, 'probeModes');
+    const probe = await probeAgentInventory(machineId, target.target, 'probeModes', args.serverId);
     if (!probe.ok) {
         return inventoryListResult({
             agentId: target.target.agentId,
@@ -233,6 +238,7 @@ export async function listAgentSessionModesForActions(args: AgentSessionModesLis
 export type AgentConfigOptionsListArgs = Readonly<{
     agentId?: string;
     machineId?: string;
+    serverId?: string;
     limit?: number;
     backendTargetKey?: string;
     modelId?: string;
@@ -251,7 +257,7 @@ export async function listAgentConfigOptionsForActions(args: AgentConfigOptionsL
     if (!machineId) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
     }
-    const probe = await probeAgentInventory(machineId, target.target, 'probeConfigOptions');
+    const probe = await probeAgentInventory(machineId, target.target, 'probeConfigOptions', args.serverId);
     if (!probe.ok) {
         return inventoryListResult({
             agentId: target.target.agentId,
@@ -328,6 +334,7 @@ export type SpawnConnectedServicesListArgs = Readonly<{
     agentId?: string;
     backendTargetKey?: string;
     machineId?: string;
+    serverId?: string;
     includeUnavailable?: boolean;
 }>;
 
@@ -352,36 +359,41 @@ export async function listSpawnConnectedServicesForActions(args: SpawnConnectedS
     const connectedGroups = state.profile?.connectedAccountGroupsV4 ?? [];
 
     const agentCore = isBundledAgentId(agentId) ? getAgentCore(agentId) : null;
-    let projectedConnectedAccounts: readonly Readonly<{ service: { pluginId: string; localId: string } }>[] = [];
+    let projectedConnectedAccounts: readonly Readonly<{
+        service: { pluginId: string; localId: string };
+        credentialKinds?: readonly ('oauth' | 'token')[];
+    }>[] = [];
     const machineId = normalizeId(args.machineId);
-    if (!agentCore && machineId) {
-        const serverId = normalizeId(getActiveServerSnapshot()?.serverId);
+    if (machineId) {
+        const serverId = normalizeId(args.serverId) || normalizeId(getActiveServerSnapshot()?.serverId);
         const described = await machineContributionRegistryProjectionDescribe(machineId, {
             ...(serverId ? { serverId } : {}),
         });
-        if (described.supported) {
+        if (described.supported && described.projection.v === 2) {
             projectedConnectedAccounts = described.projection.agentsById[agentId]?.connectedAccounts ?? [];
         }
     }
-    const supportedServiceIds = agentCore
+    const supportedServiceIds = projectedConnectedAccounts.length > 0
+        ? resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts)
+        : agentCore
         ? (agentCore.connectedServices?.supportedServiceIds ?? [])
             .map((serviceId) => resolveQualifiedConnectedAccountServiceKey(serviceId))
             .filter((serviceKey): serviceKey is string => Boolean(serviceKey))
             .filter((serviceKey, index, all) => all.indexOf(serviceKey) === index)
-        : resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts);
+        : [];
 
     if (supportedServiceIds.length === 0) {
         return { agentId, supportedServiceIds: [], items: [] };
     }
 
     const labelsByKey = readConnectedServiceProfileLabels(state.settings);
-    const profileOptionsByServiceId = applyAgentKindRestrictionsToQualifiedProfileOptions({
+    const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
         optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
             accounts: connectedAccounts,
             supportedServiceIds,
             labelsByKey,
         }),
-        agentCore,
+        connectedAccounts: projectedConnectedAccounts,
     });
     const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
         groups: connectedGroups,

@@ -1107,7 +1107,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 123,
-                modelSelection: modelSelection('backend:codex'),
+                modelSelection: modelSelection('agent:happier.agent.codex/codex'),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -1252,7 +1252,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'read-only',
                 permissionModeUpdatedAt: 12,
-                modelSelection: modelSelection('backend:codex', 'template-model', 34),
+                modelSelection: modelSelection('agent:happier.agent.codex/codex', 'template-model', 34),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -1303,7 +1303,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 123,
-                modelSelection: modelSelection('backend:codex'),
+                modelSelection: modelSelection('agent:happier.agent.codex/codex'),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -1430,7 +1430,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'readOnly',
                 permissionModeUpdatedAt: 12,
-                modelSelection: modelSelection('backend:claude', 'claude-sonnet-4-6', 34),
+                modelSelection: modelSelection('agent:happier.agent.claude/claude', 'claude-sonnet-4-6', 34),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -1475,7 +1475,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             displayText: 'Template prompt',
             permissionMode: 'readOnly',
             permissionModeUpdatedAt: 12,
-            modelSelection: modelSelection('backend:claude', 'claude-sonnet-4-6', 34),
+            modelSelection: modelSelection('agent:happier.agent.claude/claude', 'claude-sonnet-4-6', 34),
             sessionEncryptionKeyBase64: 'live-dek',
             automation: intervalAutomationDraft({
                 name: 'Scheduled message',
@@ -1528,12 +1528,14 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('round-trips new-session worktree intent through the shared automation template adapter into temp data', () => {
         const draft = {
             targetType: 'new_session',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
             checkoutCreationDraft: {
                 kind: 'git_worktree' as const,
                 displayName: 'feature/auth',
                 baseRef: 'main',
             },
+            organizationPlacement: { folderId: null, tagIds: [] },
             prompt: 'Open the feature branch worktree',
             displayText: 'Open the feature branch worktree',
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -1621,7 +1623,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 resumeSessionId: null,
                 permissionMode: 'acceptEdits',
                 permissionModeUpdatedAt: 123,
-                modelSelection: modelSelection('backend:codex'),
+                modelSelection: modelSelection('agent:happier.agent.codex/codex'),
                 mcpSelection: null,
                 connectedServices: null,
                 terminal: null,
@@ -1880,7 +1882,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             resumeSessionId: 'resume-1',
             backendNewSessionOptionStateByTargetKey: {
-                'backend:codex': {
+                'agent:happier.agent.codex/codex': {
                     experimentalCodexAcp: true,
                 },
             },
@@ -2052,12 +2054,15 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(tempData.path).toBeUndefined();
         expect(buildNewSessionAuthoringDraftFromTempData(tempData)).toEqual(expect.objectContaining({
             directory: '/tmp/project',
-            agentTarget: null,
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
             transcriptStorage: 'direct',
             profileId: 'profile-1',
             resumeSessionId: 'resume-1',
             permissionMode: 'safe-yolo',
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'codex',
@@ -2100,7 +2105,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             permissionModeUpdatedAt: 123,
             modelSelection: modelSelection('agent:happier.agent.codex/codex'),
             mcpSelection: null,
-            connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+            connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
             terminal: null,
             windowsRemoteSessionLaunchMode: null,
             windowsRemoteSessionConsole: null,
@@ -2133,7 +2138,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             selectedSecretIdByProfileIdByEnvVarName: null,
             sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
             backendNewSessionOptionStateByTargetKey: {
-                ['backend:review-bot:configured:review-bot']: {
+                ['agent:happier.agent.codex/codex']: {
                     connectedServices: { v: 1, bindingsByServiceId: { 'happier.service.github/github': { source: 'connected' } } },
                 },
             },
@@ -2208,6 +2213,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             selectedSecretIdByProfileIdByEnvVarName: null,
             sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
             backendNewSessionOptionStateByTargetKey: null,
+            preferredPersistedAgentId: 'codex',
             updatedAt: 987,
         });
 
@@ -2266,7 +2272,10 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         expect(persistedDraft).toEqual(expect.objectContaining({
             agentType: DEFAULT_AGENT_ID,
-            agentTarget: null,
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            },
         }));
         expect(persistedDraft).not.toHaveProperty('backendTarget');
     });
@@ -2306,7 +2315,7 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(tempData).toEqual(expect.objectContaining({
             agentTarget: {
                 kind: 'agent',
-                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
             },
         }));
         expect(tempData).not.toHaveProperty('backendTarget');

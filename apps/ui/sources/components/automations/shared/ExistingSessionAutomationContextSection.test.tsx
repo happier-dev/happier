@@ -60,24 +60,29 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',
+    executionTarget: null,
     directory: '/repo/project',
     checkoutCreationDraft: null,
+    organizationPlacement: { folderId: null, tagIds: [] },
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
-    agentId: 'codex',
-    backendTarget: { kind: 'backend', backendId: 'codex' },
+    agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+    },
     transcriptStorage: 'direct',
     profileId: 'profile-1',
     environmentVariables: null,
     resumeSessionId: null,
     permissionMode: 'acceptEdits',
     permissionModeUpdatedAt: 123,
-    modelId: 'gpt-5',
-    modelUpdatedAt: 456,
+    modelSelection: null,
     mcpSelection: {
+        v: 1,
+        managedServersEnabled: true,
         forceIncludeServerIds: ['managed-1', 'managed-2'],
         forceExcludeServerIds: [],
-    } as any,
+    },
     connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -88,12 +93,15 @@ const BASE_DRAFT: SessionAuthoringDraft = {
     terminal: null,
     windowsRemoteSessionLaunchMode: null,
     windowsRemoteSessionConsole: null,
-    experimentalCodexAcp: null,
+    windowsTerminalWindowName: null,
+    runtimeDescriptorV1: null,
     acpSessionModeId: null,
+    sessionConfigOptionOverrides: null,
     existingSessionId: 'session-1',
     sessionEncryptionMode: 'e2ee',
     sessionEncryptionKeyBase64: 'secret',
     sessionEncryptionVariant: 'dataKey',
+    automation: null,
 };
 
 describe('ExistingSessionAutomationContextSection', () => {
@@ -155,7 +163,10 @@ describe('ExistingSessionAutomationContextSection', () => {
                 context={buildExistingSessionAutomationAuthoringContext({
                     draft: {
                         ...BASE_DRAFT,
-                        backendTarget: null,
+                        agentTarget: {
+                            kind: 'agent',
+                            identity: { pluginId: 'happier.agent.review-bot', localId: 'review-bot' },
+                        },
                         sessionEncryptionMode: 'plain',
                         transcriptStorage: null,
                         profileId: null,

@@ -23,6 +23,7 @@ import {
     composerAttachmentDraftToView,
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
+    placePositionlessComposerReferences,
     type ComposerAttachmentAvailabilityCatalog,
 } from '@/components/sessions/composer/composerScopeAdapters';
 import type { ComposerSubmissionSnapshot } from '@/components/sessions/composer/composerSubmissionCoordinator';
@@ -127,10 +128,22 @@ export function useNewSessionComposerDocument(params: Readonly<{
     const draftId = params.draftId ?? legacyHarnessDraftId;
     const draftScope = params.draftScope ?? null;
     const composerAccountLifetime = captureActiveServerAccountScopeLifetime();
+    const documentOwnerKey = `${params.scopeKey ?? 'ephemeral'}\u0000${draftId}`;
+    // One live document identity per document owner. A durable owner is
+    // addressed by its draft id, so the ref keeps that address; an ephemeral
+    // owner carries no address, so its identity is minted per owner key and
+    // rotates when the owner does — the replaced scope's target, decorations,
+    // locks and focus retire with the old ref instead of leaking into the
+    // replacement.
+    const ephemeralIdentityRef = React.useRef<Readonly<{ ownerKey: string; instanceId: string }> | null>(null);
+    if (draftScope === null && ephemeralIdentityRef.current?.ownerKey !== documentOwnerKey) {
+        ephemeralIdentityRef.current = { ownerKey: documentOwnerKey, instanceId: randomUUID() };
+    }
+    const instanceId = draftScope !== null ? draftId : ephemeralIdentityRef.current!.instanceId;
     const ref = React.useMemo<Extract<ComposerRefV1, Readonly<{ kind: 'newSession' }>>>(() => ({
         kind: 'newSession',
-        instanceId: draftId,
-    }), [draftId]);
+        instanceId,
+    }), [instanceId]);
     const refRef = React.useRef<ComposerRefV1>(ref);
     refRef.current = ref;
     const mountedRef = React.useRef(true);
@@ -154,7 +167,15 @@ export function useNewSessionComposerDocument(params: Readonly<{
     ), [isNewSessionComposerCurrent]);
     const isCurrentCallbackRef = React.useRef(isNewSessionComposerCurrent);
     isCurrentCallbackRef.current = isNewSessionComposerCurrent;
-    const documentOwnerKey = `${params.scopeKey ?? 'ephemeral'}\u0000${draftId}`;
+    // Positionless seed references (an Automation edit template's stored
+    // message-level refs) are placed into the current prompt exactly once,
+    // here at the seed boundary: after this the document's exact-range
+    // custody owns every occurrence, and a token the seed text does not
+    // contain is dropped instead of being silently relocated.
+    const initialSeedReferences = placePositionlessComposerReferences({
+        text: params.promptStore.getPrompt(),
+        references: params.initialStructuredInputReferences ?? [],
+    });
     const documentOwnerRef = React.useRef<Readonly<{
         key: string;
         owner: ReturnType<typeof createNewSessionComposerDocumentOwner>;
@@ -175,7 +196,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
                     initialDocument: {
                         text: params.promptStore.getPrompt(),
                         structuredInputMentions: composerStructuredMentionsFromReferences({
-                            references: params.initialStructuredInputReferences ?? [],
+                            references: initialSeedReferences,
                             existing: [],
                         }),
                         composerAttachments: params.persistedAttachments,
@@ -193,7 +214,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         mentions: initialOwnerDocument.structuredInputMentions.length > 0
             ? initialOwnerDocument.structuredInputMentions
             : composerStructuredMentionsFromReferences({
-                references: params.initialStructuredInputReferences ?? [],
+                references: initialSeedReferences,
                 existing: [],
             }),
     };

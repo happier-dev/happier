@@ -57,7 +57,7 @@ export async function runSessionHandoffUiFlow(
     args: RunSessionHandoffUiFlowArgs,
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
-        const actionRequestId = String(args.context.actionRequestId ?? '').trim() || randomUUID();
+        const actionRequestId = String(args.context.actionRequestId ?? '').trim();
         const modalId = openSessionHandoffProgressModal();
         let activeResumeHandler: Readonly<{
             key: string;
@@ -147,13 +147,15 @@ export async function runSessionHandoffUiFlow(
                 onResume,
             });
         });
-        const unsubscribeOperation = subscribeActionOperationByRequestId({
-            requestId: actionRequestId,
-            onUpdate: (operation) => {
-                if (operation.actionId !== 'session.handoff' || operation.scope.sessionId !== args.sessionId) return;
-                Modal.update(modalId, { operation });
-            },
-        });
+        const unsubscribeOperation = actionRequestId
+            ? subscribeActionOperationByRequestId({
+                requestId: actionRequestId,
+                onUpdate: (operation) => {
+                    if (operation.actionId !== 'session.handoff' || operation.scope.sessionId !== args.sessionId) return;
+                    Modal.update(modalId, { operation });
+                },
+            })
+            : () => {};
         let progressModalClosed = false;
         const closeProgressModal = () => {
             if (progressModalClosed) {
@@ -165,10 +167,7 @@ export async function runSessionHandoffUiFlow(
             progressModalClosed = true;
         };
         try {
-            let result = await executeSessionHandoffAction({
-                ...args,
-                context: { ...args.context, actionRequestId },
-            } as any);
+            let result = await executeSessionHandoffAction(args as any);
             if (result.ok) {
                 return result;
             }

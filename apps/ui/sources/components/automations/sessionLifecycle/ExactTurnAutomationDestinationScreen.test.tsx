@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 
 const routerMock = vi.hoisted(() => ({
@@ -13,6 +14,11 @@ const routerMock = vi.hoisted(() => ({
 const refreshState = vi.hoisted(() => ({ reject: false }));
 const refreshAutomationsSpy = vi.hoisted(() => vi.fn(async () => {
     if (refreshState.reject) throw new Error('offline');
+}));
+// Lifetime- and scope-sensitive Account state: a same-server Account A→B
+// switch retires the A-era lifetime exactly like the real scope owner.
+const accountScopeState = vi.hoisted(() => ({
+    value: { serverId: 'server-1', accountId: 'account-1' } as { serverId: string; accountId: string } | null,
 }));
 const state = vi.hoisted(() => ({
     session: {
@@ -26,7 +32,13 @@ const state = vi.hoisted(() => ({
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: routerMock }).module;
+    return createExpoRouterMock({
+        router: {
+            push: routerMock.push,
+            back: routerMock.back,
+            setParams: routerMock.setParams,
+        },
+    }).module;
 });
 vi.mock('@/components/ui/selectionList', () => createPassThroughModule(['SelectionListScreen']));
 vi.mock('@/components/ui/surfaces/SurfaceStateCard', () => createPassThroughModule(['SurfaceStateCard']));
@@ -35,12 +47,38 @@ vi.mock('@/sync/domains/state/storage', async () => {
     return createStorageModuleStub({
         useSession: () => state.session,
         useAutomations: () => state.automations,
+        useActiveServerAccountScope: () => accountScopeState.value,
         storage: {
             getState: () => ({ sessions: { [state.session.id]: state.session } }),
         },
     });
 });
 vi.mock('@/sync/sync', () => ({ sync: { refreshAutomations: refreshAutomationsSpy } }));
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+}));
+vi.mock('@/hooks/server/useAutomationsSupport', () => ({
+    useAutomationsSupport: () => ({ enabled: true }),
+}));
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+}));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => {
+        const scope = accountScopeState.value;
+        if (!scope) return null;
+        return {
+            scope,
+            isCurrent: () => {
+                const current = accountScopeState.value;
+                return !!current
+                    && current.serverId === scope.serverId
+                    && current.accountId === scope.accountId;
+            },
+            onRetire: () => ({ dispose: () => undefined }),
+        };
+    },
+}));
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
@@ -62,6 +100,7 @@ describe('ExactTurnAutomationDestinationScreen', () => {
         routerMock.setParams.mockClear();
         refreshAutomationsSpy.mockClear();
         refreshState.reject = false;
+        accountScopeState.value = { serverId: 'server-1', accountId: 'account-1' };
         state.session = {
             id: 'source-session',
             serverId: 'server-1',
@@ -91,7 +130,7 @@ describe('ExactTurnAutomationDestinationScreen', () => {
     it('uses one searchable virtualized destination list for create and existing writer routes', async () => {
         const { ExactTurnAutomationDestinationScreen } = await import('./ExactTurnAutomationDestinationScreen');
         const screen = await renderScreen(<ExactTurnAutomationDestinationScreen observed={observed} />);
-        await act(async () => {});
+        await flushHookEffects({ cycles: 2, turns: 2 });
 
         const picker = screen.findByProps({ testID: 'exact-turn-automation-destination' });
         expect(picker.props.rootStep).toMatchObject({
@@ -151,6 +190,22 @@ describe('ExactTurnAutomationDestinationScreen', () => {
         expect(routerMock.push).not.toHaveBeenCalled();
     });
 
+    it('does not refresh automations again when the running source session emits live updates', async () => {
+        const { ExactTurnAutomationDestinationScreen } = await import('./ExactTurnAutomationDestinationScreen');
+        const screen = await renderScreen(<ExactTurnAutomationDestinationScreen observed={observed} />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
+
+        // Live transcript churn replaces the Session object while the exact
+        // turn is unchanged; the semantic authority binding has not changed,
+        // so the hydrated destination list must not be torn down and refetched.
+        state.session = { ...state.session };
+        await screen.update(<ExactTurnAutomationDestinationScreen observed={{ ...observed }} />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('shows a typed retry state instead of presenting cached destinations as current after refresh fails', async () => {
         refreshState.reject = true;
         const { ExactTurnAutomationDestinationScreen } = await import('./ExactTurnAutomationDestinationScreen');
@@ -166,5 +221,31 @@ describe('ExactTurnAutomationDestinationScreen', () => {
         await act(async () => failed.props.action.onPress());
         await act(async () => {});
         expect(refreshAutomationsSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('rebinds the Account-scoped authority when the active Account changes on the same server', async () => {
+        const { ExactTurnAutomationDestinationScreen } = await import('./ExactTurnAutomationDestinationScreen');
+        const screen = await renderScreen(<ExactTurnAutomationDestinationScreen observed={observed} />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(screen.findByProps({ testID: 'exact-turn-automation-destination' })).toBeDefined();
+        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(1);
+
+        // Same server, Account B mounts: the A-era authority must retire and a
+        // B authority must establish exactly once, refreshing under B.
+        accountScopeState.value = { serverId: 'server-1', accountId: 'account-2' };
+        await screen.update(<ExactTurnAutomationDestinationScreen observed={{ ...observed }} />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(2);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(refreshAutomationsSpy).toHaveBeenCalledTimes(2);
+
+        // The destination list is current again and selections are authorized
+        // under B instead of being silently refused by a retired A authority.
+        const picker = screen.findByProps({ testID: 'exact-turn-automation-destination' });
+        await act(async () => picker.props.onSelect('create-new'));
+        expect(routerMock.push).toHaveBeenCalledWith({
+            pathname: '/automations/new',
+            params: observed,
+        });
     });
 });

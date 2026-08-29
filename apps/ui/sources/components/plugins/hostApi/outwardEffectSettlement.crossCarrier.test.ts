@@ -14,6 +14,7 @@ import {
     createPluginSurfaceOpenSurfaceHandler,
     type PluginSurfaceOpenHandler,
 } from '@/components/plugins/surfaces/openPluginSurface';
+import type { PluginSurfaceHostApiHandlers } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 
 /**
  * One settlement rule, two physical carriers.
@@ -25,10 +26,22 @@ import {
  * nothing happened after something did, and the only sane response to "nothing
  * happened" is to do it again.
  *
+ * `openNewSession` is the sibling navigation: the New Session screen it opens
+ * replaces the requesting surface, so the same consequence rule applies. A
+ * terminal `settleEphemeralInput` is the sibling settlement: the mounted owner
+ * records the input and closes the ephemeral surface as a consequence, and the
+ * settlement is durable — rewriting it into `stale_surface` would ask the
+ * plugin to settle an already-settled input, which can only fail.
+ *
  * `confirm` is the discriminating contrast: its settlement is a DECISION about
  * a mount, so a retired mount cannot vouch for it and both carriers still
  * refuse. A rule that delivered everything would pass the openSurface rows and
  * fail these.
+ *
+ * Caller WITHDRAWAL is a different fact from retirement and is never rewritten
+ * into success: a launch the caller cancelled before the owner settled it
+ * settles as the carrier's typed withdrawal, and a response that arrives after
+ * the withdrawal is inert.
  */
 
 const surface: PluginUiSurfaceContextV1 = {
@@ -86,8 +99,10 @@ type MountFixture = Readonly<{
 }>;
 
 function createMount(input: Readonly<{
-    openSurface: PluginSurfaceOpenHandler;
+    openSurface?: PluginSurfaceOpenHandler;
     confirm?: () => Promise<PluginUiJsonValueV1>;
+    /** Additional canonical handlers under test (openNewSession, settleEphemeralInput, …). */
+    handlers?: PluginSurfaceHostApiHandlers;
 }>): MountFixture {
     let current = true;
     const isCurrent = () => current;
@@ -95,8 +110,11 @@ function createMount(input: Readonly<{
         surfaceContext: surface,
         isCurrent,
         handlers: {
-            openSurface: createPluginSurfaceOpenSurfaceHandler(input.openSurface, isCurrent),
+            ...(input.openSurface
+                ? { openSurface: createPluginSurfaceOpenSurfaceHandler(input.openSurface, isCurrent) }
+                : {}),
             ...(input.confirm ? { confirm: async () => await input.confirm!() } : {}),
+            ...input.handlers,
         },
     });
     return {
@@ -228,6 +246,36 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         });
     });
 
+    it('reports stale_surface consistently when a non-outward handler errors as its mount retires', async () => {
+        const nativeMount = createMount({
+            confirm: async () => {
+                nativeMount.retire();
+                throw new Error('confirmation_owner_failed');
+            },
+        });
+        const native = createNativeCarrier(nativeMount);
+        await expect(native.api.confirm('Delete the preview?')).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'stale_surface',
+        });
+
+        const hostedMount = createMount({
+            confirm: async () => {
+                hostedMount.retire();
+                throw new Error('confirmation_owner_failed');
+            },
+        });
+        const hosted = await createHostedCarrier(hostedMount, ['confirm']);
+        await expect(hostedRequest(hosted, {
+            requestId: 'confirm-error-retired',
+            method: 'confirm',
+            payload: { message: 'Delete the preview?' },
+        })).resolves.toMatchObject({
+            kind: 'result',
+            payload: { kind: 'error', error: { code: 'stale_surface' } },
+        });
+    });
+
     // Scenario: disconnect BEFORE any settlement. Nothing was applied, so the
     // refusal is truthful on both carriers and the author may retry.
     it('refuses a navigation whose mount retired before the placement settled', async () => {
@@ -252,6 +300,104 @@ describe('outward-effect settlement across the React Native and hosted-web carri
             requestId: 'open-stale',
             method: 'openSurface',
             payload: { destination },
+        })).resolves.toMatchObject({
+            kind: 'error',
+            payload: { code: 'stale_surface' },
+        });
+    });
+
+    // Scenario: the New Session launch is the sibling navigation. The New
+    // Session screen replaces the requesting surface, so the retirement is a
+    // CONSEQUENCE of the success and must not rewrite it on either carrier.
+    it('delivers a New Session launch that retired its own mount, on both carriers', async () => {
+        const nativeMount = createMount({
+            handlers: {
+                openNewSession: async () => {
+                    nativeMount.retire();
+                    return null;
+                },
+            },
+        });
+        const native = createNativeCarrier(nativeMount);
+        await expect(native.api.openNewSession({ prompt: 'Repair CI' })).resolves.toBeUndefined();
+
+        const hostedMount = createMount({
+            handlers: {
+                openNewSession: async () => {
+                    hostedMount.retire();
+                    return null;
+                },
+            },
+        });
+        const hosted = await createHostedCarrier(hostedMount, ['openNewSession']);
+        await expect(hostedRequest(hosted, {
+            requestId: 'new-session-1',
+            method: 'openNewSession',
+            payload: { prompt: 'Repair CI' },
+        })).resolves.toMatchObject({
+            kind: 'result',
+            payload: { kind: 'result', method: 'openNewSession' },
+        });
+    });
+
+    // Scenario: the terminal ephemeral settlement is the sibling durable
+    // settlement. The mounted owner records the input and closes the ephemeral
+    // surface as a consequence; a rewritten `stale_surface` would invite the
+    // plugin to settle an already-settled input, which can only fail.
+    it('delivers a terminal ephemeral settlement that retired its own mount, on both carriers', async () => {
+        const nativeMount = createMount({
+            handlers: {
+                settleEphemeralInput: async () => {
+                    nativeMount.retire();
+                    return null;
+                },
+            },
+        });
+        const native = createNativeCarrier(nativeMount);
+        await expect(native.api.settleEphemeralInput({ kind: 'completed', input: { answer: 7 } }))
+            .resolves.toBeUndefined();
+
+        const hostedMount = createMount({
+            handlers: {
+                settleEphemeralInput: async () => {
+                    hostedMount.retire();
+                    return null;
+                },
+            },
+        });
+        const hosted = await createHostedCarrier(hostedMount, ['settleEphemeralInput']);
+        await expect(hostedRequest(hosted, {
+            requestId: 'ephemeral-1',
+            method: 'settleEphemeralInput',
+            payload: { kind: 'completed', input: { answer: 7 } },
+        })).resolves.toMatchObject({
+            kind: 'result',
+            payload: { kind: 'result', method: 'settleEphemeralInput' },
+        });
+    });
+
+    // Scenario: retirement BEFORE any settlement. Nothing launched and nothing
+    // was recorded, so the refusal stays truthful on both carriers.
+    it('still refuses a New Session launch whose mount retired before the placement settled', async () => {
+        const nativeMount = createMount({
+            handlers: { openNewSession: async () => null },
+        });
+        nativeMount.retire();
+        const native = createNativeCarrier(nativeMount);
+        await expect(native.api.openNewSession({ prompt: 'Repair CI' })).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'stale_surface',
+        });
+
+        const hostedMount = createMount({
+            handlers: { openNewSession: async () => null },
+        });
+        const hosted = await createHostedCarrier(hostedMount, ['openNewSession']);
+        hostedMount.retire();
+        await expect(hostedRequest(hosted, {
+            requestId: 'new-session-stale',
+            method: 'openNewSession',
+            payload: { prompt: 'Repair CI' },
         })).resolves.toMatchObject({
             kind: 'error',
             payload: { code: 'stale_surface' },
@@ -321,5 +467,89 @@ describe('outward-effect settlement across the React Native and hosted-web carri
         } as PluginHostedWebBridgeEnvelopeV1['payload'], 11))).resolves.toMatchObject({ kind: 'ack' });
         settleOpen?.({ ok: true });
         await expect(inFlight).resolves.toMatchObject({ kind: 'ack' });
+    });
+
+    // Scenario: the caller withdrew a New Session launch BEFORE the owner
+    // settled it. The direct carrier must settle the withdrawal promptly — not
+    // wait for parked handler cooperation — and a response that arrives after
+    // the withdrawal is inert.
+    it('settles a withdrawn New Session launch promptly on the direct carrier and fences its late response', async () => {
+        const controller = new AbortController();
+        let settleLaunch: (() => void) | undefined;
+        let seenSignal: AbortSignal | undefined;
+        const nativeMount = createMount({
+            handlers: {
+                openNewSession: async (_request, options) => {
+                    seenSignal = options?.signal;
+                    return await new Promise<PluginUiJsonValueV1>((resolve) => {
+                        settleLaunch = () => resolve(null);
+                    });
+                },
+            },
+        });
+        const native = createNativeCarrier(nativeMount);
+        const launch = native.api.openNewSession({ prompt: 'Repair CI' }, { signal: controller.signal });
+        const settlements: unknown[] = [];
+        void launch.then(
+            () => settlements.push({ kind: 'result' }),
+            (error: unknown) => settlements.push({ kind: 'error', error }),
+        );
+
+        try {
+            await vi.waitFor(() => expect(seenSignal).toBeTypeOf('object'));
+            controller.abort();
+
+            await vi.waitFor(() => expect(settlements).toHaveLength(1), { timeout: 250 });
+            expect(settlements[0]).toMatchObject({
+                kind: 'error',
+                error: {
+                    code: 'unavailable',
+                    diagnostics: [{ code: 'aborted', severity: 'error' }],
+                },
+            });
+
+            settleLaunch?.();
+            await vi.waitFor(() => expect(settlements).toHaveLength(1));
+            expect(settlements[0]).toMatchObject({ kind: 'error' });
+        } finally {
+            settleLaunch?.();
+            await launch.catch(() => undefined);
+        }
+    });
+
+    // Scenario: the hosted carrier's cancel wire message reaches the parked
+    // mounted handler (the dialog/surface behind it is retired there), and the
+    // abandoned request never becomes a completed launch.
+    it('cancels a parked New Session launch at the mounted handler on the hosted carrier', async () => {
+        let settleLaunch: (() => void) | undefined;
+        let seenSignal: AbortSignal | undefined;
+        const hostedMount = createMount({
+            handlers: {
+                openNewSession: async (_request, options) => {
+                    seenSignal = options?.signal;
+                    return await new Promise<PluginUiJsonValueV1>((resolve) => {
+                        settleLaunch = () => resolve(null);
+                    });
+                },
+            },
+        });
+        const hosted = await createHostedCarrier(hostedMount, ['openNewSession']);
+        const launch = hostedRequest(hosted, {
+            requestId: 'new-session-cancelled',
+            method: 'openNewSession',
+            payload: { prompt: 'Repair CI' },
+        });
+        await vi.waitFor(() => expect(seenSignal).toBeTypeOf('object'));
+
+        await expect(hosted(createHostedEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'cancel',
+            identity: canonicalIdentity,
+            requestId: 'new-session-cancelled',
+        } as PluginHostedWebBridgeEnvelopeV1['payload'], 11))).resolves.toMatchObject({ kind: 'ack' });
+        expect(seenSignal?.aborted).toBe(true);
+
+        settleLaunch?.();
+        await expect(launch).resolves.toMatchObject({ kind: 'ack' });
     });
 });

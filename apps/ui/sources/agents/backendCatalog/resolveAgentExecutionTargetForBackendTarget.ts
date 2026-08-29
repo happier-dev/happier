@@ -1,12 +1,16 @@
 import {
+    AgentExecutionTargetV1Schema,
     PluginContributionIdentityV1Schema,
     readBackendTargetRefV2,
+    readPersistedAgentContributionIdentityV1,
     type AgentExecutionTargetV1,
+    type BackendTargetRefV2,
     type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
+import { stripBackendTargetSourceKind } from './backendTargetRouteParams';
 
 import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionInputs';
 
@@ -61,4 +65,29 @@ export function resolveAgentExecutionTargetForBackendTarget(params: Readonly<{
         kind: 'agent',
         identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[agentId],
     };
+}
+
+/**
+ * Resolves the canonical Agent execution target from a persisted UI selection:
+ * the retained `backendTarget` vocabulary when present, otherwise the bundled or
+ * persisted contribution identity named by the compat Agent id. Returns null
+ * when neither names a resolvable Agent contribution.
+ */
+export function resolveAgentExecutionTargetForPersistedSelection(params: Readonly<{
+    backendTarget: BackendTargetRefV2 | null | undefined;
+    fallbackAgentId?: unknown;
+}>): AgentExecutionTargetV1 | null {
+    if (params.backendTarget) {
+        const resolved = resolveAgentExecutionTargetForBackendTarget({
+            backendTarget: stripBackendTargetSourceKind(params.backendTarget),
+        });
+        if (resolved) return resolved;
+    }
+    if (typeof params.fallbackAgentId === 'string' && isBundledAgentId(params.fallbackAgentId)) {
+        return resolveAgentExecutionTargetForBackendTarget({
+            backendTarget: { kind: 'backend', backendId: params.fallbackAgentId },
+        });
+    }
+    const identity = readPersistedAgentContributionIdentityV1(params.fallbackAgentId);
+    return identity ? AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity }) : null;
 }

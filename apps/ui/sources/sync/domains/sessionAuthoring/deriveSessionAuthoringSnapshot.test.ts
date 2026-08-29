@@ -57,6 +57,7 @@ describe('deriveSessionAuthoringSnapshot', () => {
         expect(snapshot).toEqual({
             directory: '/tmp/project',
             agentId: null,
+            agentTarget: null,
             backendTarget: {
                 kind: 'backend',
                 backendId: 'review-bot',
@@ -123,8 +124,12 @@ describe('deriveSessionAuthoringSnapshot', () => {
         });
 
         expect(snapshot.directory).toBe('/home/leeroy');
-        expect(snapshot.backendTarget?.kind).toBe('backend');
-        expect(snapshot.agentId).toBe(snapshot.backendTarget?.kind === 'backend' ? snapshot.backendTarget.backendId : null);
+        expect(snapshot.backendTarget).toBeNull();
+        expect(snapshot.agentTarget).toEqual({
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        });
+        expect(snapshot.agentId).toBe('codex');
         expect(snapshot.runtimeDescriptorV1).toBeNull();
         expect(snapshot.existingSessionId).toBe('session-2');
         expect(snapshot.sessionEncryptionMode).toBe('plain');
@@ -132,7 +137,7 @@ describe('deriveSessionAuthoringSnapshot', () => {
         expect(snapshot.sessionEncryptionVariant).toBeNull();
     });
 
-    it('normalizes Codex backend aliases from the plugin-owned runtime descriptor', () => {
+    it('preserves the plugin-owned runtime descriptor without interpreting opaque Agent fields', () => {
         const snapshot = deriveSessionAuthoringSnapshot({
             session: {
                 id: 'session-3',
@@ -156,7 +161,7 @@ describe('deriveSessionAuthoringSnapshot', () => {
 
         expect(snapshot.runtimeDescriptorV1).toMatchObject({
             agentId: 'codex',
-            agent: { backendMode: 'acp' },
+            agent: { backendMode: legacyCodexBackendMode },
         });
     });
 

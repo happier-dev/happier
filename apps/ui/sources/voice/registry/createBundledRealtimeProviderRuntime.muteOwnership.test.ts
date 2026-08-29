@@ -97,7 +97,9 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       };
     };
     const mic = createMic(physicalTrack);
-    let controllerDeps: Parameters<typeof createVoiceConversationController>[0] | null = null;
+    const capturedControllerDeps: {
+      current: Parameters<typeof createVoiceConversationController>[0] | null;
+    } = { current: null };
     let selectedProviderId = providerId;
     let transcriptEpoch = 0;
     const host = {
@@ -162,7 +164,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
         subscribe: (listener: () => void) => useVoiceConversationRuntimeStore.subscribe(listener),
       },
       createConversationController: (deps) => {
-        controllerDeps = deps;
+        capturedControllerDeps.current = deps;
         return createVoiceConversationController(deps);
       },
       createMicSession: vi.fn(() => mic),
@@ -200,7 +202,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
     } satisfies BundledRealtimeProviderRuntimeHost;
     const createRuntime = (
       runtimeProviderId: string,
-      runtimeSetInputMuted?: (muted: boolean) => Promise<void>,
+      runtimeSetInputMuted: (muted: boolean) => Promise<void>,
     ) => createBundledRealtimeProviderRuntime(host, {
       providerId: runtimeProviderId,
       execution: { kind: 'direct_media' },
@@ -226,7 +228,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       encodeToolResults: vi.fn(() => []),
       encodeToolContinuation: vi.fn(() => ({ type: 'unused' })),
       microphoneMode: 'provider_managed',
-      ...(runtimeSetInputMuted ? { setInputMuted: runtimeSetInputMuted } : {}),
+      setInputMuted: runtimeSetInputMuted,
       encodeContextUpdate: vi.fn(() => []),
       encodeTextTurn: vi.fn(() => []),
       resolveSurfaceCapabilities: vi.fn(() => null),
@@ -272,7 +274,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
       expect(physicalTrack.enabled).toBe(true);
 
-      await controllerDeps?.onConnectionReady?.({
+      await capturedControllerDeps.current?.onConnectionReady?.({
         controlSessionId,
         attemptId: 1,
         request: {},
@@ -291,7 +293,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       // Replacement is a lifecycle boundary, not a second concurrent Start on
       // the same adapter. Stop retires the old attempt; the fresh Start must
       // establish an unmuted provider baseline without inheriting its state.
-      await runtime.adapter.stop();
+      await runtime.adapter.stop({ sessionId: controlSessionId });
       await runtime.adapter.start({ sessionId: controlSessionId });
 
       expect(providerCapture.muted).toBe(false);

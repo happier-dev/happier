@@ -465,6 +465,7 @@ import { applyPlannedChangeActions } from './runtime/orchestration/changesApplie
 import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
 import {
     SessionDraftRuntimeHydrationGate,
+    materializeVisibleExistingSessionDraft,
     materializeSessionDraftSocketWake,
     parseSessionDraftSocketWake,
 } from './runtime/orchestration/sessionDraftSyncRuntime';
@@ -2482,6 +2483,16 @@ class Sync {
 
         onSessionVisible = (sessionId: string) => {
             if (isDemoModeActive()) return;
+            const capturedDraftScope = getActiveServerAccountScope();
+            if (capturedDraftScope) {
+                fireAndForget(materializeVisibleExistingSessionDraft({
+                    sessionId,
+                    capturedScope: capturedDraftScope,
+                    readActiveScope: getActiveServerAccountScope,
+                    ensureRuntimeReady: () => this.ensureSessionDraftRepositoryRuntimeReady(),
+                    materializeExact: materializeExactSessionDraft,
+                }), { tag: 'Sync.onSessionVisible.sessionDraft' });
+            }
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
             this.sessionTranscriptRetention.scheduleSweep();
             this.ensureSessionViewportHydrated();

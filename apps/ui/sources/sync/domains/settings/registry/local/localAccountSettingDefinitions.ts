@@ -1,6 +1,8 @@
 import {
     BackendTargetKeyV2Schema,
     BackendTargetRefV2InputSchema,
+    PersistedAgentTargetRefV1Schema,
+    PersistedBackendTargetRefV2Schema,
     SessionDraftAddressV1Schema,
     buildSettingArtifacts,
     defineSettingDefinitions,
@@ -43,13 +45,26 @@ export const NewSessionOrdinaryEntryDraftIdSchema = z.string().refine(
     'Expected a canonical new-session draft UUID',
 );
 
-const LastUsedBackendTargetSchema = z.union([
-    BackendTargetRefV2InputSchema,
-    z.null(),
-]).transform((value) => {
-    if (value === null) return null;
-    return writePersistedBackendTargetRefV2(readBackendTargetRefV2(value));
-});
+const LastUsedBackendTargetSchema = z.preprocess((value) => {
+    if (value === null || value === undefined) return null;
+
+    // Installed Agents persist their exact contribution identity. Resolving
+    // that identity into the legacy flat backend id belongs to the current
+    // projected catalog, not this projection-independent local-settings
+    // reader. Preserve it until that owner can resolve or retire it.
+    const persistedAgent = PersistedAgentTargetRefV1Schema.safeParse(value);
+    if (persistedAgent.success) return persistedAgent.data;
+
+    const backendInput = BackendTargetRefV2InputSchema.safeParse(value);
+    if (!backendInput.success) return null;
+    try {
+        return writePersistedBackendTargetRefV2(
+            readBackendTargetRefV2(backendInput.data),
+        );
+    } catch {
+        return null;
+    }
+}, PersistedBackendTargetRefV2Schema.nullable());
 
 export const ServerSelectionGroupSchema = z.object({
     id: z.string().min(1),

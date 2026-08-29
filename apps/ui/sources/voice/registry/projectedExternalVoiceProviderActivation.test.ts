@@ -76,6 +76,7 @@ vi.mock('@/voice/settings/executionMachine', () => ({
   isCapturedVoiceExecutionMachineCurrent: (machineId: string | null) => machineId === 'machine-1',
 }));
 afterEach(() => {
+  rawCredentialMachineRpc.mockReset();
   reactNativeArtifactDaemonTransport.fetch.mockReset();
 });
 
@@ -977,7 +978,7 @@ describe('projected external Voice provider activation', () => {
               globalConnectedServices: {
                 v: 1,
                 bindingsByServiceId: {
-                  'openai-codex': {
+                  'happier.agent.codex/openai-codex': {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'installed-codex',
@@ -1011,6 +1012,7 @@ describe('projected external Voice provider activation', () => {
     const declarations = pluginManifest.contributes.voiceProviders
       .filter((candidate) => candidate.kind === 'conversation')
       .map(requireConversationDeclaration);
+    const action = pluginManifest.contributes.actions[0]!;
     const declaration = declarations[0]!;
     const artifactRoot = new URL('dist/happier-plugin-ui/', fixtureRoot);
     const manifest = PluginUiArtifactsManifestV1Schema.parse(JSON.parse(
@@ -1042,6 +1044,10 @@ describe('projected external Voice provider activation', () => {
       }),
     ])));
     const identity = identitiesByLocalId[declaration.id]!;
+    const actionIdentity = Object.freeze({
+      ...identity,
+      contributionId: action.id,
+    });
     const providerId = `${pluginId}/${declaration.id}`;
     const voiceProviderEntries = Object.fromEntries(declarations.map((candidate) => {
       const candidateProviderId = `${pluginId}/${candidate.id}`;
@@ -1082,7 +1088,7 @@ describe('projected external Voice provider activation', () => {
           : {}),
       }] as const;
     }));
-    const pluginUiEntries = Object.fromEntries(declarations.map((candidate) => {
+    const pluginUiEntries = Object.fromEntries([action, ...declarations].map((candidate) => {
       const candidateIdentity = identitiesByLocalId[candidate.id]!;
       const id = `reactNativeBundle:${pluginId}:${candidate.id}`;
         return [id, {
@@ -1090,20 +1096,27 @@ describe('projected external Voice provider activation', () => {
           pluginId,
           contributionKind: 'reactNativeBundle' as const,
           contributionId: candidate.id,
-          generatedOwnerKind: 'voiceProvider',
+          generatedOwnerKind: candidate.id === action.id ? 'clientContribution' : 'voiceProvider',
           ...origin,
           artifactGraph,
         runtime: {
           decision: { state: 'load' as const },
           loadPolicy: { source: 'installedArtifact' as const },
-          cacheIdentity: candidateIdentity,
+          cacheIdentity: candidate.id === action.id ? actionIdentity : candidateIdentity,
         },
       }] as const;
     }));
     const rawProjection: PluginProjectionV2 = {
       v: 2,
       generation: 12,
-      installedPackagesById: {}, agentsById: {}, backendsById: {}, actionsById: {}, toolsById: {},
+      installedPackagesById: {}, agentsById: {}, backendsById: {}, actionsById: {
+        [`${pluginId}/${action.id}`]: {
+          ...action,
+          pluginId,
+          ...origin,
+          available: true,
+        },
+      }, toolsById: {},
       commandsById: {}, resourcesById: {}, settingsById: {},
       familiesById: {
         voiceProviders: {
@@ -1118,6 +1131,14 @@ describe('projected external Voice provider activation', () => {
       diagnostics: [],
     };
     const projection = resolvePluginUiProjectionState(EMPTY_PLUGIN_UI_PROJECTION, rawProjection);
+    const actionProjection = unionPluginUiProjections([{
+      machineId: 'machine-1',
+      serverId: 'server-1',
+      projection,
+      phase: 'current',
+      interactionEnabled: true,
+    }], new Map([[pluginId, origin]])).pluginUiProjection;
+    if (!actionProjection) throw new Error('expected packed external Voice app projection');
     const { reader, lifetime } = createCurrentVoiceArtifactAdmission({
       pluginId,
       identity,
@@ -1145,9 +1166,14 @@ describe('projected external Voice provider activation', () => {
       hostLease.revoke();
     });
 
-    reactNativeArtifactDaemonTransport.fetch.mockImplementation(async ({ identity: requestedIdentity }) => ({
-      ok: true as const, artifactFamily: 'reactNative' as const, artifactOwnerKind: 'voiceProvider' as const, cacheIdentity: requestedIdentity,
-      artifact: { pluginId: requestedIdentity.pluginId, contributionId: requestedIdentity.contributionId, artifactKind: 'reactNativeBundle' as const, digest, format: 'plainJs' as const, byteSize: bytes.byteLength },
+    reactNativeArtifactDaemonTransport.fetch.mockImplementation(async (input) => ({
+      ok: true as const,
+      artifactFamily: 'reactNative' as const,
+      ...(input.artifactOwnerKind === 'clientContribution'
+        ? { artifactOwnerKind: 'clientContribution' as const, clientContribution: input.clientContribution }
+        : { artifactOwnerKind: 'voiceProvider' as const }),
+      cacheIdentity: input.identity,
+      artifact: { pluginId: input.identity.pluginId, contributionId: input.identity.contributionId, artifactKind: 'reactNativeBundle' as const, digest, format: 'plainJs' as const, byteSize: bytes.byteLength },
       bytesBase64: encodeBase64(bytes),
       files: [{
         relativePath: artifactGraph.entry,
@@ -1157,7 +1183,7 @@ describe('projected external Voice provider activation', () => {
       }],
     }));
     const activationInput = {
-      projection,
+      projection: actionProjection,
       platform: 'web' as const,
       voice: Object.freeze({
         projection,
@@ -1233,6 +1259,12 @@ describe('projected external Voice provider activation', () => {
     });
     const projectionB: PluginUiProjectionModel = Object.freeze({
       ...projection,
+      actionsById: Object.freeze(Object.fromEntries(
+        Object.entries(projection.actionsById).map(([id, entry]) => [id, Object.freeze({
+          ...entry,
+          ...replacementOrigin,
+        })]),
+      )),
       voiceProvidersById: Object.freeze(Object.fromEntries(
         Object.entries(projection.voiceProvidersById).map(([id, entry]) => [id, Object.freeze({
           ...entry,
@@ -1247,9 +1279,17 @@ describe('projected external Voice provider activation', () => {
         })]),
       )),
     });
+    const actionProjectionB = unionPluginUiProjections([{
+      machineId: 'machine-2',
+      serverId: 'server-2',
+      projection: projectionB,
+      phase: 'current',
+      interactionEnabled: true,
+    }], new Map([[pluginId, replacementOrigin]])).pluginUiProjection;
+    if (!actionProjectionB) throw new Error('expected replacement packed external Voice app projection');
     const replacementAttempts = await reconcileAppShellProjectedClientExecutables({
       ...activationInput,
-      projection: projectionB,
+      projection: actionProjectionB,
       voice: Object.freeze({
         projection: projectionB,
         machineId: 'machine-2',

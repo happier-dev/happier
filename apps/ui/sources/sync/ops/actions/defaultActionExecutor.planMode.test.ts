@@ -172,12 +172,17 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const executor = createDefaultActionExecutor();
     const result = await executor.execute(
       'agents.models.list',
-      { agentId: 'claude', machineId: 'm1', limit: 3 },
+      { agentId: 'claude', machineId: 'm1', serverId: 'server-b', limit: 3 },
       { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
     );
 
     expect(result.ok).toBe(true);
-    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith({ agentId: 'claude', machineId: 'm1', limit: 3 });
+    expect(listAgentModelsForVoiceTool).toHaveBeenCalledWith({
+      agentId: 'claude',
+      machineId: 'm1',
+      serverId: 'server-b',
+      limit: 3,
+    });
   });
 
   it('forwards backendTargetKey to agents.models.list voice-tool routing', async () => {
@@ -237,7 +242,9 @@ describe('createDefaultActionExecutor plan mode integration', () => {
             localId: 'codex',
           },
         },
-        initialMessage: 'Inspect this project.',
+        initialInput: {
+          text: 'Inspect this project.',
+        },
       },
       { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel', signal },
     );
@@ -262,7 +269,9 @@ describe('createDefaultActionExecutor plan mode integration', () => {
           localId: 'codex',
         },
       },
-      initialMessage: 'Inspect this project.',
+      initialInput: {
+        text: 'Inspect this project.',
+      },
       },
       signal,
     });

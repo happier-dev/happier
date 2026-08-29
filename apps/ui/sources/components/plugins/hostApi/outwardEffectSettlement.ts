@@ -29,10 +29,12 @@ export const PLUGIN_UI_OUTWARD_EFFECT_HOST_METHODS_V1 = Object.freeze([
     'setComposerDecorations',
     'releaseComposerContent',
     'openSurface',
+    'openNewSession',
     'replacePageLocation',
     'notify',
     'writeClipboard',
     'openExternalLink',
+    'settleEphemeralInput',
 ] as const satisfies readonly PluginUiHostMethodV1[]);
 
 const OUTWARD_EFFECT_HOST_METHODS = new Set<PluginUiHostMethodV1>(
@@ -53,9 +55,14 @@ export function isPluginSurfaceOutwardEffectHostMethod(method: PluginUiHostMetho
  * so the retirement is a CONSEQUENCE of the success. Answering that with
  * `stale_surface` tells the author nothing happened after something did, and
  * the only sane author response to "nothing happened" is to try again — a
- * second navigation, or a blind retry of a mutation that already ran. The
- * mounted Action dispatcher already states this rule for its own daemon
- * settlement; this is the same rule at the transport boundary.
+ * second navigation, or a blind retry of a mutation that already ran.
+ * `openNewSession` is the same shape: the New Session screen it opens replaces
+ * the requesting surface. And a terminal `settleEphemeralInput` records the
+ * user's input and closes the ephemeral surface as a consequence — the
+ * settlement is durable, so rewriting it into `stale_surface` would invite the
+ * plugin to settle an already-settled input, which can only fail. The mounted
+ * Action dispatcher already states this rule for its own daemon settlement;
+ * this is the same rule at the transport boundary.
  *
  * Everything else keeps the retirement check. A read, a `confirm` decision or a
  * selected form result are answers ABOUT a mount, and a retired mount cannot

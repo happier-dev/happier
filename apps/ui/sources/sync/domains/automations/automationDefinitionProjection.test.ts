@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationTriggerDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol';
+import {
+    AutomationDefinitionListItemSchema,
+    AutomationTriggerDetailSchema,
+    type AutomationDefinitionDetail,
+    type AutomationDefinitionListItem,
+} from '@happier-dev/protocol';
 
 import {
     applyAutomationDefinitionDetail,
@@ -76,6 +81,19 @@ function detail(overrides: Partial<AutomationDefinitionDetail> = {}): Automation
     };
 }
 
+function summary(value: AutomationDefinitionDetail): AutomationDefinitionListItem {
+    const {
+        executionRecipe: _executionRecipe,
+        templateCiphertext: _templateCiphertext,
+        triggers,
+        ...publicDefinition
+    } = value;
+    return AutomationDefinitionListItemSchema.parse({
+        ...publicDefinition,
+        triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger),
+    });
+}
+
 describe('Automation definition projection', () => {
     it('correlates the complete plural trigger set by exact identity and revision without choosing a first row', () => {
         const current = detail();
@@ -95,24 +113,25 @@ describe('Automation definition projection', () => {
     it('keeps private recipe and Event definition content direct-detail-only', () => {
         const current = detail();
         const projected = createAutomationDefinitionFromDetail(current);
-        const summary = createAutomationDefinitionSummary((({ executionRecipe: _recipe, ...value }) => value)(current));
+        const publicSummary = createAutomationDefinitionSummary(summary(current));
 
-        expect(summary.detail).toEqual({ kind: 'unloaded', templateVersion: 4 });
-        expect(summary).not.toHaveProperty('executionRecipe');
+        expect(publicSummary.detail).toEqual({ kind: 'unloaded', templateVersion: 4 });
+        expect(publicSummary).not.toHaveProperty('executionRecipe');
+        expect(projected.triggers.every((trigger) => !('triggerDefinitionEnvelope' in trigger))).toBe(true);
         expect(projected.detail).toEqual({ kind: 'available', templateVersion: 4, value: current });
         expect(projected.linkedExistingSessionId).toBe('session-1');
     });
 
     it('attaches only an exact summary/detail pair and preserves unavailable currentness', () => {
         const current = detail();
-        const summary = createAutomationDefinitionSummary((({ executionRecipe: _recipe, ...value }) => value)(current));
+        const publicSummary = createAutomationDefinitionSummary(summary(current));
 
-        expect(attachAutomationDefinitionDetail(summary, current)?.detail.kind).toBe('available');
-        expect(attachAutomationDefinitionDetail(summary, detail({
+        expect(attachAutomationDefinitionDetail(publicSummary, current)?.detail.kind).toBe('available');
+        expect(attachAutomationDefinitionDetail(publicSummary, detail({
             triggers: [scheduleTrigger('11111111-1111-4111-8111-111111111111', 3)],
         }))).toBeNull();
 
-        const unavailable = markAutomationDefinitionContentUnavailable(summary);
+        const unavailable = markAutomationDefinitionContentUnavailable(publicSummary);
         expect(applyAutomationDefinitionDetail(unavailable, current)).toBe(unavailable);
         expect(applyAutomationDefinitionDetail(unavailable, current, { replaceEqualRevision: true }).detail.kind)
             .toBe('available');

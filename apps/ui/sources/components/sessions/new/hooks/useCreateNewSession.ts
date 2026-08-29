@@ -46,7 +46,7 @@ import type { AcpConfigOptionOverridesV1, MentionRefV1 } from '@happier-dev/prot
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
 import { buildAutomationRecipeFromSessionAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
-import { materializeNewSessionAutomationEditorDraft } from '@/sync/domains/automations/automationDraft';
+import { materializeNewSessionAutomationEditorDraft, replaceExactTurnAutomationRowsWithCurrentTurns } from '@/sync/domains/automations/automationDraft';
 import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readExactActiveParentTurn } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
@@ -737,9 +737,10 @@ export function useCreateNewSession(params: Readonly<{
             const preflightIssues = staticAgentId
                 ? getNewSessionPreflightIssues({
                     agentId: staticAgentId,
-                    experiments: getAgentResumeExperimentsFromSettings(staticAgentId, current.settings),
+                    experiments: getAgentResumeExperimentsFromSettings(staticAgentId, current.settings, selectedMachineId),
                     resumeSessionId: current.resumeSessionId,
                     results: machineCapsResults,
+                    machineId: selectedMachineId,
                 })
                 : [];
             const blockingIssue = preflightIssues[0] ?? null;
@@ -1494,30 +1495,15 @@ export function useCreateNewSession(params: Readonly<{
             ) {
                 const latest = latestParamsRef.current;
                 const automation = latest.authoringDraft?.automation ?? null;
-                let canReplace = automation !== null;
-                let changed = false;
-                const replacement = automation ? {
-                    ...automation,
-                    triggers: automation.triggers.map((trigger) => {
-                        const definition = trigger.definition;
-                        if (definition.kind !== 'sessionLifecycle' || definition.scope.kind !== 'exactTurn') return trigger;
-                        const exact = readExactActiveParentTurn(storage.getState().sessions[definition.scope.sourceSessionId]);
-                        if (!exact) {
-                            canReplace = false;
-                            return trigger;
-                        }
-                        if (exact.sourceTurnId === definition.scope.sourceTurnId) return trigger;
-                        changed = true;
-                        return {
-                            ...trigger,
-                            definition: {
-                                ...definition,
-                                scope: { ...definition.scope, sourceTurnId: exact.sourceTurnId },
-                            },
-                        };
-                    }),
-                } : null;
-                const shouldReplace = canReplace && changed && replacement && latest.onAutomationDraftChange
+                const replacement = automation
+                    ? replaceExactTurnAutomationRowsWithCurrentTurns({
+                        automation,
+                        readExactTurn: (sourceSessionId) => readExactActiveParentTurn(
+                            storage.getState().sessions[sourceSessionId],
+                        ),
+                    })
+                    : null;
+                const shouldReplace = replacement && replacement.canReplace && replacement.changed && latest.onAutomationDraftChange
                     ? await Modal.confirm(
                         t('automations.exactTurn.staleTitle'),
                         t('automations.exactTurn.staleBody'),
@@ -1527,8 +1513,8 @@ export function useCreateNewSession(params: Readonly<{
                         },
                     )
                     : false;
-                if (shouldReplace && replacement) latest.onAutomationDraftChange?.(replacement);
-                else if (!changed || !canReplace) {
+                if (shouldReplace && replacement) latest.onAutomationDraftChange?.(replacement.automation);
+                else if (!replacement || !replacement.changed || !replacement.canReplace) {
                     Modal.alert(t('automations.exactTurn.staleTitle'), t('automations.exactTurn.staleBody'));
                 }
                 latestParamsRef.current.setIsCreating(false);

@@ -4152,7 +4152,7 @@ function SessionViewLoaded({
         setDraftValue,
         restoreDraft,
         restoreComposerSnapshot,
-    } = useDraft(sessionId, message, setMessage);
+    } = useDraft(sessionId, message, setMessage, { active: surfaceFocused });
     const sessionDraftAddress = React.useMemo(() => ({
         kind: 'session' as const,
         sessionId,

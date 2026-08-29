@@ -107,6 +107,13 @@ vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
 
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     useAppShellPluginUiProjection: () => ({ pluginUiProjection: null }),
+    // Mirrors the real resolver bound to a null projection: strings pass
+    // through and only the declared fallback can answer.
+    useProjectedPluginLocalizedTextResolver: () => (_pluginId: string, value: unknown) => {
+        if (typeof value === 'string') return value;
+        const fallback = (value as { fallback?: unknown } | null)?.fallback;
+        return typeof fallback === 'string' ? fallback : '';
+    },
 }));
 
 vi.mock('@/components/appShell/plugins/pluginAppPageRoute', () => ({

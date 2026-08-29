@@ -139,8 +139,12 @@ installAutomationScreensCommonModuleMocks({
         }).module;
     },
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
+            storage: createLiveStorageStoreMock(() => ({
+                profileScope: { serverId: 'server-1', accountId: 'account-1' },
+            })),
+            useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
             useAutomations: () => automationsState.list,
             useAllMachines: () => machinesState.list,
         });
@@ -161,6 +165,14 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 
 vi.mock('@/components/ui/buttons/FAB', () => ({
     FAB: (props: any) => React.createElement('FAB', props),
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => ({
+        scope: { serverId: 'server-1', accountId: 'account-1' },
+        isCurrent: () => true,
+        onRetire: () => ({ dispose: () => undefined }),
+    }),
 }));
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
@@ -271,7 +283,7 @@ describe('AutomationsScreen', () => {
         const screen = await renderScreen(React.createElement(AutomationsScreen));
         await flushHookEffects();
 
-        const rendered = JSON.stringify(screen.tree.toJSON());
+        const rendered = screen.getTextContent();
         expect(rendered).toContain('automations.list.noAutomaticTriggers');
         expect(rendered.match(/automations\.list\.interval/g)).toHaveLength(2);
         expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: On demand' }))
@@ -320,6 +332,34 @@ describe('AutomationsScreen', () => {
 
         await pressTestInstanceAsync(screen.findByProps({ testID: 'automations-stale-refresh-retry' }));
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps cached-row mutations locked while the authoritative refresh is still pending', async () => {
+        machinesState.list = [{ id: 'm1' }];
+        automationsState.list = [createAutomationListItem()];
+        let releaseRefresh: (() => void) | null = null;
+        syncSpies.refreshAutomations.mockImplementationOnce(() => new Promise<void>((resolve) => {
+            releaseRefresh = resolve;
+        }));
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        // Cached rows stay visible, but no mutation may act on them while the
+        // owning read that would make them current is still in flight.
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Nightly')).toBeTruthy();
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' }).props.disabled)
+            .toBe(true);
+        expect(screen.findByType('Switch' as any).props.disabled).toBe(true);
+
+        await act(async () => {
+            releaseRefresh?.();
+        });
+        await flushHookEffects();
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Nightly' }).props.disabled)
+            .toBe(false);
+        expect(screen.findByType('Switch' as any).props.disabled).toBe(false);
     });
 
     it('hands a high-cardinality Account list to the canonical virtualized owner in bounded chunks', async () => {

@@ -15,11 +15,12 @@ function encode(source: string): Uint8Array {
  * `ERR_UNSUPPORTED_ESM_URL_SCHEME`; only `file`/`data`/`node` schemes are
  * supported). These tests inject a REAL `importModule` that performs an
  * actual dynamic `import()` of a real compiled ES module via a `data:` URI —
- * a genuine end-to-end exercise of module instantiation + coercion + the
- * forbidden-import guard, substituting Node's real `data:` URL support for
+ * a genuine end-to-end exercise of module instantiation + coercion,
+ * substituting Node's real `data:` URL support for
  * the browser's real `blob:` URL support (the create-blob-URL half is
  * exercised by the shared web-module loader; this backend reuses that path
- * unchanged instead of owning a second blob importer. The full browser
+ * unchanged instead of owning a second blob importer or inspecting raw source
+ * text. The managed builder owns import closure. The full browser
  * `blob:` round-trip remains a live-QA (Argent web) concern, same
  * pre-existing gap the RNWEB-SPIKE documented for embeddedWeb.
  */

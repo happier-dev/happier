@@ -58,11 +58,13 @@ type NewSessionCheckoutIntentSettlement =
  * truthfully manufacture `checkoutCreationDraft`; `worktree=new` opens the
  * existing picker, whose mounted owner collects those concrete facts.
  *
- * A prepared review workspace is different: its directory and currentness
- * facts must come from the selected SCM source operation. Until that producer
- * has a canonical settlement into New Session, accepting the seed would drop
- * a required checkout choice. Refuse it at this one choke point before any
- * draft, handoff or navigation write.
+ * A prepared review workspace is settled earlier, by the mounted Host API
+ * handler that executes the caller's exact selected source operation and
+ * rewrites the seed to `reuseWorkspace` plus the materialized directory. A
+ * `preparedReviewWorkspace` intent reaching this router therefore bypassed
+ * that settlement and carries no prepared directory; accepting it would
+ * launch an unprepared flow, so it is refused here before any handoff or
+ * navigation write.
  */
 function settleNewSessionCheckoutIntent(
     checkoutIntent: PluginUiNewSessionSeedV1['checkoutIntent'],

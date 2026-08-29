@@ -225,6 +225,7 @@ describe('openPeerTcpTunnel', () => {
                 routeKind: 'server_relay',
                 selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
             }),
+            signal: null,
         });
     });
 

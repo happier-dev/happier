@@ -14,7 +14,8 @@ import {
     type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 
 type PersistedAuthoringDraftLike = Readonly<{
     agentTarget?: AgentExecutionTargetV1 | null;
@@ -68,7 +69,7 @@ function resolveTargetScopedAuthoringDraft<Draft extends TempAuthoringDraftLike 
         if (params.allowTargetlessDraftEngineSelection === false) return null;
         return params.backendTargetKey ? null : params.draft;
     }
-    return draftBackendTargetKey === params.backendTargetKey ? params.draft : null;
+    return backendTargetKeysMatch(draftBackendTargetKey, params.backendTargetKey) ? params.draft : null;
 }
 
 type ResolvedAuthoringModelState = Readonly<{
@@ -84,10 +85,20 @@ function readDraftModelSelection(params: Readonly<{
     if (params.draft.modelSelection !== undefined) {
         if (params.draft.modelSelection === null) return { present: true, selection: null };
         const selection = SessionModelSelectionV1Schema.parse(params.draft.modelSelection);
-        if (selection.ref.agentTargetKey !== params.agentTargetKey) {
+        if (!backendTargetKeysMatch(selection.ref.agentTargetKey, params.agentTargetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
-        return { present: true, selection };
+        return {
+            present: true,
+            // Persisted retired target-key spellings rekey onto the canonical
+            // target so exactly one key spelling flows through authoring state.
+            selection: selection.ref.agentTargetKey === params.agentTargetKey
+                ? selection
+                : SessionModelSelectionV1Schema.parse({
+                    ...selection,
+                    ref: { ...selection.ref, agentTargetKey: params.agentTargetKey },
+                }),
+        };
     }
     if (typeof params.draft.modelId !== 'string') return { present: false, selection: null };
     const modelId = params.draft.modelId.trim();
@@ -123,19 +134,16 @@ function resolveAuthoringModelState(params: Readonly<{
         draft: params.hydratedPersistedAuthoringDraft,
         agentTargetKey: params.agentTargetKey,
     });
-    const rememberedSelection = params.rememberedEngineSelection?.modelSelection ?? null;
     const profileSelection = params.implicitProfileModelSelection ?? null;
-    if (profileSelection && profileSelection.ref.agentTargetKey !== params.agentTargetKey) {
-        throw new Error('Profile model selection target mismatch');
-    }
-    if (rememberedSelection && rememberedSelection.ref.agentTargetKey !== params.agentTargetKey) {
-        throw new Error('Remembered engine model selection target mismatch');
-    }
+    const rememberedSelection = params.rememberedEngineSelection?.modelSelection ?? null;
     const candidate = temp.present
         ? temp.selection
         : persisted.present
             ? persisted.selection
             : profileSelection ?? rememberedSelection;
+    if (candidate && !backendTargetKeysMatch(candidate.ref.agentTargetKey, params.agentTargetKey)) {
+        throw new Error('Session authoring model selection target mismatch');
+    }
     const modelMode = resolveInitialNewSessionModelMode({
         draftModelMode: candidate?.ref.modelId ?? null,
         modelConfig: {
@@ -204,6 +212,9 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     setMcpSelection: React.Dispatch<React.SetStateAction<SessionMcpSelectionV1>>;
 }> {
     const currentBackendTargetKey = params.backendTargetKey ?? null;
+    const previousBackendTargetKeyRef = React.useRef(currentBackendTargetKey);
+    const backendTargetChanged = previousBackendTargetKeyRef.current !== currentBackendTargetKey;
+    previousBackendTargetKeyRef.current = currentBackendTargetKey;
     const targetScopedTempAuthoringDraft = React.useMemo(() => resolveTargetScopedAuthoringDraft({
         draft: params.hydratedTempAuthoringDraft,
         backendTargetKey: currentBackendTargetKey,
@@ -223,8 +234,13 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         params.hydratedPersistedAuthoringDraft,
     ]);
 
+    const bundledAgentTarget = isBundledAgentId(params.agentType)
+        ? resolveAgentExecutionTargetForBackendTarget({
+            backendTarget: { kind: 'backend', backendId: params.agentType },
+        })
+        : null;
     const effectiveModelTargetKey = currentBackendTargetKey
-        ?? resolveBackendTargetKeyV2({ kind: 'backend', backendId: params.agentType });
+        ?? resolveBackendTargetKeyV2(bundledAgentTarget ?? { kind: 'backend', backendId: params.agentType });
     const resolvedModelState = React.useMemo(() => resolveAuthoringModelState({
         ...params,
         agentTargetKey: effectiveModelTargetKey,
@@ -252,17 +268,12 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     const modelMode = currentModelState.modelMode;
     const modelSelection = currentModelState.modelSelection;
 
-    React.useEffect(() => {
-        setModelState((current) => {
-            if (current.backendTargetKey === currentBackendTargetKey) {
-                return current;
-            }
-            return {
-                backendTargetKey: currentBackendTargetKey,
-                value: resolvedModelState,
-            };
+    if (backendTargetChanged && modelState.backendTargetKey !== currentBackendTargetKey) {
+        setModelState({
+            backendTargetKey: currentBackendTargetKey,
+            value: resolvedModelState,
         });
-    }, [currentBackendTargetKey, resolvedModelState]);
+    }
 
     const setModelMode = React.useCallback<React.Dispatch<React.SetStateAction<ModelMode>>>((next) => {
         setModelState((current) => {
@@ -297,7 +308,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
 
     const setModelSelection = React.useCallback((selection: SessionModelSelectionV1 | null) => {
         const parsed = selection === null ? null : SessionModelSelectionV1Schema.parse(selection);
-        if (parsed && parsed.ref.agentTargetKey !== effectiveModelTargetKey) {
+        if (parsed && !backendTargetKeysMatch(parsed.ref.agentTargetKey, effectiveModelTargetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
         setModelState({
@@ -320,7 +331,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
             throw new Error('Session authoring model selection requires backend target');
         }
         const parsed = selection === null ? null : SessionModelSelectionV1Schema.parse(selection);
-        if (parsed && parsed.ref.agentTargetKey !== targetKey) {
+        if (parsed && !backendTargetKeysMatch(parsed.ref.agentTargetKey, targetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
         setModelState({
@@ -349,17 +360,12 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         ? acpSessionModeIdState.value
         : resolvedAcpSessionModeId;
 
-    React.useEffect(() => {
-        setAcpSessionModeIdState((current) => {
-            if (current.backendTargetKey === currentBackendTargetKey) {
-                return current;
-            }
-            return {
-                backendTargetKey: currentBackendTargetKey,
-                value: resolvedAcpSessionModeId,
-            };
+    if (backendTargetChanged && acpSessionModeIdState.backendTargetKey !== currentBackendTargetKey) {
+        setAcpSessionModeIdState({
+            backendTargetKey: currentBackendTargetKey,
+            value: resolvedAcpSessionModeId,
         });
-    }, [currentBackendTargetKey, resolvedAcpSessionModeId]);
+    }
 
     const setAcpSessionModeId = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
         setAcpSessionModeIdState((current) => {
@@ -401,7 +407,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         ? sessionConfigOptionOverridesState.value
         : initialSessionConfigOptionOverrides;
 
-    if (sessionConfigOptionOverridesState.backendTargetKey !== currentBackendTargetKey) {
+    if (backendTargetChanged && sessionConfigOptionOverridesState.backendTargetKey !== currentBackendTargetKey) {
         sessionConfigOptionOverrides = initialSessionConfigOptionOverrides;
         setSessionConfigOptionOverridesState({
             backendTargetKey: currentBackendTargetKey,
@@ -443,7 +449,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
                     },
                 })
             : selection.modelSelection;
-        if (nextModelSelection && nextModelSelection.ref.agentTargetKey !== targetKey) {
+        if (nextModelSelection && !backendTargetKeysMatch(nextModelSelection.ref.agentTargetKey, targetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
         setModelState({
@@ -479,17 +485,12 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         ? mcpSelectionState.value
         : resolvedMcpSelection;
 
-    React.useEffect(() => {
-        setMcpSelectionState((current) => {
-            if (current.backendTargetKey === currentBackendTargetKey) {
-                return current;
-            }
-            return {
-                backendTargetKey: currentBackendTargetKey,
-                value: resolvedMcpSelection,
-            };
+    if (backendTargetChanged && mcpSelectionState.backendTargetKey !== currentBackendTargetKey) {
+        setMcpSelectionState({
+            backendTargetKey: currentBackendTargetKey,
+            value: resolvedMcpSelection,
         });
-    }, [currentBackendTargetKey, resolvedMcpSelection]);
+    }
 
     const setMcpSelection = React.useCallback<React.Dispatch<React.SetStateAction<SessionMcpSelectionV1>>>((next) => {
         setMcpSelectionState((current) => {

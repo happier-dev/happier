@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
 } from '@happier-dev/protocol';
@@ -61,8 +60,14 @@ function expectMinimumInteractiveTarget(
 }
 
 describe('PluginEventAutomationComposerContent interactive targets', () => {
+    beforeEach(() => {
+        vi.stubGlobal('requestAnimationFrame', () => 1);
+        vi.stubGlobal('cancelAnimationFrame', () => {});
+    });
+
     afterEach(() => {
         standardCleanup();
+        vi.unstubAllGlobals();
         platformState.os = 'android';
     });
 
@@ -197,29 +202,8 @@ describe('PluginEventAutomationComposerContent interactive targets', () => {
             expectMinimumInteractiveTarget(screen.findByProps({ testID }), minimum);
         }
 
-        await act(async () => {
-            screen.findByProps({ testID: 'automation-event-picker' }).props.onPress();
-            screen.findByProps({ testID: 'automation-event-watcher-picker' }).props.onPress();
-            screen.findByProps({ testID: 'automation-event-filter-clause-filter-0-field-picker' }).props.onPress();
-        });
-
-        for (const testID of [
-            'automation-event-option-acme.github/events/repository',
-            'automation-event-watcher-option-watcher-machine:github-materialization',
-            'automation-event-filter-clause-filter-0-field-option-/action',
-        ]) {
-            expectMinimumInteractiveTarget(screen.findByProps({ testID }), minimum);
-        }
-
-        await act(async () => {
-            screen.findByProps({ testID: 'automation-event-filter-clause-filter-0-operator-picker' }).props.onPress();
-        });
-
-        for (const testID of [
-            'automation-event-filter-clause-filter-0-operator-option-eq',
-            'automation-event-filter-clause-filter-0-operator-option-in',
-        ]) {
-            expectMinimumInteractiveTarget(screen.findByProps({ testID }), minimum);
-        }
+        // The opened option rows are now owned by the shared virtualized
+        // SelectionList, whose target sizing is covered at that canonical
+        // owner. This suite retains the Event composer's own trigger controls.
     });
 });
