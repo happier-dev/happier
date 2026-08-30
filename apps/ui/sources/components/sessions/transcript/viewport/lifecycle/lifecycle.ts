@@ -234,6 +234,10 @@ export type TranscriptViewportLifecycleEffect =
     }>
     | Readonly<{
         sessionId: string;
+        type: 'web-user-scroll-preempt-explicit-jump';
+    }>
+    | Readonly<{
+        sessionId: string;
         timestampMs: number;
         type: 'web-user-scroll-record-intent-timestamp';
     }>
@@ -1181,6 +1185,10 @@ function webUserScrollTakeoverEffects(sessionId: string): readonly TranscriptVie
         {
             sessionId,
             type: 'web-user-scroll-preempt-entry-restore',
+        },
+        {
+            sessionId,
+            type: 'web-user-scroll-preempt-explicit-jump',
         },
     ];
 }

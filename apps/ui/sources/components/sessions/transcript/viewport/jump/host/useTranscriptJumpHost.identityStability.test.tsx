@@ -76,13 +76,14 @@ function createStableMembers() {
         listRef: createRef<ScrollableChatListRef | null>(null),
         messagesById: {},
         onViewportChangeRef: createRef(undefined),
-        onSuccessfulRouteJumpSettled: vi.fn(),
+        onRouteJumpSettled: vi.fn(),
         pendingJumpSeqViewportPromotionRef:
             createRef<JumpHostDeps['pendingJumpSeqViewportPromotionRef']['current']>(null),
         pinThresholdPx: 72,
         pinThresholdPxRef: createRef(72),
         pinToBottom: vi.fn(() => true),
-        promotedJumpSeqViewportProtectionRef: createRef(null),
+        promotedJumpSeqViewportProtectionRef:
+            createRef<JumpHostDeps['promotedJumpSeqViewportProtectionRef']['current']>(null),
         readCurrentNativeDistanceFromBottom:
             vi.fn<JumpHostDeps['readCurrentNativeDistanceFromBottom']>(() => null),
         rendererKind: 'legendList',
@@ -152,7 +153,7 @@ describe('useTranscriptJumpHost identity stability', () => {
 
     it('settles a successful current route jump only after its explicit barrier closes', async () => {
         const members = createStableMembers();
-        members.onSuccessfulRouteJumpSettled.mockImplementation(() => {
+        members.onRouteJumpSettled.mockImplementation(() => {
             expect(members.endExplicitJumpWriteBarrier).toHaveBeenCalledTimes(1);
         });
         loadTargetWindowMessagesMock.mockResolvedValue({
@@ -180,12 +181,12 @@ describe('useTranscriptJumpHost identity stability', () => {
         );
         await flushHookEffects();
 
-        expect(members.onSuccessfulRouteJumpSettled).toHaveBeenCalledTimes(1);
-        expect(members.onSuccessfulRouteJumpSettled).toHaveBeenCalledWith('s1');
+        expect(members.onRouteJumpSettled).toHaveBeenCalledTimes(1);
+        expect(members.onRouteJumpSettled).toHaveBeenCalledWith('s1');
         await hook.unmount();
     });
 
-    it('does not settle a superseded or unsuccessful route jump', async () => {
+    it('does not let a superseded route command settle the replacement attempt', async () => {
         const members = createStableMembers();
         const staleLoad = createDeferred<{ status: 'stale' }>();
         loadTargetWindowMessagesMock
@@ -208,7 +209,80 @@ describe('useTranscriptJumpHost identity stability', () => {
 
         staleLoad.resolve({ status: 'stale' });
         await flushHookEffects();
-        expect(members.onSuccessfulRouteJumpSettled).not.toHaveBeenCalled();
+        expect(members.onRouteJumpSettled).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('retries a temporarily unavailable route jump after relevant layout changes', async () => {
+        const members = createStableMembers();
+        loadTargetWindowMessagesMock.mockResolvedValue(null);
+        const initial = {
+            ...buildDeps(members),
+            jumpToSeq: 50,
+            platformOS: 'web',
+        } as JumpHostDeps;
+        const hook = await renderHook(
+            (deps: JumpHostDeps) => useTranscriptJumpHost(deps),
+            { initialProps: initial },
+        );
+        await flushHookEffects();
+        expect(loadTargetWindowMessagesMock).toHaveBeenCalledTimes(1);
+
+        await hook.rerender({
+            ...initial,
+            committedMessagesCount: 2,
+            listContentHeight: 1_100,
+        } as JumpHostDeps);
+        await flushHookEffects();
+
+        expect(loadTargetWindowMessagesMock).toHaveBeenCalledTimes(2);
+        expect(members.onRouteJumpSettled).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('preempts the active explicit jump and discards its pending durable promotion on user takeover', async () => {
+        const members = createStableMembers();
+        const load = createDeferred<null>();
+        loadTargetWindowMessagesMock.mockReturnValue(load.promise);
+        const hook = await renderHook(
+            (deps: JumpHostDeps) => useTranscriptJumpHost(deps),
+            {
+                initialProps: {
+                    ...buildDeps(members),
+                    jumpToSeq: 50,
+                } as JumpHostDeps,
+            },
+        );
+        expect(loadTargetWindowMessagesMock).toHaveBeenCalledTimes(1);
+        members.pendingJumpSeqViewportPromotionRef.current = {
+            emitViewportChange: vi.fn(),
+            seq: 50,
+            sessionId: 's1',
+        };
+        members.promotedJumpSeqViewportProtectionRef.current = {
+            promotedAtMs: Date.now(),
+            seq: 50,
+            sessionId: 's1',
+        };
+
+        hook.getCurrent().preemptExplicitJumpForUserTakeover();
+        expect(members.pendingJumpSeqViewportPromotionRef.current).toBeNull();
+        expect(members.promotedJumpSeqViewportProtectionRef.current).toBeNull();
+        expect(members.onRouteJumpSettled).toHaveBeenCalledTimes(1);
+
+        load.resolve(null);
+        await flushHookEffects();
+        expect(members.executeViewportCommandWithAnimation).not.toHaveBeenCalled();
+        expect(members.onRouteJumpSettled).toHaveBeenCalledTimes(1);
+
+        await hook.rerender({
+            ...buildDeps(members),
+            committedMessagesCount: 2,
+            jumpToSeq: 50,
+            listContentHeight: 1_100,
+        } as JumpHostDeps);
+        await flushHookEffects();
+        expect(loadTargetWindowMessagesMock).toHaveBeenCalledTimes(1);
         await hook.unmount();
     });
 
@@ -775,6 +849,7 @@ describe('useTranscriptJumpHost identity stability', () => {
             ...buildDeps(members),
             sessionId: 's2',
         } as JumpHostDeps;
+        members.currentSessionIdRef.current = 's2';
         await hook.rerender(sessionBDeps);
         const sessionBJump = hook.getCurrent().jumpToTranscriptTarget(
             { kind: 'seq', seq: 200 },

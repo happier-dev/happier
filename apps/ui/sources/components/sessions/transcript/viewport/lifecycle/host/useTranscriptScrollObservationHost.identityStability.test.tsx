@@ -57,9 +57,9 @@ function createStableMembers() {
         commitScrollPinState: vi.fn(),
         composerInsetHeightRef: createRef(0),
         currentSessionIdRef: createRef('s1'),
-        dispatchViewportLifecycleEvent: vi.fn(() => ({
+        dispatchViewportLifecycleEvent: vi.fn<ScrollObservationHostDeps['dispatchViewportLifecycleEvent']>(() => ({
             effects: [],
-            state: { bottomFollowState: { dragSession: null, mode: 'following' } },
+            state: lifecycleHost.getState(),
         })),
         emitViewportChange: vi.fn(),
         entryRestoreOwner: {
@@ -122,6 +122,7 @@ function createStableMembers() {
         pinEnabledRef: createRef(true),
         pinNativeInitialFollowBottomViewportIfReady: vi.fn(),
         pinThresholdPxRef: createRef(72),
+        preemptExplicitJumpForUserTakeover: vi.fn(),
         preemptEntryRestoreTransaction: vi.fn(),
         prepareNativeContentMaterializationAutoPin: vi.fn(),
         prependHost: {
@@ -1503,6 +1504,30 @@ describe('useTranscriptScrollObservationHost identity stability', () => {
 
         expect(event.stopped).toBe(true);
 
+        await hook.unmount();
+    });
+
+    it('routes web user takeover through the lifecycle owner to preempt the active explicit jump', async () => {
+        const members = createStableMembers();
+        members.dispatchViewportLifecycleEvent.mockImplementation((event) => ({
+            effects: event.type === 'web-user-scroll-takeover'
+                ? [
+                    { sessionId: 's1', type: 'web-user-scroll-preempt-entry-restore' },
+                    { sessionId: 's1', type: 'web-user-scroll-preempt-explicit-jump' },
+                ]
+                : [],
+            state: members.lifecycleHost.getState(),
+        }));
+        const hook = await renderHook(
+            (deps: ScrollObservationHostDeps) => useTranscriptScrollObservationHost(deps),
+            { initialProps: buildDeps(members) },
+        );
+
+        const onWheel = hook.getCurrent().platformInteractionProps.onWheel as ((event: unknown) => void);
+        onWheel({ deltaY: -24, stopPropagation: vi.fn() });
+
+        expect(members.preemptEntryRestoreTransaction).toHaveBeenCalledTimes(1);
+        expect(members.preemptExplicitJumpForUserTakeover).toHaveBeenCalledTimes(1);
         await hook.unmount();
     });
 

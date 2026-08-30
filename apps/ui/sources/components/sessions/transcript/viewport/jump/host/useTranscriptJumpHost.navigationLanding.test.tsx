@@ -165,7 +165,7 @@ function buildDeps(overrides: Readonly<{
         listRef: overrides.listRef,
         messagesById: MESSAGES,
         onJumpLanded: undefined,
-        onSuccessfulRouteJumpSettled: vi.fn(),
+        onRouteJumpSettled: vi.fn(),
         onViewportChangeRef: createRef(undefined),
         pendingJumpSeqViewportPromotionRef: createRef(null),
         pinThresholdPx: 72,

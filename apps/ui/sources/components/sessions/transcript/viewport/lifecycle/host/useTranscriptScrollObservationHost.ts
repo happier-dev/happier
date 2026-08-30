@@ -232,6 +232,7 @@ export type TranscriptScrollObservationHostDeps = Readonly<{
     pinThresholdPx: number;
     pinThresholdPxRef: MutableRef<number>;
     platformOS: typeof Platform.OS;
+    preemptExplicitJumpForUserTakeover(): void;
     preemptEntryRestoreTransaction: () => void;
     prepareNativeContentMaterializationAutoPin: TranscriptContentSizeObservationApplierEffects<WebTranscriptScrollMetrics>['prepareNativeContentMaterializationAutoPin'];
     prependHost: TranscriptPrependHost;
@@ -465,9 +466,14 @@ export function useTranscriptScrollObservationHost(
     ) => {
         for (const effect of effects) {
             if (effect.sessionId !== deps.sessionId) continue;
-            deps.preemptEntryRestoreTransaction();
+            if (effect.type === 'web-user-scroll-preempt-entry-restore') {
+                deps.preemptEntryRestoreTransaction();
+            } else {
+                deps.preemptExplicitJumpForUserTakeover();
+            }
         }
     }, [
+        deps.preemptExplicitJumpForUserTakeover,
         deps.preemptEntryRestoreTransaction,
         deps.sessionId,
     ]);

@@ -82,6 +82,7 @@ describe('transcript lifecycle host scroll observation planning', () => {
         ]);
         expect(plan.lifecycleEffects.map((effect) => effect.type)).toEqual([
             'web-user-scroll-preempt-entry-restore',
+            'web-user-scroll-preempt-explicit-jump',
             'web-user-scroll-record-intent-timestamp',
             'web-release-live-tail',
         ]);

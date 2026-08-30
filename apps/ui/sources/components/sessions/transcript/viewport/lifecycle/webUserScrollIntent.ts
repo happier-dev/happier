@@ -2,7 +2,7 @@ import type { TranscriptViewportLifecycleEffect } from './lifecycle';
 
 export type WebUserScrollTakeoverApplyEffect = Extract<
     TranscriptViewportLifecycleEffect,
-    { type: 'web-user-scroll-preempt-entry-restore' }
+    { type: 'web-user-scroll-preempt-entry-restore' | 'web-user-scroll-preempt-explicit-jump' }
 >;
 
 export type WebUserScrollIntentTimestampApplyEffect = Extract<
@@ -18,7 +18,10 @@ export function resolveWebUserScrollTakeoverApplyEffects(params: Readonly<{
         effect,
     ): effect is WebUserScrollTakeoverApplyEffect => (
         effect.sessionId === params.sessionId &&
-        effect.type === 'web-user-scroll-preempt-entry-restore'
+        (
+            effect.type === 'web-user-scroll-preempt-entry-restore' ||
+            effect.type === 'web-user-scroll-preempt-explicit-jump'
+        )
     ));
 }
 
