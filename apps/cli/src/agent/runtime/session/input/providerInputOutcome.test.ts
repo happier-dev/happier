@@ -3,6 +3,112 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSessionProviderInputOutcomeNormalizer } from './providerInputOutcome';
 
 describe('createSessionProviderInputOutcomeNormalizer', () => {
+  it('fans exact acceptance out to Pending and one correlated host effect', () => {
+    const observeSettlement = vi.fn();
+    const observeAcceptedEffect = vi.fn();
+    const observe = createSessionProviderInputOutcomeNormalizer({
+      getTarget: () => ({
+        sessionId: 'session-1',
+        hasPendingProviderInput: (localId) => localId === 'accepted-local',
+        observeProviderInputSettlement: observeSettlement,
+      }),
+      observeAcceptedEffect,
+    });
+
+    observe({
+      type: 'input-accepted',
+      localId: 'accepted-local',
+      userMessageSeq: 41,
+      delivery: { kind: 'newTurn', turnId: 'turn-1' },
+    });
+    observe({
+      type: 'input-accepted',
+      localId: 'accepted-local',
+      userMessageSeq: 41,
+      delivery: { kind: 'newTurn', turnId: 'turn-1' },
+    });
+
+    expect(observeSettlement).toHaveBeenCalledOnce();
+    expect(observeAcceptedEffect).toHaveBeenCalledExactlyOnceWith('accepted-local');
+  });
+
+  it('does not let a failing Pending observer suppress the same authoritative acceptance effect', () => {
+    const observeAcceptedEffect = vi.fn();
+    const observe = createSessionProviderInputOutcomeNormalizer({
+      getTarget: () => ({
+        sessionId: 'session-1',
+        hasPendingProviderInput: () => true,
+        observeProviderInputSettlement: () => {
+          throw new Error('pending observer failed');
+        },
+      }),
+      observeAcceptedEffect,
+    });
+
+    expect(() => observe({
+      type: 'provider_accepted',
+      localId: 'accepted-local',
+      userMessageSeq: null,
+    })).toThrow('pending observer failed');
+    expect(observeAcceptedEffect).toHaveBeenCalledExactlyOnceWith('accepted-local');
+  });
+
+  it('discards a correlated host effect only on proven pre-effect rejection', () => {
+    const discardEffect = vi.fn();
+    const observe = createSessionProviderInputOutcomeNormalizer({
+      getTarget: () => ({
+        sessionId: 'session-1',
+        hasPendingProviderInput: () => true,
+        observeProviderInputSettlement: vi.fn(),
+      }),
+      discardAcceptedEffect: discardEffect,
+    });
+
+    observe({
+      type: 'possible_write',
+      localId: 'uncertain-local',
+      userMessageSeq: null,
+      reason: 'provider response was ambiguous',
+    });
+    observe({
+      type: 'rejected_before_write',
+      localId: 'rejected-local',
+      userMessageSeq: null,
+      reason: 'provider_rejected_before_acceptance',
+    });
+
+    expect(discardEffect).toHaveBeenCalledExactlyOnceWith('rejected-local');
+  });
+
+  it('retains a correlated host effect across a reversible block for later acceptance', () => {
+    const discardEffect = vi.fn();
+    const observeAcceptedEffect = vi.fn();
+    const observe = createSessionProviderInputOutcomeNormalizer({
+      getTarget: () => ({
+        sessionId: 'session-1',
+        hasPendingProviderInput: () => true,
+        observeProviderInputSettlement: vi.fn(),
+      }),
+      discardAcceptedEffect: discardEffect,
+      observeAcceptedEffect,
+    });
+
+    observe({
+      type: 'rejected_before_write',
+      localId: 'blocked-local',
+      userMessageSeq: null,
+      reason: 'runtime_config_blocked',
+    });
+    observe({
+      type: 'provider_accepted',
+      localId: 'blocked-local',
+      userMessageSeq: null,
+    });
+
+    expect(discardEffect).not.toHaveBeenCalled();
+    expect(observeAcceptedEffect).toHaveBeenCalledExactlyOnceWith('blocked-local');
+  });
+
   it('normalizes the Plugin SDK legacy identity fields without changing opaque localId bytes', () => {
     const observeSettlement = vi.fn();
     const observe = createSessionProviderInputOutcomeNormalizer({

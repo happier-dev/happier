@@ -7,11 +7,7 @@ import type { Metadata } from '@/api/types';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import {
-  runPermissionModePromptLoop,
-  type RuntimePromptWithAcceptanceMeta,
-} from './runPermissionModePromptLoop';
-import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import {
   combinePermissionModeQueuedPrompts,
   type PermissionModeQueuedPrompt,
@@ -80,9 +76,6 @@ function createRuntime() {
     updateSessionRuntimeConfig: vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async () => {}),
     resetOrDisposeRuntime: vi.fn(async () => {}),
     compactContext: undefined as undefined | ((command: string) => Promise<void>),
-    // Same one declaration the host and the loop use, so this fake cannot drift into a
-    // third copy that hides the acceptance callback.
-    sendPromptWithMeta: undefined as undefined | ((params: RuntimePromptWithAcceptanceMeta) => Promise<void>),
     shouldResumeAfterPermissionModeChange: vi.fn(() => true),
   };
   return operations;
@@ -337,19 +330,18 @@ describe('runPermissionModePromptLoop', () => {
     const runtime = createRuntime();
     const sentTexts: string[] = [];
     const seedTextAtEachSend: unknown[] = [];
-    runtime.sendPromptWithMeta = vi.fn(async (
-      params: { text: string } & { onProviderPromptAccepted?: () => void },
-    ) => {
-      sentTexts.push(params.text);
+    const acceptanceByLocalId = new Map<string, () => void>();
+    runtime.sendTurnPrompt = vi.fn(async (text: string) => {
+      sentTexts.push(text);
       seedTextAtEachSend.push(session.__getMetadata()?.replaySeedV1?.seedText);
       if (sentTexts.length > 1) return;
       if (confirmAcceptanceBeforeAbort) {
-        params.onProviderPromptAccepted?.();
+        acceptanceByLocalId.get('local-1')?.();
       }
       // The send only settles when the turn does, so the abort arrives here rather than
       // through waitForTurnCompletion.
       throw new Error('Cancelled by user');
-    }) as typeof runtime.sendPromptWithMeta;
+    });
 
     queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
 
@@ -381,6 +373,10 @@ describe('runPermissionModePromptLoop', () => {
       currentPermissionModeUpdatedAt: 0,
       setCurrentPermissionMode: () => {},
       setCurrentPermissionModeUpdatedAt: () => {},
+      registerProviderAcceptedEffect: (localId, onAccepted) => {
+        if (onAccepted) acceptanceByLocalId.set(localId, onAccepted);
+        else acceptanceByLocalId.delete(localId);
+      },
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
@@ -389,15 +385,75 @@ describe('runPermissionModePromptLoop', () => {
     expect(seedTextAtEachSend[1]).toBe(expectedSeedTextAtSecondSend);
   });
 
-  // OWNERSHIP PIN. Provider ACCEPTANCE of the dispatched prompt is the only seam that may
-  // retire the replay seed, and the host surfaces it through exactly one contract: the
-  // prompt-dispatch envelope. `HostSessionRuntimeHookRuntime` is the type a runtime is
-  // actually implemented against, so this fake is typed at THAT boundary rather than the
-  // loop's. A second, divergent declaration of the same method — one that drops
-  // `onProviderPromptAccepted` — compiles fine and then silently never retires, re-sending
-  // the entire carry-over context on the next prompt. If this stops compiling, the two
-  // declarations have drifted apart again.
-  it('retires the replay seed from a runtime implemented against the host runtime hook contract', async () => {
+  it('keeps the replay seed live when the runtime returns before exact provider acceptance', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata({
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const sentTexts: string[] = [];
+    const acceptanceByLocalId = new Map<string, () => void>();
+    runtime.sendTurnPrompt = vi.fn(async (text: string) => {
+      sentTexts.push(text);
+      // Native terminal custody can return before the provider decides whether it
+      // accepted the injected input. Absence of the exact callback is intentionally
+      // ambiguous and must keep the seed available for a later accepted prompt.
+    });
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    let readyCount = 0;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() } as any,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        readyCount += 1;
+        if (readyCount === 1) {
+          queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
+          return;
+        }
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      registerProviderAcceptedEffect: (localId, onAccepted) => {
+        if (onAccepted) acceptanceByLocalId.set(localId, onAccepted);
+        else acceptanceByLocalId.delete(localId);
+      },
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(sentTexts).toEqual(['SEED\n\nhello', 'SEED\n\nsecond']);
+    expect(session.__getMetadata()?.replaySeedV1?.seedText).toBe('SEED');
+  });
+
+  // OWNERSHIP PIN. Provider ACCEPTANCE is normalized once by the host and correlated to the
+  // replay effect by Pending localId; the runtime keeps only its ordinary send contract.
+  it('drains host acceptance arriving during turn completion before reading the next prompt', async () => {
     const session = createPromptLoopSession();
     session.__setMetadata({
       ...createPromptLoopMetadata({
@@ -416,17 +472,14 @@ describe('runPermissionModePromptLoop', () => {
     const runtime = createRuntime();
     const sentTexts: string[] = [];
     const seedTextAtEachSend: unknown[] = [];
-    const sendPromptWithMeta: NonNullable<HostSessionRuntimeHookRuntime['sendPromptWithMeta']> =
-      async (params) => {
-        sentTexts.push(params.text);
-        seedTextAtEachSend.push(session.__getMetadata()?.replaySeedV1?.seedText);
-        if (sentTexts.length > 1) return;
-        // Custody is confirmed here; the turn then dies. Retirement must already be in
-        // flight so the `finally` drain settles it before the next prompt is composed.
-        params.onProviderPromptAccepted?.();
-        throw new Error('Cancelled by user');
-      };
-    runtime.sendPromptWithMeta = vi.fn(sendPromptWithMeta) as typeof runtime.sendPromptWithMeta;
+    const acceptanceByLocalId = new Map<string, () => void>();
+    runtime.sendTurnPrompt = vi.fn(async (text: string) => {
+      sentTexts.push(text);
+      seedTextAtEachSend.push(session.__getMetadata()?.replaySeedV1?.seedText);
+    });
+    runtime.waitForTurnCompletion = vi.fn(async () => {
+      if (sentTexts.length === 1) acceptanceByLocalId.get('local-1')?.();
+    });
 
     queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
 
@@ -458,6 +511,10 @@ describe('runPermissionModePromptLoop', () => {
       currentPermissionModeUpdatedAt: 0,
       setCurrentPermissionMode: () => {},
       setCurrentPermissionModeUpdatedAt: () => {},
+      registerProviderAcceptedEffect: (localId, onAccepted) => {
+        if (onAccepted) acceptanceByLocalId.set(localId, onAccepted);
+        else acceptanceByLocalId.delete(localId);
+      },
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
@@ -1425,11 +1482,18 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('APPEND\n\nhello', localIdentityMeta('local-eager-1'));
   });
 
-  it('uses sendPromptWithMeta when provided by the runtime', async () => {
+  it('registers replay retirement by localId while using the ordinary runtime send owner', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
+    const acceptanceByLocalId = new Map<string, () => void>();
+    runtime.sendTurnPrompt = vi.fn(async () => {
+      acceptanceByLocalId.get('local-1')?.();
+    });
+    const registerProviderAcceptedEffect = vi.fn((localId: string, onAccepted: (() => void) | null) => {
+      if (onAccepted) acceptanceByLocalId.set(localId, onAccepted);
+      else acceptanceByLocalId.delete(localId);
+    });
     const messageBuffer = new MessageBuffer();
     const permissionHandler = {
       setPermissionMode: vi.fn(),
@@ -1467,22 +1531,18 @@ describe('runPermissionModePromptLoop', () => {
       onBeforeReset,
       onAfterReset,
       onAfterLoopBoundary,
+      registerProviderAcceptedEffect,
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
-      text: 'hello',
-      ...localIdentityMeta('local-1'),
-      onProviderPromptAccepted: expect.any(Function),
-    });
-    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(registerProviderAcceptedEffect).toHaveBeenCalledWith('local-1', expect.any(Function));
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-1'));
   });
 
   it('passes queued structured input through the runtime prompt metadata', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
     const structuredInput = {
       v: 1 as const,
       imageInputs: [{
@@ -1536,12 +1596,10 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
-      text: 'inspect this image',
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('inspect this image', {
       ...localIdentityMeta('local-image-1'),
       structuredInput,
       causalPermissionAuthority,
-      onProviderPromptAccepted: expect.any(Function),
     });
   });
 
@@ -1570,7 +1628,7 @@ describe('runPermissionModePromptLoop', () => {
     runtime.updateSessionRuntimeConfig = vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async (update) => {
       configUpdates.push(update);
     });
-    runtime.sendPromptWithMeta = vi.fn(async () => {
+    runtime.sendTurnPrompt = vi.fn(async () => {
       events.push('provider-dispatch');
     });
 
@@ -1659,11 +1717,10 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.updateSessionRuntimeConfig).not.toHaveBeenCalledWith({
       modelId: 'openrouter/model',
     });
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
-      text: 'hello with selected model',
-      ...localIdentityMeta('local-model-1'),
-      onProviderPromptAccepted: expect.any(Function),
-    });
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(
+      'hello with selected model',
+      localIdentityMeta('local-model-1'),
+    );
   });
 
   it.each([
@@ -1691,7 +1748,6 @@ describe('runPermissionModePromptLoop', () => {
     }));
     const queue = createModeQueue();
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
     const requestedSelection = {
       agentTargetKey: 'backend:codex',
       providerConnectionId: ProviderConnectionIdSchema.parse('pc_other'),
@@ -1755,7 +1811,6 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendPromptWithMeta).not.toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
     expect(observeProviderInputSettlement).toHaveBeenNthCalledWith(1, {
@@ -1795,7 +1850,6 @@ describe('runPermissionModePromptLoop', () => {
     }));
     const queue = createModeQueue();
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
     const resolveComposerAttachmentForDispatch = vi.fn(async () => ({
       attachments: [{
         instanceId: 'review-comment-1',
@@ -1854,7 +1908,6 @@ describe('runPermissionModePromptLoop', () => {
     } as Parameters<typeof runPermissionModePromptLoop>[0]);
 
     expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
-    expect(runtime.sendPromptWithMeta).not.toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(resolveComposerAttachmentForDispatch).toHaveBeenCalledWith({
       sessionId: session.sessionId,
@@ -1895,7 +1948,6 @@ describe('runPermissionModePromptLoop', () => {
     }));
     const queue = createModeQueue();
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
     const media = {
       id: 'media-review-video',
       role: 'input' as const,
@@ -1952,7 +2004,6 @@ describe('runPermissionModePromptLoop', () => {
     } as Parameters<typeof runPermissionModePromptLoop>[0]);
 
     expect(runtime.beginTurnLifecycle).not.toHaveBeenCalled();
-    expect(runtime.sendPromptWithMeta).not.toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(observeProviderInputSettlement).toHaveBeenCalledWith({
       kind: 'rejected_before_effect',
@@ -1981,7 +2032,7 @@ describe('runPermissionModePromptLoop', () => {
     runtime.updateSessionRuntimeConfig = vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async (update) => {
       configUpdates.push(update);
     });
-    runtime.sendPromptWithMeta = vi.fn(async () => {
+    runtime.sendTurnPrompt = vi.fn(async () => {
       expect(configUpdates).toContainEqual({ permissionMode: 'read-only' });
     });
 
@@ -2033,11 +2084,10 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.updateSessionRuntimeConfig).toHaveBeenCalledWith({ permissionMode: 'read-only' });
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
-      text: 'hello read-only',
-      ...localIdentityMeta('local-permission-1'),
-      onProviderPromptAccepted: expect.any(Function),
-    });
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(
+      'hello read-only',
+      localIdentityMeta('local-permission-1'),
+    );
   });
 
   it('formats object-shaped prompt errors without leaking [object Object] into the transcript', async () => {
@@ -2153,7 +2203,7 @@ describe('runPermissionModePromptLoop', () => {
     const enqueueAgentMessageCommittedSpy = vi.spyOn(session, 'enqueueAgentMessageCommitted');
     const queue = createModeQueue();
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {
+    runtime.sendTurnPrompt = vi.fn(async () => {
       throw new Error('OpenCode session aborted');
     });
     const messageBuffer = new MessageBuffer();
@@ -2282,7 +2332,7 @@ describe('runPermissionModePromptLoop', () => {
     const promptSnapshots: Array<{ modeId: string | null; modelId: string | null }> = [];
     let selectedModeId: string | null = null;
     let selectedModelId: string | null = null;
-    runtime.sendPromptWithMeta = vi.fn(async () => {
+    runtime.sendTurnPrompt = vi.fn(async () => {
       promptSnapshots.push({ modeId: selectedModeId, modelId: selectedModelId });
     });
 
@@ -2507,7 +2557,6 @@ describe('runPermissionModePromptLoop', () => {
 
     const queue = createModeQueue();
     const runtime = createRuntime() as any;
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
 
     const messageBuffer = new MessageBuffer();
     const permissionHandler = {
@@ -2591,7 +2640,7 @@ describe('runPermissionModePromptLoop', () => {
       appliedPromise,
     ]);
 
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
     expect(appliedModeId).toBe('plan');
     expect(appliedModelId).toBe('openai/gpt-5.2');
     expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalledWith({
@@ -2609,7 +2658,6 @@ describe('runPermissionModePromptLoop', () => {
     const queue = createModeQueue();
     queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
     const runtime = createRuntime();
-    runtime.sendPromptWithMeta = vi.fn(async () => {});
 
     const abortController = new AbortController();
     session.waitForMetadataUpdate = vi.fn(async (signal?: AbortSignal) => await new Promise<boolean>((resolve) => {
@@ -2697,7 +2745,7 @@ describe('runPermissionModePromptLoop', () => {
     const runtime = createRuntime() as any;
     let resolvePromptSend: (() => void) | undefined;
     const promptStarted = new Promise<void>((resolve) => {
-      runtime.sendPromptWithMeta = vi.fn(
+      runtime.sendTurnPrompt = vi.fn(
         () =>
           new Promise<void>((sendResolve) => {
             resolvePromptSend = sendResolve;
@@ -2791,7 +2839,7 @@ describe('runPermissionModePromptLoop', () => {
     await appliedPromise;
     await loopPromise;
 
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
     expect(appliedModeId).toBe('plan');
     expect(appliedModelId).toBe('openai/gpt-5.2');
     expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalled();
@@ -2933,7 +2981,6 @@ describe('runPermissionModePromptLoop', () => {
 
     expect(runtime.compactContext).toBeUndefined();
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
-    expect(runtime.sendPromptWithMeta).toBeUndefined();
     expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
       'qwen',
       expect.objectContaining({

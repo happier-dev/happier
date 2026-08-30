@@ -76,7 +76,6 @@ import {
   type PromptLoopBoundaryReason,
   type PromptLoopCheckpointLifecycle,
   type PromptLoopResetReason,
-  type RuntimePromptWithAcceptanceMeta,
 } from '@/agent/runtime/runPermissionModePromptLoop';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
@@ -401,10 +400,6 @@ export type HostSessionRuntimeHookRuntime = Readonly<{
   setOnPromptDeliveryBlockerCleared?: (handler: ((info: Readonly<{
     deliveryBlockedReason?: string;
   }>) => void) | null) => void;
-  // Named, not re-declared: a structural copy here silently dropped
-  // `onProviderPromptAccepted`, so a runtime implemented against this contract could never
-  // retire the replay seed at acceptance. `RuntimePromptWithAcceptanceMeta` is the one owner.
-  sendPromptWithMeta?: (params: RuntimePromptWithAcceptanceMeta) => Promise<void>;
   shouldResumeAfterPermissionModeChange?: () => boolean;
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
@@ -1625,6 +1620,24 @@ export async function runHostSessionRuntime(
   });
   permissionHandler.setPermissionMode(initialPermissionMode);
 
+  const acceptedEffectByPendingLocalId = new Map<string, () => void>();
+  const registerProviderAcceptedEffect = (
+    localId: string,
+    onAccepted: (() => void) | null,
+  ): void => {
+    if (onAccepted) acceptedEffectByPendingLocalId.set(localId, onAccepted);
+    else acceptedEffectByPendingLocalId.delete(localId);
+  };
+  const observeAcceptedEffect = (localId: string): void => {
+    const effect = acceptedEffectByPendingLocalId.get(localId);
+    if (!effect) return;
+    acceptedEffectByPendingLocalId.delete(localId);
+    try {
+      effect();
+    } catch {
+      // Provider acceptance is authoritative. A replay-metadata effect cannot invalidate it.
+    }
+  };
   const observeProviderInputOutcome = createSessionProviderInputOutcomeNormalizer({
     getTarget: () => session,
     takeAppliedModel: (localId) => {
@@ -1634,6 +1647,10 @@ export async function runHostSessionRuntime(
     },
     discardAppliedModel: (localId) => {
       appliedModelByPendingLocalId.delete(localId);
+    },
+    observeAcceptedEffect,
+    discardAcceptedEffect: (localId) => {
+      acceptedEffectByPendingLocalId.delete(localId);
     },
   });
   let inputConsumer: SessionProviderInputConsumer<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt> | null = null;
@@ -1655,6 +1672,7 @@ export async function runHostSessionRuntime(
       }
       return await consumer.runProviderInputDispatch(dispatchOpts);
     },
+    registerProviderAcceptedEffect,
     steerText: async (text, options) => {
       const runtime = runtimeForInFlightSteer;
       if (!runtime?.steerPrompt) {
@@ -1664,7 +1682,18 @@ export async function runHostSessionRuntime(
         await runtime.steerPrompt(text);
         return;
       }
-      await runtime.steerPrompt(text, options);
+      const promptMeta = options;
+      const localId = typeof promptMeta.localId === 'string' && promptMeta.localId.length > 0
+        ? promptMeta.localId
+        : null;
+      await runtime.steerPrompt(text, promptMeta);
+      if (
+        localId
+        && typeof runtime.setOnPromptDeliveryOutcome !== 'function'
+        && typeof runtime.setOnPromptAcceptedByProvider !== 'function'
+      ) {
+        observeAcceptedEffect(localId);
+      }
     },
     rejectPromptBeforeProvider: (info) => {
       observeProviderInputOutcome({ type: 'rejected_before_write', ...info });
@@ -2668,6 +2697,12 @@ export async function runHostSessionRuntime(
           ...loopParams,
           inputConsumer,
           runtime: loopParams.runtime,
+          ...(
+            typeof hookRuntime.setOnPromptDeliveryOutcome === 'function'
+            || typeof hookRuntime.setOnPromptAcceptedByProvider === 'function'
+              ? { registerProviderAcceptedEffect }
+              : {}
+          ),
         }),
       },
       initialResumeId,
@@ -2683,6 +2718,7 @@ export async function runHostSessionRuntime(
     hookRuntime.setOnPromptAcceptedByProvider?.(null);
     hookRuntime.setOnPromptTerminallyRejectedBeforeProvider?.(null);
     hookRuntime.setOnPromptDeliveryBlockerCleared?.(null);
+    acceptedEffectByPendingLocalId.clear();
     currentLifecycleSession.setSessionRuntimeControls(null);
     config.onAfterStart = originalOnAfterStart;
     sessionStateMetadataObserver.dispose();

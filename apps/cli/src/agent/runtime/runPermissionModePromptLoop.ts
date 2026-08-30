@@ -97,37 +97,10 @@ export type ComposerAttachmentDispatchResolver = (input: Readonly<{
   signal: AbortSignal;
 }>) => Promise<ComposerAttachmentResolveResultV1>;
 
-/**
- * The single declaration of the host -> runtime prompt-dispatch envelope, and the only
- * contract that carries provider acceptance back to the host.
- *
- * Both the prompt loop (the only caller) and `HostSessionRuntimeHookRuntime` (the type a
- * runtime is implemented against) name THIS type. They previously carried two divergent
- * copies of it, and the copy an implementer would be written against had no
- * `onProviderPromptAccepted`: such a runtime compiles, never signals acceptance, and
- * therefore never retires the replay seed — re-sending the whole carry-over context on the
- * next prompt. One declaration is the fix; do not re-inline a structural copy.
- */
-export type RuntimePromptWithAcceptanceMeta = {
-  text: string;
-  /**
-   * Invoked the moment the provider has taken custody of this prompt, for a runtime whose
-   * send does not return at that boundary. The host retires the replay seed from this
-   * signal, so it must fire only on unambiguous delivery — never for a send that may not
-   * have reached the provider.
-   *
-   * A runtime whose send DOES return at acceptance needs no callback: the loop treats the
-   * resolved send as the same unambiguous signal, and a send that rejects leaves the seed
-   * live on purpose.
-   */
-  onProviderPromptAccepted?: () => void;
-} & RuntimeTurnPromptMeta;
-
 export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
   supportsInFlightSteer?: () => boolean;
   canSteerPrompt?: () => boolean;
   compactContext?: (command: string) => Promise<void>;
-  sendPromptWithMeta?: (params: RuntimePromptWithAcceptanceMeta) => Promise<void>;
   sendTurnPrompt: (
     prompt: string,
     meta?: RuntimeTurnPromptMeta,
@@ -679,6 +652,15 @@ export async function runPermissionModePromptLoop(opts: {
     localIds: readonly string[];
     selection: ProviderBoundModelRef;
   }>) => void;
+  /**
+   * Registers the replay-seed effect against the same exact localId settled by the host's
+   * canonical provider-input outcome normalizer. Absent means this runtime's send resolves at
+   * provider acceptance and the loop settles inline.
+   */
+  registerProviderAcceptedEffect?: (
+    localId: string,
+    onAccepted: (() => void) | null,
+  ) => void;
   releaseRejectedBeforeProviderPromptIdentity?: (
     session: ApiSessionClient,
     message: PermissionModeQueuedPrompt,
@@ -1400,25 +1382,30 @@ export async function runPermissionModePromptLoop(opts: {
         opts.runtime.beginTurnLifecycle();
         beganTurn = true;
         startActiveTurnPendingPump();
-        const providerSend = typeof opts.runtime.sendPromptWithMeta === 'function'
-          ? opts.runtime.sendPromptWithMeta({
-            text: dispatchPrompt,
-            ...promptDeliveryMeta,
-            onProviderPromptAccepted: confirmProviderAccepted,
-          })
-          : Object.keys(promptDeliveryMeta).length === 0
-            ? opts.runtime.sendTurnPrompt(dispatchPrompt)
-            : opts.runtime.sendTurnPrompt(dispatchPrompt, promptDeliveryMeta);
+        const waitsForExactProviderAcceptance = Boolean(
+          localId && opts.registerProviderAcceptedEffect,
+        );
+        if (localId && opts.registerProviderAcceptedEffect) {
+          opts.registerProviderAcceptedEffect(
+            localId,
+            pendingReplaySeedSettlement ? confirmProviderAccepted : null,
+          );
+        }
+        const providerSend = Object.keys(promptDeliveryMeta).length === 0
+          ? opts.runtime.sendTurnPrompt(dispatchPrompt)
+          : opts.runtime.sendTurnPrompt(dispatchPrompt, promptDeliveryMeta);
         // Runtime adapters update exact steerability synchronously when provider dispatch
         // acquires a live turn. Re-check only at that lifecycle edge; no cadence or inferred
         // turn-in-flight state is allowed to start the Pending pump.
         startActiveTurnPendingPump();
         await providerSend;
-        // A send that returns is itself unambiguous acceptance; a runtime whose send spans
-        // the turn already signalled earlier through `onProviderPromptAccepted`, and this
-        // call is then a no-op. Anything before this point can still throw without the
-        // provider having taken custody, which must leave the seed live.
-        confirmProviderAccepted();
+        // A runtime with the exact outcome seam can return at transport custody before the
+        // provider decides whether it accepted the injected prompt. For that runtime only the
+        // host's localId-correlated acceptance may retire the seed; legacy sends still resolve
+        // at acceptance.
+        if (!waitsForExactProviderAcceptance) {
+          confirmProviderAccepted();
+        }
         // Ordinary turns settle here, so the next prompt reads a retired seed with the
         // ordering unchanged. Native strict-resume acceptance is intentionally later:
         // transport custody proves only the replay seed, while the provider's completion
@@ -1478,11 +1465,6 @@ export async function runPermissionModePromptLoop(opts: {
         handledPreTurnFailure = !beganTurn;
       }
     } finally {
-      // The provider confirmed delivery but the turn then failed, was cancelled, or the
-      // backend was disposed before the inline drain above. Retirement is already in
-      // flight; draining it here keeps the next prompt from prefixing the seed a second
-      // time. A prompt the provider never accepted has nothing pending and stays live.
-      await drainReplaySeedSettlement();
       try {
         if (beganTurn) {
           if (suppressFlushTurnFailure) {
@@ -1526,6 +1508,11 @@ export async function runPermissionModePromptLoop(opts: {
         stopActiveTurnPendingPump();
         turnInFlight = false;
       }
+      // Exact provider acceptance can arrive while waitForTurnCompletion is pending. Drain only
+      // after that boundary so the next prompt cannot read replaySeedV1 before the accepted
+      // prompt's metadata settlement has completed. Rejected or ambiguous input never invokes
+      // the registered effect and therefore leaves the seed live.
+      await drainReplaySeedSettlement();
       if (beganTurn) {
         if (currentCheckpointMessageId && !activeCheckpointTurnId) {
           activeCheckpointTurnId = currentCheckpointMessageId;

@@ -4934,6 +4934,43 @@ describe('runHostSessionRuntime', () => {
     expect(runtime.setOnPromptDeliveryBlockerCleared).toHaveBeenLastCalledWith(null);
   });
 
+  it('routes exact provider acceptance to Pending and the correlated replay effect', async () => {
+    const harness = createHarness();
+    let deliveryHandler: ((outcome: any) => void) | null = null;
+    harness.session.hasPendingProviderInput = vi.fn((localId: string) => localId === 'local-exact');
+    harness.session.observeProviderInputSettlement = vi.fn();
+    const runtime = {
+      ...harness.runtime,
+      setOnPromptDeliveryOutcome: vi.fn((handler: ((outcome: any) => void) | null) => {
+        deliveryHandler = handler;
+      }),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
+
+    const replayEffect = vi.fn();
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      expect(params.registerProviderAcceptedEffect).toBeTypeOf('function');
+      params.registerProviderAcceptedEffect('local-exact', replayEffect);
+      deliveryHandler?.({
+        type: 'input-accepted',
+        localId: 'local-exact',
+        userMessageSeq: 21,
+        delivery: { kind: 'newTurn', turnId: 'turn-exact' },
+      });
+      deliveryHandler?.({
+        type: 'input-accepted',
+        localId: 'local-exact',
+        userMessageSeq: 21,
+        delivery: { kind: 'newTurn', turnId: 'turn-exact' },
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledOnce();
+    expect(replayEffect).toHaveBeenCalledOnce();
+  });
+
   it('registers abort control RPCs on the active swapped session manager without authoring a cancellation transcript', async () => {
     const harness = createHarness();
     const initialSession = harness.session;

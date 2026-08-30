@@ -93,6 +93,11 @@ export type InFlightSteerController = Readonly<{
     | Readonly<{ status: 'dispatched'; value: Value }>
     | Readonly<{ status: 'cancelled' }>
   >;
+  /** Register a localId-correlated host effect consumed by canonical provider acceptance. */
+  registerProviderAcceptedEffect?: (
+    localId: string,
+    onAccepted: (() => void) | null,
+  ) => void;
   /**
    * Send additional user text to the in-flight turn.
    *
@@ -158,6 +163,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   ) => void;
 } {
   let steerSequence: Promise<void> = Promise.resolve();
+  let replaySeedSettlementSequence: Promise<void> = Promise.resolve();
   let didReplaySeedBootstrapForSteer = false;
   let currentSession = opts.session;
   let currentBindingGeneration = 0;
@@ -437,6 +443,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           return true;
         };
         if (stopForLostBinding()) return;
+        // Exact provider acceptance may arrive after the native steer call returns. Drain any
+        // settlement it started before the next steer reads replaySeedV1, otherwise the same
+        // activation seed can be prefixed to two provider inputs.
+        await replaySeedSettlementSequence;
+        if (stopForLostBinding()) return;
         const queueBlockedSteer = (
           queuedText: string = text,
           queuedMode: PermissionModeQueuedPromptMode = queueMode,
@@ -496,12 +507,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                   session: {
                     getMetadataSnapshot: () =>
                       isCurrentBinding(session, messageBindingGeneration) ? session.getMetadataSnapshot?.() : {},
-                    updateMetadata: (updater) => {
-                      if (!isCurrentBinding(session, messageBindingGeneration)) return;
-                      return session.updateMetadata((current) =>
-                        isCurrentBinding(session, messageBindingGeneration) ? updater(current) : current,
-                      );
-                    },
+                    // Resolution is generation-guarded above and below. This writer is retained
+                    // only by the exact provider-acceptance settlement, which must still retire
+                    // the seed on its original Session after the queue binding moves elsewhere.
+                    updateMetadata: (updater) => session.updateMetadata(updater),
                     ...(typeof session.refreshSessionSnapshotFromServerBestEffort === 'function'
                       ? {
                           refreshSessionSnapshotFromServerBestEffort: (refreshOpts?: {
@@ -522,7 +531,9 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                 if (stopForLostBinding()) return;
                 didReplaySeedBootstrapForSteer = true;
                 providerText = seedResolution.providerPrompt;
-                settleReplaySeedOnProviderAcceptance = seedResolution.settleOnProviderAcceptance;
+                settleReplaySeedOnProviderAcceptance = seedResolution.seedApplied
+                  ? seedResolution.settleOnProviderAcceptance
+                  : null;
               } catch {
                 if (stopForLostBinding()) return;
                 // Best-effort only; fall back to steering the raw user text.
@@ -550,14 +561,27 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               provenanceBlock: inputContextBlock,
               transformedUserText: providerText,
             });
+            const confirmProviderPromptAccepted = (): void => {
+              const settle = settleReplaySeedOnProviderAcceptance;
+              if (!settle) return;
+              settleReplaySeedOnProviderAcceptance = null;
+              const priorSettlements = replaySeedSettlementSequence;
+              const replaySeedSettlement = priorSettlements.then(async () => {
+                await settle();
+              });
+              replaySeedSettlementSequence = replaySeedSettlement;
+            };
+            if (localId) {
+              steer.registerProviderAcceptedEffect?.(
+                localId,
+                settleReplaySeedOnProviderAcceptance ? confirmProviderPromptAccepted : null,
+              );
+            }
             await steer.steerText(dispatchText, {
               localId,
               ...queuedPromptIdentityFields,
               ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
             });
-            // The steer reached the provider; only now may the activation seed retire. A throw
-            // above leaves it in place so the context survives the retry.
-            await settleReplaySeedOnProviderAcceptance?.();
             if (stopForLostBinding()) return;
             return;
           } catch {

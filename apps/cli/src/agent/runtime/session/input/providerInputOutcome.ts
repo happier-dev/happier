@@ -287,7 +287,8 @@ export function normalizeHostProviderInputOutcome(
 
 /**
  * The one Dev host normalizer. Provider adapters publish evidence; this owner validates exact
- * singleton identity and enforces monotonic settlement before forwarding to the current session.
+ * singleton identity and enforces monotonic settlement before forwarding the same accepted fact
+ * to Pending and any correlated host effect.
  */
 export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
     getTarget(): SessionProviderInputOutcomeTarget;
@@ -296,6 +297,8 @@ export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
         selection: ProviderBoundModelRef;
     }> | null;
     discardAppliedModel?(localId: string): void;
+    observeAcceptedEffect?(localId: string): void;
+    discardAcceptedEffect?(localId: string): void;
 }>): (outcome: HostProviderInputOutcomeEvidence) => void {
     const decisiveOutcomeBySessionAndLocalId = new Map<
         string,
@@ -329,12 +332,19 @@ export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
             && !isReversibleSessionProviderInputBlockReason(outcome.reason)
         ) {
             params.discardAppliedModel?.(outcome.localId);
+            params.discardAcceptedEffect?.(outcome.localId);
         }
         if (outcome.kind === 'accepted') {
             const appliedModel = params.takeAppliedModel?.(outcome.localId) ?? null;
-            target.observeProviderInputSettlement(
-                appliedModel ? { ...outcome, appliedModel } : outcome,
-            );
+            try {
+                target.observeProviderInputSettlement(
+                    appliedModel ? { ...outcome, appliedModel } : outcome,
+                );
+            } finally {
+                // Acceptance is one authoritative provider fact with independent consumers.
+                // A broken Pending observer must not leave replay carry-over live and duplicate it.
+                params.observeAcceptedEffect?.(outcome.localId);
+            }
             return;
         }
         target.observeProviderInputSettlement(outcome);
