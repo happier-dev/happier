@@ -37,6 +37,13 @@ export function buildWorkflowRunsEndpoint(repository, workflow, sourceBranch, so
   return `repos/${repository}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(sourceBranch)}&head_sha=${encodeURIComponent(sourceSha)}&event=push&per_page=100`;
 }
 
+function fetchWorkflowRun(repository, runId) {
+  const result = spawnSync('gh', ['api', 'repos/' + repository + '/actions/runs/' + runId], { encoding: 'utf8', env: process.env });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(String(result.stderr || result.stdout || '').trim());
+  return JSON.parse(String(result.stdout ?? ''));
+}
+
 function fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha) {
   const endpoint = buildWorkflowRunsEndpoint(repository, workflow, sourceBranch, sourceSha);
   const result = spawnSync('gh', ['api', endpoint], { encoding: 'utf8', env: process.env });
