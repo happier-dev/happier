@@ -424,6 +424,51 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(finalMeta?.replaySeedV1?.appliedToLocalId).toBe('local-1');
   });
 
+  it('settles an accepted steer against its original Session after the queue binding moves', async () => {
+    const first = createSessionHarness();
+    const second = createSessionHarness();
+    const { queue } = createQueue();
+    first.setMetadataSnapshot({
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'sess_parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    let acceptFirstPrompt: (() => void) | undefined;
+    const binding = registerPermissionModeMessageQueueBinding({
+      session: first.session as any,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText: vi.fn(async (
+          _text: string,
+          _identity: unknown,
+          callbacks?: { onProviderPromptAccepted?: () => void },
+        ) => {
+          acceptFirstPrompt = callbacks?.onProviderPromptAccepted;
+        }),
+      },
+    } as any);
+
+    first.emitUserMessage({ content: { text: 'steer me' }, localId: 'local-old-session', meta: {} });
+    await vi.waitFor(() => expect(acceptFirstPrompt).toBeTypeOf('function'));
+
+    binding.bindSession(second.session);
+    acceptFirstPrompt?.();
+    await vi.waitFor(() => {
+      expect(first.session.getMetadataSnapshot()?.replaySeedV1?.seedText).toBe('');
+    });
+    expect(first.session.getMetadataSnapshot()?.replaySeedV1?.appliedToLocalId).toBe(
+      'local-old-session',
+    );
+  });
+
   it('keeps delayed acceptance correlated to its steer and drains it before the following prompt', async () => {
     const { session, emitUserMessage, setMetadataSnapshot } = createSessionHarness();
     const { queue } = createQueue();

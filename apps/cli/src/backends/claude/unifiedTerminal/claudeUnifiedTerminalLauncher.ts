@@ -649,7 +649,8 @@ export async function claudeUnifiedTerminalLauncher(
       didBootstrap: didReplaySeedBootstrap,
     });
     didReplaySeedBootstrap = resolution.didBootstrap;
-    replaySeedRetirement.bind(
+    replaySeedRetirement.register(
+      readSinglePendingDeliveryLocalId(batch.userMessageLocalIds),
       resolution.seedApplied ? resolution.settleReplaySeedOnProviderAcceptance : null,
     );
     return {
@@ -992,7 +993,7 @@ export async function claudeUnifiedTerminalLauncher(
         if (inFlightStartupMessage?.launchAttempt === launchAttempt) inFlightStartupMessage = null;
         returnedExactInFlightMessage = false;
         lastStartupBatchUserMessageLocalIds = [];
-        replaySeedRetirement.confirmProviderAccepted();
+        replaySeedRetirement.confirmProviderAccepted(userMessageLocalIds);
         if (!providerInputOutcomes.observeAccepted({ userMessageLocalIds, appliedModelId })) {
           logger.debug('[unified]: ignored provider acceptance without one exact Queue localId outcome binding');
         }

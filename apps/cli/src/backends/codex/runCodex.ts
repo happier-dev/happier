@@ -1162,10 +1162,14 @@ export async function runCodex(opts: {
                             permissionModeUpdatedAt: resolvedMode.permissionModeUpdatedAt,
                         })
                         : null;
+                    liveSteerReplaySeedRetirement.register(
+                        localIds.length === 1 ? localIds[0] : null,
+                        dispatchResolution.seedApplied
+                            ? dispatchResolution.settleReplaySeedOnProviderAcceptance
+                            : null,
+                    );
                     const onProviderPromptAccepted = dispatchResolution.seedApplied
-                        ? liveSteerReplaySeedRetirement.createAcceptanceCallback(
-                            dispatchResolution.settleReplaySeedOnProviderAcceptance,
-                        )
+                        ? () => liveSteerReplaySeedRetirement.confirmProviderAccepted(localIds)
                         : null;
                     await dispatchProviderInputOrThrow(async () => {
                         await runtime.steerPrompt(providerPromptText, {
@@ -2426,11 +2430,6 @@ export async function runCodex(opts: {
                 const replaySeedRetirement = createProviderPromptAcceptanceSettlement();
                 // Unambiguous confirmed delivery only: a send that throws before any acceptance
                 // evidence never reaches this, so the seed stays live for the retry.
-                const retireReplaySeedOnConfirmedDelivery = replaySeedRetirement.confirmProviderAccepted;
-                const confirmProviderAcceptedPromptForTurn = (appliedModelId?: string | null): void => {
-                    retireReplaySeedOnConfirmedDelivery();
-                    confirmProviderAcceptedPrompt(message, appliedModelId);
-                };
                 const awaitReplaySeedSettlement = replaySeedRetirement.drain;
             try {
                 const localId =
@@ -2441,6 +2440,13 @@ export async function runCodex(opts: {
                     ...(message.userMessageLocalIds ?? []),
                     localId,
                 ]);
+                const retireReplaySeedOnConfirmedDelivery = (): void => {
+                    replaySeedRetirement.confirmProviderAccepted(localIds);
+                };
+                const confirmProviderAcceptedPromptForTurn = (appliedModelId?: string | null): void => {
+                    retireReplaySeedOnConfirmedDelivery();
+                    confirmProviderAcceptedPrompt(message, appliedModelId);
+                };
                 providerDeliveryLocalIds = localIds;
                 const startSeqExclusive = session.getLastObservedMessageSeq();
                 const turnToken = session.beginTurnAssistantTextSnapshot({ startSeqExclusive });
@@ -2462,7 +2468,8 @@ export async function runCodex(opts: {
                         catalogs: codexDispatchCatalogReaders(),
                     });
                     didReplaySeedBootstrap = dispatchResolution.didBootstrap;
-                    replaySeedRetirement.bind(
+                    replaySeedRetirement.register(
+                        localIds.length === 1 ? localIds[0] : null,
                         dispatchResolution.seedApplied
                             ? dispatchResolution.settleReplaySeedOnProviderAcceptance
                             : null,

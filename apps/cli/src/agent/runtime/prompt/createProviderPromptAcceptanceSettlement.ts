@@ -1,36 +1,48 @@
 /**
- * Holds provider-acceptance settlement between a synchronous acceptance callback and the next
- * asynchronous prompt read. Every prompt must bind its own settler (or null), so acceptance of a
- * later unseeded prompt cannot retire an earlier failed attempt.
+ * Correlates provider-acceptance settlement by the same Pending localId used by the canonical
+ * provider-input outcome. Providers may accept an older prompt after a newer one has entered
+ * terminal custody, so a mutable "current prompt" callback is never sufficient.
  */
 export function createProviderPromptAcceptanceSettlement(): Readonly<{
-  bind: (settle: (() => Promise<unknown>) | null) => void;
-  createAcceptanceCallback: (settle: () => Promise<unknown>) => () => void;
-  confirmProviderAccepted: () => void;
+  register: (localId: string | null, settle: (() => Promise<unknown>) | null) => void;
+  confirmProviderAccepted: (localIds: readonly string[]) => void;
+  createPromptLocalAcceptanceCallback: (settle: () => Promise<unknown>) => () => void;
   drain: () => Promise<void>;
 }> {
-  let boundAcceptanceCallback: (() => void) | null = null;
+  const pendingSettlementByLocalId = new Map<string, () => Promise<unknown>>();
   let settlementSequence: Promise<void> = Promise.resolve();
-
-  const createAcceptanceCallback = (settle: () => Promise<unknown>): (() => void) => {
-    let pendingSettlement: (() => Promise<unknown>) | null = settle;
-    return (): void => {
-      const acceptedSettlement = pendingSettlement;
-      if (!acceptedSettlement) return;
-      pendingSettlement = null;
-      settlementSequence = settlementSequence.then(async () => {
-        await acceptedSettlement();
-      });
-    };
+  const enqueueSettlement = (settle: () => Promise<unknown>): void => {
+    settlementSequence = settlementSequence.then(async () => {
+      await settle();
+    });
   };
 
   return Object.freeze({
-    bind(settle: (() => Promise<unknown>) | null): void {
-      boundAcceptanceCallback = settle ? createAcceptanceCallback(settle) : null;
+    register(localId: string | null, settle: (() => Promise<unknown>) | null): void {
+      if (typeof localId !== 'string' || localId.trim().length === 0) return;
+      if (!settle) {
+        pendingSettlementByLocalId.delete(localId);
+        return;
+      }
+      pendingSettlementByLocalId.set(localId, settle);
     },
-    createAcceptanceCallback,
-    confirmProviderAccepted(): void {
-      boundAcceptanceCallback?.();
+    confirmProviderAccepted(localIds: readonly string[]): void {
+      if (localIds.length !== 1) return;
+      const localId = localIds[0];
+      if (typeof localId !== 'string' || localId.trim().length === 0) return;
+      const acceptedSettlement = pendingSettlementByLocalId.get(localId);
+      if (!acceptedSettlement) return;
+      pendingSettlementByLocalId.delete(localId);
+      enqueueSettlement(acceptedSettlement);
+    },
+    createPromptLocalAcceptanceCallback(settle: () => Promise<unknown>): () => void {
+      let pendingSettlement: (() => Promise<unknown>) | null = settle;
+      return (): void => {
+        const acceptedSettlement = pendingSettlement;
+        if (!acceptedSettlement) return;
+        pendingSettlement = null;
+        enqueueSettlement(acceptedSettlement);
+      };
     },
     async drain(): Promise<void> {
       await settlementSequence;

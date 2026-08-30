@@ -1453,7 +1453,8 @@ export async function claudeRemoteLauncher(
                         didBootstrap: didReplaySeedBootstrap,
                     });
                     didReplaySeedBootstrap = resolution.didBootstrap;
-                    replaySeedRetirement.bind(
+                    replaySeedRetirement.register(
+                        readSinglePendingDeliveryLocalId(batch.userMessageLocalIds),
                         resolution.seedApplied
                             ? resolution.settleReplaySeedOnProviderAcceptance
                             : null,
@@ -1830,7 +1831,7 @@ export async function claudeRemoteLauncher(
                         appliedModelId?: string;
                     }) => {
                         remoteProviderInputOutcomes?.observeAccepted(userMessageLocalIds, appliedModelId);
-                        replaySeedRetirement.confirmProviderAccepted();
+                        replaySeedRetirement.confirmProviderAccepted(userMessageLocalIds);
                         resetUnifiedParkRelaunchBudget();
                     },
                     onPromptTransportFailure: (failure: Readonly<{
@@ -2044,7 +2045,7 @@ export async function claudeRemoteLauncher(
                                 appliedModelId?: string;
                             }) => {
                                 providerInputOutcomes.observeAccepted({ userMessageLocalIds, appliedModelId });
-                                replaySeedRetirement.confirmProviderAccepted();
+                                replaySeedRetirement.confirmProviderAccepted(userMessageLocalIds);
                                 resetUnifiedParkRelaunchBudget();
                             },
                             resolvePromptDeliveryState: (batch) => {

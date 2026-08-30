@@ -247,12 +247,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                 session: {
                   getMetadataSnapshot: () =>
                     isCurrentBinding(session, messageBindingGeneration) ? session.getMetadataSnapshot?.() : {},
-                  updateMetadata: (updater) => {
-                    if (!isCurrentBinding(session, messageBindingGeneration)) return;
-                    return session.updateMetadata((current) =>
-                      isCurrentBinding(session, messageBindingGeneration) ? updater(current) : current,
-                    );
-                  },
+                  // Resolution is generation-guarded above and below. This writer is retained
+                  // only by the exact provider-acceptance settlement, which must still retire
+                  // the seed on its original Session after the queue binding moves elsewhere.
+                  updateMetadata: (updater) => session.updateMetadata(updater),
                   ...(typeof session.refreshSessionSnapshotFromServerBestEffort === 'function'
                     ? {
                         refreshSessionSnapshotFromServerBestEffort: (refreshOpts?: {
@@ -284,10 +282,17 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
 
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
+          steerReplaySeedRetirement.register(
+            deliveryIdentity.localId,
+            settleReplaySeedOnProviderAcceptance,
+          );
+          const acceptedLocalId = deliveryIdentity.localId;
           const onProviderPromptAccepted = settleReplaySeedOnProviderAcceptance
-            ? steerReplaySeedRetirement.createAcceptanceCallback(
-                settleReplaySeedOnProviderAcceptance,
-              )
+            ? acceptedLocalId
+              ? () => steerReplaySeedRetirement.confirmProviderAccepted([acceptedLocalId])
+              : steerReplaySeedRetirement.createPromptLocalAcceptanceCallback(
+                  settleReplaySeedOnProviderAcceptance,
+                )
             : null;
           if (deliveryIdentity.steerOptions === undefined) {
             if (onProviderPromptAccepted) {
