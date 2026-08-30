@@ -68,6 +68,32 @@ process.exit(2);
   return { fakeGh, keychainStore };
 }
 
+function createFakeGitPushTool(dir, { remoteTarget = 'refs/heads/pr-123' } = {}) {
+  const fakeGit = join(dir, 'fake-git');
+  const gitLog = join(dir, 'git-log.jsonl');
+  writeFileSync(
+    fakeGit,
+    `#!/usr/bin/env node
+const { appendFileSync, existsSync } = require('node:fs');
+const args = process.argv.slice(2);
+const config = Object.fromEntries(Array.from({ length: Number(process.env.GIT_CONFIG_COUNT || 0) }, (_, index) => [
+  process.env['GIT_CONFIG_KEY_' + index],
+  process.env['GIT_CONFIG_VALUE_' + index],
+]));
+appendFileSync(process.env.GHOPS_TEST_GIT_LOG, JSON.stringify({
+  args,
+  config,
+  hooksPathExists: existsSync(config['core.hooksPath'] || ''),
+}) + '\\n');
+if (args[0] === 'rev-parse') process.stdout.write(process.env.GHOPS_TEST_LOCAL_SHA + '\\n');
+if (args[0] === 'ls-remote') process.stdout.write((process.env.GHOPS_TEST_REMOTE_SHA || process.env.GHOPS_TEST_LOCAL_SHA) + '\\t${remoteTarget}\\n');
+`,
+    'utf8',
+  );
+  chmodSync(fakeGit, 0o755);
+  return { fakeGit, gitLog };
+}
+
 function createMacHostCredentialFixture(dir, { token = 'mac-host-keychain-token' } = {}) {
   const storageDir = join(dir, 'stacks');
   const stackName = 'ghops-managed-vm';
@@ -154,20 +180,114 @@ test('forwards nested subcommand help to gh', () => {
   assert.deepEqual(JSON.parse(res.stdout).argv, ['issue', 'edit', '--help']);
 });
 
-test('rejects Git transport commands in favor of the current machine Git identity', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ghops-git-command-rejection-test-'));
-  const res = runGhop(['git', 'push', '--repo', 'happier-dev/happier'], {
-    HAPPIER_STACK_STORAGE_DIR: join(dir, 'empty-stacks'),
-    HAPPIER_STACK_STACK: 'ghops-no-targets',
-    HAPPIER_GITHUB_BOT_TOKEN: '',
-    GH_TOKEN: '',
-    GITHUB_TOKEN: '',
+test('supports an explicitly selected bot-authenticated branch push without exposing the token', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-git-push-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const { fakeGit, gitLog } = createFakeGitPushTool(dir);
+  const localSha = '1111111111111111111111111111111111111111';
+  const token = 'git-push-bot-secret';
+
+  const res = runGhop([
+    'git',
+    'push',
+    '--repo',
+    'happier-dev/happier',
+    '--source',
+    'HEAD',
+    '--target',
+    'refs/heads/pr-123',
+  ], {
+    HAPPIER_GITHUB_BOT_TOKEN: token,
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    HAPPIER_GHOPS_GIT_PATH: fakeGit,
+    GHOPS_TEST_GIT_LOG: gitLog,
+    GHOPS_TEST_LOCAL_SHA: localSha,
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  assert.doesNotMatch(`${res.stdout}\n${res.stderr}`, new RegExp(token));
+  const calls = readFileSync(gitLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const push = calls.find((call) => call.args[0] === 'push');
+  assert.ok(push);
+  assert.deepEqual(push.args, [
+    'push',
+    'https://github.com/happier-dev/happier.git',
+    `${localSha}:refs/heads/pr-123`,
+  ]);
+  assert.doesNotMatch(JSON.stringify(push.args), new RegExp(token));
+  assert.equal(push.config['http.extraHeader'], '');
+  assert.match(push.config['http.https://github.com/.extraHeader'], /^Authorization: Basic /);
+  assert.doesNotMatch(push.config['http.https://github.com/.extraHeader'], new RegExp(token));
+  assert.equal(push.hooksPathExists, true);
+  assert.equal(existsSync(push.config['core.hooksPath']), false);
+  assert.match(res.stdout, new RegExp(`${localSha}.*refs/heads/pr-123`));
+});
+
+test('uses an exact force-with-lease when a bot rebase push is explicitly authorized', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-git-rebase-push-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const { fakeGit, gitLog } = createFakeGitPushTool(dir);
+  const localSha = '2222222222222222222222222222222222222222';
+  const expectedRemoteSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+  const res = runGhop([
+    'git',
+    'push',
+    '--repo',
+    'happier-dev/happier',
+    '--source',
+    'HEAD',
+    '--target',
+    'refs/heads/pr-123',
+    '--force-with-lease',
+    expectedRemoteSha,
+  ], {
+    HAPPIER_GITHUB_BOT_TOKEN: 'rebase-push-secret',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    HAPPIER_GHOPS_GIT_PATH: fakeGit,
+    GHOPS_TEST_GIT_LOG: gitLog,
+    GHOPS_TEST_LOCAL_SHA: localSha,
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  const calls = readFileSync(gitLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const push = calls.find((call) => call.args[0] === 'push');
+  assert.deepEqual(push.args, [
+    'push',
+    `--force-with-lease=refs/heads/pr-123:${expectedRemoteSha}`,
+    'https://github.com/happier-dev/happier.git',
+    `${localSha}:refs/heads/pr-123`,
+  ]);
+});
+
+test('fails closed when an explicit bot push does not publish the intended commit', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-git-push-verification-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const { fakeGit, gitLog } = createFakeGitPushTool(dir);
+  const intendedSha = '3333333333333333333333333333333333333333';
+  const observedSha = '4444444444444444444444444444444444444444';
+
+  const res = runGhop([
+    'git',
+    'push',
+    '--repo',
+    'happier-dev/happier',
+    '--source',
+    'HEAD',
+    '--target',
+    'refs/heads/pr-123',
+  ], {
+    HAPPIER_GITHUB_BOT_TOKEN: 'verification-secret',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    HAPPIER_GHOPS_GIT_PATH: fakeGit,
+    GHOPS_TEST_GIT_LOG: gitLog,
+    GHOPS_TEST_LOCAL_SHA: intendedSha,
+    GHOPS_TEST_REMOTE_SHA: observedSha,
   });
 
   assert.notEqual(res.status, 0);
-  assert.match(res.stderr, /does not perform Git commits or pushes/i);
-  assert.match(res.stderr, /current machine/i);
-  assert.doesNotMatch(res.stderr, /HAPPIER_GITHUB_BOT_TOKEN/);
+  assert.match(res.stderr, new RegExp(`did not resolve to ${intendedSha}`));
+  assert.doesNotMatch(`${res.stdout}\n${res.stderr}`, /verification-secret/);
 });
 
 test('fails closed when token is missing', () => {
@@ -207,6 +327,37 @@ test('uses the execution-host credential broker when the VM has no environment t
   assert.match(sshArgs.at(-1), /happier-ghops-brokers-/);
   assert.match(sshArgs.at(-1), /\/usr\/bin\/nc -U/);
   assert.deepEqual(JSON.parse(input), { version: 1, operation: 'read-ghops-credential' });
+});
+
+test('keeps an explicit bot push on the authoritative checkout when the credential comes from mac-host', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-mac-host-git-push-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const { fakeGit, gitLog } = createFakeGitPushTool(dir);
+  const fixture = createMacHostCredentialFixture(dir, { token: 'mac-host-git-push-token' });
+  const localSha = '5555555555555555555555555555555555555555';
+
+  const res = runGhop([
+    'git',
+    'push',
+    '--repo',
+    'happier-dev/happier',
+    '--source',
+    'HEAD',
+    '--target',
+    'refs/heads/pr-123',
+  ], {
+    ...fixture.env,
+    HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    HAPPIER_GHOPS_GIT_PATH: fakeGit,
+    GHOPS_TEST_GIT_LOG: gitLog,
+    GHOPS_TEST_LOCAL_SHA: localSha,
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  const gitCalls = readFileSync(gitLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.ok(gitCalls.some((call) => call.args[0] === 'push'));
+  assert.equal(readFileSync(fixture.sshLog, 'utf8').trim().split('\n').length, 1);
 });
 
 test('fails closed when the configured mac-host credential route is unavailable', () => {

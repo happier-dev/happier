@@ -1,18 +1,18 @@
 ---
 name: happier-github-ops
-description: Read and mutate GitHub as the isolated Happier bot through `yarn ghops`, with exact or bounded standing mutation authority, untrusted-issue handling, public write-back rules, and a strict boundary that keeps commits and pushes on the current machine Git identity.
+description: Read and mutate GitHub as the isolated Happier bot through `yarn ghops`, with exact or bounded standing mutation authority, untrusted-issue handling, public write-back rules, machine-identity defaults for commits and pushes, and an explicitly authorized bot-push exception.
 ---
 
 # Happier GitHub Ops (bot `gh` wrapper)
 
-This repo provides `yarn ghops` as the canonical isolated transport for GitHub API/UI reads and mutations as the bot. It is never the transport for commits or Git pushes: those use the current machine's configured Git identity, remote, and credentials. `ghops` **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority. Without that override, macOS reads the validated token from Keychain service `happier/ghops`, account `happier-bot`; a managed Linux workspace receives that same credential from the short-lived execution-host broker through its active `mac-host` target while keeping repository work on the authoritative Linux checkout. The broker exposes only this fixed credential over a user-only Unix socket and never places the token in the guest environment or on disk.
+This repo provides `yarn ghops` as the canonical isolated transport for GitHub API/UI reads and mutations as the bot, plus an explicit bot-authenticated branch-push capability. Ordinary commits and pushes still use the current machine's configured Git identity, remote, and credentials; `ghops git push` is an authorization-gated exception, never the default. `ghops` **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority. Without that override, macOS reads the validated token from Keychain service `happier/ghops`, account `happier-bot`; a managed Linux workspace receives that same credential from the short-lived execution-host broker through its active `mac-host` target while keeping repository work on the authoritative Linux checkout. The broker exposes only this fixed credential over a user-only Unix socket and never places the token in the guest environment or on disk.
 
 ## Prerequisites
 
 - `gh` is installed on the host and reachable on `PATH`.
 - Either environment variable `HAPPIER_GITHUB_BOT_TOKEN` is set to the bot's fine-grained PAT, or the token was stored on macOS with `yarn ghops auth store`.
 - Repository issue mutations require the fine-grained PAT permission **Issues: Read and write** for the target repository. The bot account's repository role and GraphQL `viewerCanUpdate` fields do not prove that the resolved token grants write operations.
-- Branch pushes do not use `ghops` or its token. They require the current machine's normal Git credentials to update the exact repository and branch; if those credentials lack access, report the permission boundary rather than falling back to the bot.
+- Ordinary branch pushes require the current machine's normal Git credentials. An explicitly authorized bot push requires **Contents: Read and write** plus repository/fork permission to update the exact target branch; lack of machine access alone does not authorize that exception.
 
 ## Contract / Safety
 
@@ -134,8 +134,8 @@ On non-macOS platforms outside an active managed execution-host session, continu
 
 Keep two transport identities separate:
 
-- ordinary commits and every Git push use the current machine's Git identity and configured Git credentials; never replace them with the bot, the PR author, or the GitHub login;
-- GitHub API/UI mutations use `yarn ghops` and therefore appear as `happier-bot`.
+- ordinary commits and Git pushes use the current machine's Git identity and configured Git credentials by default; never replace them with the bot, the PR author, or the GitHub login by inference;
+- GitHub API/UI mutations, and an explicitly authorized `ghops git push`, use `yarn ghops` and therefore appear as `happier-bot`.
 
 Before an ordinary commit, verify both local Git identity fields. If either is missing, stop and ask the user to configure it; never invent an identity or use `--author` to impersonate someone else. Credit material contributors with verified `Co-authored-by:` trailers as defined by the committing workflow, not by changing the primary commit identity.
 
@@ -145,7 +145,18 @@ Before any push, resolve the exact repository, remote, source commit, and target
 git push <remote> <source>:refs/heads/<branch>
 ```
 
-Use an explicit refspec and verify the remote SHA afterward. Do not pass a push through `yarn ghops`, use an authenticated remote URL, run `gh auth setup-git`, change a global/local credential helper, or handle a token ad hoc. If the current machine credentials cannot push to a contributor fork or protected branch, report that boundary rather than substituting `happier-bot`.
+Use an explicit refspec and verify the remote SHA afterward. Do not use an authenticated remote URL, run `gh auth setup-git`, change a global/local credential helper, or handle a token ad hoc. If the current machine credentials cannot push to a contributor fork or protected branch, report that boundary; do not silently substitute `happier-bot`.
+
+Use the isolated bot Git transport only when exact authorization or a bounded standing grant explicitly selects `happier-bot` as the push actor for the named repository, source, and branch. Generic permission to commit, push, fix, or steward a PR does not select the bot. Resolve the exact target immediately before the push:
+
+```bash
+yarn ghops git push \
+  --repo happier-dev/happier \
+  --source <source> \
+  --target refs/heads/<branch>
+```
+
+The wrapper validates `happier-bot`, resolves the source to one commit SHA, permits only `refs/heads/*`, disables repository hooks for the credential-bearing process, verifies the remote SHA afterward, and keeps the token out of command arguments and persistent Git configuration. This changes only the push actor; commit author and committer identities remain governed independently.
 
 For a rebase of another author's PR, preserve every original author identity while the current machine's configured Git identity remains the committer. Do not set bot author or committer environment variables and do not modify Git configuration. Inspect the rewritten author/committer pairs before pushing. A separate corrective commit uses the same current machine identity.
 
@@ -157,7 +168,15 @@ git push \
   <remote> <source>:refs/heads/<branch>
 ```
 
-Never use unrestricted `--force`. If the current machine credentials do not permit the exact update, report that permission boundary rather than retrying through the bot.
+Never use unrestricted `--force`. The current machine remains the default push actor. When the authorization explicitly selects the bot for the rebase push, use the same exact lease through the isolated transport:
+
+```bash
+yarn ghops git push \
+  --repo happier-dev/happier \
+  --source <source> \
+  --target refs/heads/<branch> \
+  --force-with-lease <pre-rebase-remote-sha>
+```
 
 ## Public GitHub writing
 
