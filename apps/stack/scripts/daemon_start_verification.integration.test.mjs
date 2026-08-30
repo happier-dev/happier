@@ -15,6 +15,7 @@ import {
   shouldContinueAttendedDaemonStartVerification,
   startLocalDaemonWithAuth,
 } from './daemon.mjs';
+import { killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
 import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { writeStubHappierCliFiles } from './testkit/core/stub_happier_cli_files.mjs';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
@@ -35,8 +36,76 @@ function createStubStackEnv(overrides = {}) {
   return {
     ...process.env,
     HAPPIER_STACK_REPO_DIR: '',
+    HAPPIER_STACK_CLI_ROOT_DIR: '',
+    HAPPIER_STACK_TUI: '',
+    HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '',
+    HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: '',
+    HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '',
+    HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '',
     ...overrides,
   };
+}
+
+const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = dirname(scriptsDir);
+const DAEMON_TEST_PROCESS_HELPER_PATH = join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs');
+
+function buildProfileCaptureDaemonCliScript({ cliHomeDir, capturePath }) {
+  const activeServerId = 'stack_dev__id_default';
+  const statePath = join(cliHomeDir, 'servers', activeServerId, 'daemon.state.json');
+  return `
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) process.exit(2);
+
+if (args[0] === 'server' && args[1] === 'set') {
+  const value = (name) => {
+    const index = args.indexOf(name);
+    return index >= 0 ? String(args[index + 1] || '') : '';
+  };
+  const settingsPath = join(home, 'settings.json');
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  const serverId = value('--server-id');
+  const current = settings.servers?.[serverId] ?? {};
+  settings.activeServerId = serverId;
+  settings.servers = {
+    ...(settings.servers ?? {}),
+    [serverId]: {
+      ...current,
+      id: serverId,
+      serverUrl: value('--server-url'),
+      localServerUrl: value('--local-server-url'),
+      webappUrl: value('--webapp-url'),
+    },
+  };
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\\n', 'utf-8');
+  process.exit(0);
+}
+
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === 'stop' || sub === 'status') process.exit(0);
+if (sub !== 'start') process.exit(0);
+
+const settings = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf-8'));
+const activeServerId = String(settings.activeServerId || '');
+writeFileSync(
+  ${JSON.stringify(capturePath)},
+  JSON.stringify({ activeServerId, profile: settings.servers?.[activeServerId] ?? null }) + '\\n',
+  'utf-8',
+);
+spawnDaemonLikeProcess({
+  cliHomeDir: home,
+  internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+  publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+  statePaths: [${JSON.stringify(statePath)}],
+});
+process.exit(0);
+`.trimStart();
 }
 
 async function writeStubHappyCli({ cliDir }) {
@@ -677,6 +746,111 @@ try {
     const res = await runNode([runnerPath], { cwd: tmp, env: createStubStackEnv() });
     assert.match(res.stdout + res.stderr, /\[daemon\] .*already running/i);
   } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth reconciles a stale active stack profile before spawning the daemon', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-profile-reconcile-'));
+  let daemonPid = null;
+  try {
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    const cliBin = join(tmp, 'bin', 'happier');
+    const cliCommandScript = join(tmp, 'profile-capture-daemon.mjs');
+    const capturePath = join(tmp, 'profile-at-daemon-start.json');
+    const activeServerId = 'stack_dev__id_default';
+    const internalServerUrl = 'http://127.0.0.1:4311';
+    const publicServerUrl = 'http://localhost:4311';
+    const credentialContents = 'credential-must-remain-unchanged\n';
+
+    await mkdir(dirname(cliBin), { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
+    await chmod(cliBin, 0o755);
+    await writeFile(
+      cliCommandScript,
+      buildProfileCaptureDaemonCliScript({ cliHomeDir, capturePath }),
+      'utf-8',
+    );
+    await writeFile(
+      join(cliHomeDir, 'settings.json'),
+      JSON.stringify({
+        schemaVersion: 6,
+        activeServerId,
+        servers: {
+          [activeServerId]: {
+            id: activeServerId,
+            name: 'Controlled stack profile',
+            serverUrl: 'http://127.0.0.1:3012',
+            localServerUrl: 'http://127.0.0.1:3012',
+            webappUrl: 'http://localhost:3012',
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+            preservedProfileField: 'keep-me',
+          },
+        },
+      }, null, 2) + '\n',
+      'utf-8',
+    );
+
+    const env = {
+      ...createStubStackEnv(),
+      HAPPIER_STACK_STORAGE_DIR: join(tmp, 'storage'),
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '1',
+      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '2000',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+    };
+    const credentialPaths = resolveStackCredentialPaths({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env: { ...env, HAPPIER_ACTIVE_SERVER_ID: activeServerId },
+    });
+    await mkdir(dirname(credentialPaths.serverScopedPath), { recursive: true });
+    await writeFile(credentialPaths.serverScopedPath, credentialContents, 'utf-8');
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliCommand: process.execPath,
+      cliCommandArgs: [cliCommandScript],
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    const daemonState = JSON.parse(
+      await readFile(join(cliHomeDir, 'servers', activeServerId, 'daemon.state.json'), 'utf-8'),
+    );
+    daemonPid = Number(daemonState?.pid);
+
+    const profileAtDaemonStart = JSON.parse(await readFile(capturePath, 'utf-8'));
+    assert.equal(profileAtDaemonStart.activeServerId, activeServerId);
+    assert.equal(profileAtDaemonStart.profile?.serverUrl, internalServerUrl);
+    assert.equal(profileAtDaemonStart.profile?.localServerUrl, internalServerUrl);
+    assert.equal(profileAtDaemonStart.profile?.webappUrl, publicServerUrl);
+    assert.equal(profileAtDaemonStart.profile?.preservedProfileField, 'keep-me');
+
+    const persistedSettings = JSON.parse(await readFile(join(cliHomeDir, 'settings.json'), 'utf-8'));
+    assert.equal(persistedSettings.activeServerId, activeServerId);
+    assert.equal(persistedSettings.servers[activeServerId].serverUrl, internalServerUrl);
+    assert.equal(persistedSettings.servers[activeServerId].localServerUrl, internalServerUrl);
+    assert.equal(persistedSettings.servers[activeServerId].webappUrl, publicServerUrl);
+    assert.equal(persistedSettings.servers[activeServerId].preservedProfileField, 'keep-me');
+    assert.equal(await readFile(credentialPaths.serverScopedPath, 'utf-8'), credentialContents);
+  } finally {
+    if (Number.isFinite(daemonPid) && daemonPid > 1) {
+      killDetachedProcessGroup(daemonPid, 'SIGKILL');
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });

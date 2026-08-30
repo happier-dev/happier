@@ -7,6 +7,7 @@ import {
   getServerProfile,
   listServerProfiles,
   removeServerProfile,
+  setServerProfileEndpointsById,
   upsertServerProfileByUrl,
   useServerProfile,
 } from '@/server/serverProfiles';
@@ -452,6 +453,9 @@ async function cmdTest(args: string[]): Promise<void> {
 
 async function cmdSet(args: string[]): Promise<void> {
   const json = wantsJson(args);
+  const serverId = argvValue(args, '--server-id');
+  const migrateMatchingProfileState = args.includes('--migrate-matching-profile-state');
+  const hasExplicitLocalServerUrl = args.some((arg) => arg === '--local-server-url' || arg.startsWith('--local-server-url='));
   let serverUrlRaw = argvValue(args, '--server-url');
   let localServerUrlRaw = argvValue(args, '--local-server-url');
   const publicServerUrlRaw = argvValue(args, '--public-server-url');
@@ -470,7 +474,7 @@ async function cmdSet(args: string[]): Promise<void> {
   let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
   let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
 
-  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+  if (!serverId && !publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
     const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
       internalServerUrl: serverUrl,
       timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
@@ -483,35 +487,46 @@ async function cmdSet(args: string[]): Promise<void> {
   }
 
   // Best-effort: ask the server what its canonical/share URL is.
-  try {
-    const advertised = await fetchServerAdvertisedUrls({ apiServerUrl: localServerUrl || serverUrl, timeoutMs: 1500 });
-    const advertisedCanonical = advertised?.canonicalServerUrl ?? null;
-    const advertisedWebappUrl = advertised?.webappUrl ?? null;
+  if (!serverId) {
+    try {
+      const advertised = await fetchServerAdvertisedUrls({ apiServerUrl: localServerUrl || serverUrl, timeoutMs: 1500 });
+      const advertisedCanonical = advertised?.canonicalServerUrl ?? null;
+      const advertisedWebappUrl = advertised?.webappUrl ?? null;
 
-    if (advertisedCanonical && advertisedCanonical !== serverUrl) {
-      // cmdSet is always non-interactive today; adopt only when the current serverUrl is unshareable or insecure.
-      const shouldAdopt = !localServerUrl && (isLocalishServerUrl(serverUrl) || isInsecureRemoteHttpServerUrl(serverUrl));
-      if (shouldAdopt) {
-        if (isLocalishServerUrl(serverUrl)) {
-          localServerUrl = serverUrl;
+      if (advertisedCanonical && advertisedCanonical !== serverUrl) {
+        // cmdSet is always non-interactive today; adopt only when the current serverUrl is unshareable or insecure.
+        const shouldAdopt = !localServerUrl && (isLocalishServerUrl(serverUrl) || isInsecureRemoteHttpServerUrl(serverUrl));
+        if (shouldAdopt) {
+          if (isLocalishServerUrl(serverUrl)) {
+            localServerUrl = serverUrl;
+          }
+          serverUrl = advertisedCanonical;
         }
-        serverUrl = advertisedCanonical;
       }
-    }
 
-    if (!webappUrlRaw && advertisedWebappUrl) {
-      // Only override when not explicitly set.
-      // When it is set, callers may be pointing at a custom webapp origin.
-      // (A future version can prompt here in interactive mode.)
-      webappUrlRaw = advertisedWebappUrl;
+      if (!webappUrlRaw && advertisedWebappUrl) {
+        // Only override when not explicitly set.
+        // When it is set, callers may be pointing at a custom webapp origin.
+        // (A future version can prompt here in interactive mode.)
+        webappUrlRaw = advertisedWebappUrl;
+      }
+    } catch {
+      // best-effort
     }
-  } catch {
-    // best-effort
   }
   const webappUrl = webappUrlRaw
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : defaultWebappUrlFromServerUrl(serverUrl);
-  const created = await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
+  const created = serverId
+    ? await setServerProfileEndpointsById({
+        id: serverId,
+        serverUrl,
+        ...(hasExplicitLocalServerUrl ? { localServerUrl } : {}),
+        webappUrl,
+        use: true,
+        migrateMatchingProfileState,
+      })
+    : await upsertServerProfileByUrl({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
   reloadConfiguration();
   if (json) {
     await printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });

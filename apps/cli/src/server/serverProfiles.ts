@@ -177,6 +177,36 @@ function urlsReferToSameServer(leftRaw: string, rightRaw: string): boolean {
   return normalizeServerUrlForEnvId(left) === normalizeServerUrlForEnvId(right);
 }
 
+function findMatchingProfileStateSourceId(
+  servers: Record<string, unknown>,
+  targetId: string,
+  activeServerId: string | undefined,
+  serverUrl: string,
+  localServerUrl: string,
+): string | null {
+  const candidates = Object.entries(servers)
+    .filter(([id, value]) => {
+      if (id === targetId) return false;
+      const profile = coerceProfile(value);
+      if (!profile) return false;
+      return [profile.serverUrl, profile.localServerUrl]
+        .filter((url): url is string => Boolean(url))
+        .some((url) => urlsReferToSameServer(url, serverUrl) || (localServerUrl && urlsReferToSameServer(url, localServerUrl)));
+    })
+    .map(([id]) => id);
+  if (activeServerId && candidates.includes(activeServerId)) return activeServerId;
+  return candidates.length === 1 ? candidates[0] ?? null : null;
+}
+
+function copyMissingServerScopedEntry<T>(
+  map: Record<string, T> | undefined,
+  sourceId: string | null,
+  targetId: string,
+): Record<string, T> | undefined {
+  if (!map || !sourceId || sourceId === targetId || targetId in map || !(sourceId in map)) return map;
+  return { ...map, [targetId]: map[sourceId] };
+}
+
 function findProfileIdByLocalUrlAndWebapp(
   servers: Record<string, any>,
   localServerUrlRaw: string,
@@ -410,6 +440,86 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
     return await getActiveServerProfile();
   }
   return await getServerProfile(resolvedId);
+}
+
+/**
+ * Updates the endpoints of one known profile. Stack orchestration may explicitly migrate
+ * missing state from one equivalent legacy profile when adopting its stable stack-owned id.
+ */
+export async function setServerProfileEndpointsById(opts: Readonly<{
+  id: string;
+  name?: string;
+  serverUrl: string;
+  localServerUrl?: string;
+  webappUrl: string;
+  use?: boolean;
+  migrateMatchingProfileState?: boolean;
+}>): Promise<ServerProfile> {
+  const id = asStringId(opts.id);
+  if (sanitizeServerIdForFilesystem(id, '') !== id) {
+    throw new Error(`Invalid server profile id: ${id}`);
+  }
+
+  const serverUrl = String(opts.serverUrl ?? '').trim();
+  const localServerUrl = String(opts.localServerUrl ?? '').trim();
+  const webappUrl = String(opts.webappUrl ?? '').trim();
+  const requestedName = String(opts.name ?? '').trim();
+  const shouldUse = opts.use === true;
+  const now = Date.now();
+
+  await updateSettings((current) => {
+    const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
+    const sourceId = opts.migrateMatchingProfileState === true
+      ? findMatchingProfileStateSourceId(servers, id, current.activeServerId, serverUrl, localServerUrl)
+      : null;
+    const source = sourceId && servers[sourceId] && typeof servers[sourceId] === 'object' ? servers[sourceId] : {};
+    const rawExisting = servers[id] && typeof servers[id] === 'object' ? servers[id] : source;
+    const existing = coerceProfile(rawExisting);
+    const name = existing?.name || requestedName || id;
+    const createdAt = existing?.createdAt || now;
+    const next = {
+      ...rawExisting,
+      id,
+      name,
+      serverUrl,
+      ...(opts.localServerUrl !== undefined
+        ? { localServerUrl: localServerUrl && localServerUrl !== serverUrl ? localServerUrl : undefined }
+        : {}),
+      webappUrl,
+      createdAt,
+      updatedAt: now,
+      lastUsedAt: shouldUse ? now : (existing?.lastUsedAt ?? 0),
+    };
+    const nextSettings = {
+      ...current,
+      activeServerId: shouldUse ? id : current?.activeServerId,
+      servers: { ...servers, [id]: next },
+    };
+    if (!sourceId) return nextSettings;
+    return {
+      ...nextSettings,
+      machineIdByServerId: copyMissingServerScopedEntry(current.machineIdByServerId, sourceId, id),
+      machineIdByServerIdByAccountId: copyMissingServerScopedEntry(current.machineIdByServerIdByAccountId, sourceId, id),
+      machineReplacementCandidatesByServerIdByAccountId: copyMissingServerScopedEntry(
+        current.machineReplacementCandidatesByServerIdByAccountId,
+        sourceId,
+        id,
+      ),
+      lastTokenSubByServerId: copyMissingServerScopedEntry(current.lastTokenSubByServerId, sourceId, id),
+      machineIdConfirmedByServerByServerId: copyMissingServerScopedEntry(
+        current.machineIdConfirmedByServerByServerId,
+        sourceId,
+        id,
+      ),
+      lastChangesCursorByServerIdByAccountId: copyMissingServerScopedEntry(
+        current.lastChangesCursorByServerIdByAccountId,
+        sourceId,
+        id,
+      ),
+    };
+  });
+
+  return shouldUse ? await getActiveServerProfile() : await getServerProfile(id);
 }
 
 export async function removeServerProfile(

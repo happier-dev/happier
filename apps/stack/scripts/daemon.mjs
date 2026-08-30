@@ -24,6 +24,7 @@ import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
+import { buildStackServerProfileSetArgs } from './utils/stack/server_profile_reconciliation.mjs';
 import {
   isCliDirectExecutableCommand,
   probeCliDistRuntimeImport,
@@ -1778,6 +1779,35 @@ export async function startLocalDaemonWithAuth({
       );
     }
     throw new Error(formatCliDistUnavailableForDaemonStart({ distEntrypoint, reason: distCheck.reason }));
+  }
+
+  const canReconcileProfileWithAdmittedCli =
+    !distCheck.generationAdmissionRequired || distCheck.current === true;
+  if (canReconcileProfileWithAdmittedCli && existsSync(join(cliHomeDir, 'settings.json'))) {
+    const serverId = String(daemonEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+    if (serverId) {
+      const profileCommand = resolveDaemonCommandSpec({
+        cliBin,
+        cliEntrypoint: explicitCommand ? cliEntrypoint : distEntrypoint,
+        cliNodeEntrypoint,
+        cliCommand,
+        cliCommandArgs,
+        env: daemonEnv,
+      });
+      await run(
+        profileCommand.command,
+        [
+          ...profileCommand.argsPrefix,
+          ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl }),
+        ],
+        {
+          env: { ...daemonEnv, HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP: '1' },
+          stdio: 'ignore',
+          timeoutMs: 10_000,
+          captureFailureDiagnostic: { env: daemonEnv },
+        },
+      );
+    }
   }
 
   // If this is a migrated/new stack home dir, seed credentials from the user's existing login (best-effort)
