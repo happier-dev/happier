@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasServerSharedDepsOutputs,
   hasServerGeneratedProviderOutputs,
+  ensureServerGeneratedProviderOutputs,
   resolveServerLightSqliteDatabaseUrl,
   resolveServerStartLaunchSpec,
   shouldRetryServerStartFromFailureContext,
@@ -104,6 +105,15 @@ describe("startServerLight planning helpers", () => {
       env: { DATABASE_URL: explicitDatabaseUrl },
       platform: "linux",
     })).toBe(explicitDatabaseUrl);
+  });
+
+  it("ignores an inherited external DATABASE_URL for an explicitly selected SQLite server", () => {
+    expect(resolveServerLightSqliteDatabaseUrl({
+      dataDir: "/tmp/happier-e2e",
+      env: { DATABASE_URL: "postgresql://postgres@127.0.0.1:5432/happier" },
+      platform: "linux",
+      inheritDatabaseUrl: false,
+    })).toBe("file:///tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1");
   });
 
   it("serializes shared deps builds across concurrent callers", async () => {
@@ -221,6 +231,32 @@ describe("startServerLight planning helpers", () => {
     writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), "changed\n", "utf8");
     expect(hasServerGeneratedProviderOutputs(rootDir, "pglite")).toBe(true);
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(false);
+  });
+
+  it("serializes generation and rechecks each requested provider", async () => {
+    const generated = new Set<TestDbProvider>();
+    const calls: TestDbProvider[] = [];
+    const generate = async (provider: TestDbProvider) => {
+      calls.push(provider);
+      await sleep(10);
+      generated.add(provider);
+    };
+
+    await Promise.all([
+      ensureServerGeneratedProviderOutputs({
+        dbProvider: "sqlite",
+        hasOutputs: (provider) => generated.has(provider),
+        generate,
+      }),
+      ensureServerGeneratedProviderOutputs({
+        dbProvider: "postgres",
+        hasOutputs: (provider) => generated.has(provider),
+        generate,
+      }),
+    ]);
+
+    expect(calls).toEqual(["sqlite", "postgres"]);
+    expect(generated).toEqual(new Set<TestDbProvider>(["sqlite", "postgres"]));
   });
 
   it("retries server start when startup failure tail contains EADDRINUSE", () => {

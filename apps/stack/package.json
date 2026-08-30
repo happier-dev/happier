@@ -1,7 +1,7 @@
 {
   "name": "@happier-dev/stack",
   "type": "module",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "repository": "happier-dev/happier",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",

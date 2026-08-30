@@ -771,12 +771,15 @@ jobs:
 
   cli:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
+    needs: [trusted_ref_guard]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         part: [1, 2]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 60
     env:
       # Some CLI tests fetch/inspect GitHub Release assets. Prefer the built-in
@@ -883,8 +886,11 @@ jobs:
 
   stack:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
+    needs: [trusted_ref_guard]
     name: Stack Tests (unit + integration)
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
     steps:
       - name: Checkout

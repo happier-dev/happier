@@ -738,7 +738,9 @@ jobs:
                 stack: process.env.STACK_VERSION,
                 server: process.env.SERVER_VERSION,
               };
-              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify(expectedComponents)) {
+              const actualComponents = bundle.release?.components;
+              const componentsMatch = actualComponents && Object.keys(expectedComponents).length === Object.keys(actualComponents).length && Object.entries(expectedComponents).every(([key, value]) => actualComponents[key] === value);
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || !componentsMatch) {
                 throw new Error("Invalid exact-candidate release-notes projection");
               }
               for (const value of [bundle.projections?.github?.markdown, bundle.projections?.expo?.message]) {
@@ -915,7 +917,9 @@ jobs:
                 stack: process.env.STACK_VERSION,
                 server: process.env.SERVER_VERSION,
               };
-              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify(expectedComponents)) {
+              const actualComponents = bundle.release?.components;
+              const componentsMatch = actualComponents && Object.keys(expectedComponents).length === Object.keys(actualComponents).length && Object.entries(expectedComponents).every(([key, value]) => actualComponents[key] === value);
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || !componentsMatch) {
                 throw new Error("Invalid exact-candidate release-notes projection");
               }
               const values = {

@@ -259,7 +259,7 @@ describe('sessionHandoffs ops', () => {
             }),
         }));
         const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
-        expect(call.timeoutMs).toBe(90_000);
+        expect(call.timeoutMs).toBe(1_800_000);
     }, 60_000);
 
     it('maps macOS /Users/<user> paths into the target machine homeDir when preparing a Linux target', async () => {
