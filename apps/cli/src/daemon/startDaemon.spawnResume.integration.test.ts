@@ -2839,33 +2839,15 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         });
 
       const stopSessionModule = await import('./sessions/stopSession');
-      vi.mocked(stopSessionModule.createStopSession).mockImplementation(({
-        pidToTrackedSession,
-        areTrackedRunnersExited,
-        waitForTrackedRunnersExit,
-        loadTerminalHostAdapters: injectedLoadTerminalHostAdapters,
-      }) => {
-        loadTerminalHostAdapters = injectedLoadTerminalHostAdapters;
-        return vi.fn(async (sessionId: string) => {
-          const trackedPids: number[] = [];
-          for (const trackedSession of pidToTrackedSession.values()) {
-            if (trackedSession.happySessionId === sessionId) {
-              trackedSession.stopRequestedAtMs = Date.now();
-              trackedPids.push(trackedSession.pid);
-            }
-          }
-          if (!areTrackedRunnersExited) {
-            throw new Error('Expected exact pre-signal runner exit observation');
-          }
-          if (await areTrackedRunnersExited({ sessionId, trackedPids })) {
-            return { status: 'stopped' as const };
-          }
-          const exited = await waitForTrackedRunnersExit?.({ sessionId, trackedPids });
-          return exited
-            ? { status: 'stopped' as const }
-            : { status: 'incomplete' as const, reason: 'runner_exit_timeout' as const };
-        }) as any;
+      const actualStopSessionModule = await vi.importActual<typeof import('./sessions/stopSession')>('./sessions/stopSession');
+      vi.mocked(stopSessionModule.createStopSession).mockImplementation((params) => {
+        loadTerminalHostAdapters = params.loadTerminalHostAdapters;
+        return actualStopSessionModule.createStopSession({
+          ...params,
+          readAttachmentState: async () => ({ status: 'absent' }),
+        });
       });
+      const killSpy = vi.spyOn(process, 'kill');
 
       const { startDaemon } = await import('./startDaemon');
       run = startDaemon();
@@ -2888,6 +2870,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         code: null,
         signal: null,
       });
+      expect(killSpy).not.toHaveBeenCalledWith(6480, 'SIGTERM');
+      expect(killSpy).not.toHaveBeenCalledWith(-6480, 'SIGTERM');
       expect(loadTerminalHostAdapters).toEqual(expect.any(Function));
       const firstRegistry = await loadTerminalHostAdapters!();
       const secondRegistry = await loadTerminalHostAdapters!();
