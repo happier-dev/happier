@@ -804,6 +804,10 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                 ? Number.POSITIVE_INFINITY
                 : resolveSessionMutationTranscriptFlushBatchLimit();
             let transcriptDeliveriesThisFlush = 0;
+            // Runtime activity is an independent projection. Preserve ordering for blocked
+            // session-turn/transcript mutations, but still allow a later activity snapshot to
+            // clear stale background activity.
+            let earlierAuthoritativeMutationBlocked = false;
             const refreshInFlightMutations = (nextIndex: number) => {
                 advanceInFlightBatch(nextIndex);
             };
@@ -827,20 +831,25 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                     refreshInFlightMutations(index + 1);
                     continue;
                 }
+                if (earlierAuthoritativeMutationBlocked && mutation.kind !== 'runtime_activity_snapshot') {
+                    remaining.push(mutation);
+                    refreshInFlightMutations(index + 1);
+                    continue;
+                }
                 const shouldRedriveAuthoritative = (
                     (reason === 'connect' || reason === 'startup')
                     && isAuthoritativeSessionMutationKind(mutation.kind)
                 );
                 if (!shouldRedriveAuthoritative && reason !== 'flush' && mutation.nextAttemptAt > now) {
-                    if (mutation.kind === 'transcript_message_append' || mutation.kind === 'runtime_activity_snapshot') {
+                    if (mutation.kind === 'runtime_activity_snapshot') {
                         remaining.push(mutation);
                         refreshInFlightMutations(index + 1);
                         continue;
                     }
                     remaining.push(mutation);
-                    remaining.push(...batch.slice(index + 1));
-                    inFlightBatch = null;
-                    break;
+                    earlierAuthoritativeMutationBlocked = true;
+                    refreshInFlightMutations(index + 1);
+                    continue;
                 }
                 const parsedMutation = params.admission(mutation, params.sessionId);
                 if (!parsedMutation.ok) {
@@ -938,11 +947,11 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                         diagnostic: createDeliveryDiagnostic(outcome),
                     });
                     remaining.push(failedMutation);
-                    remaining.push(...batch.slice(index + 1));
-                    inFlightBatch = null;
+                    earlierAuthoritativeMutationBlocked = true;
+                    refreshInFlightMutations(index + 1);
                     didChange = true;
                     shouldRequestReconnect = true;
-                    break;
+                    continue;
                 } catch (error) {
                     if (isAuthenticationError(error)) {
                         remaining.push({
@@ -998,11 +1007,11 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                     },
                 });
                 remaining.push(failedMutation);
-                remaining.push(...batch.slice(index + 1));
-                inFlightBatch = null;
+                earlierAuthoritativeMutationBlocked = true;
+                refreshInFlightMutations(index + 1);
                 didChange = true;
                 shouldRequestReconnect = true;
-                break;
+                continue;
             }
             mutations = mergeQueuedSessionMutations(remaining, mutations);
             inFlightBatch = null;

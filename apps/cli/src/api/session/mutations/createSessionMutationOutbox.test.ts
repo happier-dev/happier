@@ -1278,6 +1278,94 @@ describe('createSessionMutationOutbox', () => {
         }
     });
 
+    it('delivers a runtime-activity terminal snapshot even when an earlier session turn is retryably blocked', async () => {
+        const sessionId = 's-runtime-activity-not-blocked-by-turn';
+        const deliveredSnapshots: unknown[] = [];
+        vi.mocked(axios.post).mockRejectedValue({ response: { status: 503 } });
+        const socket = createApiSessionSocketStub({ connected: false });
+        const { createSessionMutationJournal } = await import('./createSessionMutationOutbox');
+        const { createRuntimeActivitySnapshotMutation, createSessionTurnMutation } = await import('./sessionMutationTypes');
+        const { parseQueuedSessionMutation, saveSessionMutationOutbox } = await import('./sessionMutationPersistence');
+        const runtimeSnapshot = createRuntimeActivitySnapshotMutation({
+            sessionId,
+            snapshot: { state: 'active', activeCount: 1 },
+        });
+        const blockedTurn = createSessionTurnMutation({
+            sessionId,
+            action: 'begin',
+            turnId: 'turn-blocking-runtime-activity',
+            provider: 'codex',
+            mutationId: 'mutation-blocking-runtime-activity',
+            observedAt: 1_000,
+        });
+        await saveSessionMutationOutbox(await createRuntimePersistenceContext(sessionId), [
+            {
+                kind: 'session_turn',
+                mutationId: blockedTurn.mutationId,
+                payload: blockedTurn,
+                createdAt: 1_000,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+            {
+                kind: 'runtime_activity_snapshot',
+                mutationId: runtimeSnapshot.mutationId,
+                payload: runtimeSnapshot,
+                admissionOrder: 1,
+                createdAt: 1_001,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+        ]);
+
+        const outbox = createSessionMutationJournal({
+            custody: 'runtime',
+            token: 'tok',
+            sessionId,
+            paths: (await createRuntimePersistenceContext(sessionId)).paths,
+            admission: parseQueuedSessionMutation,
+            getSocket: () => socket,
+            requestReconnect: () => {},
+            deliverRuntimeActivitySnapshot: async (mutation) => {
+                deliveredSnapshots.push(mutation.snapshot);
+                return {
+                    status: 'delivered',
+                    path: 'socket',
+                    runtimeActivityEvidence: {
+                        disposition: 'applied',
+                        projection: {
+                            state: 'idle',
+                            activeCount: 0,
+                            observedAt: 2_000,
+                            revision: 2,
+                        },
+                    },
+                };
+            },
+        });
+        await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+
+        await outbox.enqueueRuntimeActivitySnapshot(runtimeSnapshot);
+        expect(deliveredSnapshots).toEqual([{ state: 'active', activeCount: 1 }]);
+        const terminalSnapshot = createRuntimeActivitySnapshotMutation({
+            sessionId,
+            snapshot: { state: 'idle', activeCount: 0 },
+        });
+        await outbox.enqueueRuntimeActivitySnapshot(terminalSnapshot);
+
+        expect(deliveredSnapshots).toEqual([
+            { state: 'active', activeCount: 1 },
+            { state: 'idle', activeCount: 0 },
+        ]);
+        await expect(readPersistedOutboxMutations(sessionId)).resolves.toEqual([
+            expect.objectContaining({
+                kind: 'session_turn',
+                mutationId: blockedTurn.mutationId,
+            }),
+        ]);
+        await outbox.close();
+    });
+
     it('re-resolves the live server URL and retries a terminal turn mutation after a local endpoint refusal', async () => {
         const attemptedUrls: string[] = [];
         vi.stubEnv('HAPPIER_SERVER_URL', 'http://127.0.0.1:41001');
