@@ -11,6 +11,61 @@ function jsonlLine(value: unknown): string {
 }
 
 describe('readClaudeSessionTitle', () => {
+  it.each([
+    ['ai-title', 'aiTitle', 'AI-generated Claude title'],
+    ['custom-title', 'customTitle', 'Renamed Claude session'],
+  ] as const)('prefers a late %s record over the first user message', async (type, titleKey, expectedTitle) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-provider-'));
+    const projectDir = join(root, 'projects', 'proj-one');
+    await mkdir(projectDir, { recursive: true });
+
+    const filePath = join(projectDir, 'session-one.jsonl');
+    await writeFile(
+      filePath,
+      [
+        jsonlLine({
+          type: 'user',
+          uuid: 'first-user',
+          message: { content: 'Initial user prompt' },
+        }),
+        ...Array.from({ length: 520 }, (_, index) => jsonlLine({
+          type: 'progress',
+          uuid: `progress-${index}`,
+        })),
+        jsonlLine({
+          type,
+          [titleKey]: expectedTitle,
+          sessionId: 'session-one',
+        }),
+        ...Array.from({ length: 80 }, (_, index) => jsonlLine({
+          type: 'progress',
+          uuid: `tail-progress-${index}`,
+        })),
+      ].join(''),
+      'utf8',
+    );
+
+    await expect(readClaudeSessionTitle(filePath)).resolves.toBe(expectedTitle);
+  });
+
+  it('uses the newest Claude title record when a session is renamed more than once', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-newest-'));
+    const projectDir = join(root, 'projects', 'proj-one');
+    await mkdir(projectDir, { recursive: true });
+
+    const filePath = join(projectDir, 'session-one.jsonl');
+    await writeFile(
+      filePath,
+      [
+        jsonlLine({ type: 'custom-title', customTitle: 'First rename', sessionId: 'session-one' }),
+        jsonlLine({ type: 'custom-title', customTitle: 'Newest rename', sessionId: 'session-one' }),
+      ].join(''),
+      'utf8',
+    );
+
+    await expect(readClaudeSessionTitle(filePath)).resolves.toBe('Newest rename');
+  });
+
   it('scans past non-title-bearing leading records until it finds meaningful user text', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-'));
     const projectDir = join(root, 'projects', 'proj-one');

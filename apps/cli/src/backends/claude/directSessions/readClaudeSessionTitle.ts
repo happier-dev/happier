@@ -1,3 +1,6 @@
+import { stat } from 'node:fs/promises';
+
+import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonlBackwardPager';
 import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
 import { readDirectSessionTitleCandidate } from '@/api/directSessions/title/readDirectSessionTitleCandidate';
 
@@ -26,7 +29,49 @@ function coerceTextContent(content: unknown): string | null {
   return readDirectSessionTitleCandidate(text);
 }
 
+function readClaudeTitleRecordCandidate(record: Record<string, unknown>): string | null {
+  if (record.type === 'ai-title') {
+    return readDirectSessionTitleCandidate(typeof record.aiTitle === 'string' ? record.aiTitle : '');
+  }
+  if (record.type === 'custom-title') {
+    return readDirectSessionTitleCandidate(typeof record.customTitle === 'string' ? record.customTitle : '');
+  }
+  return null;
+}
+
+async function readClaudeTitleFromTail(filePath: string): Promise<string | null> {
+  const fileSize = (await stat(filePath).catch(() => null))?.size ?? 0;
+  let endOffsetBytes = fileSize;
+  let scannedBytes = 0;
+  let scannedItems = 0;
+
+  while (endOffsetBytes > 0 && scannedBytes < TITLE_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_SCAN_TOTAL_MAX_ITEMS) {
+    const page = await readJsonlFileBackwardPage({
+      filePath,
+      endOffsetBytes,
+      maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_SCAN_TOTAL_MAX_BYTES - scannedBytes),
+      maxItems: Math.min(TITLE_SCAN_CHUNK_MAX_ITEMS, TITLE_SCAN_TOTAL_MAX_ITEMS - scannedItems),
+    });
+    for (let index = page.items.length - 1; index >= 0; index -= 1) {
+      const value = page.items[index]?.value;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const title = readClaudeTitleRecordCandidate(value as Record<string, unknown>);
+      if (title) return title;
+    }
+
+    if (page.reachedStart || page.nextEndOffsetBytes >= endOffsetBytes) break;
+    scannedBytes += endOffsetBytes - page.nextEndOffsetBytes;
+    scannedItems += page.items.length;
+    endOffsetBytes = page.nextEndOffsetBytes;
+  }
+
+  return null;
+}
+
 export async function readClaudeSessionTitle(filePath: string): Promise<string | null> {
+  const providerTitle = await readClaudeTitleFromTail(filePath);
+  if (providerTitle) return providerTitle;
+
   let summaryTitle: string | null = null;
   let assistantFallback: string | null = null;
   let offsetBytes = 0;
