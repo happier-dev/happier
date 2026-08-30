@@ -176,6 +176,7 @@ function createLocalHarness(options?: {
       invokeLocal: vi.fn(async () => ({})),
     },
     sendClaudeSessionMessage: vi.fn(),
+    sendClaudeSessionMessageCommittedExact: vi.fn(async () => {}),
     sendClaudeSessionMessageCommitted: vi.fn(async () => ({
       persisted: true,
       delivered: true,
@@ -629,7 +630,7 @@ describe('claudeLocalLauncher', () => {
     expect(scannerOptions).not.toBeNull();
     session.onSessionFound('sid1', hookWithTranscript('/tmp/sid1.jsonl'));
 
-    scannerOptions!.onMessage({
+    await scannerOptions!.onMessage({
       type: 'user',
       uuid: 'user_prompt_1',
       message: { content: 'do work' },
@@ -639,7 +640,7 @@ describe('claudeLocalLauncher', () => {
     await Promise.resolve();
     expect(abortObserved).toBe(false);
 
-    scannerOptions!.onMessage({
+    await scannerOptions!.onMessage({
       type: 'assistant',
       uuid: 'assistant_draft',
       isSidechain: false,
@@ -650,7 +651,7 @@ describe('claudeLocalLauncher', () => {
       },
     } as any);
     await vi.advanceTimersByTimeAsync(250);
-    scannerOptions!.onMessage({
+    await scannerOptions!.onMessage({
       type: 'user',
       uuid: 'stop_feedback',
       isMeta: true,
@@ -662,7 +663,7 @@ describe('claudeLocalLauncher', () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(abortObserved).toBe(false);
 
-    scannerOptions!.onMessage({
+    await scannerOptions!.onMessage({
       type: 'assistant',
       uuid: 'assistant_final',
       isSidechain: false,
@@ -892,7 +893,7 @@ describe('claudeLocalLauncher', () => {
       phase: 'completed',
       providerSessionId: 'sid_after_compact',
     }));
-    const transcriptPayload = vi.mocked(client.sendClaudeSessionMessage).mock.calls
+    const transcriptPayload = vi.mocked(client.sendClaudeSessionMessageCommittedExact!).mock.calls
       .map(([message]) => JSON.stringify(message))
       .join('\n');
     expect(transcriptPayload).not.toContain('<command-name>/compact</command-name>');
@@ -937,7 +938,7 @@ describe('claudeLocalLauncher', () => {
     expect(scannerOptions).not.toBeNull();
     session.onSessionFound('sid1', hookWithTranscript('/tmp/sid1.jsonl'));
 
-    scannerOptions!.onMessage({
+    await scannerOptions!.onMessage({
       type: 'user',
       uuid: 'user_prompt_1',
       message: { content: 'do work' },
@@ -955,7 +956,7 @@ describe('claudeLocalLauncher', () => {
     expect(client.peekPendingMessageQueueV2Count).not.toHaveBeenCalled();
     expect(abortObserved).toBe(false);
 
-    scannerOptions!.onMessage({
+    await scannerOptions!.onMessage({
       type: 'assistant',
       uuid: 'assistant_final',
       isSidechain: false,
@@ -1039,7 +1040,7 @@ describe('claudeLocalLauncher', () => {
         throw new Error('scanner options not captured');
       }
 
-      scannerOptions.onMessage({
+      await scannerOptions.onMessage({
         type: 'assistant',
         uuid: 'assistant_tool_use_1',
         isSidechain: false,
@@ -1060,7 +1061,7 @@ describe('claudeLocalLauncher', () => {
         },
       } as any);
 
-      scannerOptions.onMessage({
+      await scannerOptions.onMessage({
         type: 'user',
         uuid: 'user_tool_result_1',
         isSidechain: false,
@@ -1092,7 +1093,7 @@ describe('claudeLocalLauncher', () => {
         },
       } as any);
 
-      scannerOptions.onMessage({
+      await scannerOptions.onMessage({
         type: 'assistant',
         uuid: 'assistant_end_turn_1',
         isSidechain: false,
@@ -1109,7 +1110,7 @@ describe('claudeLocalLauncher', () => {
 
     expect(result).toEqual({ type: 'exit', code: 0 });
 
-    const sendClaudeSessionMessageMock = client.sendClaudeSessionMessage as ReturnType<typeof vi.fn>;
+    const sendClaudeSessionMessageMock = client.sendClaudeSessionMessageCommittedExact as ReturnType<typeof vi.fn>;
     const diffCall = sendClaudeSessionMessageMock.mock.calls.find((call: any[]) => {
       const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
       return content.some((block: any) => block?.type === 'tool_use' && block?.name === 'Diff');

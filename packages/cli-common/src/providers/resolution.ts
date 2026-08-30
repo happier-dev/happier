@@ -64,6 +64,14 @@ function resolveManagedCommandBasename(spec: ProviderCliManagedInstallSpec): str
   return spec.kind === 'github_release_binary' ? `${spec.binaryName}.exe` : `${spec.binaryName}.cmd`;
 }
 
+export function resolveProviderCliManagedCommandRelativePath(agentId: AgentId): string {
+  const managedInstall = getProviderCliRuntimeSpec(agentId).managedInstall;
+  if (!managedInstall) {
+    throw new Error(`Provider ${agentId} does not define a managed CLI install path`);
+  }
+  return join('bin', resolveManagedCommandBasename(managedInstall));
+}
+
 export function readProviderCliOverride(agentId: AgentId, processEnv: NodeJS.ProcessEnv = process.env): string | null {
   const envKey = `HAPPIER_${agentId.toUpperCase()}_PATH`;
   const override = expandHomeDirPath(
@@ -122,7 +130,12 @@ export function resolveProviderCliManagedCommandPath(
   const happyHomeDir = typeof opts.happyHomeDir === 'string' && opts.happyHomeDir.trim().length > 0
     ? opts.happyHomeDir.trim()
     : resolveHappyHomeDirFromEnvironment(processEnv);
-  return join(happyHomeDir, 'tools', 'providers', agentId, 'current', 'bin', resolveManagedCommandBasename(managedInstall));
+  const installRoot = join(happyHomeDir, 'tools', 'providers', agentId);
+  const commandRelativePath = resolveProviderCliManagedCommandRelativePath(agentId);
+  const activeCommandPath = join(installRoot, 'active', commandRelativePath);
+  // Existing runner snapshots still resolve current. New POSIX promotions retain it and switch active atomically.
+  if (process.platform !== 'win32' && existsSync(activeCommandPath)) return activeCommandPath;
+  return join(installRoot, 'current', commandRelativePath);
 }
 
 function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): string | null {

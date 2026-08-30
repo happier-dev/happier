@@ -96,6 +96,7 @@ type ParkedUnifiedTerminalMessage = Readonly<{
 type InFlightStartupMessage = Readonly<{
   source: 'initial' | 'parked' | 'queue';
   batch: ParkedUnifiedTerminalMessage;
+  launchAttempt: number;
 }>;
 
 function readClaudeResumeSessionId(claudeArgs: readonly string[]): string | null {
@@ -754,8 +755,9 @@ export async function claudeUnifiedTerminalLauncher(
     message: string;
     maxUserMessageSeq?: number | null | undefined;
     userMessageLocalIds?: readonly string[] | null | undefined;
-  }>): boolean => {
+  }>, launchAttempt: number): boolean => {
     return inFlightStartupMessage !== null
+      && inFlightStartupMessage.launchAttempt === launchAttempt
       && inFlightStartupMessage.batch.message === input.message
       && inFlightStartupMessage.batch.maxUserMessageSeq === (input.maxUserMessageSeq ?? null)
       && areSameUserMessageLocalIds(inFlightStartupMessage.batch.userMessageLocalIds, input.userMessageLocalIds);
@@ -833,6 +835,7 @@ export async function claudeUnifiedTerminalLauncher(
           })
         : initialPrompt.claudeArgs;
     unifiedTerminalLaunchAttempt += 1;
+    const launchAttempt = unifiedTerminalLaunchAttempt;
     const resumeSessionId = readClaudeResumeSessionId(claudeArgs);
     const startupLifecycle = await prepareClaudeUnifiedStartupLifecycle({
       intent: resumeSessionId
@@ -858,6 +861,21 @@ export async function claudeUnifiedTerminalLauncher(
       logPrefix: '[unified]',
       logDebug: (message, error) => logger.debug(message, error),
     });
+    let launchAttemptSettled = false;
+    let returnedExactInFlightMessage = false;
+    const settleReturnedExactInFlightMessage = (): void => {
+      if (!returnedExactInFlightMessage) return;
+      returnedExactInFlightMessage = false;
+      if (inFlightStartupMessage?.launchAttempt !== launchAttempt) return;
+      const localIds = inFlightStartupMessage.batch.userMessageLocalIds;
+      inFlightStartupMessage = null;
+      blockUndeliverableProviderPrompt({
+        localIds,
+        blockPendingMessageDelivery: session.client.blockPendingMessageDelivery?.bind(session.client),
+        blockReason: 'runtime_disposed_before_delivery',
+        logPrefix: '[unified]',
+      });
+    };
     const providerDispatch = await sessionInputConsumer.runProviderInputDispatch({
       abortSignal: abortController.signal,
       dispatch: async () => runClaudeUnifiedTerminalSession({
@@ -901,8 +919,16 @@ export async function claudeUnifiedTerminalLauncher(
         maxUserMessageSeq,
         userMessageLocalIds,
       }) => {
-        if (isInFlightStartupMessage({ message, maxUserMessageSeq, userMessageLocalIds })) {
-          inFlightStartupMessage = null;
+        if (launchAttemptSettled) {
+          logger.debug('[unified]: ignored late undeliverable-input callback from a settled terminal launch attempt');
+          return;
+        }
+        if (isInFlightStartupMessage({ message, maxUserMessageSeq, userMessageLocalIds }, launchAttempt)) {
+          // Defer the custody decision until this launch attempt settles. A startup/readiness
+          // failure is retried by the existing restore path; clean disposal or any other failure
+          // still blocks the durable row instead of replaying it from a second owner.
+          returnedExactInFlightMessage = true;
+          return;
         }
         blockUndeliverableProviderPrompt({
           localIds: userMessageLocalIds,
@@ -936,7 +962,8 @@ export async function claudeUnifiedTerminalLauncher(
       onPromptAcceptedByProvider: ({ userMessageLocalIds, appliedModelId }) => {
         consecutiveParkRelaunches = 0;
         resetRecoveryProbeInconclusiveEscalation();
-        inFlightStartupMessage = null;
+        if (inFlightStartupMessage?.launchAttempt === launchAttempt) inFlightStartupMessage = null;
+        returnedExactInFlightMessage = false;
         lastStartupBatchUserMessageLocalIds = [];
         if (!providerInputOutcomes.observeAccepted({ userMessageLocalIds, appliedModelId })) {
           logger.debug('[unified]: ignored provider acceptance without one exact Queue localId outcome binding');
@@ -944,7 +971,8 @@ export async function claudeUnifiedTerminalLauncher(
       },
       onPromptTerminallyRejectedBeforeProvider: ({ userMessageLocalIds, reason }) => {
         consecutiveParkRelaunches = 0;
-        inFlightStartupMessage = null;
+        if (inFlightStartupMessage?.launchAttempt === launchAttempt) inFlightStartupMessage = null;
+        returnedExactInFlightMessage = false;
         lastStartupBatchUserMessageLocalIds = [];
         if (!providerInputOutcomes.observeRejectedBeforeEffect({
             userMessageLocalIds,
@@ -992,7 +1020,7 @@ export async function claudeUnifiedTerminalLauncher(
           const parked = parkedMessage;
           const mode = observeOutgoingBatchMode(parked.mode);
           parkedMessage = null;
-          inFlightStartupMessage = { source: 'parked', batch: { ...parked, mode } };
+          inFlightStartupMessage = { source: 'parked', batch: { ...parked, mode }, launchAttempt };
           noteStartupBatchLocalIds(parked.userMessageLocalIds);
           binding.noteNextInjectedPromptShouldSuppressEcho({ retainUntilObserved: true });
           return {
@@ -1009,6 +1037,7 @@ export async function claudeUnifiedTerminalLauncher(
           });
           inFlightStartupMessage = {
             source: 'initial',
+            launchAttempt,
             batch: {
               message: initialPrompt.prompt,
               mode: initialBatchMode,
@@ -1028,6 +1057,7 @@ export async function claudeUnifiedTerminalLauncher(
         const mode = observeOutgoingBatchMode(batch.mode);
         inFlightStartupMessage = {
           source: 'queue',
+          launchAttempt,
           batch: {
             message: batch.message,
             mode,
@@ -1137,7 +1167,22 @@ export async function claudeUnifiedTerminalLauncher(
         });
       },
       }),
+    }).catch((error: unknown) => {
+      launchAttemptSettled = true;
+      if (
+        returnedExactInFlightMessage
+        && !isClaudeUnifiedTerminalReadinessTimeoutError(error)
+        && !(
+          isClaudeUnifiedTerminalRuntimeIssueError(error)
+          && isTerminalHostStartupError(error)
+        )
+      ) {
+        settleReturnedExactInFlightMessage();
+      }
+      throw error;
     });
+    launchAttemptSettled = true;
+    settleReturnedExactInFlightMessage();
     if (providerDispatch.status === 'cancelled') {
       return;
     }

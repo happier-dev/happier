@@ -241,13 +241,18 @@ function clampPoint(image: DecodedPng, point: Point): Point {
   };
 }
 
-function buildOutsideSamplePoints(image: DecodedPng, bounds: Bounds): Point[] {
+export function buildOutsideSamplePoints(image: Pick<DecodedPng, 'width' | 'height'>, bounds: Bounds): Point[] {
   return [
     { x: bounds.x - 2, y: bounds.y - 2 },
     { x: bounds.x + bounds.width + 2, y: bounds.y + Math.floor(bounds.height / 2) },
     { x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + bounds.height + 2 },
     { x: bounds.x - 2, y: bounds.y + Math.floor(bounds.height / 2) },
-  ].map((point) => clampPoint(image, point));
+  ].filter((point) => (
+    point.x >= 0
+    && point.y >= 0
+    && point.x < image.width
+    && point.y < image.height
+  ));
 }
 
 function buildInsideSamplePoints(image: DecodedPng, bounds: Bounds): Point[] {

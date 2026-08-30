@@ -45,6 +45,18 @@ Examples:
 EOF
 }
 
+assert_completed_postgres_migration() {
+  local label="$1"
+  local compose_env_file="$2"
+  shift 2
+  local migration_count
+  migration_count="$("$@" --env-file "$compose_env_file" exec -T postgres sh -lc "psql -U \"${POSTGRES_USER:-happier}\" -d \"${POSTGRES_DB:-happier_smoke}\" -tAc 'select count(*) from \"_prisma_migrations\" where finished_at is not null and rolled_back_at is null;' 2>/dev/null | tr -d '[:space:]' | head -n 1" || true)"
+  if ! [[ "${migration_count:-}" =~ ^[0-9]+$ ]] || [[ "$migration_count" -lt 1 ]]; then
+    echo "[npm-e2e-smoke] $label: expected at least one completed postgres migration (got: ${migration_count:-missing})" >&2
+    return 1
+  fi
+}
+
 for arg in "$@"; do
   case "$arg" in
     --mode=*) mode="${arg#*=}" ;;
@@ -668,6 +680,7 @@ run_dockerhub_images_smoke() {
           echo "[npm-e2e-smoke] expected at least one postgres connection from relay-server (application_name=$postgres_app_name, got: ${conn_count:-missing})" >&2
           exit 1
         fi
+        assert_completed_postgres_migration "dockerhub relay-server" "$docker_env_file" "${compose_images[@]}"
       fi
 
       echo "[npm-e2e-smoke] dockerhub images OK (db=$db_case)"
@@ -849,6 +862,7 @@ run_relay_upgrade_smoke() {
           echo "[npm-e2e-smoke] relay upgrade (postgres): expected at least one postgres connection after upgrade (application_name=$postgres_app_name_to, got: ${conn_count:-missing})" >&2
           exit 1
         fi
+        assert_completed_postgres_migration "relay upgrade (postgres)" "$upgrade_env_to" "${compose_upgrade[@]}"
       fi
 
       echo "[npm-e2e-smoke] relay upgrade OK ($db_case)" >&2
@@ -1078,6 +1092,7 @@ if [[ "$with_any_remote" == "1" ]]; then
 	        echo "[npm-e2e-smoke] expected at least one postgres connection from server (application_name=${POSTGRES_APP_NAME:-missing}, got: ${conn_count:-missing})" >&2
 	        exit 1
 	      fi
+	      assert_completed_postgres_migration "remote server" "$env_file" "${compose_remote[@]}"
 	    fi
 	  fi
 

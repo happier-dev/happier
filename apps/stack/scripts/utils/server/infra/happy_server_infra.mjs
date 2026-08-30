@@ -7,7 +7,6 @@ import { ensureEnvFileMutated } from '../../env/env_file.mjs';
 import { readEnvObjectFromFile } from '../../env/read.mjs';
 import { sanitizeDnsLabel } from '../../net/dns.mjs';
 import { pickNextFreeTcpPort } from '../../net/ports.mjs';
-import { pmExecBin } from '../../proc/pm.mjs';
 import { run, runCapture } from '../../proc/proc.mjs';
 import { randomToken } from '../../crypto/tokens.mjs';
 import { coercePort, INFRA_RESERVED_PORT_KEYS } from '../port.mjs';
@@ -424,7 +423,7 @@ export async function ensureHappyServerManagedInfra({
               { key: 'HAPPIER_STACK_MINIO_PORT', value: String(minioPort) },
               { key: 'HAPPIER_STACK_MINIO_CONSOLE_PORT', value: String(minioConsolePort) },
               // Vars consumed by happier-server:
-              { key: 'DATABASE_URL', value: databaseUrl },
+              ...(databaseUrl ? [{ key: 'DATABASE_URL', value: databaseUrl }] : []),
               { key: 'REDIS_URL', value: redisUrl },
               { key: 'S3_HOST', value: s3Host },
               { key: 'S3_PORT', value: String(minioPort) },
@@ -483,7 +482,7 @@ export async function ensureHappyServerManagedInfra({
     projectName,
     infraDir,
     env: {
-      DATABASE_URL: databaseUrl,
+      ...(databaseUrl ? { DATABASE_URL: databaseUrl } : {}),
       REDIS_URL: redisUrl,
       S3_HOST: s3Host,
       S3_PORT: String(minioPort),
@@ -495,27 +494,4 @@ export async function ensureHappyServerManagedInfra({
       HANDY_MASTER_SECRET: handyMasterSecret,
     },
   };
-}
-
-export async function applyHappyServerMigrations(
-  { serverDir, env, quiet = false, dbProvider },
-  { pmExecBinImpl = pmExecBin } = {},
-) {
-  const effectiveDbProvider = applyEffectiveDbProviderEnv({
-    serverComponentName: 'happier-server',
-    env: dbProvider == null ? env : { HAPPIER_DB_PROVIDER: dbProvider },
-    targetEnv: { ...env },
-  });
-  if (effectiveDbProvider === 'mysql') {
-    await pmExecBinImpl({
-      dir: serverDir,
-      bin: 'migrate:mysql:deploy',
-      args: [],
-      env,
-      quiet,
-    });
-    return;
-  }
-  // Non-interactive + idempotent. Safe for dev; also safe for managed stacks on start.
-  await pmExecBinImpl({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env, quiet });
 }

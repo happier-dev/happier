@@ -9,6 +9,7 @@ function session(overrides: Partial<Session> & {
     lastRuntimeIssue?: unknown;
     pendingRequestObservedAt?: unknown;
     rollbackEligibleTurnStarts?: unknown;
+    sessionTurns?: unknown;
 } = {}): Session {
     return {
         id: 's1',
@@ -81,6 +82,47 @@ describe('areStoredSessionsEqual', () => {
         expect(areStoredSessionsEqual(
             session({ rollbackEligibleTurnStarts: [1] }),
             session({ rollbackEligibleTurnStarts: [1, 3] }),
+        )).toBe(false);
+    });
+
+    it('detects structured session turn projection changes when legacy rollback starts are unchanged', () => {
+        const sessionTurns = {
+            v: 1 as const,
+            sessionId: 's1',
+            latestTurnId: 'turn-1',
+            updatedAt: 10,
+            turns: [
+                {
+                    turnId: 'turn-1',
+                    status: 'completed' as const,
+                    startedAt: 1,
+                    updatedAt: 10,
+                    terminalAt: 10,
+                    transcriptAnchors: {
+                        startUserMessageSeq: 1,
+                        userMessageSeqs: [1],
+                        startSeqInclusive: 1,
+                        endSeqInclusive: 2,
+                    },
+                    rollback: { state: 'eligible' as const, updatedAt: 10 },
+                },
+            ],
+        };
+
+        expect(areStoredSessionsEqual(
+            session({ rollbackEligibleTurnStarts: [1], sessionTurns }),
+            session({
+                rollbackEligibleTurnStarts: [1],
+                sessionTurns: {
+                    ...sessionTurns,
+                    updatedAt: 20,
+                    turns: sessionTurns.turns.map((turn) => ({
+                        ...turn,
+                        updatedAt: 20,
+                        rollback: { state: 'not_eligible' as const, reason: 'not_latest_turn', updatedAt: 20 },
+                    })),
+                },
+            }),
         )).toBe(false);
     });
 

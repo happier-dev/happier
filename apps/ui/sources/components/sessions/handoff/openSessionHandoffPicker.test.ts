@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const showMock = vi.hoisted(() => vi.fn<(config: unknown) => string>());
 const hideMock = vi.hoisted(() => vi.fn<(id: string) => void>());
-const refreshMachinesThrottledMock = vi.hoisted(() => vi.fn<(params: unknown) => Promise<void>>(async () => {}));
+const sessionHandoffPickerModalStub = vi.hoisted(() => () => null);
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -14,22 +14,14 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        refreshMachinesThrottled: (params: unknown) => refreshMachinesThrottledMock(params),
-    },
-}));
-
 vi.mock('./SessionHandoffPickerModal', () => ({
-    SessionHandoffPickerModal: () => null,
+    SessionHandoffPickerModal: sessionHandoffPickerModalStub,
 }));
 
 describe('openSessionHandoffPicker', () => {
     beforeEach(() => {
         showMock.mockReset();
         hideMock.mockReset();
-        refreshMachinesThrottledMock.mockReset();
-        refreshMachinesThrottledMock.mockResolvedValue(undefined);
         showMock.mockImplementation((config: any) => {
             config.props.onResolve(null);
             return 'modal_1';
@@ -41,38 +33,12 @@ describe('openSessionHandoffPicker', () => {
         vi.resetModules();
     });
 
-    it('refreshes machines before opening the picker modal', async () => {
-        const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
-
-        await openSessionHandoffPicker({
-            sessionId: 'sess_1',
-            sourceMachineId: 'machine_source',
-            serverId: 'server_a',
+    it('mounts the concrete picker body immediately instead of a Suspense loading shell', async () => {
+        let capturedConfig: any = null;
+        showMock.mockImplementation((config: any) => {
+            capturedConfig = config;
+            return 'modal_1';
         });
-
-        expect(refreshMachinesThrottledMock).toHaveBeenCalledWith({ staleMs: 0, force: true });
-        expect(showMock).toHaveBeenCalledTimes(1);
-        expect(refreshMachinesThrottledMock.mock.invocationCallOrder[0]).toBeLessThan(showMock.mock.invocationCallOrder[0]);
-    });
-
-    it('still opens the picker modal when the refresh fails', async () => {
-        refreshMachinesThrottledMock.mockRejectedValueOnce(new Error('network down'));
-        const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
-
-        await expect(openSessionHandoffPicker({
-            sessionId: 'sess_1',
-            sourceMachineId: 'machine_source',
-            serverId: 'server_a',
-        })).resolves.toBeNull();
-
-        expect(refreshMachinesThrottledMock).toHaveBeenCalledWith({ staleMs: 0, force: true });
-        expect(showMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('still opens the picker modal when the refresh hangs (never resolves)', async () => {
-        vi.useFakeTimers();
-        refreshMachinesThrottledMock.mockImplementationOnce(() => new Promise(() => {}));
-
         const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
 
         const promise = openSessionHandoffPicker({
@@ -81,12 +47,14 @@ describe('openSessionHandoffPicker', () => {
             serverId: 'server_a',
         });
 
-        // The picker should not block indefinitely waiting for machine refresh.
-        await vi.advanceTimersByTimeAsync(3500);
+        await vi.waitFor(() => {
+            expect(capturedConfig).not.toBeNull();
+        });
+        const entry = capturedConfig.component(capturedConfig.props);
+        expect(entry.type).toBe(sessionHandoffPickerModalStub);
 
+        capturedConfig.props.onResolve(null);
         await expect(promise).resolves.toBeNull();
-        expect(showMock).toHaveBeenCalledTimes(1);
-        expect(refreshMachinesThrottledMock).toHaveBeenCalledWith({ staleMs: 0, force: true });
     });
 
     it('resolves the picker selection and hides the modal without letting a later close callback turn it into a cancel', async () => {

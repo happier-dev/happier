@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { openPgliteMigrationSession } from '../pgliteMigrationSession';
 
 export interface FullRuntimeMigrationProcessBoundary {
     spawn(command: string, args: string[], options: {
@@ -18,12 +19,21 @@ interface FullRuntimeMigrationOptions {
     executablePath: string;
     env: NodeJS.ProcessEnv;
     processBoundary?: FullRuntimeMigrationProcessBoundary;
+    pgliteBoundary?: FullRuntimePgliteBoundary;
 }
 
-function normalizeProvider(env: NodeJS.ProcessEnv): 'postgres' | 'mysql' {
+export interface FullRuntimePgliteBoundary {
+    open(env: NodeJS.ProcessEnv): Promise<Readonly<{
+        databaseUrl: string;
+        close(): Promise<void>;
+    }>>;
+}
+
+function normalizeProvider(env: NodeJS.ProcessEnv): 'postgres' | 'mysql' | 'pglite' {
     const rawProvider = String(env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').trim().toLowerCase();
     if (rawProvider === 'postgres' || rawProvider === 'postgresql') return 'postgres';
     if (rawProvider === 'mysql') return 'mysql';
+    if (rawProvider === 'pglite') return 'pglite';
     throw new Error(`[happier-server-migrate] unsupported database provider: ${rawProvider || '<empty>'}`);
 }
 
@@ -53,14 +63,19 @@ const defaultProcessBoundary: FullRuntimeMigrationProcessBoundary = {
     },
 };
 
+const defaultPgliteBoundary: FullRuntimePgliteBoundary = {
+    open: async (env) => await openPgliteMigrationSession(env, { purpose: 'runtime:migrate' }),
+};
+
 export async function runFullRuntimeMigration({
     executablePath,
     env,
     processBoundary = defaultProcessBoundary,
+    pgliteBoundary = defaultPgliteBoundary,
 }: FullRuntimeMigrationOptions): Promise<number> {
     const provider = normalizeProvider(env);
-    const databaseUrl = String(env.DATABASE_URL ?? '').trim();
-    if (!databaseUrl) {
+    const configuredDatabaseUrl = String(env.DATABASE_URL ?? '').trim();
+    if (provider !== 'pglite' && !configuredDatabaseUrl) {
         throw new Error('[happier-server-migrate] DATABASE_URL is required');
     }
 
@@ -93,27 +108,33 @@ export async function runFullRuntimeMigration({
         requirePath(queryEnginePath, 'file'),
     ]);
 
-    const completion = processBoundary.spawn(
-        runnerPath,
-        ['migrate', 'deploy', '--schema', schemaPath],
-        {
-            cwd: artifactRoot,
-            env: {
-                ...env,
-                DATABASE_URL: databaseUrl,
-                HAPPIER_DB_PROVIDER: provider,
-                PRISMA_SCHEMA_ENGINE_BINARY: schemaEnginePath,
-                PRISMA_QUERY_ENGINE_LIBRARY: queryEnginePath,
+    const pgliteSession = provider === 'pglite' ? await pgliteBoundary.open(env) : null;
+    const databaseUrl = pgliteSession?.databaseUrl ?? configuredDatabaseUrl;
+    try {
+        const completion = processBoundary.spawn(
+            runnerPath,
+            ['migrate', 'deploy', '--schema', schemaPath],
+            {
+                cwd: artifactRoot,
+                env: {
+                    ...env,
+                    DATABASE_URL: databaseUrl,
+                    HAPPIER_DB_PROVIDER: provider,
+                    PRISMA_SCHEMA_ENGINE_BINARY: schemaEnginePath,
+                    PRISMA_QUERY_ENGINE_LIBRARY: queryEnginePath,
+                },
+                stdio: 'inherit',
             },
-            stdio: 'inherit',
-        },
-    );
-    if (completion.error) {
-        throw new Error(`[happier-server-migrate] failed to launch packaged Prisma: ${completion.error.message}`);
+        );
+        if (completion.error) {
+            throw new Error(`[happier-server-migrate] failed to launch packaged Prisma: ${completion.error.message}`);
+        }
+        if (completion.status === 0 && completion.signal === null) return 0;
+        if (typeof completion.status === 'number' && completion.status !== 0) return completion.status;
+        return 1;
+    } finally {
+        await pgliteSession?.close();
     }
-    if (completion.status === 0 && completion.signal === null) return 0;
-    if (typeof completion.status === 'number' && completion.status !== 0) return completion.status;
-    return 1;
 }
 
 const isMain = (import.meta as ImportMeta & { main?: boolean }).main === true;

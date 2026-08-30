@@ -68,8 +68,7 @@ commands.
   automation owns the outputs it publishes.
 - Run only discriminating compatibility vectors or live flows for affected,
   reachable directions. Do not manufacture a component or platform matrix.
-- Do not read or invoke the legacy workspace/bootstrap material under this
-  skill directory; it encoded the retired local archive-certification workflow
-  and is not part of the current contract.
+- Keep certification evidence in the existing release record or final handoff.
+  Do not create per-run plan, tracking, ledger, lane, or workspace machinery.
 - Do not write release notes, tags, GitHub releases, credentials, deploy
   branches, or store submissions from this skill.

@@ -207,6 +207,11 @@ export const TranscriptList = React.memo((props: {
         transcriptSessionCommon.toolRoute,
     ]);
 
+    const transcriptListExtraData = React.useMemo(() => ({
+        selectionVersion: transcriptMessageSelection.selectionVersion,
+        thinkingExpandedByMessageId,
+    }), [thinkingExpandedByMessageId, transcriptMessageSelection.selectionVersion]);
+
     return (
         <TranscriptMotionProvider key={props.datasetKey} sessionKey={props.datasetKey} config={motionConfig}>
             <TranscriptRowLayoutMutationProvider value={prepareRowLayoutMutation}>
@@ -215,7 +220,7 @@ export const TranscriptList = React.memo((props: {
                     ref={listRef}
                     data={listData}
                     dataKey={props.datasetKey}
-                    extraData={transcriptMessageSelection.selectionVersion}
+                    extraData={transcriptListExtraData}
                     keyExtractor={keyExtractor}
                     getItemType={getItemType}
                     renderItem={renderItem}

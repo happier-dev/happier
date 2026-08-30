@@ -1,15 +1,15 @@
-# Server flavors: `happier-server-light` vs `happier-server`
+# Server presets: `happier-server-light` vs `happier-server`
 
-hstack supports two server “flavors”. You can switch between them globally (main stack) or per stack.
+hstack supports two compatibility-facing server preset names. They select topology and backend defaults, not a restricted database implementation. You can switch presets globally (main stack) or per stack.
 
 ## What’s the difference?
 
-Both flavors use the **same server codebase** (the monorepo server package, typically `apps/server`), but run with different backends and storage assumptions.
+Both presets use the **same server codebase**. An explicit `HAPPIER_DB_PROVIDER=postgres|mysql|pglite|sqlite` wins under either preset. Without an explicit provider, light defaults to SQLite and full defaults to Postgres.
 
 ### `happier-server-light` (recommended default)
 
 - **No Docker required**
-- Uses **SQLite by default** (stack-local file), with optional embedded Postgres via PGlite
+- Uses **SQLite by default**; PostgreSQL/MySQL can be selected with an external `DATABASE_URL`, and PGlite remains available as an embedded option
 - Stores local public files under the stack directory
 - Best choice for a stable “main” stack and quick local installs
 
@@ -29,15 +29,15 @@ Key env vars (stored in the stack env file):
 
 ### `happier-server` (full server)
 
-- Docker-managed infra per stack (Postgres + Redis + Minio/S3)
+- Docker-managed topology per stack (Redis + Minio/S3, plus Postgres only when the selected provider is Postgres without an external `DATABASE_URL`)
 - Closer to “production-like” behavior
 - Useful when you need Redis/S3 semantics or want to reproduce full-server-only issues
 
 ## Full server infra (no AWS required)
 
-`happier-server` requires:
+The full preset defaults to:
 
-- Postgres (`DATABASE_URL`)
+- Postgres (`DATABASE_URL`, managed by hstack when omitted)
 - Redis (`REDIS_URL`)
 - S3-compatible object storage (`S3_*`)
 
@@ -88,11 +88,7 @@ Notes:
 ## Prisma behavior (why start is safer under LaunchAgents)
 
 - **`hstack start`** is “production-like”. It avoids running heavyweight schema sync loops under launchd KeepAlive.
-- **`hstack dev`** is for rapid iteration:
-  - for `happier-server`: hstack runs `prisma migrate deploy` by default (configurable via `HAPPIER_STACK_PRISMA_MIGRATE`).
-  - for `happier-server-light`:
-    - SQLite uses the server package’s canonical `migrate:sqlite:deploy` script.
-    - PGlite uses the server package’s `migrate:light:deploy` script.
+- **`hstack dev`** is for rapid iteration. Migration selection follows the provider under either preset (configurable via `HAPPIER_STACK_PRISMA_MIGRATE`): Postgres uses Prisma migrate deploy, MySQL uses `migrate:mysql:deploy`, SQLite uses `migrate:sqlite:deploy`, and PGlite uses `migrate:light:deploy`.
 
 Important: for a given run (`hstack start` / `hstack dev`) you choose **one** flavor.
 
@@ -143,6 +139,6 @@ There are two separate concepts:
 - **Repo selection**: which monorepo checkout/worktree the stack runs from
   - controlled by `HAPPIER_STACK_REPO_DIR` (via `hstack wt use ...` / `hstack stack wt <stack> -- use ...`)
 
-## SQLite note
+## Database provider note
 
-SQLite is the default DB for `happier-server-light`. You can opt into embedded Postgres (PGlite) by setting `HAPPIER_DB_PROVIDER=pglite` in the stack env.
+SQLite is the light preset default and Postgres is the full preset default. Set `HAPPIER_DB_PROVIDER` in the stack env to choose independently. PostgreSQL and MySQL require `DATABASE_URL` unless the full preset is allowed to manage its default Postgres service.

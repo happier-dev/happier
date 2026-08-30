@@ -107,6 +107,75 @@ function mockMachineDomainBoundariesForActiveServer(
 }
 
 describe('machines domain: sessionListViewData rebuild gating', () => {
+    it('does not let a late snapshot regress a newer machine activity update', async () => {
+        vi.useFakeTimers();
+        mockMachineDomainBoundaries();
+
+        const { createMachinesDomain } = await import('./machines');
+        const initialState = {
+            sessions: {},
+            settings: { groupInactiveSessionsByProject: false },
+            sessionListRenderables: {},
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
+        };
+        const { get, domain } = createHarness(createMachinesDomain, initialState);
+        const machine = {
+            id: 'm1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 200,
+            active: true,
+            activeAt: 200,
+            revokedAt: null,
+            metadata: { displayName: 'Mac' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        domain.applyMachines([machine] as any, true, { sourceServerId: 'server_a' });
+        domain.replaceMachineDisplays([
+            { ...get().machineDisplayById.m1, updatedAt: 300, active: false, activeAt: 100 },
+        ], { sourceServerId: 'server_a' });
+
+        expect(get().machineDisplayById.m1).toMatchObject({ active: true, activeAt: 200 });
+
+        domain.applyMachines([{
+            ...machine,
+            updatedAt: 300,
+            active: false,
+            activeAt: 100,
+            metadataVersion: 2,
+            metadata: { displayName: 'Renamed Mac' },
+        }] as any, true, { sourceServerId: 'server_a' });
+
+        expect(get().machines.m1).toMatchObject({
+            active: true,
+            activeAt: 200,
+            metadataVersion: 2,
+            metadata: { displayName: 'Renamed Mac' },
+        });
+        expect(get().machineDisplayById.m1).toMatchObject({ active: true, activeAt: 200 });
+        expect(get().machineListByServerId.server_a[0]).toMatchObject({ active: true, activeAt: 200 });
+
+        domain.applyMachines([{
+            ...machine,
+            updatedAt: 400,
+            active: false,
+            activeAt: 400,
+        }] as any, false, { sourceServerId: 'server_a' });
+
+        expect(get().machines.m1).toMatchObject({ active: false, activeAt: 400 });
+        expect(get().machineDisplayById.m1).toMatchObject({ active: false, activeAt: 400 });
+        expect(get().machineListByServerId.server_a[0]).toMatchObject({ active: false, activeAt: 400 });
+    });
+
     it('preserves machine records and coalesces warm-cache writes when incoming machines do not change', async () => {
         vi.useFakeTimers();
         mockMachineDomainBoundaries();

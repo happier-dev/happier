@@ -448,13 +448,9 @@ export function useSessionStatus(session: SessionStatusSource, options: UseSessi
  * Returns the last segment of the path, or 'unknown' if no path is available.
  */
 export function getSessionName(session: SessionNameSource): string {
-    const summaryText = (session.metadata as any)?.summary?.text ?? (session.metadata as any)?.summaryText;
-    if (typeof summaryText === 'string' && summaryText.trim()) {
-        return summaryText;
-    } else if (session.metadata?.name) {
-        const name = session.metadata.name.trim();
-        if (name.length > 0) return name;
-    } else if (session.metadata) {
+    const displayTitle = getSessionDisplayTitle(session);
+    if (displayTitle) return displayTitle;
+    if (session.metadata) {
         const displayPath = readDisplayPathForSession({
             sessionId: session.id,
             metadata: session.metadata ?? null,
@@ -467,6 +463,20 @@ export function getSessionName(session: SessionNameSource): string {
         return lastSegment;
     }
     return t('status.unknown');
+}
+
+export function getSessionDisplayTitle(session: SessionNameSource): string | null {
+    const metadata = session.metadata as Readonly<{
+        summary?: Readonly<{ text?: unknown }> | null;
+        summaryText?: unknown;
+        name?: unknown;
+    }> | null | undefined;
+    const summaryText = metadata?.summary?.text ?? metadata?.summaryText;
+    if (typeof summaryText === 'string' && summaryText.trim()) {
+        return summaryText.trim();
+    }
+    const name = metadata?.name;
+    return typeof name === 'string' && name.trim() ? name.trim() : null;
 }
 
 /**

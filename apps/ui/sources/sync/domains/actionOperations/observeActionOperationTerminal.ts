@@ -4,6 +4,7 @@ import {
     actionOperationStore,
     type ActionOperationStore,
 } from './actionOperationStore';
+import { subscribeActionOperationByRequest } from './subscribeActionOperationByRequest';
 
 function createAbortError(): Error {
     if (typeof DOMException !== 'undefined') {
@@ -48,27 +49,22 @@ export function observeActionOperationTerminal(params: Readonly<{
             cleanup();
             reject(createAbortError());
         };
-        const read = () => {
-            for (const operation of store.getState().operationsById.values()) {
-                if (
-                    operation.scope.accountId === params.accountId
-                    && operation.scope.machineId === params.machineId
-                    && operation.actionId === params.actionId
-                    && operation.requestId === params.requestId
-                    && isTerminal(operation)
-                ) {
-                    finish(operation);
-                    return;
-                }
-            }
-        };
-
         if (params.signal?.aborted) {
             abort();
             return;
         }
         params.signal?.addEventListener('abort', abort, { once: true });
-        unsubscribe = store.subscribe(read);
-        read();
+        const nextUnsubscribe = subscribeActionOperationByRequest({
+            store,
+            accountId: params.accountId,
+            machineId: params.machineId,
+            actionId: params.actionId,
+            requestId: params.requestId,
+            onUpdate: (operation) => {
+                if (isTerminal(operation)) finish(operation);
+            },
+        });
+        if (settled) nextUnsubscribe();
+        else unsubscribe = nextUnsubscribe;
     });
 }

@@ -6,9 +6,16 @@ import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
 
 import {
+  SERVER_RUNTIME_CANDIDATE_MAX_AGGREGATE_BYTES,
+  SERVER_RUNTIME_CANDIDATE_MAX_FILE_BYTES,
   finalizeServerRuntimeCandidate,
   inspectServerRuntimeCandidate,
 } from './server-runtime-candidate.mjs';
+
+test('default candidate budgets admit five self-contained migration archives without weakening the per-file cap', () => {
+  assert.equal(SERVER_RUNTIME_CANDIDATE_MAX_FILE_BYTES, 512 * 1024 * 1024);
+  assert.equal(SERVER_RUNTIME_CANDIDATE_MAX_AGGREGATE_BYTES, 2 * 1024 * 1024 * 1024);
+});
 
 const targets = [
   ['linux', 'x64'],

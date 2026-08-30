@@ -5,10 +5,13 @@ import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
@@ -47,15 +50,6 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
   return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
 }
 
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
-}
-
 async function readComputedStylesForLocator(locator: Locator): Promise<{ fontSize: string; color: string }> {
   return locator.evaluate((el) => {
     const node = el as unknown as HTMLElement;
@@ -76,7 +70,7 @@ test.describe('ui e2e: thinking markdown rendering', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -168,15 +162,15 @@ test.describe('ui e2e: thinking markdown rendering', () => {
     });
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-    const sessionId = await createSessionFromComposer({
+    const session = await createSessionFromNewSessionComposer({
       page,
       uiBaseUrl,
       machineId,
       prompt: `thinking markdown ${run.runId}`,
+      readiness: 'first-turn-reload-safe',
     });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
 
     await expect(page.getByTestId('transcript-thinking-header').first()).toBeVisible({ timeout: 180_000 });
     await page.getByTestId('transcript-thinking-header').first().click();

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   parseDevTargetsConfig,
+  resolveDevTargetExecutionPolicy,
   resolveDevTargetsConfigPath,
 } from './config.mjs';
 
@@ -41,6 +42,7 @@ test('parseDevTargetsConfig accepts the minimal POSIX and Windows target contrac
           sshConfigFile: '/tmp/lima-happier-stack-linux.conf',
           limaInstance: 'hslqa',
           limaHome: '/tmp/lima-happier',
+          remotePath: ['/home/dev/.local/bin', '/usr/local/bin'],
           repoDir: '/home/dev/happier',
           cliHomeDir: '/home/dev/.happier-stack/dev-targets/linux',
         },
@@ -64,6 +66,7 @@ test('parseDevTargetsConfig accepts the minimal POSIX and Windows target contrac
           sshConfigFile: '/tmp/lima-happier-stack-linux.conf',
           limaInstance: 'hslqa',
           limaHome: '/tmp/lima-happier',
+          remotePath: ['/home/dev/.local/bin', '/usr/local/bin'],
           repoDir: '/home/dev/happier',
           cliHomeDir: '/home/dev/.happier-stack/dev-targets/linux',
           remoteServerPort: null,
@@ -78,6 +81,62 @@ test('parseDevTargetsConfig accepts the minimal POSIX and Windows target contrac
         },
       ],
     },
+  );
+});
+
+test('version 1 configuration preserves local services plus a daemon on every target', () => {
+  const config = parseDevTargetsConfig({
+    version: 1,
+    targets: [
+      { name: 'mac-host', platform: 'posix', ssh: 'mac-host', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+  });
+
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config), {
+    server: { mode: 'local' },
+    expo: { mode: 'local' },
+    daemons: { mode: 'local-and-targets', targets: ['mac-host'] },
+  });
+});
+
+test('version 2 configuration assigns the server to mac-host while retaining local and Mac daemons', () => {
+  const config = parseDevTargetsConfig({
+    version: 2,
+    targets: [
+      { name: 'mac-host', platform: 'posix', ssh: 'mac-host', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+    runtimePlacement: {
+      server: { mode: 'prefer-target', target: 'mac-host' },
+      daemon: { mode: 'local-and-targets', targets: ['mac-host'] },
+    },
+  });
+
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config), {
+    server: { mode: 'prefer-target', target: 'mac-host', fallback: 'local' },
+    expo: { mode: 'local' },
+    daemons: { mode: 'local-and-targets', targets: ['mac-host'] },
+  });
+  assert.throws(
+    () => resolveDevTargetExecutionPolicy(config, {
+      targetsEnabled: false,
+      serverRequested: true,
+    }),
+    /--no-dev-targets.*remote server placement/i,
+  );
+});
+
+test('version 2 placement rejects unknown targets', () => {
+  assert.throws(
+    () => parseDevTargetsConfig({
+      version: 2,
+      targets: [
+        { name: 'mac-host', platform: 'posix', ssh: 'mac-host', repoDir: '/repo', cliHomeDir: '/home' },
+      ],
+      runtimePlacement: {
+        server: { mode: 'prefer-target', target: 'missing' },
+      },
+    }),
+    /references unknown target: missing/i,
   );
 });
 
@@ -129,5 +188,19 @@ test('parseDevTargetsConfig rejects duplicate targets and unsafe SSH/path input'
         ],
       }),
     /limaInstance and limaHome must be configured together/i,
+  );
+  assert.throws(
+    () => parseDevTargetsConfig({
+      version: 1,
+      targets: [{
+        name: 'linux',
+        platform: 'posix',
+        ssh: 'host',
+        remotePath: ['relative/bin'],
+        repoDir: '/repo',
+        cliHomeDir: '/home',
+      }],
+    }),
+    /invalid remotePath entry/i,
   );
 });

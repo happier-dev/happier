@@ -15,6 +15,7 @@ import {
   createSessionFromNewSessionComposer,
   openNewSessionMachineSelection,
   openNewSessionPathSelection,
+  reloadCreatedSessionFromNewSessionComposer,
   selectFirstAvailableMachineForNewSession,
 } from './createSessionFromNewSessionComposer';
 
@@ -24,7 +25,7 @@ type CountableLocator = Readonly<{
 }>;
 
 const MACHINE_OPTION_SELECTOR = '[data-testid^="new-session-machine:"]:visible, [data-testid^="new-session-machine-option:"]:visible';
-
+const VISIBLE_NEW_SESSION_COMPOSER_SELECTOR = 'textarea[data-testid="new-session-composer-input"]:visible';
 function exactMachineSelector(machineId: string): string {
   return `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`;
 }
@@ -290,16 +291,18 @@ describe('openNewSessionPathSelection', () => {
 });
 
 describe('createSessionFromNewSessionComposer', () => {
-  it('selects the current-path checkout option before sending when the checkout chip is present', async () => {
+  it('preserves the scoped session href and opts into first-turn readiness before an exact-href reload', async () => {
     let nowMs = 0;
     let currentUrl = 'http://127.0.0.1:3000/new';
     let sessionComposerVisible = false;
+    let committedPromptVisible = false;
+    let reloadedCreatedSession = false;
 
     const exactMachineClickSpy = vi.fn(async () => {});
     const checkoutChipClickSpy = vi.fn(async () => {});
     const currentPathClickSpy = vi.fn(async () => {});
     const sendClickSpy = vi.fn(async () => {
-      currentUrl = 'http://127.0.0.1:3000/session/session-checkout';
+      currentUrl = 'http://127.0.0.1:3000/session/session-checkout?serverId=server-a';
       sessionComposerVisible = true;
     });
 
@@ -314,6 +317,11 @@ describe('createSessionFromNewSessionComposer', () => {
         if (testId === 'session-composer-input') {
           return {
             count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
+          };
+        }
+        if (testId === 'transcript-chat-list') {
+          return {
+            count: async (): Promise<number> => (reloadedCreatedSession ? 1 : 0),
           };
         }
         if (testId === 'agent-input-machine-chip') {
@@ -352,6 +360,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 1,
@@ -372,13 +385,24 @@ describe('createSessionFromNewSessionComposer', () => {
             count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
           };
         }
+        if (selector === '[data-testid^="transcript-message-"]:not([data-testid*=":"])') {
+          return {
+            filter: () => ({
+              count: async (): Promise<number> => (committedPromptVisible ? 1 : 0),
+            }),
+          };
+        }
         throw new Error(`unexpected selector: ${selector}`);
       }),
       goto: vi.fn(async (url: string) => {
         currentUrl = url;
+        if (url.includes('/session/session-checkout')) {
+          reloadedCreatedSession = true;
+        }
       }),
       waitForTimeout: vi.fn(async (delayMs: number) => {
         nowMs += delayMs;
+        if (sessionComposerVisible) committedPromptVisible = true;
       }),
       waitForURL: vi.fn(async (matcher: (url: URL) => boolean) => {
         const url = new URL(currentUrl);
@@ -391,17 +415,33 @@ describe('createSessionFromNewSessionComposer', () => {
 
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
 
-    await expect(createSessionFromNewSessionComposer({
+    const createdSession = await createSessionFromNewSessionComposer({
       page: page as never,
       uiBaseUrl: 'http://127.0.0.1:3000',
       machineId: 'machine-1',
       prompt: 'hello checkout',
-    })).resolves.toBe('session-checkout');
+      readiness: 'first-turn-reload-safe',
+    });
+
+    expect(createdSession).toEqual({
+      sessionId: 'session-checkout',
+      sessionHref: 'http://127.0.0.1:3000/session/session-checkout?serverId=server-a',
+    });
+    expect(committedPromptVisible).toBe(true);
+
+    await reloadCreatedSessionFromNewSessionComposer({
+      page: page as never,
+      session: createdSession,
+    });
 
     expect(exactMachineClickSpy).toHaveBeenCalledTimes(1);
     expect(checkoutChipClickSpy).toHaveBeenCalledTimes(1);
     expect(currentPathClickSpy).toHaveBeenCalledTimes(1);
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
+    expect(page.goto).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:3000/session/session-checkout?serverId=server-a',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
   });
 
   it('recovers when /new initially renders blocking guidance and only exposes the composer after the machine picker fallback returns', async () => {
@@ -452,6 +492,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 0,
@@ -499,14 +544,17 @@ describe('createSessionFromNewSessionComposer', () => {
       uiBaseUrl: 'http://127.0.0.1:3000',
       machineId: 'machine-1',
       prompt: 'hello after guidance',
-    })).resolves.toBe('session-456');
+    })).resolves.toEqual({
+      sessionId: 'session-456',
+      sessionHref: 'http://127.0.0.1:3000/session/session-456',
+    });
 
     expect(machineChipClickSpy).not.toHaveBeenCalled();
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
     expect(inputFillSpy).toHaveBeenCalledWith('hello after guidance');
   });
 
-  it('continues when the fallback machine picker auto-selects the only machine and returns to /new', async () => {
+  it('returns route-ready without waiting for transcript commit when the fallback picker auto-selects the machine', async () => {
     let nowMs = 0;
     let currentUrl = 'http://127.0.0.1:3000/new';
     let machineChipText = 'Select machine';
@@ -556,6 +604,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 0,
@@ -602,7 +655,10 @@ describe('createSessionFromNewSessionComposer', () => {
       uiBaseUrl: 'http://127.0.0.1:3000',
       machineId: 'machine-1',
       prompt: 'hello world',
-    })).resolves.toBe('session-123');
+    })).resolves.toEqual({
+      sessionId: 'session-123',
+      sessionHref: 'http://127.0.0.1:3000/session/session-123',
+    });
 
     expect(machineChipClickSpy).toHaveBeenCalledTimes(1);
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
@@ -664,6 +720,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-dup')) {
           return exactMachineLocator;
         }
@@ -703,7 +764,10 @@ describe('createSessionFromNewSessionComposer', () => {
       uiBaseUrl: 'http://127.0.0.1:3000',
       machineId: 'machine-dup',
       prompt: 'duplicate machine prompt',
-    })).resolves.toBe('session-456');
+    })).resolves.toEqual({
+      sessionId: 'session-456',
+      sessionHref: 'http://127.0.0.1:3000/session/session-456',
+    });
 
     expect(exactMachineClickSpy).toHaveBeenCalledTimes(1);
     expect(inputFillSpy).toHaveBeenCalledWith('duplicate machine prompt');
@@ -762,6 +826,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-delayed-enabled')) {
           return {
             count: async (): Promise<number> => 1,
@@ -807,7 +876,10 @@ describe('createSessionFromNewSessionComposer', () => {
       uiBaseUrl: 'http://127.0.0.1:3000',
       machineId: 'machine-delayed-enabled',
       prompt: 'wait for enabled machine',
-    })).resolves.toBe('session-789');
+    })).resolves.toEqual({
+      sessionId: 'session-789',
+      sessionHref: 'http://127.0.0.1:3000/session/session-789',
+    });
 
     expect(machineClickSpy).toHaveBeenCalled();
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
@@ -862,6 +934,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-session-input-only')) {
           return {
             count: async (): Promise<number> => 1,
@@ -904,7 +981,10 @@ describe('createSessionFromNewSessionComposer', () => {
       uiBaseUrl: 'http://127.0.0.1:3000',
       machineId: 'machine-session-input-only',
       prompt: 'session input only prompt',
-    })).resolves.toBe('session-901');
+    })).resolves.toEqual({
+      sessionId: 'session-901',
+      sessionHref: 'http://127.0.0.1:3000/session/session-901',
+    });
 
     expect(machineClickSpy).toHaveBeenCalledTimes(1);
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
@@ -951,6 +1031,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-error')) {
           return {
             count: async (): Promise<number> => 1,

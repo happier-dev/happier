@@ -70,7 +70,8 @@ vi.mock('@/components/sessions/new/navigation/newSessionContainedModalScreen', (
     NewSessionScreenPortalScope: (props: { children?: React.ReactNode }) => React.createElement('NewSessionScreenPortalScope', null, props.children),
 }));
 
-vi.mock('@/sync/domains/state/newSessionCheckoutDraft', () => ({
+vi.mock('@/sync/domains/state/newSessionCheckoutDraft', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/state/newSessionCheckoutDraft')>()),
     parseCheckoutCreationDraft: () => null,
 }));
 

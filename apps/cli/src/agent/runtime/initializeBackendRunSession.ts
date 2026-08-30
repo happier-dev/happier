@@ -32,8 +32,7 @@ import {
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects'
 import {
-  clearPendingFirstInputFromEnv,
-  readPendingFirstInputFromEnv,
+  createPendingFirstInputCommitter,
 } from '@/daemon/spawn/pendingFirstInput'
 
 export interface InitializeBackendRunSessionOptions {
@@ -78,6 +77,8 @@ export interface InitializeBackendRunSessionOptions {
    * the disposal callback returned to the caller.
    */
   runtimeActivityLifecycle?: BackendRunRuntimeActivityLifecycle
+  /** Keep daemon-carried first input durable until the provider installs its input consumer. */
+  deferPendingFirstInputCommitUntilRuntimeReady?: boolean
 }
 
 export interface InitializeBackendRunSessionResult {
@@ -86,6 +87,7 @@ export interface InitializeBackendRunSessionResult {
   reportedSessionId: string | null
   attachedToExistingSession: boolean
   disposeRuntimeActivity?: () => Promise<void>
+  commitPendingFirstInputAfterRuntimeReady?: (() => Promise<void>) | null
 }
 
 type DaemonReportMode = 'await' | 'background'
@@ -219,20 +221,22 @@ export async function initializeBackendRunSession(
       deps.createSessionRuntimeActivityFn ?? createSessionRuntimeActivity,
     )
   const startupSideEffectsOrder = opts.startupSideEffectsOrder ?? 'report-first'
-  const pendingFirstInput = readPendingFirstInputFromEnv()
-  let pendingFirstInputCommitted = pendingFirstInput === null
-  const commitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
-    if (pendingFirstInputCommitted || pendingFirstInput === null) return
-    const result = await session.enqueueSessionUserMessage({
-      text: pendingFirstInput.text,
-      localId: pendingFirstInput.localId,
-      meta: { ...pendingFirstInput.meta, source: 'ui', sentFrom: 'cli' },
-    })
-    if (result?.recoveryBlocked) {
-      throw new Error(`Pending first input was blocked: ${result.recoveryBlocked.status}`)
+  const pendingFirstInputCommitter = createPendingFirstInputCommitter()
+  let commitPendingFirstInputAfterRuntimeReady: (() => Promise<void>) | null = null
+  const deferOrCommitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
+    if (
+      !opts.deferPendingFirstInputCommitUntilRuntimeReady
+      || !pendingFirstInputCommitter.hasPendingInput
+    ) {
+      await pendingFirstInputCommitter.commit(session)
+      return
     }
-    pendingFirstInputCommitted = true
-    clearPendingFirstInputFromEnv()
+
+    let commitPromise: Promise<void> | null = null
+    commitPendingFirstInputAfterRuntimeReady = () => {
+      commitPromise ??= pendingFirstInputCommitter.commit(session)
+      return commitPromise
+    }
   }
 
   try {
@@ -334,7 +338,7 @@ export async function initializeBackendRunSession(
     }
 
     primeAgentStateForUiFn(session, opts.uiLogPrefix)
-    await commitPendingFirstInput(session)
+    await deferOrCommitPendingFirstInput(session)
     await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background')
 
     return {
@@ -343,6 +347,7 @@ export async function initializeBackendRunSession(
       reportedSessionId: existingSessionId,
       attachedToExistingSession: true,
       disposeRuntimeActivity: preparedRuntimeActivity?.dispose,
+      commitPendingFirstInputAfterRuntimeReady,
     }
   }
 
@@ -396,7 +401,7 @@ export async function initializeBackendRunSession(
       if (!nextId || nextId.startsWith('offline-')) return
 
       primeAgentStateForUiFn(newSession, opts.uiLogPrefix)
-      void commitPendingFirstInput(newSession)
+      void pendingFirstInputCommitter.commit(newSession)
         .then(() => runStartupSideEffectsOnce(newSession, nextId))
         .catch(() => {})
     },
@@ -406,7 +411,7 @@ export async function initializeBackendRunSession(
 
   primeAgentStateForUiFn(session, opts.uiLogPrefix)
   if (reportedSessionId) {
-    await commitPendingFirstInput(session)
+    await deferOrCommitPendingFirstInput(session)
     await runStartupSideEffectsOnce(session, reportedSessionId)
   }
 
@@ -416,6 +421,7 @@ export async function initializeBackendRunSession(
     reportedSessionId,
     attachedToExistingSession: false,
     disposeRuntimeActivity: preparedRuntimeActivity?.dispose,
+    commitPendingFirstInputAfterRuntimeReady,
   }
   } catch (error) {
     await preparedRuntimeActivity?.dispose().catch(() => {})

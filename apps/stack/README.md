@@ -301,11 +301,12 @@ npx --yes -p @happier-dev/stack hstack tools setup-pr --repo=123 --dev --force
 
 Details: `[docs/worktrees-and-forks.md](docs/worktrees-and-forks.md)`.
 
-#### Server flavor (server-light vs full server)
+#### Server presets (light vs full)
 
-- Use `happier-server-light` for a light local stack (no Redis, no Postgres, no Docker), and UI serving via server-light.
-- Use `happier-server` when you need a more production-like server (Postgres + Redis + S3-compatible storage) or want to develop server changes for upstream.
+- Use `happier-server-light` for local, no-Docker topology defaults: SQLite, local files, and UI serving from the server.
+- Use `happier-server` for production-like topology defaults: managed Postgres + Redis + S3-compatible storage and the UI gateway.
   - hstack can **manage the required infra automatically per stack** (via Docker Compose) and runs a **UI gateway** so you still get a single `https://...ts.net` URL that serves the UI + proxies API/websockets/files.
+- The database is an independent choice. Set `HAPPIER_DB_PROVIDER=postgres|mysql|pglite|sqlite`; the preset supplies only the default (`sqlite` for light, `postgres` for full).
 
 Switch globally:
 

@@ -136,6 +136,7 @@ export const SessionHandoffStartRequestSchema = z
     targetMachineId: z.string().min(1).max(MAX_MACHINE_ID_LENGTH),
     sessionStorageMode: SessionHandoffStorageModeSchema,
     targetSessionStorageMode: SessionHandoffStorageModeSchema.optional(),
+    targetPath: z.string().min(1).max(MAX_PATH_LENGTH).optional(),
     preferredTransportStrategies: z
       .array(SessionHandoffTransportStrategySchema)
       .min(1)

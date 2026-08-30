@@ -12,6 +12,14 @@ on:
           - full
           - fast
           - custom
+      runner_pool:
+        description: "Runner pool — GitHub is the default; Blacksmith accelerates approved non-secret Linux test lanes"
+        required: true
+        default: github
+        type: choice
+        options:
+          - github
+          - blacksmith-linux-4vcpu
       custom_checks:
         description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,wsrepl_lima,mobile_e2e_android,mobile_e2e_ios,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
         required: true
@@ -282,6 +290,7 @@ jobs:
     secrets: inherit
     with:
       select_jobs_explicitly: true
+      runner_pool: ${{ inputs.runner_pool }}
       run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
       ui_e2e_specs: ${{ needs.resolve.outputs.ui_e2e_specs }}
       run_wsrepl_lima: ${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}

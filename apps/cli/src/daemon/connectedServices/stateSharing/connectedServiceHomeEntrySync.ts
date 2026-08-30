@@ -42,7 +42,9 @@ export async function moveConnectedServiceHomeEntryAside(path: string): Promise<
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err?.code === 'ENOENT') return;
-      if (err?.code === 'EEXIST') continue;
+      // A same-timestamp sibling collision can report EEXIST, ENOTEMPTY, or EISDIR
+      // depending on whether the existing backup is a file or directory and the host OS.
+      if (err?.code === 'EEXIST' || err?.code === 'ENOTEMPTY' || err?.code === 'EISDIR') continue;
       throw error;
     }
   }

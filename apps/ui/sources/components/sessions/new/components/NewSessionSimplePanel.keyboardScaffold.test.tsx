@@ -258,12 +258,17 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
     it('does not vertically center a non-floating web composer behind a blank top spacer', async () => {
         testState.platformOs = 'web';
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
-        const props = { ...createFloatingPanelProps(), shouldBottomAnchor: false };
+        const props = {
+            ...createFloatingPanelProps(),
+            shouldBottomAnchor: false,
+            containerStyle: { paddingTop: 20 },
+        };
         const screen = await renderScreen(<NewSessionSimplePanel {...props} />);
         const scaffoldStyle = testState.scaffoldHarness?.getLastRender()?.props.style;
         const flattened = Object.assign({}, ...(Array.isArray(scaffoldStyle) ? scaffoldStyle : [scaffoldStyle]));
 
         expect(flattened.justifyContent).toBe('flex-start');
+        expect(flattened.paddingTop).toBe(0);
         await screen.unmount();
     });
 

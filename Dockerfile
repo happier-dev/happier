@@ -372,7 +372,7 @@ RUN set -eux; \
       --arch "$artifact_arch" \
       --dest /opt/happier/server \
       --pubkey /tmp/happier-release.pub; \
-    rm -rf /opt/happier/server/generated/mysql-client; \
+    rm -rf /opt/happier/server/generated/mysql-client /opt/happier/server/prisma/mysql; \
     case "$TARGETARCH" in \
       amd64) \
         find /opt/happier/server/generated/sqlite-client -name '*.node' \
@@ -395,6 +395,8 @@ RUN useradd -m -s /bin/bash happier \
     && mkdir -p /data /opt/happier/server \
     && chown -R happier:happier /data /opt/happier
 COPY --from=relay-artifacts --chown=happier:happier /opt/happier/server /opt/happier/server
+COPY apps/server/scripts/run-server.sh /usr/local/bin/run-server
+RUN chmod +x /usr/local/bin/run-server
 ARG SENTRY_RELEASE=""
 ENV SENTRY_RELEASE=$SENTRY_RELEASE
 ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
@@ -418,7 +420,7 @@ ENV HAPPY_SQLITE_MIGRATIONS_DIR=/opt/happier/server/prisma/sqlite/migrations
 USER happier
 EXPOSE 3005
 VOLUME ["/data"]
-CMD ["/opt/happier/server/happier-server"]
+CMD ["run-server", "/opt/happier/server/happier-server"]
 
 # Default target when building without --target
 FROM server AS default

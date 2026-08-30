@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyEnvOverridesToEnvText, parseEnvOverridesFromArgv } from '../scripts/self_host_runtime.mjs';
+import {
+  applyEnvOverridesToEnvText,
+  mergeSelfHostServerRuntimeEnvText,
+  parseEnvOverridesFromArgv,
+} from '../scripts/self_host_runtime.mjs';
 
 test('self-host env overrides parse --env and apply overrides to rendered env text', () => {
   const base = [
@@ -35,3 +39,18 @@ test('self-host env overrides reject invalid keys', () => {
   );
 });
 
+test('self-host runtime updates preserve operator-owned database configuration', () => {
+  const merged = mergeSelfHostServerRuntimeEnvText({
+    baseEnvText: 'HAPPIER_DB_PROVIDER=sqlite\nDATABASE_URL=file:/managed.sqlite\nHAPPIER_FILES_BACKEND=local\n',
+    existingEnvText: [
+      'HAPPIER_DB_PROVIDER=postgres',
+      'DATABASE_URL=postgresql://operator:secret@db.example.test/happier',
+      'HAPPIER_FILES_BACKEND=s3',
+      '',
+    ].join('\n'),
+  });
+
+  assert.match(merged, /^HAPPIER_DB_PROVIDER=postgres$/m);
+  assert.match(merged, /^DATABASE_URL=postgresql:\/\/operator:secret@db\.example\.test\/happier$/m);
+  assert.match(merged, /^HAPPIER_FILES_BACKEND=s3$/m);
+});

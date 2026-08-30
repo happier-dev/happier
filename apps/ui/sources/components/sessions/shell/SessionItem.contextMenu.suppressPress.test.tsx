@@ -52,6 +52,19 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 
 const modalPromptSpy = vi.fn(async () => null as string | null);
 const sessionRenameSpy = vi.fn(async () => ({ success: true }));
+const openSessionForkStrategyFlowSpy = vi.fn();
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => ({
+    openSessionForkStrategyFlow: (...args: unknown[]) => openSessionForkStrategyFlowSpy(...args),
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    deferOnWeb: (callback: () => void) => callback(),
+}));
 
 function hasRenameMenuItem(items: unknown): boolean {
     if (!Array.isArray(items)) return false;
@@ -152,6 +165,8 @@ installSessionShellCommonModuleMocks({
             getStorage: () => storage,
             useHasUnreadMessages: () => false,
             useLocalSetting: (key: string) => key === 'devModeEnabled' ? localDevModeEnabled : null,
+            useSetting: (key: string) => key === 'sessionReplayEnabled',
+            useSettings: () => ({ sessionReplayEnabled: true }),
             useProfile: () => ({
                 id: 'u1',
                 timestamp: 0,
@@ -196,10 +211,69 @@ describe('SessionItem context menu press suppression', () => {
         modalPromptSpy.mockResolvedValue(null);
         sessionRenameSpy.mockReset();
         sessionRenameSpy.mockResolvedValue({ success: true });
+        openSessionForkStrategyFlowSpy.mockReset();
         platformOs = 'ios';
         localDevModeEnabled = false;
         storageSessionsState.current = {};
         vi.useRealTimers();
+    });
+
+    it('offers fork in the session row dropdown without a subtitle and opens the shared fork flow', async () => {
+        platformOs = 'web';
+        const session = createSessionFixture({
+            id: 'sess_fork',
+            active: true,
+            metadata: {
+                flavor: 'claude',
+                machineId: 'machine_a',
+                path: '/workspace/project',
+                host: 'host-a',
+            },
+        });
+        storageSessionsState.current = { [session.id]: session };
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                forkActionContext={{
+                    settings: {},
+                    replayEnabled: true,
+                    executionRunsEnabled: false,
+                }}
+            />,
+        );
+
+        const hoverContainer = screen.root.findAll((node) => typeof node.props.onPointerEnter === 'function')[0];
+        await act(async () => hoverContainer?.props.onPointerEnter());
+        const dropdown = screen.findByType('DropdownMenu' as React.ElementType);
+        const forkItem = dropdown.props.items.find((item: { id: string }) => item.id === 'session.fork');
+
+        expect(forkItem).toMatchObject({
+            id: 'session.fork',
+            title: 'sessionInfo.forkSession',
+            subtitle: undefined,
+        });
+
+        await act(async () => {
+            await dropdown.props.onSelect('session.fork');
+        });
+
+        await vi.waitFor(() => {
+            expect(openSessionForkStrategyFlowSpy).toHaveBeenCalledWith(expect.objectContaining({
+                sessionId: 'sess_fork',
+                forkSupportSource: session,
+                serverId: 'server_a',
+                machineId: 'machine_a',
+                forkPoint: { type: 'latest' },
+            }));
+        });
     });
 
     it('does not mount closed native context menus until they are opened', async () => {

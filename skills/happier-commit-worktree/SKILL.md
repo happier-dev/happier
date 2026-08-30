@@ -22,6 +22,8 @@ Apply these invariants throughout:
 - Serialize HEAD mutations even when reconnaissance and validation run in parallel.
 - Use Conventional Commit subjects and explanatory bodies.
 - Commit only changes whose intent, ownership, and suitability are understood.
+- Use the checkout's existing current-user `git config user.name` and `git config user.email` for every ordinary commit. Verify both before the first commit; never rewrite them to a bot, PR author, issue author, or other contributor, and stop rather than inventing a missing identity.
+- Evaluate `Co-authored-by:` attribution per packet. Add a verified contributor only when that packet materially incorporates their code, patch, design, causal diagnosis, decisive reproduction, or substantially adopted fix direction; never infer attribution from PR/issue authorship or participation alone.
 
 Read [private-index-protocol.md](references/private-index-protocol.md) before the first commit in a campaign. Read [recovery-and-audit.md](references/recovery-and-audit.md) whenever the index is unusual, a process was interrupted, HEAD moved, a lock appeared, or the user asks whether everything was preserved.
 

@@ -5,10 +5,12 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { buildAutomationTemplateEnvelope } from '../../src/testkit/automations';
+import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer, openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { enableClaudeUnifiedTerminal } from '../../src/testkit/uiE2e/enableClaudeUnifiedTerminal';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
@@ -203,6 +205,9 @@ test.describe('ui e2e: automations authoring', () => {
             createAccount: false,
             extraEnv: {
                 HOME: cliHomeDir,
+                HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
+                HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(testDir, 'fake-claude.jsonl')),
+                HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-automations-${run.runId}`,
             },
         });
 
@@ -211,6 +216,7 @@ test.describe('ui e2e: automations authoring', () => {
         const machineId = await readMachineIdFromCliAuthLoginStdout(resolve(join(testDir, 'cli.auth.login.stdout.log')));
 
         await enableAutomationsInSettings({ page, baseUrl: uiBaseUrl });
+        await enableClaudeUnifiedTerminal({ page, uiBaseUrl });
 
         const inlineAutomationName = `Inline automation ${run.runId}`;
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?automation=1&happier_hmr=0`, 180_000);
@@ -218,7 +224,7 @@ test.describe('ui e2e: automations authoring', () => {
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('new-session-automation-chip').click();
         await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(1, { timeout: 60_000 });
-        await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
+        await ensureSwitchEnabled(page.getByRole('switch'));
         await page.getByTestId('automation-sentence-name-input').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
 
@@ -232,7 +238,7 @@ test.describe('ui e2e: automations authoring', () => {
         await expect(page.getByTestId('new-session-automation-chip')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('new-session-automation-chip').click();
         await expect(page.getByTestId('session-authoring-automation-toggle-label')).toHaveCount(1, { timeout: 60_000 });
-        await expect(page.getByRole('switch')).toBeChecked({ timeout: 60_000 });
+        await ensureSwitchEnabled(page.getByRole('switch'));
         await page.getByTestId('automation-sentence-name-input').first().fill(inlineAutomationName);
         await page.getByTestId('new-session-composer-input').fill(`inline automation prompt ${run.runId}`);
         await postJson<{ id: string }>({
@@ -249,15 +255,19 @@ test.describe('ui e2e: automations authoring', () => {
             },
         });
 
-        const sessionId = await createSessionFromNewSessionComposer({
+        const session = await createSessionFromNewSessionComposer({
             page,
             uiBaseUrl,
             machineId,
             prompt: `session for automation ${run.runId}`,
         });
+        const { sessionId } = session;
 
         const existingSessionAutomationName = `Existing automation ${run.runId}`;
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}/automations/new?happier_hmr=0`, 180_000);
+        const automationAuthoringUrl = new URL(session.sessionHref);
+        automationAuthoringUrl.pathname = `${automationAuthoringUrl.pathname}/automations/new`;
+        automationAuthoringUrl.searchParams.set('happier_hmr', '0');
+        await gotoDomContentLoadedWithRetries(page, automationAuthoringUrl.toString(), 180_000);
         await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('automation-sentence-name-input')).toHaveCount(0, { timeout: 60_000 });
         await getVisibleSessionComposer(page).fill(`existing-session automation prompt ${run.runId}`);

@@ -5738,9 +5738,9 @@ export const de: TranslationStructure = {
 
     sessionDrafts: {
         sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen',
-        status: { offline: 'Offline', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', startInterrupted: 'Start unterbrochen' },
+        status: { offline: 'Nicht verbunden', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', startInterrupted: 'Start unterbrochen' },
         new: { action: 'Neuer Entwurf' }, delete: { action: 'Entwurf löschen', confirmTitle: 'Entwurf löschen?', confirmDescription: 'Dieser Entwurf wird von deinen Geräten entfernt.' },
-        conflict: { title: 'Entwurfskonflikt', description: 'Dieses Feld wurde auf einem anderen Gerät geändert.', mine: 'Auf diesem Gerät', synced: 'Synchronisiert', useSynced: 'Synchronisierte Version verwenden', keepDevice: 'Geräteversion behalten', copyMine: 'Meine Version kopieren', copied: 'Kopiert', copyFailed: 'Kopieren fehlgeschlagen', field: { text: 'Text', mentions: 'Erwähnungen', attachments: 'Anhänge', recipient: 'Empfänger', agentContinuation: 'Agentenfortsetzung', executionRunDelivery: 'Laufzustellung' } },
+        conflict: { title: 'Entwurfskonflikt', description: 'Dieses Feld wurde auf einem anderen Gerät geändert.', mine: 'Auf diesem Gerät', synced: 'Synchronisiert', useSynced: 'Synchronisierte Version verwenden', keepDevice: 'Geräteversion behalten', copyMine: 'Meine Version kopieren', copied: 'Kopiert', copyFailed: 'Kopieren fehlgeschlagen', field: { text: 'Textinhalt', mentions: 'Erwähnungen', attachments: 'Anhänge', recipient: 'Empfänger', agentContinuation: 'Agentenfortsetzung', executionRunDelivery: 'Laufzustellung' } },
     },
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,

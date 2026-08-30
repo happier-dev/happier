@@ -130,12 +130,45 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     });
 
     const launchSpec = await readLaunchSpecFromSpawn(spawn);
+    expect(launchSpec.env).toMatchObject({ HAPPIER_SESSION_ID: 'happy-session-id' });
     expect(launchSpec.diagnostics).toMatchObject({
       sessionId: 'happy-session-id',
     });
     expect(launchSpec.diagnostics?.logsDir).toContain('/logs/terminal-runner');
     expect(launchSpec.diagnostics?.sessionExitDir).toContain('/logs/session-exit');
   });
+
+  it.each(['', '   ', 'offline-local-session'])(
+    'removes an inherited managed session id when the supplied id is unusable (%j)',
+    async (happySessionId: string) => {
+      await withPatchedEnv({
+        HAPPIER_SESSION_ID: 'outer-session',
+        [HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]: JSON.stringify(['HAPPIER_SESSION_ID']),
+      }, async () => {
+        const spawn = await buildClaudeUnifiedTerminalSpawn({
+          path: '/workspace/project',
+          happySessionId,
+          first: {
+            message: 'hello',
+            mode: {
+              permissionMode: 'default',
+            },
+          },
+          deps: {
+            resolveClaudeCliPath: () => '/usr/local/bin/claude',
+            isClaudeCliJavaScriptFile: () => false,
+            ensureClaudeJsRuntimeExecutable: async () => '/managed/node',
+            claudeLocalLauncherPath: '/happier/scripts/claude_local_launcher.cjs',
+            terminalLaunchSpecRunnerPath: '/happier/scripts/terminal_launch_spec_runner.cjs',
+            resolveCommandInvocation: ({ command, args }) => ({ command, args: [...args] }),
+          },
+        });
+
+        const launchSpec = await readLaunchSpecFromSpawn(spawn);
+        expect(launchSpec.env?.HAPPIER_SESSION_ID).toBeUndefined();
+      });
+    },
+  );
 
   it('preserves Windows verbatim argument handling from the resolved Claude invocation', async () => {
     const spawn = await buildClaudeUnifiedTerminalSpawn({
@@ -810,6 +843,7 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
     await withPatchedEnv({
       ANTHROPIC_API_KEY: 'sk-ant-test',
       CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+      CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'true',
       HUGE_UNRELATED_ENV: 'y'.repeat(200_000),
       MY_EXPLICIT_CHILD_ENV: 'kept',
       [HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]: JSON.stringify(['MY_EXPLICIT_CHILD_ENV']),
@@ -824,6 +858,7 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
         },
         envOverlay: {
           OVERLAY_ONLY: 'overlay-kept',
+          CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'true',
         },
         deps: {
           resolveClaudeCliPath: () => '/usr/local/bin/claude',
@@ -841,8 +876,11 @@ async function readOverlayFromArgs(args: readonly string[], hookSettingsPath: st
       expect(launchSpec.env?.MY_EXPLICIT_CHILD_ENV).toBe('kept');
       expect(launchSpec.env?.OVERLAY_ONLY).toBe('overlay-kept');
       expect(launchSpec.env?.DISABLE_AUTOUPDATER).toBe('1');
+      expect(launchSpec.env?.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION).toBeUndefined();
+      expect(launchSpec.envPassthroughKeys).toContain('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION');
       expect(launchSpec.envPassthroughKeys).toContain('ANTHROPIC_API_KEY');
       expect(spawn.spawnEnv.ANTHROPIC_API_KEY).toBe('sk-ant-test');
+      expect(spawn.spawnEnv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION).toBe('false');
       expect(spawn.spawnEnv.HUGE_UNRELATED_ENV).toBeUndefined();
       expect(spawn.spawnEnv[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]).toBeUndefined();
       expect(launchSpec.env?.HUGE_UNRELATED_ENV).toBeUndefined();

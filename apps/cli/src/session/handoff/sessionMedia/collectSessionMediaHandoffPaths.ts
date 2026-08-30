@@ -1,4 +1,6 @@
 import type { SessionHandoffProviderBundle } from '../types';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 
 const SESSION_MEDIA_ENVELOPE_KIND = 'session_media.v1';
 const ATTACHMENTS_ENVELOPE_KIND = 'attachments.v1';
@@ -128,19 +130,70 @@ function parseOpenCodeExportRecords(text: string): readonly unknown[] {
   }
 }
 
-export function collectSessionMediaHandoffPathsFromProviderBundle(
+async function collectJsonLineMediaPathsFromFileSlice(file: Readonly<{
+  filePath: string;
+  offsetBytes: number;
+  sizeBytes: number;
+}>): Promise<readonly string[]> {
+  if (file.sizeBytes === 0) return [];
+  const stream = createReadStream(file.filePath, {
+    start: file.offsetBytes,
+    end: file.offsetBytes + file.sizeBytes - 1,
+    encoding: 'utf8',
+  });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  const records: unknown[] = [];
+  const paths = new Set<string>();
+  for await (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      records.push(JSON.parse(trimmed) as unknown);
+    } catch {
+      continue;
+    }
+    if (records.length >= 256) {
+      for (const path of collectSessionMediaHandoffPaths(records)) paths.add(path);
+      records.length = 0;
+    }
+  }
+  for (const path of collectSessionMediaHandoffPaths(records)) paths.add(path);
+  return [...paths].sort((left, right) => left.localeCompare(right));
+}
+
+export async function collectSessionMediaHandoffPathsFromProviderBundle(
   providerBundle: SessionHandoffProviderBundle | undefined,
-): readonly string[] {
+): Promise<readonly string[]> {
   if (!providerBundle) return [];
 
   switch (providerBundle.providerId) {
     case 'claude':
+      if (providerBundle.transcriptFile) {
+        return await collectJsonLineMediaPathsFromFileSlice(providerBundle.transcriptFile);
+      }
       return collectSessionMediaHandoffPaths(parseJsonLines(decodeBase64Utf8(providerBundle.transcriptBase64)));
     case 'codex':
-      return collectSessionMediaHandoffPaths(
-        providerBundle.files.flatMap((file) => parseJsonLines(decodeBase64Utf8(file.contentBase64))),
-      );
+      {
+        const paths = new Set<string>();
+        for (const file of providerBundle.files) {
+          const filePaths = file.contentFile
+            ? await collectJsonLineMediaPathsFromFileSlice(file.contentFile)
+            : collectSessionMediaHandoffPaths(parseJsonLines(decodeBase64Utf8(file.contentBase64)));
+          for (const path of filePaths) paths.add(path);
+        }
+        return [...paths].sort((left, right) => left.localeCompare(right));
+      }
     case 'opencode':
+      if (providerBundle.exportJsonFile) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of createReadStream(providerBundle.exportJsonFile.filePath, {
+          start: providerBundle.exportJsonFile.offsetBytes,
+          end: providerBundle.exportJsonFile.offsetBytes + providerBundle.exportJsonFile.sizeBytes - 1,
+        })) {
+          chunks.push(Buffer.from(chunk));
+        }
+        return collectSessionMediaHandoffPaths(parseOpenCodeExportRecords(Buffer.concat(chunks).toString('utf8')));
+      }
       return collectSessionMediaHandoffPaths(parseOpenCodeExportRecords(decodeBase64Utf8(providerBundle.exportJsonBase64)));
     default:
       return [];

@@ -6,6 +6,8 @@ import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelp
 import type { CustomModalChromeConfig } from '@/modal';
 
 const refreshMachinesThrottledMock = vi.fn(async () => {});
+const openMachinePathBrowserModalMock = vi.fn<(params: unknown) => Promise<string>>(async () => '/home/leeroy.guest/.happier-stack/workspace/0.2');
+const pathBrowserModuleLoadedMock = vi.fn();
 let credentialsReady = true;
 
 
@@ -146,9 +148,17 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
+vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => {
+    pathBrowserModuleLoadedMock();
+    return {
+        openMachinePathBrowserModal: (params: unknown) => openMachinePathBrowserModalMock(params),
+    };
+});
+
 describe('SessionHandoffPickerModal', () => {
     beforeEach(() => {
         refreshMachinesThrottledMock.mockClear();
+        openMachinePathBrowserModalMock.mockClear();
         credentialsReady = true;
         machineListByServerIdState = {
             server_a: [
@@ -185,6 +195,7 @@ describe('SessionHandoffPickerModal', () => {
             },
         ];
         settingsState.favoriteMachines = [];
+        settingsState.recentMachinePaths = [];
         settingsState.sessionHandoffDefaultsV1 = {
             v: 1,
             workspaceTransferEnabled: true,
@@ -194,6 +205,12 @@ describe('SessionHandoffPickerModal', () => {
             ignoredIncludeGlobs: ['dist/**'],
             directTargetMode: 'convert_to_persisted',
         };
+    });
+
+    it('does not load the target path browser until the user asks to choose a directory', async () => {
+        await import('./SessionHandoffPickerModal');
+
+        expect(pathBrowserModuleLoadedMock).not.toHaveBeenCalled();
     });
 
     it('returns the selected machine and default handoff options', async () => {
@@ -250,6 +267,65 @@ describe('SessionHandoffPickerModal', () => {
             },
         });
         expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('reuses the editable recent-path picker and opens its browser only on Browse', async () => {
+        const onResolve = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
+
+        machineListByServerIdState.server_a[0]!.metadata.homeDir = '/home/target';
+        allMachinesState[0]!.metadata.homeDir = '/home/target';
+        settingsState.recentMachinePaths = [{
+            machineId: 'machine_target',
+            path: '/home/target/recent-project',
+        }];
+
+        const screen = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={setChrome}
+            onResolve={onResolve}
+            sessionId="sess_1"
+            sourceMachineId="machine_source"
+            serverId="server_a"
+        />);
+
+        await act(async () => {
+            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+                id: 'machine_target',
+                active: true,
+                activeAt: Date.now(),
+                metadata: {
+                    displayName: 'Target machine',
+                    host: 'target.local',
+                    homeDir: '/home/target',
+                },
+            });
+        });
+        expect(screen.findByTestId('path-selection-list:header:input')).not.toBeNull();
+        expect(screen.findByTestId('path-selection-list:path-root:option:recent:/home/target/recent-project')).not.toBeNull();
+        await act(async () => {
+            screen.changeTextByTestId('path-selection-list:header:input', '/home/target/pasted-project');
+        });
+        openMachinePathBrowserModalMock.mockResolvedValueOnce('/home/target/browser-project');
+        await screen.pressByTestIdAsync('path-selection-list:open-tree-browser');
+        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine_target',
+            serverId: 'server_a',
+            initialPath: '/home/target/pasted-project',
+        }));
+
+        const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
+        await act(async () => {
+            await (startButton!.props as { onPress: () => unknown }).onPress();
+        });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({
+            targetMachineId: 'machine_target',
+            targetPath: '/home/target/browser-project',
+        }));
     });
 
     it('allows handoff to an online storage machine before exact readiness is known', async () => {
@@ -722,7 +798,13 @@ describe('SessionHandoffPickerModal', () => {
             directModeMenu!.props.onSelect('keep_direct');
         });
 
-        const globInput = tree.findByType('TextInput' as any);
+        // The shared path picker renders its own search input; select the transfer
+        // glob input by its placeholder key instead of assuming a single text input.
+        const findGlobInput = (): any =>
+            tree.findAllByType('TextInput' as any)
+                .find((node: any) => node.props?.placeholder === 'settingsSession.handoff.includeIgnoredMode.globsPlaceholder');
+        const globInput = findGlobInput();
+        expect(globInput).toBeTruthy();
         expect(globInput.props.editable).toBe(false);
         await act(async () => {
             globInput.props.onChangeText('dist/**, .env.local');
@@ -736,7 +818,7 @@ describe('SessionHandoffPickerModal', () => {
         expect(strategyMenuAfterAttempt?.props.selectedId).toBe('transfer_snapshot');
         expect(conflictMenuAfterAttempt?.props.selectedId).toBe('create_sibling_copy');
         expect(ignoredMenuAfterAttempt?.props.selectedId).toBe('include_selected');
-        expect(tree.findByType('TextInput' as any).props.value).toBe('dist/**');
+        expect(findGlobInput()?.props.value).toBe('dist/**');
 
         const footer = requireCardChrome(chrome).footer;
         const startButton = findElementByTestId(footer, 'session-handoff-start');

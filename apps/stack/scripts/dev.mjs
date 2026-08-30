@@ -13,8 +13,10 @@ import { checkDaemonStatePingAware, getDaemonEnv, stopLocalDaemon } from './daem
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
 import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
+import { selectExpoDevMetroPort } from './utils/expo/metro_ports.mjs';
 import {
   captureStackRuntimeStopSnapshot,
+  createStackServerRuntimeProcessPatch,
   finalizeStackRuntimeStop,
   readStackRuntimeStateFile,
   recordStackRuntimeServerPids,
@@ -34,7 +36,11 @@ import {
   resolveStackOwnedServerRuntimePid,
   startDevServer,
 } from './utils/dev/server.mjs';
-import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
+import {
+  decideDevStartupTopology,
+  observeDevServerStartupTopology,
+  shouldExitAdoptedDevRuntime,
+} from './utils/dev/devStartupTopology.mjs';
 import { resolveDevReloadPollIntervalMs } from './utils/dev/devReloadCoordinator.mjs';
 import { startDevReloadComposition } from './utils/dev/devReloadComposition.mjs';
 import { prepareDevProxyStartup, resolveDevProxyStableHost, shouldEnableStackDevProxy } from './utils/dev/devProxy.mjs';
@@ -42,7 +48,11 @@ import { createDevProxyUnexpectedExitHandler } from './utils/dev/devProxyLifecyc
 import { resolveDevServerConnection } from './utils/dev/resolveDevServerConnection.mjs';
 import { observeRuntimePortOwnedByStackDevProxy, selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { createListenerOwnershipCommandScope } from './utils/server/listener_ownership.mjs';
-import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
+import {
+  ensureDevExpoServer,
+  resolveExpoDevHost,
+  resolveExpoTailscaleEnabled,
+} from './utils/dev/expo_dev.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { waitForHttpOk } from './utils/server/server.mjs';
@@ -64,9 +74,25 @@ import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog
 import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
 import { resolveTauriPaneInvocation } from './utils/tui/tauri_mode.mjs';
 import { resolveReactNativeDevtoolsUrl } from './utils/dev/react_native_devtools.mjs';
-import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
-import { startStackDevTargetsInBackground } from './utils/dev_targets/supervisor.mjs';
+import {
+  loadDevTargetsConfig,
+  resolveDevTargetExecutionPolicy,
+} from './utils/dev_targets/config.mjs';
+import { runDevTargetsDoctor } from './utils/dev_targets/doctor.mjs';
+import {
+  resolveDevTargetServicePlans,
+  resolveServicePlansAfterTargetPreflight,
+} from './utils/dev_targets/service_placement.mjs';
+import { resolveRemoteServerRuntimeConfig } from './utils/dev_targets/remote_commands.mjs';
+import {
+  startStackDevTargets,
+  startStackDevTargetsInBackground,
+} from './utils/dev_targets/supervisor.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
+import {
+  hasExplicitMobileReachableHost,
+  resolveMobileReachableServerUrl,
+} from './utils/server/mobile_api_url.mjs';
 
  /**
   * Dev mode stack:
@@ -178,11 +204,12 @@ async function main() {
 
   const startTauri = flags.has('--tauri') || flags.has('--with-tauri');
   const startUi = !flags.has('--no-ui');
-  const startDaemon = !flags.has('--no-daemon');
+  const requestedStartDaemon = !flags.has('--no-daemon');
   const openReactNativeDevtools = flags.has('--rn-devtools') || flags.has('--react-native-devtools');
   const noBrowser = startTauri || flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile') || expoTailscale;
+  const requestedStartExpo = startUi || startMobile;
 
   if (startTauri && !startUi) {
     throw new Error('[local] --tauri requires the ui');
@@ -201,19 +228,8 @@ async function main() {
   delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
   const stackCtx = resolveStackContext({ env: baseEnv, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
-  const loadedDevTargets = flags.has('--no-dev-targets')
-    ? { path: null, config: { version: 1, targets: [] } }
-    : await loadDevTargetsConfig({ stackName, env: baseEnv, allowMissing: true });
-  const devTargets = loadedDevTargets.config.targets;
-  if (!json && stackMode && runtimeStatePath) {
-    await completeInterruptedStackStopBeforeStart({
-      rootDir,
-      stackName,
-      baseDir: autostart.baseDir,
-      env: baseEnv,
-      json,
-    });
-  }
+  const devTargetsEnabled = !flags.has('--no-dev-targets');
+  const loadedDevTargets = await loadDevTargetsConfig({ stackName, env: baseEnv, allowMissing: true });
   const serverPort = await selectLocalServerPortCandidateForStack({
     env: baseEnv,
     stackMode,
@@ -236,17 +252,11 @@ async function main() {
     env: baseEnv,
     resolvedLocalUrls: resolvedUrls,
   });
-  const startServer = serverConnection.startServer;
-  if (devTargets.length > 0 && !startServer) {
-    throw new Error(
-      '[dev-targets] configured dev targets require the local Stack server; ' +
-        'use --no-dev-targets when running dev with --no-server or --server-url',
-    );
-  }
+  const requestedStartServer = serverConnection.startServer;
   const localInternalServerUrl = resolvedUrls.internalServerUrl;
   const internalServerUrl = serverConnection.internalServerUrl;
   let publicServerUrl = serverConnection.publicServerUrl;
-  if (startServer && stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
+  if (requestedStartServer && !serverConnection.hasExplicitPublicServerUrl && stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
     const src = String(resolvedUrls.publicServerUrlSource ?? '');
     const hasStackScopedTailscale = src.startsWith('tailscale-');
     if (!hasStackScopedTailscale) {
@@ -255,12 +265,67 @@ async function main() {
   }
   // Expo app config: this is what both web + native app use to reach the Happy server.
   // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
-  const uiApiUrl = startServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;
+  const uiApiUrl = requestedStartServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;
   const serverConnectionSource = serverConnection.source;
   const restart = flags.has('--restart');
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
     ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
+
+  const executionPolicy = resolveDevTargetExecutionPolicy(loadedDevTargets.config, {
+    targetsEnabled: devTargetsEnabled,
+    serverRequested: requestedStartServer,
+  });
+  const devTargets = devTargetsEnabled ? loadedDevTargets.config.targets : [];
+  const configuredServicePlans = resolveDevTargetServicePlans({
+    targets: devTargets,
+    policy: executionPolicy,
+    requested: {
+      server: requestedStartServer,
+      expo: requestedStartExpo,
+      daemon: requestedStartDaemon,
+    },
+  });
+  if (
+    configuredServicePlans.targets.some((plan) => Object.values(plan.services).some(Boolean))
+    && !requestedStartServer
+  ) {
+    throw new Error(
+      '[dev-targets] remote runtime placement cannot consume an external --server-url; '
+        + 'set runtime placement to local or use --no-dev-targets for this run',
+    );
+  }
+  const remoteServerRuntimeConfig = configuredServicePlans.targets.some((plan) => plan.services.server)
+    ? resolveRemoteServerRuntimeConfig({ serverComponentName, env: baseEnv })
+    : null;
+  let servicePlans = configuredServicePlans;
+  const exclusiveTargetPlans = configuredServicePlans.targets.filter((plan) => (
+    Object.entries(plan.services).some(([service, enabled]) => enabled && !configuredServicePlans.local[service])
+  ));
+  if (!json && exclusiveTargetPlans.length > 0) {
+    const diagnosis = await runDevTargetsDoctor({
+      targets: exclusiveTargetPlans.map((plan) => plan.target),
+      env: baseEnv,
+    });
+    const reachableTargets = new Set(
+      diagnosis.targets.filter((target) => target.ok).map((target) => target.name),
+    );
+    servicePlans = resolveServicePlansAfterTargetPreflight({
+      configured: configuredServicePlans,
+      mutagenAvailable: diagnosis.mutagen.ok,
+      reachableTargets,
+    });
+  }
+  const remoteServerPlan = servicePlans.targets.find((plan) => plan.services.server) ?? null;
+  if (!json && remoteServerPlan && (await fetchHappierHealth(localInternalServerUrl)).ok) {
+    throw new Error(
+      `[dev-targets] the local stable server listener at ${localInternalServerUrl} is still active; `
+        + 'stop the current Stack before starting its authoritative remote server',
+    );
+  }
+  const startServer = servicePlans.local.server;
+  const startDaemon = servicePlans.local.daemon;
+  const startExpo = servicePlans.local.expo;
 
   if (json) {
     printResult({
@@ -281,11 +346,23 @@ async function main() {
         startTauri,
         startDaemon,
         devTargets,
+        executionPolicy,
+        servicePlans,
         openReactNativeDevtools,
         cliHomeDir,
       },
     });
     return;
+  }
+
+  if (stackMode && runtimeStatePath) {
+    await completeInterruptedStackStopBeforeStart({
+      rootDir,
+      stackName,
+      baseDir: autostart.baseDir,
+      env: baseEnv,
+      json,
+    });
   }
 
   if (startServer) {
@@ -354,7 +431,6 @@ async function main() {
       })).status)
     : false;
   // Expo dev server state (worktree-scoped): single Expo process per stack/worktree.
-  const startExpo = startUi || startMobile;
   const expoPaths = getExpoStatePaths({
     baseDir: autostart.baseDir,
     kind: 'expo-dev',
@@ -373,13 +449,17 @@ async function main() {
     restart,
   });
 
-  if (
-    devTargets.length === 0 &&
-    !restart &&
-    (!startServer || startupDecision.adoptedServer) &&
-    (!startDaemon || daemonAlreadyRunning) &&
-    (!startExpo || expoAlreadyRunning)
-  ) {
+  if (shouldExitAdoptedDevRuntime({
+    devTargetCount: servicePlans.targets.length,
+    restart,
+    watchEnabled,
+    serverRequested: startServer,
+    adoptedServer: startupDecision.adoptedServer,
+    daemonRequested: startDaemon,
+    daemonRunning: daemonAlreadyRunning,
+    expoRequested: startExpo,
+    expoRunning: expoAlreadyRunning,
+  })) {
     console.log(
       `${green('✓')} dev: already running ${dim('(')}` +
         `${dim('server=')}${cyan(internalServerUrl)}${startServer ? '' : dim(' (external)')}` +
@@ -397,7 +477,7 @@ async function main() {
       script: 'dev.mjs',
       ephemeral,
       ownerPid: process.pid,
-      ports: startServer ? { server: serverPort } : {},
+      ports: requestedStartServer ? { server: serverPort } : {},
       runtimeSnapshotId: null,
       serveUi: null,
     });
@@ -412,6 +492,86 @@ async function main() {
       env: baseEnv,
     });
   }
+
+  const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;
+  const remoteExpoPort = remoteExpoPlan
+    ? (await selectExpoDevMetroPort({
+        env: baseEnv,
+        stackMode,
+        stackName,
+        host: resolveExpoDevHost({ env: baseEnv }) === 'lan' ? '0.0.0.0' : '127.0.0.1',
+      })).port
+    : null;
+  const remotePublicServerUrl = startMobile
+    ? resolveMobileReachableServerUrl({
+        env: baseEnv,
+        serverUrl: publicServerUrl,
+        serverPort,
+      })
+    : remoteServerPlan ? publicServerUrl : uiApiUrl;
+  const expoPublicUrl = remoteExpoPort
+    ? resolveMobileReachableServerUrl({
+        env: baseEnv,
+        serverUrl: `http://localhost:${remoteExpoPort}`,
+        serverPort: remoteExpoPort,
+      })
+    : '';
+  const resolveMobilePublicUrlsOnTarget =
+    startMobile
+    && !serverConnection.hasExplicitPublicServerUrl
+    && !resolvedUrls.envPublicUrl
+    && !hasExplicitMobileReachableHost({ env: baseEnv });
+
+  const buildDevTargetsStartOptions = () => {
+    if (servicePlans.targets.length === 0) return null;
+    const credentialPath = servicePlans.targets.some((plan) => plan.services.daemon)
+      ? findExistingStackCredentialPath({
+          cliHomeDir,
+          serverUrl: internalServerUrl,
+          env: baseEnv,
+        })
+      : null;
+    return {
+      stackName,
+      stackBaseDir: loadedDevTargets.path ? dirname(loadedDevTargets.path) : autostart.baseDir,
+      sourceDir: resolve(cliDir, '..', '..'),
+      localServerPort: serverPort,
+      localExpoPort: remoteExpoPort,
+      publicServerUrl: remotePublicServerUrl,
+      expoPublicUrl,
+      resolveMobilePublicUrlsOnTarget,
+      expoListenHost: resolveExpoDevHost({ env: baseEnv }) === 'lan' ? '0.0.0.0' : '127.0.0.1',
+      startMobile,
+      activeServerId: resolveStackActiveServerId({ env: baseEnv, stackName }),
+      credentialPath,
+      remoteServerRuntimeConfig,
+      syncTargets: devTargets,
+      targetPlans: servicePlans.targets,
+      onTargetStateChange: async ({ name, ...state }) => {
+        if (!stackMode || !runtimeStatePath) return;
+        const ownsServer = state.services?.server === true;
+        await recordStackRuntimeUpdate(runtimeStatePath, {
+          remoteTargets: { [name]: state },
+          ...(ownsServer && state.status === 'running'
+            ? {
+                placement: {
+                  server: name,
+                  daemon: startDaemon ? 'local' : name,
+                  expo: startExpo ? 'local' : remoteExpoPlan?.target.name ?? 'disabled',
+                },
+                ...createStackServerRuntimeProcessPatch({
+                  listenerPid: null,
+                  wrapperPid: null,
+                  serverPort,
+                  clearProxyState: true,
+                }),
+              }
+            : {}),
+        }).catch(() => {});
+      },
+      env: baseEnv,
+    };
+  };
 
   // Start server (only if not already healthy)
   // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
@@ -485,7 +645,9 @@ async function main() {
             : null,
       })
     : { serverEnv: baseEnv, serverScript: null, serverProc: null };
-  if (!startServer) {
+  if (remoteServerPlan) {
+    console.log(`${green('✓')} server: remote startup through ${cyan(internalServerUrl)}`);
+  } else if (!startServer) {
     console.log(`${green('✓')} server: external ${cyan(internalServerUrl)}`);
   } else if (startupDecision.startServer) {
     console.log(`${green('✓')} server: ready at ${cyan(internalServerUrl)}`);
@@ -501,6 +663,35 @@ async function main() {
       stackName,
     }).join('\n'),
   );
+
+  if (remoteServerPlan) {
+    const devTargetsStartOptions = buildDevTargetsStartOptions();
+    if (stackMode && runtimeStatePath) {
+      await recordStackRuntimeUpdate(runtimeStatePath, {
+        placement: {
+          server: remoteServerPlan.target.name,
+          daemon: startDaemon ? 'local' : remoteServerPlan.target.name,
+          expo: startExpo ? 'local' : remoteExpoPlan?.target.name ?? 'disabled',
+        },
+        remoteTargets: Object.fromEntries(servicePlans.targets.map((plan) => [
+          plan.target.name,
+          {
+            services: plan.services,
+            serviceStatus: Object.fromEntries(
+              Object.entries(plan.services)
+                .filter(([, enabled]) => enabled)
+                .map(([service]) => [service, 'starting']),
+            ),
+            status: 'starting',
+          },
+        ])),
+      });
+    }
+    devTargetsController = await startStackDevTargets(devTargetsStartOptions);
+    console.log(
+      `${green('✓')} server: remote ${remoteServerPlan.target.name} ready through ${cyan(internalServerUrl)}`,
+    );
+  }
 
   // Reliability before daemon start:
   // - Ensure schema exists (server-light: canonical provider migration script; happier-server: migrate deploy if tables missing)
@@ -760,7 +951,15 @@ async function main() {
 
   const expoRes =
     expoResEarly ??
-    (await ensureDevExpoServer({
+    (remoteExpoPlan
+      ? {
+          ok: true,
+          skipped: true,
+          reason: 'remote_target',
+          port: remoteExpoPort,
+          target: remoteExpoPlan.target.name,
+        }
+      : await ensureDevExpoServer({
       startUi,
       startMobile,
       uiDir,
@@ -774,7 +973,7 @@ async function main() {
       envPath,
       children,
       expoTailscale,
-    }));
+      }));
   if (startUi) {
     const uiPort = expoRes?.port;
     const uiUrlRaw = uiPort ? `http://localhost:${uiPort}` : '';
@@ -830,22 +1029,8 @@ async function main() {
     void reloadWatcher.requestReload('daemon');
   }
 
-  if (devTargets.length > 0) {
-    const credentialPath = findExistingStackCredentialPath({
-      cliHomeDir,
-      serverUrl: internalServerUrl,
-      env: baseEnv,
-    });
-    devTargetsController = startStackDevTargetsInBackground({
-      stackName,
-      stackBaseDir: loadedDevTargets.path ? dirname(loadedDevTargets.path) : autostart.baseDir,
-      sourceDir: resolve(cliDir, '..', '..'),
-      localServerPort: serverPort,
-      activeServerId: resolveStackActiveServerId({ env: baseEnv, stackName }),
-      credentialPath,
-      targets: devTargets,
-      env: baseEnv,
-    });
+  if (servicePlans.targets.length > 0 && !devTargetsController) {
+    devTargetsController = startStackDevTargetsInBackground(buildDevTargetsStartOptions());
   }
 
   if (startTauri) {

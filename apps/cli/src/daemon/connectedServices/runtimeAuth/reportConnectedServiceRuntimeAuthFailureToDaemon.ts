@@ -22,6 +22,7 @@ import {
 import { scheduleRuntimeAuthFailureReportOutboxDrainToDaemon } from './reportOutbox/runtimeAuthFailureReportOutboxDrainScheduler';
 import type { RuntimeAuthFailureReportOutboxItem } from './reportOutbox/runtimeAuthFailureReportOutboxTypes';
 import { resolveRuntimeAuthFailureReportOutboxDelivery } from './reportOutbox/resolveRuntimeAuthFailureReportOutboxDelivery';
+import { CONNECTED_SERVICE_RUNTIME_AUTH_RECOVERY_TRANSPORT_TIMEOUT_MS } from './connectedServiceRuntimeAuthTimeouts';
 
 type RuntimeAuthFailureNotifyBody = Readonly<{
   reportId: string;
@@ -64,7 +65,8 @@ export type ConnectedServiceRuntimeAuthFailureDaemonReport = Readonly<{
   }>;
 }>;
 
-export const CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS = 120_000;
+export const CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS =
+  CONNECTED_SERVICE_RUNTIME_AUTH_RECOVERY_TRANSPORT_TIMEOUT_MS;
 
 // Incident Jun-11 H-C / FIX-2: one failed turn is observed by multiple independent triggers
 // (e.g. Claude's StopFailure hook, the SDK inbound loop, and the bridge transcript observer),

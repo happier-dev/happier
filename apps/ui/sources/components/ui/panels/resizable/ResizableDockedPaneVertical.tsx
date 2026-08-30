@@ -79,7 +79,19 @@ export const ResizableDockedPaneVertical = React.memo((props: ResizableDockedPan
                     />
                 </Pressable>
             ) : null}
-            <View style={{ flex: 1, width: '100%', minHeight: 0 }}>{props.children}</View>
+            <View
+                testID={props.testID ? `${props.testID}-content` : undefined}
+                style={{
+                    flex: 1,
+                    width: '100%',
+                    minHeight: 0,
+                    ...(canResize
+                        ? (resizeEdge === 'top' ? { paddingTop: 18 } : { paddingBottom: 18 })
+                        : null),
+                }}
+            >
+                {props.children}
+            </View>
         </View>
     );
 });

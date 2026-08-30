@@ -33,3 +33,17 @@ test('server postinstall runner skips installed package context and respects npm
     'server postinstall runner should delegate to postinstall:real'
   );
 });
+
+test('server postinstall builds shared dependencies before provider generation', async () => {
+  const serverPackageJson = JSON.parse(await readFile(serverPackagePath, 'utf8'));
+  const postinstallScript = String(serverPackageJson?.scripts?.['postinstall:real'] ?? '');
+  const buildSharedIndex = postinstallScript.indexOf('build:shared');
+  const generateProvidersIndex = postinstallScript.indexOf('generate:providers');
+
+  assert.ok(buildSharedIndex >= 0, 'server postinstall should build shared workspace dependencies');
+  assert.ok(generateProvidersIndex >= 0, 'server postinstall should generate provider clients');
+  assert.ok(
+    buildSharedIndex < generateProvidersIndex,
+    'shared workspace dependencies must exist before provider generation imports their canonical parser',
+  );
+});

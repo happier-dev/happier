@@ -469,6 +469,17 @@ if (argv.includes('--version') || argv.includes('-v')) {
   process.exit(0);
 }
 
+if (argv.includes('--help') || argv.includes('-h')) {
+  process.stdout.write([
+    'Usage: claude [options] [prompt]',
+    '  --output-format <format>',
+    '  --input-format <format>',
+    '  --permission-mode <mode>',
+    '',
+  ].join('\n'));
+  process.exit(0);
+}
+
 if (requireNativeOauth) {
   const nativeAuthContract = inspectNativeOauthContract();
   safeAppendJsonl(logPath, nativeAuthContract);
@@ -1350,7 +1361,10 @@ if (isSdkStreamJson) {
   let localComposerBuffer = '';
   let skipNextLfAfterCr = false;
   const renderLocalIdleComposer = () => {
-    process.stdout.write('\n❯ \x1b[2mTry "refactor <filepath>"\x1b[22m\n');
+    // Keep the new composer on a distinct terminal row from the submitted prompt. The real Claude
+    // TUI renders turn output between them; a single shared newline makes two composer-shaped rows
+    // overlap in the screen parser's global matcher and falsely leaves the submitted prompt active.
+    process.stdout.write('\n\n❯ ');
     safeAppendJsonl(logPath, {
       type: 'local_idle_composer_rendered',
       invocationId,
@@ -1405,6 +1419,13 @@ if (isSdkStreamJson) {
         continue;
       }
       skipNextLfAfterCr = false;
+      if (char === '\x1b') {
+        // Claude's idle composer clears its current draft on Escape. The unified injector uses this
+        // bounded behavior to recover only its own verified leftover text.
+        localComposerBuffer = '';
+        process.stdout.write('\r\x1b[2K❯ ');
+        continue;
+      }
       if (char === '\r') {
         submitLocalComposerBuffer();
         skipNextLfAfterCr = true;
@@ -1412,9 +1433,11 @@ if (isSdkStreamJson) {
       }
       if (char === '\n') {
         localComposerBuffer += '\n';
+        process.stdout.write('\n');
         continue;
       }
       localComposerBuffer += char;
+      process.stdout.write(char);
     }
   });
   if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {

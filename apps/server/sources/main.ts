@@ -1,17 +1,19 @@
 import 'reflect-metadata';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
+import { resolveServerFlavorFromEnv } from '@/config/backends';
 import { registerProcessHandlers } from '@/utils/process/processHandlers';
 
 async function run(): Promise<void> {
-    process.env.HAPPY_SERVER_FLAVOR = 'full';
-    process.env.HAPPIER_SERVER_FLAVOR = 'full';
+    const flavor = resolveServerFlavorFromEnv(process.env, 'full');
+    process.env.HAPPY_SERVER_FLAVOR = flavor;
+    process.env.HAPPIER_SERVER_FLAVOR = flavor;
 
     // Initialize Sentry before importing the server runtime so auto-instrumentation can patch dependencies (Fastify, etc).
     initializeServerSentry(process.env);
     registerProcessHandlers();
 
     const { startServer } = await import('@/startServer');
-    await startServer('full');
+    await startServer(flavor);
 }
 
 void run()

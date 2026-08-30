@@ -55,6 +55,7 @@ import {
   createLocalAgentNativeResumeRecordStore,
   prepareAgentNativeReturnStrictResume,
 } from '@/session/agentTransition/agentNativeReturn';
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -140,6 +141,7 @@ export type StandardAcpProviderConfig = {
     getAbortSignal: () => AbortSignal;
     setThinking: (value: boolean) => void;
     memoryRecallGuidanceEnabled: boolean;
+    processEnv?: NodeJS.ProcessEnv;
     toolDelivery: 'native_mcp' | 'shell_bridge' | 'unsupported';
     pendingQueueDrainMaxPopPerWake?: number;
     providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
@@ -507,6 +509,7 @@ export async function runStandardAcpProvider(
     getAbortSignal: () => abortController.signal,
     setThinking: setThinkingState,
     memoryRecallGuidanceEnabled,
+    processEnv: withCurrentHappierSessionId(process.env, session.sessionId),
     toolDelivery,
     pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: providerInputConsumer as SessionProviderInputConsumer<unknown, unknown>,

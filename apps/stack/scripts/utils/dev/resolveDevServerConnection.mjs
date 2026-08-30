@@ -23,6 +23,7 @@ export function resolveDevServerConnection({
 }) {
   const noServer = flags.has('--no-server');
   const serverUrlFromArg = parseHttpUrl(kv.get('--server-url') ?? '', { label: '--server-url' });
+  const publicServerUrlFromArg = parseHttpUrl(kv.get('--server-public-url') ?? '', { label: '--server-public-url' });
   const serverUrlFromEnv = parseHttpUrl(env.HAPPIER_SERVER_URL ?? '', { label: 'HAPPIER_SERVER_URL' });
   const externalServerUrl = serverUrlFromArg || serverUrlFromEnv;
   const useExternalServer = noServer || Boolean(serverUrlFromArg);
@@ -44,17 +45,19 @@ export function resolveDevServerConnection({
     return {
       startServer: false,
       internalServerUrl: externalServerUrl,
-      publicServerUrl: externalServerUrl,
+      publicServerUrl: publicServerUrlFromArg || externalServerUrl,
       uiApiUrl: externalServerUrl,
       source: serverUrlFromArg ? 'cli-arg' : 'env',
+      hasExplicitPublicServerUrl: Boolean(publicServerUrlFromArg),
     };
   }
 
   return {
     startServer: true,
     internalServerUrl: resolvedLocalUrls.internalServerUrl,
-    publicServerUrl: resolvedLocalUrls.publicServerUrl,
+    publicServerUrl: publicServerUrlFromArg || resolvedLocalUrls.publicServerUrl,
     uiApiUrl: resolvedLocalUrls.defaultPublicUrl,
     source: 'local',
+    hasExplicitPublicServerUrl: Boolean(publicServerUrlFromArg),
   };
 }

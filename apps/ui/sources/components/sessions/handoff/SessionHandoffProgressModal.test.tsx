@@ -33,6 +33,33 @@ describe('SessionHandoffProgressModal', () => {
         expect(findProgressIndicators(screen)).toHaveLength(1);
     });
 
+    it('shows determinate session-state packaging progress before workspace preparation begins', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                operation={{
+                    version: 1,
+                    operationId: 'handoff-operation-1',
+                    requestId: 'request-1',
+                    revision: 2,
+                    actionId: 'session.handoff',
+                    state: 'running',
+                    scope: { accountId: 'account-1', machineId: 'source-machine', sessionId: 'session-1' },
+                    title: 'Hand off session',
+                    createdAt: 1,
+                    startedAt: 1,
+                    progress: { kind: 'determinate', current: 1024, total: 4096, label: 'Packaging session state' },
+                    cancellation: 'supported',
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-operation-progress-bar')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('25');
+        expect(screen.getTextContent()).toContain('Packaging session state');
+    });
+
     it('renders a full checkpoint timeline that matches the protocol checkpoint enum', async () => {
         const { SessionHandoffProgressCheckpointSchema } = await import('@happier-dev/protocol');
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');

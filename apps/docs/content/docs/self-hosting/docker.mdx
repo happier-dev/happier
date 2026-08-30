@@ -73,7 +73,7 @@ Notes:
 
 ### Prebuilt image: use Postgres (full flavor)
 
-The `relay-server` image is built from the same server code and can run full flavor too — you just override the defaults. Postgres is the external database supported by the prebuilt image.
+The `relay-server` image is built from the same server code and can run full flavor too — you just override the defaults. Postgres is the external database supported by the prebuilt image. On startup, the image applies its bundled Postgres migrations before starting the server; set `RUN_MIGRATIONS=0` only when migrations are managed separately.
 
 Example `docker-compose.yml` (Postgres + local files backend):
 
@@ -220,9 +220,9 @@ Notes:
 - `pglite` uses the Postgres Prisma client, so include `postgres` if you intend to run light mode on PGlite. The light flavor's own default is `sqlite`.
 - If you build without `mysql` (or `sqlite`) and later run with `HAPPIER_DB_PROVIDER=mysql` (or `sqlite`), the server will fail at startup with a clear error telling you to rebuild with the missing provider included.
 
-## Full vs light flavor
+## Full vs light presets
 
-Happier Server supports two “flavors” that share the same API + internal logic. The difference is which storage backends are used.
+Happier Server supports two presets that share the same API and runtime. A preset supplies topology and backend defaults; `HAPPIER_DB_PROVIDER` independently selects the database under either preset.
 
 ### Full flavor (recommended for production)
 
@@ -252,10 +252,7 @@ The DB provider is selected via:
 
 - `HAPPIER_DB_PROVIDER` (preferred) or `HAPPY_DB_PROVIDER`
 
-Supported values:
-
-- Full flavor: `postgres` (default), `mysql` (MySQL 8.0.16+)
-- Light flavor: `sqlite` (default), `pglite`
+Supported values under either preset are `postgres`, `mysql` (MySQL 8.0.16+), `sqlite`, and `pglite`. Full defaults to Postgres; light defaults to SQLite.
 
 Image support depends on how the image was built. Prebuilt `relay-server` images include SQLite and Postgres runtime support; MySQL requires a source-built `server` image with MySQL included.
 
@@ -331,20 +328,21 @@ The default `server` image starts the **full** flavor. To run light in Docker, y
 - use the `relay-server` target (recommended for self-host), or
 - run the `server` target with `HAPPIER_SERVER_FLAVOR=light`.
 
-For PGlite specifically, you still need to run the light migrations helper script (PGlite’s connection string is created at runtime).
+The image entrypoint runs the packaged PGlite migration owner before startup, just as it does for external Postgres. Persist the local data directory.
 
 ```bash
 docker run --rm -p 3005:3005 \
   -e PORT=3005 \
+  -e HAPPIER_SERVER_FLAVOR=light \
+  -e HAPPIER_DB_PROVIDER=pglite \
   -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/server-light \
   -v happier-server-light:/data/server-light \
-  happier-server \
-  sh -lc 'yarn --cwd apps/server migrate:light:deploy && yarn --cwd apps/server start:light'
+  happier-server
 ```
 
 ### Light flavor (SQLite, default)
 
-SQLite is the light flavor's default and the recommended light-mode database for Docker because it is single-process and easy to back up. The server image entrypoint automatically runs `prisma migrate deploy` for SQLite when `RUN_MIGRATIONS=1` (default).
+SQLite is the light flavor's default and the recommended light-mode database for Docker because it is single-process and easy to back up. With `RUN_MIGRATIONS=1` (default), the entrypoint enables the server's existing startup migration path; migrations run once inside normal server startup before the database client is initialized.
 
 ```bash
 docker run --rm -p 3005:3005 \
@@ -555,17 +553,11 @@ services:
 
 ## Migrations
 
-The `server` Docker target runs DB migrations by default before starting:
-
-- Full flavor:
-  - Provider is selected by `HAPPIER_DB_PROVIDER` (default `postgres`).
-  - The container runs `prisma migrate deploy` against the matching schema on startup.
-- Light flavor:
-  - The default image entrypoint starts full flavor, so for light you run migrations explicitly in your overridden command (examples above).
+The source-built `server` target and prebuilt `relay-server` image run DB migrations by default. Migration selection follows `HAPPIER_DB_PROVIDER`, independently of the preset: Postgres, MySQL, and PGlite use their packaged/provider migration owner; SQLite uses the server's canonical in-process startup migration path.
 
 Notes:
 
-- Disable auto-migrations in full flavor with `RUN_MIGRATIONS=0`.
+- Disable automatic migrations with `RUN_MIGRATIONS=0`. For SQLite, the entrypoint maps this to the server startup migration setting; it does not launch a second migration process.
 - In Postgres multi-replica setups, it’s OK if more than one replica tries to migrate at startup (the DB serializes via locks).
 
 ## Reverse proxy checklist
@@ -579,10 +571,8 @@ Notes:
 
 If you are developing Happier Server itself (not just deploying it), keep in mind:
 
-- There are two runtime flavors: **full** (`yarn --cwd apps/server start`) and **light** (`yarn --cwd apps/server start:light`).
-- The DB provider is selected via `HAPPIER_DB_PROVIDER`:
-  - Full: `postgres` (default) or `mysql`
-  - Light: `sqlite` (default) or `pglite`
+- There are two runtime presets: **full** (`yarn --cwd apps/server start`) and **light** (`yarn --cwd apps/server start:light`).
+- The DB provider is independently selected via `HAPPIER_DB_PROVIDER=postgres|mysql|sqlite|pglite`; full defaults to Postgres and light defaults to SQLite.
 - Prisma model source of truth: `apps/server/prisma/schema.prisma`.
 - Provider schemas are generated from it:
   - `yarn --cwd apps/server schema:sync` (and tests enforce `schema:sync:check`)

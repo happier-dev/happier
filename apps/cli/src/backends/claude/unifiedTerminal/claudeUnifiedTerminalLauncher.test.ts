@@ -141,6 +141,7 @@ function createSession(overrides: Readonly<{
       sessionId: 'happy-session-id',
       sendSessionEvent: vi.fn(),
       sendClaudeSessionMessage: vi.fn(),
+      sendClaudeSessionMessageCommittedExact: vi.fn(async () => {}),
       sendClaudeSessionMessageCommitted: vi.fn(async () => ({
         persisted: true,
         delivered: true,
@@ -782,10 +783,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
       },
     });
 
-    expect(client.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['l17'],
-      reason: 'runtime_disposed_before_delivery',
-    });
+    expect(client.blockPendingMessageDelivery).not.toHaveBeenCalled();
     expect(queue.unshift).not.toHaveBeenCalled();
     expect(client.bindProviderInputOutcomeProducer).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'claude',
@@ -1074,12 +1072,12 @@ describe('claudeUnifiedTerminalLauncher', () => {
       },
     });
 
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenCalledTimes(1);
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledTimes(1);
     expect(session.client.recordClaudeJsonlMessageConsumed).toHaveBeenCalledWith(expect.objectContaining({
       type: 'user',
       uuid: 'user-echo',
     }));
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledWith(expect.objectContaining({
       type: 'assistant',
       uuid: 'assistant-reply',
     }));
@@ -1130,12 +1128,12 @@ describe('claudeUnifiedTerminalLauncher', () => {
       type: 'user',
       uuid: 'historical-user-echo',
     }));
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenCalledTimes(2);
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledTimes(2);
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenNthCalledWith(1, expect.objectContaining({
       type: 'user',
       uuid: 'fresh-terminal-user',
     }));
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenNthCalledWith(2, expect.objectContaining({
       type: 'assistant',
       uuid: 'assistant-reply',
     }));
@@ -1173,7 +1171,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
         provenance: { kind: 'non_dependent', source: 'history' },
       },
     );
-    expect(session.client.sendClaudeSessionMessage).not.toHaveBeenCalled();
+    expect(session.client.sendClaudeSessionMessageCommittedExact).not.toHaveBeenCalled();
   });
 
   it('does not persist Claude compact summary or compact local-command artifacts from unified transcripts', async () => {
@@ -1229,7 +1227,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
       },
     });
 
-    expect(session.client.sendClaudeSessionMessage).not.toHaveBeenCalled();
+    expect(session.client.sendClaudeSessionMessageCommittedExact).not.toHaveBeenCalled();
   });
 
   it('does not emit a stale compaction started event after a compact boundary completed event', async () => {
@@ -1548,12 +1546,12 @@ describe('claudeUnifiedTerminalLauncher', () => {
       type: 'user',
       uuid: 'cli-positional-user',
     }));
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenCalledTimes(2);
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledTimes(2);
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenNthCalledWith(1, expect.objectContaining({
       type: 'user',
       uuid: 'cli-positional-user',
     }));
-    expect(session.client.sendClaudeSessionMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenNthCalledWith(2, expect.objectContaining({
       type: 'assistant',
       uuid: 'cli-positional-assistant',
     }));
@@ -2981,11 +2979,25 @@ describe('claudeUnifiedTerminalLauncher', () => {
     mocks.runClaudeUnifiedTerminalSession
       .mockImplementationOnce(async (runOpts: {
         nextMessage: () => Promise<{ message: string; mode: { permissionMode: string } } | null>;
+        returnUnconsumedMessage?: (input: {
+          message: string;
+          mode: { permissionMode: string };
+          maxUserMessageSeq?: number | null;
+          userMessageLocalIds?: readonly string[] | null;
+        }) => void;
         onTerminalHostReady?: (input: { handle: TerminalHostHandle; terminal: TerminalAttachmentInfo['terminal'] }) => Promise<void>;
       }) => {
-        await expect(runOpts.nextMessage()).resolves.toEqual(expect.objectContaining({
+        const batch = await runOpts.nextMessage();
+        expect(batch).toEqual(expect.objectContaining({
           message: 'resume after readiness timeout',
         }));
+        if (!batch) throw new Error('expected pending readiness-timeout batch');
+        runOpts.returnUnconsumedMessage?.({
+          message: batch.message,
+          mode: batch.mode,
+          maxUserMessageSeq: null,
+          userMessageLocalIds: ['pending-readiness-timeout'],
+        });
         await runOpts.onTerminalHostReady?.({
           handle: {
             kind: 'zellij',
@@ -3031,6 +3043,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
       expect.objectContaining({ permissionMode: 'default' }),
       { userMessageSeq: null, userMessageLocalIds: ['pending-readiness-timeout'] },
     );
+    expect(session.client.blockPendingMessageDelivery).not.toHaveBeenCalled();
 
     expect(session.client.sessionTurnLifecycle?.failTurn).toHaveBeenCalledWith({
       provider: 'claude',

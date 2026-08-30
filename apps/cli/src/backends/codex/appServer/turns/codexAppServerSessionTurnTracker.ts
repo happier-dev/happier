@@ -16,7 +16,7 @@ const CODEX_AGENT_ID = 'codex';
 const CODEX_APP_SERVER_ROLLBACK_RANGES_METADATA_KEY = 'sessionRollbackRangesV1';
 const MAX_RETAINED_CODEX_APP_SERVER_TURN_ENTRIES = 200;
 const MAX_RETAINED_CODEX_APP_SERVER_USER_MESSAGE_SEQS_PER_TURN = 50;
-const COMMITTED_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS = 1_000;
+const COMMITTED_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS = 10_000;
 
 type CodexAppServerSessionTurnTranscriptAnchors = Readonly<{
     startUserMessageSeq?: number;
@@ -175,6 +175,8 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
     const now = params.now ?? Date.now;
     let sessionTurnEvidence = createEmptySessionTurnEvidence(params.getProviderThreadId(), now());
     let activeTurn: ActiveTurn | null = null;
+    let activeTurnGeneration = 0;
+    let pendingStartAnchorResolution: Promise<void> | null = null;
 
     const applyLocalSessionTurnEvidenceMutation = (
         mutate: (
@@ -185,15 +187,22 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         sessionTurnEvidence = mutate(sessionTurnEvidence, now());
     };
 
-    const resolveCommittedUserMessageSeq = async (localId: string | null | undefined): Promise<number | null> => {
+    const readCommittedUserMessageSeq = (localId: string | null | undefined): number | null => {
         const trimmedLocalId = readTrimmedString(localId);
         if (!trimmedLocalId) return null;
-        const syncSeq = normalizeSeq(params.session.getCommittedUserMessageSeq?.(trimmedLocalId) ?? null);
-        if (syncSeq !== null) return syncSeq;
+        return normalizeSeq(params.session.getCommittedUserMessageSeq?.(trimmedLocalId) ?? null);
+    };
+
+    const waitForCommittedUserMessageSeq = async (localId: string | null | undefined): Promise<number | null> => {
+        const trimmedLocalId = readTrimmedString(localId);
+        if (!trimmedLocalId) return null;
         return normalizeSeq(await params.session.waitForCommittedUserMessageSeq?.(trimmedLocalId, {
             timeoutMs: COMMITTED_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS,
         }) ?? null);
     };
+
+    const resolveCommittedUserMessageSeq = async (localId: string | null | undefined): Promise<number | null> =>
+        readCommittedUserMessageSeq(localId) ?? await waitForCommittedUserMessageSeq(localId);
 
     const buildInitialTranscriptAnchors = (
         startUserMessageSeq: number,
@@ -305,6 +314,34 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         return true;
     };
 
+    const scheduleStartAnchorResolution = (paramsForTurn: Readonly<{
+        localId: string | null | undefined;
+        startSeqInclusive: number | null;
+        generation: number;
+    }>): void => {
+        if (!readTrimmedString(paramsForTurn.localId) || !params.session.waitForCommittedUserMessageSeq) return;
+        const resolution = (async () => {
+            const startUserMessageSeq = await waitForCommittedUserMessageSeq(paramsForTurn.localId);
+            if (startUserMessageSeq === null || paramsForTurn.generation !== activeTurnGeneration) return;
+            await mergeBeginIntoActiveTurn({
+                providerTurnId: null,
+                startUserMessageSeq,
+                startSeqInclusive: paramsForTurn.startSeqInclusive,
+            });
+        })().catch((error) => {
+            params.onMetadataWriteError?.(error);
+        });
+        pendingStartAnchorResolution = resolution;
+        void resolution.finally(() => {
+            if (pendingStartAnchorResolution === resolution) pendingStartAnchorResolution = null;
+        });
+    };
+
+    const drainStartAnchorResolution = async (): Promise<void> => {
+        const resolution = pendingStartAnchorResolution;
+        if (resolution) await resolution;
+    };
+
     const readRollbackPlanningEvidence = (): CodexAppServerRollbackEvidenceSet => {
         const metadataSnapshot = params.session.getMetadataSnapshot?.();
         const rollbackRanges = readRollbackRangesFromMetadata(metadataSnapshot);
@@ -327,17 +364,24 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         initializeFromCurrentMetadata(): void {
             sessionTurnEvidence = createEmptySessionTurnEvidence(params.getProviderThreadId(), now());
             activeTurn = null;
+            activeTurnGeneration += 1;
+            pendingStartAnchorResolution = null;
         },
 
         async beginTurn(paramsForTurn: Readonly<{
             turnId: string | null;
             startUserMessageLocalId?: string | null;
+            startUserMessageSeq?: number | null;
             startSeqInclusive: number | null;
         }>): Promise<void> {
             const providerTurnId = readTrimmedString(paramsForTurn.turnId);
-            const startUserMessageSeq = await resolveCommittedUserMessageSeq(paramsForTurn.startUserMessageLocalId);
+            const suppliedStartUserMessageSeq = normalizeSeq(paramsForTurn.startUserMessageSeq);
+            const startUserMessageSeq = suppliedStartUserMessageSeq
+                ?? readCommittedUserMessageSeq(paramsForTurn.startUserMessageLocalId);
             const startSeqInclusive = normalizeSeq(paramsForTurn.startSeqInclusive);
             if (await mergeBeginIntoActiveTurn({ providerTurnId, startUserMessageSeq, startSeqInclusive })) return;
+            activeTurnGeneration += 1;
+            const turnGeneration = activeTurnGeneration;
             const lifecycle = params.session.sessionTurnLifecycle;
             if (startUserMessageSeq === null) {
                 if (lifecycle) {
@@ -354,9 +398,15 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
                         params.onMetadataWriteError?.(error);
                         activeTurn = { kind: 'unavailable', turnId: null, providerTurnId, startUserMessageSeq, startSeqInclusive };
                     }
+                    scheduleStartAnchorResolution({
+                        localId: paramsForTurn.startUserMessageLocalId,
+                        startSeqInclusive,
+                        generation: turnGeneration,
+                    });
                     return;
                 }
                 activeTurn = { kind: 'unavailable', turnId: null, providerTurnId, startUserMessageSeq, startSeqInclusive };
+                scheduleStartAnchorResolution({ localId: paramsForTurn.startUserMessageLocalId, startSeqInclusive, generation: turnGeneration });
                 return;
             }
             const resolvedStartSeqInclusive = startSeqInclusive ?? startUserMessageSeq;
@@ -547,6 +597,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         },
 
         async completeActiveTurn(paramsForCompletion: Readonly<{ endSeqInclusive: number | null }>): Promise<void> {
+            await drainStartAnchorResolution();
             if (!activeTurn || activeTurn.kind !== 'tracked') {
                 activeTurn = null;
                 return;
@@ -622,6 +673,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         },
 
         async interruptActiveTurn(paramsForInterruption: Readonly<{ endSeqInclusive: number | null }>): Promise<void> {
+            await drainStartAnchorResolution();
             if (!activeTurn || activeTurn.kind !== 'tracked') {
                 activeTurn = null;
                 return;
@@ -681,6 +733,7 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
             endSeqInclusive: number | null;
             issue?: SessionRuntimeIssueV1 | null;
         }>): Promise<void> {
+            await drainStartAnchorResolution();
             if (!activeTurn || activeTurn.kind !== 'tracked') {
                 activeTurn = null;
                 return;

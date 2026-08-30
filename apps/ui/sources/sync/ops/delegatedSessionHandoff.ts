@@ -60,6 +60,7 @@ export async function delegateSessionHandoffToSourceDaemon(
         accountId: string;
         sourceMachineId: string;
         targetMachineId: string;
+        targetPath?: string;
         sessionId: string;
         sessionStorageMode: SessionHandoffStorageMode;
         targetSessionStorageMode?: SessionHandoffStorageMode;
@@ -100,6 +101,7 @@ export async function delegateSessionHandoffToSourceDaemon(
                     sessionId: params.sessionId,
                     sourceMachineId: params.sourceMachineId,
                     targetMachineId: params.targetMachineId,
+                    ...(params.targetPath ? { targetPath: params.targetPath } : {}),
                     sessionStorageMode: params.sessionStorageMode,
                     ...(params.targetSessionStorageMode ? { targetSessionStorageMode: params.targetSessionStorageMode } : {}),
                     preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],

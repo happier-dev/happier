@@ -127,7 +127,11 @@ The body must explain why the files belong together, not enumerate filenames. Me
 
 For issue-linked packets, use `Refs #N` when the correction is partial, a mitigation, still release-gated, or must remain open for reporter-channel verification. Use `Fixes #N` only when merging the commit into the repository's default branch satisfies the issue's actual closure gate. Do not force one issue per commit: keep one coherent correction per commit, grouping several issues only when that one correction fully explains them and splitting one issue when it contains independently coherent changes.
 
-Preserve material issue-contributor authorship in the packet. If an issue author or commenter supplied a causal insight, decisive reproduction, design, patch, or solution direction substantially embodied in the packet, add one `Co-authored-by: Name <email>` trailer for that contributor after the blank line that starts the footer block. Prefer an explicitly supplied GitHub-associated email; otherwise resolve the authenticated GitHub user's numeric id, current login, and display name and use the GitHub-provided `ID+LOGIN@users.noreply.github.com` form, falling back to the login as the name. Do not use `@handle`, guess a private email, duplicate a contributor trailer, or grant co-authorship merely for filing a routine report. If identity resolution is unavailable, mark the commit packet attribution-blocked rather than silently losing credit.
+Preserve material contributor authorship in the packet, whether it came through an issue, PR, review, patch, or existing code being carried forward/refactored. Add one `Co-authored-by: Name <email>` trailer only when this packet materially incorporates that person's code, patch, design, causal diagnosis, decisive reproduction, or substantially adopted fix direction. A PR author's original code or solution embodied in a refactor normally qualifies; an independent follow-up fix does not gain their trailer merely because it lands on their PR. Routine reports, requested logs, confirmation, review ownership, participation, and generic suggestions are valuable but do not automatically constitute commit co-authorship.
+
+Apply the test to the commit bytes and reasoning, not the surrounding thread: refactoring contributor-written code preserves their authorship; independently correcting a new edge case does not; implementing a reporter's decisive causal diagnosis may qualify even when they supplied no patch; mechanically rebasing existing commits preserves their author fields and does not require adding new trailers.
+
+Prefer an explicitly supplied GitHub-associated email; otherwise resolve the contributor's numeric GitHub id, current login, and display name and use the GitHub-provided `ID+LOGIN@users.noreply.github.com` form, falling back to the login as the name. Do not use `@handle`, guess a private email, duplicate a contributor trailer, or change the primary commit identity. If a materially required identity cannot be resolved, mark only that commit packet attribution-blocked rather than silently losing credit.
 
 ## 6. Group review checklist
 
@@ -141,6 +145,6 @@ Before staging, answer:
 - Is any output generated, private, temporary, oversized, or unexplained?
 - Can the subject distinguish this commit from every neighboring commit?
 - Does the body explain ownership and non-obvious semantics?
-- Did any issue author or commenter materially shape this packet, and is their verified co-author trailer present exactly once?
+- Which other people materially contributed content embodied in this packet, and is each justified verified co-author trailer present exactly once—with no trailer added merely because someone authored the surrounding issue or PR?
 - Which focused checks decide whether the group is sound?
 - Has every path assigned to this reconnaissance lane been placed in a packet, excluded with evidence, or reported with an exact unresolved fact?

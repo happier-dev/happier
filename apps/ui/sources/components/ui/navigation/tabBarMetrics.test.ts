@@ -9,6 +9,14 @@ describe('resolveTabBarMetrics', () => {
         expect(resolveTabBarMetrics('large', true).iconSize).toBe(28);
     });
 
+    it('makes compact tabs visually narrower than regular tabs', () => {
+        const compact = resolveTabBarMetrics('compact', false);
+        const regular = resolveTabBarMetrics('regular', false);
+
+        expect(compact.tabMinWidth).toBe(44);
+        expect(compact.tabMinWidth).toBeLessThan(regular.tabMinWidth);
+    });
+
     it('adds vertical padding in icon-only mode for a balanced height', () => {
         expect(resolveTabBarMetrics('regular', false).tabPaddingVertical)
             .toBeGreaterThan(resolveTabBarMetrics('regular', true).tabPaddingVertical);
@@ -19,9 +27,9 @@ describe('resolveTabBarMetrics', () => {
             const labeled = resolveTabBarMetrics(size, true);
             expect(labeled.tabPaddingHorizontal).toBe(labeled.tabPaddingVertical);
         }
-        expect(resolveTabBarMetrics('compact', true).tabPaddingHorizontal).toBe(4);
-        expect(resolveTabBarMetrics('regular', true).tabPaddingHorizontal).toBe(6);
-        expect(resolveTabBarMetrics('large', true).tabPaddingHorizontal).toBe(8);
+        expect(resolveTabBarMetrics('compact', true).tabPaddingHorizontal).toBe(3);
+        expect(resolveTabBarMetrics('regular', true).tabPaddingHorizontal).toBe(5);
+        expect(resolveTabBarMetrics('large', true).tabPaddingHorizontal).toBe(7);
     });
 
     it('rounds the active pill more when labels are shown (taller tab)', () => {

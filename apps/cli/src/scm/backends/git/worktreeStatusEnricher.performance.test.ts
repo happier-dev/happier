@@ -170,4 +170,25 @@ describe('worktreeStatusEnricher — git invocation budget (FR3-13)', () => {
         });
         expect(statusCalls.length).toBeLessThanOrEqual(paths.length);
     });
+
+    it('omits enrichment deterministically when the process boundary reports a timeout', async () => {
+        runScmCommandMock.mockResolvedValue({
+            success: false,
+            exitCode: null,
+            stdout: '',
+            stderr: '',
+            timedOut: true,
+        });
+
+        const { enrichGitWorktreesWithStatus } = await import('./worktreeStatusEnricher');
+        const result = await enrichGitWorktreesWithStatus({
+            worktrees: [{ path: '/repo/timed-out', branch: 'dev', isCurrent: false, isMain: true }],
+            includeWorktreeStatus: true,
+            perCallTimeoutMs: 1,
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0]?.changeCount).toBeUndefined();
+        expect(result[0]?.lastActivityAt).toBeUndefined();
+    });
 });

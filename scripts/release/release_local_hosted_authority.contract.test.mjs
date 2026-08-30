@@ -54,7 +54,6 @@ exit 0
         '--repository', 'happier-dev/happier',
         '--deploy-environment', 'preview',
         '--deploy-targets', 'server,server_runner',
-        '--bump', 'none',
         '--source-sha', AUTHORIZED_DEV_SHA,
         '--workflow-control-sha', AUTHORIZED_DEV_SHA,
         '--resume-run-id', '31506884258',
@@ -254,7 +253,7 @@ exit 0
   }
 });
 
-test('the local release command rejects automatic bumps before any release mutation or source lookup', () => {
+test('the local release command rejects the removed bump option before any release mutation or source lookup', () => {
   const root = mkdtempSync(join(tmpdir(), 'hosted-release-bump-admission-'));
   const bin = join(root, 'bin');
   const log = join(root, 'commands.log');
@@ -283,8 +282,8 @@ test('the local release command rejects automatic bumps before any release mutat
     );
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /Materialize and commit changelog and version updates, then rerun with --bump none\./);
-    assert.equal(readFileSync(log, 'utf8'), '', 'automatic bump admission must fail before external commands');
+    assert.match(result.stderr, /Unknown option '--bump'/);
+    assert.equal(readFileSync(log, 'utf8'), '', 'the removed bump option must fail before external commands');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1368,7 +1368,17 @@ describe('persistence', () => {
             persistenceModule.prepareSessionLocalStateScopeForActivation(sessionLocalScopeB);
 
             expect(loadNewSessionDraft()).toBeNull();
-            expect(loadNewSessionDraft(sessionLocalScopeB)).toEqual(legacyDraft);
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toEqual(expect.objectContaining({
+                input: legacyDraft.input,
+                selectedMachineId: legacyDraft.selectedMachineId,
+                selectedPath: legacyDraft.selectedPath,
+                selectedProfileId: legacyDraft.selectedProfileId,
+                selectedSecretId: legacyDraft.selectedSecretId,
+                agentType: legacyDraft.agentType,
+                permissionMode: legacyDraft.permissionMode,
+                modelMode: legacyDraft.modelMode,
+                acpSessionModeId: legacyDraft.acpSessionModeId,
+            }));
         });
 
         it('migrates legacy workspace review comment drafts during scope activation', () => {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { waitForCondition } from '@/testkit/async/waitFor';
 import {
   createCodexAppServerProcessEnv,
   writeFakeCodexAppServerScript,
@@ -838,15 +839,32 @@ describe('listCodexSessionCandidates', () => {
 
     expect(result.candidates).toEqual([]);
 
-    const pid = Number.parseInt((await readFile(pidFile, 'utf8')).trim(), 10);
-    expect(Number.isFinite(pid)).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
-    }
-    expect(alive).toBe(false);
+    let pid = Number.NaN;
+    await waitForCondition(async () => {
+      try {
+        pid = Number.parseInt((await readFile(pidFile, 'utf8')).trim(), 10);
+        return Number.isFinite(pid);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      }
+    }, {
+      timeoutMs: 5_000,
+      intervalMs: 25,
+      label: 'timed-out Codex app-server subprocess to publish its pid',
+    });
+
+    await waitForCondition(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    }, {
+      timeoutMs: 5_000,
+      intervalMs: 25,
+      label: 'timed-out Codex app-server subprocess to exit',
+    });
   });
 });

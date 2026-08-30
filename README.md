@@ -3,9 +3,7 @@
 
   ### Mobile, Web and Desktop client for Claude Code, Codex, OpenCode, Pi, Cursor, ...
   
-  Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer<br />and continue seamlessly from your phone, browser, or desktop app.
-
-  <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
+  Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer and continue seamlessly from your phone, browser, or desktop app.
 
   **End-to-end encrypted. Self-hostable.<br />
   Built by developers, for developers.**
@@ -31,19 +29,7 @@ Whether you’re stepping away for a coffee or switching devices mid-task, Happi
 
 ### Step 1: Download App
 
-#### iOS
-
-<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>
-
-#### Play Store
-
-Play Store app is in private beta, to access it:
-1. Join the [Happier Google Group](https://groups.google.com/g/happier-dev)
-2. Join the private beta [from Android](https://play.google.com/store/apps/details?id=dev.happier.app) or [from the web](https://play.google.com/apps/testing/dev.happier.app)
-
-#### Android APK
-
-[Download the APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk)
+<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=dev.happier.app"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
 
 ### Step 2: Install the CLI on your computer
 

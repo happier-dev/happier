@@ -218,6 +218,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
     targetMachineId: string;
+    targetPath?: string;
     requestId?: string;
     targetSessionStorageMode?: 'direct' | 'persisted';
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
@@ -1956,12 +1957,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             (parsed.data as any).targetSessionStorageMode === 'direct' || (parsed.data as any).targetSessionStorageMode === 'persisted'
               ? (parsed.data as any).targetSessionStorageMode
               : undefined;
+          const targetPath = normalizeId((parsed.data as any).targetPath);
           const workspaceTransferParsed = SessionHandoffWorkspaceTransferSchema.safeParse((parsed.data as any).workspaceTransfer);
           const workspaceTransfer = workspaceTransferParsed.success ? workspaceTransferParsed.data : undefined;
           const requestId = normalizeId(ctx.actionRequestId);
           const res = await deps.sessionHandoffStart({
             sessionId,
             targetMachineId,
+            ...(targetPath ? { targetPath } : {}),
             ...(requestId ? { requestId } : {}),
             ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
             ...(workspaceTransfer ? { workspaceTransfer } : {}),

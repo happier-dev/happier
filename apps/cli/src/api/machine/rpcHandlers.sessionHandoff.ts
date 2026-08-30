@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import {
   type AgentRuntimeDescriptorV1,
+  type ActionOperationProgressV1,
   DirectSessionsSourceSchema,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
@@ -164,6 +165,15 @@ type SessionHandoffStartFastPathResult =
       errorCode: 'source_stop_failed';
       error: string;
     }>;
+
+type SessionHandoffStartLocalOptions = Readonly<{
+  onProgress?: (progress: ActionOperationProgressV1) => void;
+}>;
+
+type SessionHandoffStartHandler = (
+  raw: unknown,
+  options?: SessionHandoffStartLocalOptions,
+) => Promise<unknown>;
 
 export type SessionHandoffDirectPeerTransferHandle = Readonly<{
   publishTransfer: (input: Readonly<{
@@ -991,10 +1001,9 @@ function isDirectPeerTransferProtocolError(error: unknown): boolean {
 async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
   transferId: string;
   sourceMachineId: string;
+  destinationPath: string;
   machineTransferChannel: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel']>;
 }>): Promise<SessionHandoffProviderBundle> {
-  const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-server-routed-'));
-  const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
   const timeoutMs =
     typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
       ? configuration.filesTransferSessionTtlMs
@@ -1007,19 +1016,15 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
         }
       : undefined;
 
-  try {
-    await requestServerRoutedTransferToFile({
-      transferId: params.transferId,
-      sourceMachineId: params.sourceMachineId,
-      machineTransferChannel: params.machineTransferChannel,
-      destinationPath: payloadFilePath,
-      ...(openBody ? { openBody } : {}),
-      ...(timeoutMs ? { timeoutMs } : {}),
-    });
-    return await readSessionHandoffProviderBundleFile(payloadFilePath);
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
-  }
+  await requestServerRoutedTransferToFile({
+    transferId: params.transferId,
+    sourceMachineId: params.sourceMachineId,
+    machineTransferChannel: params.machineTransferChannel,
+    destinationPath: params.destinationPath,
+    ...(openBody ? { openBody } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
+  });
+  return await readSessionHandoffProviderBundleFile(params.destinationPath);
 }
 
 async function resolvePrepareProviderBundle(params: Readonly<{
@@ -1029,6 +1034,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
   machineTransferChannel?: Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel'];
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
+  destinationPath: string;
 }>): Promise<SessionHandoffProviderBundle | undefined> {
   const transferPublication = params.handoffMetadataV2?.providerBundleTransferPublication;
   if (!transferPublication) {
@@ -1036,6 +1042,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
       return await requestServerRoutedPrepareProviderBundle({
         transferId: buildSessionHandoffProviderBundleTransferId(params.request.handoffId),
         sourceMachineId: params.request.sourceMachineId,
+        destinationPath: params.destinationPath,
         machineTransferChannel: params.machineTransferChannel,
       });
     }
@@ -1050,6 +1057,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
       ? await requestServerRoutedPrepareProviderBundle({
         transferId: transferPublication.transferId,
         sourceMachineId: params.request.sourceMachineId,
+        destinationPath: params.destinationPath,
         machineTransferChannel: params.machineTransferChannel,
       })
       : params.actualTransportStrategy === 'direct_peer' && transferEndpointCandidates && params.directPeerTransfer?.requestPayloadFile
@@ -1060,6 +1068,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
               return await requestServerRoutedPrepareProviderBundle({
                 transferId: transferPublication.transferId,
                 sourceMachineId: params.request.sourceMachineId,
+                destinationPath: params.destinationPath,
                 machineTransferChannel: params.machineTransferChannel,
               });
             }
@@ -1074,6 +1083,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
               return await requestServerRoutedPrepareProviderBundle({
                 transferId: transferPublication.transferId,
                 sourceMachineId: params.request.sourceMachineId,
+                destinationPath: params.destinationPath,
                 machineTransferChannel: params.machineTransferChannel,
               });
             }
@@ -1083,21 +1093,18 @@ async function resolvePrepareProviderBundle(params: Readonly<{
             typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
               ? configuration.filesTransferSessionTtlMs
               : undefined;
-          const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-direct-peer-'));
-          const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
           try {
-            try {
               await params.directPeerTransfer!.requestPayloadFile!({
                 transferId: transferPublication.transferId,
                 endpointCandidates,
-                destinationPath: payloadFilePath,
+                destinationPath: params.destinationPath,
                 ...(timeoutMs ? { timeoutMs } : {}),
               });
               params.transferRouteCache?.recordDirectPeerRouteViable({
                 remoteMachineId: params.request.sourceMachineId,
                 endpointCandidates,
               });
-              return await readSessionHandoffProviderBundleFile(payloadFilePath);
+              return await readSessionHandoffProviderBundleFile(params.destinationPath);
             } catch (error) {
               if (isDirectPeerTransferProtocolError(error)) {
                 throw error;
@@ -1113,14 +1120,12 @@ async function resolvePrepareProviderBundle(params: Readonly<{
                 return await requestServerRoutedPrepareProviderBundle({
                   transferId: transferPublication.transferId,
                   sourceMachineId: params.request.sourceMachineId,
+                  destinationPath: params.destinationPath,
                   machineTransferChannel: params.machineTransferChannel,
                 });
               }
               throw new Error(directPeerTransferUnavailable().error);
             }
-          } finally {
-            await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
-          }
         })()
         : undefined;
 
@@ -1308,7 +1313,7 @@ async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
 
 export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
-  wrapStartHandler?: (handler: RpcHandler<unknown, unknown>) => RpcHandler<unknown, unknown>;
+  wrapStartHandler?: (handler: SessionHandoffStartHandler) => RpcHandler<unknown, unknown>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   loadSessionMetadata?: (sessionId: string) => Promise<Record<string, unknown> | null>;
   stopSessionForHandoff?: (sessionId: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
@@ -1629,6 +1634,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	    request: SessionHandoffStartRequest;
 	    metadata: Record<string, unknown>;
 	    sourceStopState: 'stopped' | 'already_inactive';
+	    onProgress?: (progress: Readonly<{ currentBytes: number; totalBytes: number }>) => void;
 	    preExportedProviderBundle?: Readonly<{
 	      providerBundle: SessionHandoffProviderBundle;
 	      targetPath: string;
@@ -1657,6 +1663,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
             handoffId: input.handoffId,
             providerBundle: exported.providerBundle,
+            ...(input.onProgress ? { onProgress: input.onProgress } : {}),
           });
 
           await sourceExportStore.save({
@@ -1927,9 +1934,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     });
   }
 
-	  const startHandler: RpcHandler<unknown, unknown> = async (raw: unknown) => {
+	  const startHandler: SessionHandoffStartHandler = async (raw: unknown, localOptions) => {
 	    const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
 	    if (!parsed.success) return invalidRequest();
+
+    const reportBundleProgress = (label: string) => (
+      progress: Readonly<{ currentBytes: number; totalBytes: number }>,
+    ) => {
+      localOptions?.onProgress?.(
+        progress.totalBytes > 0
+          ? {
+              kind: 'determinate',
+              current: Math.min(progress.currentBytes, progress.totalBytes),
+              total: progress.totalBytes,
+              label,
+            }
+          : { kind: 'indeterminate', label },
+      );
+    };
 
     const metadata = await loadSessionMetadata(parsed.data.sessionId, parsed.data.sourceMachineId);
     if (!metadata) {
@@ -2068,6 +2090,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 	          request: parsed.data,
 	          metadata,
 	          sourceStopState,
+	          onProgress: reportBundleProgress('Packaging session state'),
 	        });
 
 	        return {
@@ -2295,7 +2318,10 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                 let providerBundlePayloadSource: TransferPayloadSource | null = null;
                 try {
                   const exported = await exportSessionBundle(metadata);
-                  providerBundlePayloadSource = await createSessionHandoffProviderBundlePayloadSource(exported.providerBundle);
+                  providerBundlePayloadSource = await createSessionHandoffProviderBundlePayloadSource(
+                    exported.providerBundle,
+                    reportBundleProgress('Packaging session state'),
+                  );
 
 		              const actualSourceStopState =
 		                params.stopSessionForHandoff
@@ -2313,6 +2339,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
                     request: parsed.data,
                     metadata,
                     sourceStopState: actualSourceStopState,
+                    onProgress: reportBundleProgress('Staging session state'),
                     preExportedProviderBundle: {
                       providerBundle: exported.providerBundle,
                       targetPath: exported.targetPath,
@@ -2341,6 +2368,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
             const persistedProviderBundle = await sourceExportStore.writeProviderBundleFile({
               handoffId,
               providerBundle: exported.providerBundle,
+              onProgress: reportBundleProgress('Packaging session state'),
             });
 		        const providerBundlePayloadSource = createFileTransferPayloadSource({
               filePath: persistedProviderBundle.filePath,
@@ -2487,6 +2515,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 			            request: parsed.data,
 			            metadata,
 			            sourceStopState: actualSourceStopState,
+			            onProgress: reportBundleProgress('Packaging session state'),
 			            ...(preExportedProviderBundle ? { preExportedProviderBundle } : {}),
 			          });
 			        })();
@@ -2520,6 +2549,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		        request: parsed.data,
 		        metadata,
 		        sourceStopState: stopState,
+		        onProgress: reportBundleProgress('Packaging session state'),
 		      });
 
 	      return {
@@ -2843,6 +2873,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
               machineTransferChannel: params.machineTransferChannel,
               directPeerTransfer: params.directPeerTransfer,
               transferRouteCache,
+              destinationPath: await sourceExportStore.prepareReceivedProviderBundleFilePath(parsed.data.handoffId),
             });
           if (!resolvedProviderBundle) {
             throw new Error('Invalid session handoff provider bundle');

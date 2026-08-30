@@ -228,6 +228,9 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
       HAPPIER_STACK_AUTO_AUTH_SEED: '1',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '500',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     };
 
     profileServer = await startProfileAuthServer({ port: 4101, allowToken: seedToken });
@@ -235,6 +238,8 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
     await assert.doesNotReject(async () => {
       await startLocalDaemonWithAuth({
         cliBin,
+        cliCommand: process.execPath,
+        cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
         cliHomeDir: targetCliHome,
         internalServerUrl: 'http://127.0.0.1:4101',
         publicServerUrl: 'http://localhost:4101',
@@ -254,6 +259,8 @@ test('invalid-auth auto-reseed uses resolved stack name instead of null placehol
 
     await stopLocalDaemon({
       cliBin,
+      cliCommand: process.execPath,
+      cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
       internalServerUrl: 'http://127.0.0.1:4101',
       cliHomeDir: targetCliHome,
     });
@@ -325,6 +332,9 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
       HAPPIER_STACK_AUTO_AUTH_SEED: '1',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '500',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     };
 
     profileServer = await startProfileAuthServer({ port: 4201, allowToken: seedToken });
@@ -332,6 +342,8 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
     await assert.doesNotReject(async () => {
       await startLocalDaemonWithAuth({
         cliBin,
+        cliCommand: process.execPath,
+        cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
         cliHomeDir: targetCliHome,
         internalServerUrl: 'http://127.0.0.1:4201',
         publicServerUrl: 'http://localhost:4201',
@@ -349,6 +361,8 @@ test('invalid-auth auto-reseed overwrites stale target credentials', async () =>
 
     await stopLocalDaemon({
       cliBin,
+      cliCommand: process.execPath,
+      cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
       internalServerUrl: 'http://127.0.0.1:4201',
       cliHomeDir: targetCliHome,
     });
@@ -523,6 +537,9 @@ if (sub === 'start') {
       HAPPIER_STACK_AUTO_AUTH_SEED: '1',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '500',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     };
 
     // Server is reachable but rejects the configured seed token. This should fail closed and must not fall back to main.
@@ -532,6 +549,8 @@ if (sub === 'start') {
       async () => {
         await startLocalDaemonWithAuth({
           cliBin,
+          cliCommand: process.execPath,
+          cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
           cliHomeDir: targetCliHome,
           internalServerUrl: 'http://127.0.0.1:4301',
           publicServerUrl: 'http://localhost:4301',
@@ -562,6 +581,8 @@ if (sub === 'start') {
 
     await stopLocalDaemon({
       cliBin,
+      cliCommand: process.execPath,
+      cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
       internalServerUrl: 'http://127.0.0.1:4301',
       cliHomeDir: targetCliHome,
     });
@@ -696,11 +717,16 @@ if (sub === 'start') {
       HAPPIER_STACK_AUTO_AUTH_SEED: '1',
       HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
       HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '500',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     };
 
     await assert.rejects(
       startLocalDaemonWithAuth({
         cliBin,
+        cliCommand: process.execPath,
+        cliCommandArgs: [join(cliDir, 'dist', 'index.mjs')],
         cliHomeDir: targetCliHome,
         internalServerUrl: 'http://127.0.0.1:4401',
         publicServerUrl: 'http://localhost:4401',

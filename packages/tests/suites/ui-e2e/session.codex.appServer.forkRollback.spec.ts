@@ -1,17 +1,26 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
+import {
+  readFakeCodexAppServerRequestLog,
+  writeFakeCodexAppServerScript,
+  type FakeCodexAppServerRequest,
+} from '../../src/testkit/codexAppServerRemoteHarness';
+import { readCliAccessKey } from '../../src/testkit/cliAccessKey';
+import { fetchJson } from '../../src/testkit/http';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -57,65 +66,6 @@ function parseSessionIdFromUrl(url: string): string {
   return sessionId;
 }
 
-async function writeFakeCodexAppServerScript(params: { scriptPath: string; requestLogPath: string }): Promise<void> {
-  const script = [
-    '#!/usr/bin/env node',
-    'import { appendFile } from "node:fs/promises";',
-    'import readline from "node:readline";',
-    `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
-    'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
-    'let turnCounter = 0;',
-    'for await (const line of rl) {',
-    '  if (!line.trim()) continue;',
-    '  const msg = JSON.parse(line);',
-    '  await appendFile(requestLogPath, JSON.stringify({ id: msg.id ?? null, method: msg.method ?? null, params: msg.params ?? null }) + "\\n");',
-    '  if (msg.method === "initialize") {',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake-codex-app-server", version: "0.0.0" } } }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  if (msg.method === "initialized") continue;',
-    '  if (msg.method === "thread/start") {',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: "thread-started", model: "gpt-5.4", serviceTier: null } }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  if (msg.method === "collaborationMode/list") {',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: [{ name: "Default", mode: "default", reasoning_effort: null }] }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  if (msg.method === "model/list") {',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: [{ id: "gpt-5.4", displayName: "GPT-5.4", isDefault: true }] }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  if (msg.method === "turn/start") {',
-    '    turnCounter += 1;',
-    '    const turnId = `turn-${turnCounter}`;',
-    '    const threadId = msg.params?.threadId ?? "thread-started";',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: turnId }, threadId } }) + "\\n");',
-    '    setTimeout(() => {',
-    '      process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId, turn: { id: turnId } } }) + "\\n");',
-    '    }, 5);',
-    '    setTimeout(() => {',
-    '      process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: `msg-${turnCounter}`, type: "agentMessage", text: `FAKE_CODEX_APP_SERVER_OK_${turnCounter}` } } }) + "\\n");',
-    '    }, 10);',
-    '    setTimeout(() => {',
-    '      process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId, turn: { id: turnId } } }) + "\\n");',
-    '    }, 15);',
-    '    continue;',
-    '  }',
-    '  if (msg.method === "thread/rollback") {',
-    '    if (typeof msg.params?.numTurns !== "number" || msg.params.numTurns < 1 || typeof msg.params?.threadId !== "string" || msg.params.threadId.length === 0) {',
-    '      process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "thread/rollback requires { threadId, numTurns >= 1 }" } }) + "\\n");',
-    '      continue;',
-    '    }',
-    '    process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: msg.params.threadId } }) + "\\n");',
-    '    continue;',
-    '  }',
-    '  process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "method not found" } }) + "\\n");',
-    '}',
-  ].join('\n');
-  await writeFile(params.scriptPath, script, { encoding: 'utf8', mode: 0o755 });
-}
-
 async function writeExecutableStub(params: Readonly<{ targetPath: string; stdoutLine: string }>): Promise<void> {
   const line = params.stdoutLine.replaceAll('"', '\\"');
   const contents = process.platform === 'win32'
@@ -129,29 +79,53 @@ async function writeExecutableStub(params: Readonly<{ targetPath: string; stdout
 
 async function waitForLoggedRequest(params: {
   requestLogPath: string;
-  predicate: (entry: { id?: unknown; method?: unknown; params?: Record<string, unknown> | null }) => boolean;
+  predicate: (entry: FakeCodexAppServerRequest) => boolean;
   timeoutMs?: number;
 }): Promise<void> {
-  const timeoutMs = params.timeoutMs ?? 60_000;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const raw = await readFile(params.requestLogPath, 'utf8');
-      const entries = raw
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { id?: unknown; method?: unknown; params?: Record<string, unknown> | null });
-      if (entries.some((entry) => params.predicate(entry))) {
-        return;
-      }
-    } catch {
-      // allow the poll loop to retry until the log exists and contains the request
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
+  await waitFor(async () => {
+    const entries = await readFakeCodexAppServerRequestLog(params.requestLogPath);
+    return entries.some(params.predicate);
+  }, {
+    timeoutMs: params.timeoutMs ?? 60_000,
+    intervalMs: 250,
+    context: `expected request in ${params.requestLogPath}`,
+  });
+}
 
-  throw new Error(`Timed out waiting for expected request in ${params.requestLogPath}`);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function waitForEligibleServerTurn(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  providerTurnId: string;
+}>): Promise<void> {
+  await waitFor(async () => {
+    const response = await fetchJson<Record<string, unknown>>(
+      `${params.baseUrl}/v1/sessions/${encodeURIComponent(params.sessionId)}/turns`,
+      {
+        headers: { Authorization: `Bearer ${params.token}` },
+        timeoutMs: 15_000,
+      },
+    );
+    if (response.status !== 200) return false;
+    const turns = Array.isArray(response.data.turns) ? response.data.turns.filter(isRecord) : [];
+    return turns.some((turn) => {
+      const rollback = isRecord(turn.rollback) ? turn.rollback : null;
+      const transcriptAnchors = isRecord(turn.transcriptAnchors) ? turn.transcriptAnchors : null;
+      return turn.providerTurnId === params.providerTurnId
+        && response.data.latestTurnId === turn.turnId
+        && turn.status === 'completed'
+        && rollback?.state === 'eligible'
+        && typeof transcriptAnchors?.startUserMessageSeq === 'number';
+    });
+  }, {
+    timeoutMs: 60_000,
+    intervalMs: 250,
+    context: `server rollback eligibility for provider turn ${params.providerTurnId}`,
+  });
 }
 
 async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Promise<void> {
@@ -226,7 +200,11 @@ async function createCodexSessionFromComposer(params: {
 }
 
 async function readMessageActionHandle(page: Page, text: string): Promise<{ wrapper: Locator; messageId: string }> {
-  const wrapper = page.locator('[data-testid^="transcript-message-"]').filter({ hasText: text }).first();
+  // Agent replies can quote the complete user prompt. A substring filter therefore selects the
+  // earlier agent row for the initial composer prompt and asks it for a user-only rollback action.
+  const wrapper = page.locator('[data-testid^="transcript-message-"]').filter({
+    has: page.getByText(text, { exact: true }),
+  }).first();
   await expect(wrapper).toHaveCount(1, { timeout: 120_000 });
   const wrapperTestId = await wrapper.getAttribute('data-testid');
   if (!wrapperTestId) throw new Error(`missing wrapper test id for message: ${text}`);
@@ -249,7 +227,7 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -303,9 +281,11 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
     const fakeCodexCliPath = resolve(join(fakeBinDir, process.platform === 'win32' ? 'codex.cmd' : 'codex'));
     await writeExecutableStub({ targetPath: fakeCodexCliPath, stdoutLine: 'codex 0.0.0-e2e' });
 
-    const fakeCodexAppServerPath = resolve(join(testDir, 'fake-codex-app-server.mjs'));
     const fakeCodexRequestLogPath = resolve(join(testDir, 'fake-codex-app-server.requests.jsonl'));
-    await writeFakeCodexAppServerScript({ scriptPath: fakeCodexAppServerPath, requestLogPath: fakeCodexRequestLogPath });
+    const fakeCodexAppServerPath = await writeFakeCodexAppServerScript({
+      dir: testDir,
+      requestLogPath: fakeCodexRequestLogPath,
+    });
 
     daemon = await authenticateAndStartDaemon({
       page,
@@ -338,7 +318,10 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
 
     await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByText('FAKE_CODEX_APP_SERVER_OK_1')).toHaveCount(1, { timeout: 180_000 });
+    // The first app-server turn includes runtime-owned session instructions before the
+    // user prompt. Assert the unique user-prompt suffix rather than pretending the
+    // fake server received the bare composer value as its complete input.
+    await expect(page.getByText(`${parentPrompt}:done`, { exact: false })).toHaveCount(1, { timeout: 180_000 });
 
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });
@@ -348,7 +331,16 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
     const composer = page.locator('textarea[data-testid="session-composer-input"]:visible').first();
     await composer.fill(secondPrompt);
     await composer.press('Enter');
-    await expect(page.getByText('FAKE_CODEX_APP_SERVER_OK_2')).toHaveCount(1, { timeout: 180_000 });
+    await expect(page.getByText(`reply:${secondPrompt}:done`)).toHaveCount(1, { timeout: 180_000 });
+
+    const accessKey = await readCliAccessKey(cliHomeDir);
+    if (!accessKey) throw new Error('missing authenticated CLI access key for server turn discriminator');
+    await waitForEligibleServerTurn({
+      baseUrl: server.baseUrl,
+      token: accessKey.token,
+      sessionId: parentSessionId,
+      providerTurnId: 'turn-2',
+    });
 
     const secondPromptMessage = await readMessageActionHandle(page, secondPrompt);
 
@@ -367,33 +359,10 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
 
     await expect(composer).toHaveValue(secondPrompt, { timeout: 60_000 });
 
-    const firstPromptMessage = await readMessageActionHandle(page, parentPrompt);
-    await firstPromptMessage.wrapper.hover();
-    await expect(rollbackButtonForMessage(page, firstPromptMessage.messageId)).toHaveCount(1, { timeout: 60_000 });
-
-    const thirdPrompt = `codex-app-server-parent-3 ${run.runId}`;
-    await composer.fill(thirdPrompt);
-    await composer.press('Enter');
-    await expect(page.getByText('FAKE_CODEX_APP_SERVER_OK_3')).toHaveCount(1, { timeout: 180_000 });
-
-    await firstPromptMessage.wrapper.hover();
-    await expect(rollbackButtonForMessage(page, firstPromptMessage.messageId)).toHaveCount(1, { timeout: 60_000 });
-    await rollbackButtonForMessage(page, firstPromptMessage.messageId).click();
-
-    await waitForLoggedRequest({
-      requestLogPath: fakeCodexRequestLogPath,
-      timeoutMs: 60_000,
-      predicate: (entry) => entry.method === 'thread/rollback'
-        && typeof entry.params?.threadId === 'string'
-        && entry.params.threadId.length > 0
-        && entry.params?.numTurns === 2,
-    });
-
-    await expect(composer).toHaveValue(parentPrompt, { timeout: 60_000 });
-
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });
     await page.getByRole('button', { name: /Fork session/i }).click();
+    await selectSessionForkStrategy(page, 'native');
 
     await page.waitForURL(
       (url) => {

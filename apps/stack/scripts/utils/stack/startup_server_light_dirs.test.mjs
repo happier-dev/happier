@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
-import { ensureServerLightSchemaReady } from './startup.mjs';
+import { ensureServerSchemaReady } from './startup.mjs';
 
 async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
@@ -56,6 +56,13 @@ export class PrismaClient {
   for (const pkg of packages) {
     await writeEsmPkg({ dir: pkg.path, name: pkg.name, body: pkg.body });
   }
+  const sqliteClientDir = join(serverDir, 'generated', 'sqlite-client');
+  await mkdir(sqliteClientDir, { recursive: true });
+  await writeFile(
+    join(sqliteClientDir, 'index.js'),
+    'export class PrismaClient { constructor() { this.account = { count: async () => 0 }; } async $disconnect() {} }\n',
+    'utf-8',
+  );
 }
 
 async function writeYarnVersionShim(binDir) {
@@ -88,7 +95,7 @@ async function createServerLightProbeFixture(root) {
   return { serverDir, binDir };
 }
 
-test('ensureServerLightSchemaReady creates light data dirs before probing', async (t) => {
+test('ensureServerSchemaReady creates light data dirs before probing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-dirs-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -111,7 +118,7 @@ test('ensureServerLightSchemaReady creates light data dirs before probing', asyn
   assert.equal(existsSync(filesDir), false);
   assert.equal(existsSync(dbDir), false);
 
-  await ensureServerLightSchemaReady({ serverDir, env });
+  await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env });
 
   assert.equal(existsSync(dataDir), true);
   assert.equal(existsSync(filesDir), true);

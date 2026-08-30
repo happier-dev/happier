@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { CodexSessionBundle, ImportedSessionHandoffBundle } from '../../../session/handoff/types';
+import { copySessionHandoffFileSlice } from '../../../session/handoff/sessionHandoffProviderBundleFile';
 import { resolveConfiguredCodexHome } from '../utils/resolveConfiguredCodexHome';
 import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
 
@@ -93,7 +94,11 @@ export async function importCodexSessionBundle(params: Readonly<{
   for (const file of params.bundle.files) {
     const destPath = resolveContainedCodexPath(codexHome, file.relativePath);
     await mkdir(dirname(destPath), { recursive: true });
-    await writeFile(destPath, Buffer.from(file.contentBase64, 'base64'));
+    if (file.contentFile) {
+      await copySessionHandoffFileSlice({ source: file.contentFile, targetFilePath: destPath });
+    } else {
+      await writeFile(destPath, Buffer.from(file.contentBase64, 'base64'));
+    }
   }
 
   return {

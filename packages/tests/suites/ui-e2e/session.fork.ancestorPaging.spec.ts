@@ -5,13 +5,19 @@ import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+  type CreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { ensureSessionReplayForkEnabled } from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -57,33 +63,13 @@ function parseSessionIdFromUrl(url: string): string {
   return sessionId;
 }
 
-async function createSessionFromComposer(params: {
+async function ensureReplayForkEnabled(params: {
   page: Page;
   uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
-}
-
-async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; sessionId: string }): Promise<void> {
-  await params.page.goto(`${params.uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
-  await expect(params.page.getByTestId('settings-session-replay-enabled-item')).toHaveCount(1, { timeout: 60_000 });
-  const replayItem = params.page.getByTestId('settings-session-replay-enabled-item');
-  const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-  const hasSwitch = (await replaySwitch.count()) > 0;
-  if (hasSwitch) {
-    const checked = await replaySwitch.isChecked().catch(() => false);
-    if (!checked) {
-      await replayItem.click();
-      await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-    }
-  } else {
-    await replayItem.click();
-  }
-
-  await params.page.goto(`${params.uiBaseUrl}/session/${params.sessionId}`, { waitUntil: 'domcontentloaded' });
-  await expect(params.page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+  session: CreatedSessionFromNewSessionComposer;
+}): Promise<void> {
+  await ensureSessionReplayForkEnabled(params);
+  await reloadCreatedSessionFromNewSessionComposer({ page: params.page, session: params.session });
 }
 
 async function forkFromFirstMessageMatching(params: { page: Page; containsText: string; currentSessionId: string }): Promise<string> {
@@ -95,6 +81,7 @@ async function forkFromFirstMessageMatching(params: { page: Page; containsText: 
   const messageId = wrapperTestId.replace(/^transcript-message-/, '');
   await expect(params.page.getByTestId(`transcript-message-fork:${messageId}`)).toHaveCount(1, { timeout: 120_000 });
   await params.page.getByTestId(`transcript-message-fork:${messageId}`).click();
+  await selectSessionForkStrategy(params.page, 'replay');
   const deadlineMs = Date.now() + 180_000;
   while (Date.now() < deadlineMs) {
     try {
@@ -144,7 +131,7 @@ test.describe('ui e2e: fork ancestor paging across segments', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -211,10 +198,16 @@ test.describe('ui e2e: fork ancestor paging across segments', () => {
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
 
     const marker0 = `PARENT_MARKER_0 ${run.runId}`;
-    const parentSessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: marker0 });
+    const parentSession = await createSessionFromNewSessionComposer({
+      page,
+      uiBaseUrl,
+      machineId,
+      prompt: marker0,
+      readiness: 'first-turn-reload-safe',
+    });
+    const { sessionId: parentSessionId } = parentSession;
 
-    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
     await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });
 
     // Create enough turns to exceed a single transcript page (SESSION_MESSAGES_PAGE_SIZE=150).
@@ -223,7 +216,7 @@ test.describe('ui e2e: fork ancestor paging across segments', () => {
       await sendPromptAndWaitForOk({ page, prompt: `PARENT_MARKER_${i} ${run.runId}`, okNumber: i + 1 });
     }
 
-    await ensureReplayForkEnabled({ page, uiBaseUrl, sessionId: parentSessionId });
+    await ensureReplayForkEnabled({ page, uiBaseUrl, session: parentSession });
 
     const forkTarget = `PARENT_MARKER_80 ${run.runId}`;
     await expect(page.getByText(forkTarget).first()).toBeVisible({ timeout: 60_000 });

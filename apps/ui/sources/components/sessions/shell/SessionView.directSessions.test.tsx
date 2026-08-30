@@ -283,6 +283,9 @@ const themeColors = vi.hoisted(() => ({
 }));
 
 installSessionShellCommonModuleMocks({
+  featureEnabled: () => ({
+    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId as keyof typeof featureEnabledState] ?? false,
+  }),
   reactNative: async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -459,9 +462,6 @@ vi.mock('@/components/voice/surface/VoiceSurface', () => ({
 }));
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
   AttachmentFilePicker: () => null,
-}));
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => featureEnabledState[featureId as keyof typeof featureEnabledState] ?? false,
 }));
 vi.mock('@/utils/platform/responsive', () => ({
   getDeviceType: () => 'tablet',

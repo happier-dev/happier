@@ -988,6 +988,24 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
 }));
 
 describe('ChangedFilesReview', () => {
+    it('prefers the current list ref over a retained DOM host when resolving the web scroll root', async () => {
+        const {
+            resolveChangedFilesReviewCurrentWebScrollRoot,
+            selectChangedFilesReviewWebRootCandidate,
+        } = await import('./ChangedFilesReview');
+        const retainedDomHost = { id: 'retained' } as unknown as Element;
+        const currentImperativeHost = { id: 'current' } as unknown as Element;
+
+        expect(selectChangedFilesReviewWebRootCandidate({
+            imperativeHost: currentImperativeHost,
+            queriedHost: retainedDomHost,
+        })).toBe(currentImperativeHost);
+        expect(resolveChangedFilesReviewCurrentWebScrollRoot({
+            resolveCurrent: () => currentImperativeHost,
+            retained: retainedDomHost,
+        })).toBe(currentImperativeHost);
+    });
+
     beforeEach(() => {
         sessionScmDiffFileSpy.mockReset();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, _req: any) => ({ success: true, diff: 'diff', error: null }));

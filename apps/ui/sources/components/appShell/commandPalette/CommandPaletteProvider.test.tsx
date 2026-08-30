@@ -266,7 +266,7 @@ describe('CommandPaletteProvider', () => {
         const showProps = vi.mocked(Modal.show).mock.calls[0]?.[0]?.props as { commands?: Array<{ id: string; shortcut?: string }> } | undefined;
         const commands = showProps?.commands ?? [];
         expect(commands.find((command) => command.id === 'new-session')?.shortcut).toBeUndefined();
-        expect(commands.find((command) => command.id === 'settings')?.shortcut).toBe('Cmd+I');
+        expect(commands.find((command) => command.id === 'settings')?.shortcut).toMatch(/^(?:Cmd|Ctrl)\+I$/);
     });
 
     it('routes configured settings and new-session shortcuts through root handlers', async () => {

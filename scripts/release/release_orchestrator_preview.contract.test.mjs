@@ -308,10 +308,10 @@ test('final release workflows only consume already-materialized version bumps', 
   const releaseNpm = await loadWorkflow('release-npm.yml');
   const workflow = parse(orchestrator);
 
-  assert.deepEqual(
-    workflow?.on?.workflow_dispatch?.inputs?.bump?.options,
-    ['none'],
-    'manual final release dispatch must not advertise version mutations that the release conductor rejects',
+  assert.equal(
+    workflow?.on?.workflow_dispatch?.inputs?.bump,
+    undefined,
+    'manual final release dispatch must not advertise version mutations',
   );
 
   assert.doesNotMatch(orchestrator, /bump-versions-dev\.mjs/);

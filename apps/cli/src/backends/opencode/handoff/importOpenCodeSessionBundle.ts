@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,6 +10,7 @@ import { buildOpenCodeAgentRuntimeDescriptor } from '@happier-dev/agents';
 import { buildOpenCodeSessionEnvironmentVariables } from '../utils/opencodeSessionAffinity';
 import { resolveOpenCodeCliLaunchSpec } from '../utils/resolveOpenCodeCliCommand';
 import type { ImportedSessionHandoffBundle, OpenCodeSessionBundle } from '../../../session/handoff/types';
+import { copySessionHandoffFileSlice } from '../../../session/handoff/sessionHandoffProviderBundleFile';
 import { OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES } from './opencodeHandoffLimits';
 
 type ExecFileAsync = (
@@ -57,14 +58,27 @@ export async function importOpenCodeSessionBundle(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<ImportedSessionHandoffBundle> {
   const execFile = params.execFile ?? execFileAsync;
-  if (estimateBase64DecodedBytes(params.bundle.exportJsonBase64) > OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES) {
+  const exportFile = params.bundle.exportJsonFile;
+  const exportSizeBytes = exportFile
+    ? exportFile.sizeBytes
+    : estimateBase64DecodedBytes(params.bundle.exportJsonBase64 ?? '');
+  if (exportSizeBytes > OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES) {
     throw new Error(`OpenCode handoff import export payload exceeds size limit (${OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES} bytes)`);
   }
   const importFileName = resolveOpenCodeImportFileName(params.bundle.remoteSessionId);
   const tempDir = await mkdtemp(join(tmpdir(), 'handoff-opencode-'));
   const importPath = join(tempDir, importFileName);
   try {
-    await writeFile(importPath, decodeOpenCodeImportExportJson(params.bundle.exportJsonBase64), 'utf8');
+    if (exportFile) {
+      await copySessionHandoffFileSlice({ source: exportFile, targetFilePath: importPath });
+      try {
+        JSON.parse(await readFile(importPath, 'utf8'));
+      } catch {
+        throw new Error('Invalid OpenCode handoff export payload JSON');
+      }
+    } else {
+      await writeFile(importPath, decodeOpenCodeImportExportJson(params.bundle.exportJsonBase64 ?? ''), 'utf8');
+    }
     const launch = resolveOpenCodeCliLaunchSpec(params.processEnv);
     const invocation = resolveWindowsCommandInvocation({
       command: launch.command,

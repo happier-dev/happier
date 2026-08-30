@@ -24,11 +24,11 @@ import { resolveFloatingTabBarBottomPadding } from './floatingTabBarBottomInset'
 // Instagram fully-rounded floating bar).
 const TAB_BAR_RADIUS = 999;
 const FLOATING_SIDE_GUTTER = 16;
-const FLOATING_TOP_GAP = 6;
+const FLOATING_TOP_GAP = 4;
 // Capsule inner padding. Combined with the active-highlight inset (CockpitTabBar/
 // TabBar `activePill`: left/right 4, top/bottom 3) this sets the gap from the
-// capsule rim to a selected tab at the edge: H = 2 + 4 = 6, V = 1 + 3 = 4.
-const PILL_PADDING_VERTICAL = 1;
+// capsule rim to a selected tab at the edge: H = 2 + 4 = 6, V = 0 + 3 = 3.
+const PILL_PADDING_VERTICAL = 0;
 const PILL_PADDING_HORIZONTAL = 2;
 // Breathing room between the bar and a sibling capsule. iOS 26 sets its search
 // button off the tab bar by roughly this much, and it matches the widest tab gap

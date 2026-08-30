@@ -56,7 +56,7 @@ Defaults:
   - In `--mode=local`, remote server smoke is enabled by default.
   - This exercises `hstack remote server setup --ssh ...` against a systemd-enabled ssh container and waits for the remote server to become healthy.
 - `--remote-server-db=postgres|sqlite` (default: `postgres`)
-  - When `postgres`, starts a Postgres container and passes `--env HAPPIER_DB_PROVIDER=postgres --env DATABASE_URL=...` to remote server setup.
+  - When `postgres`, starts a Postgres container, passes `--env HAPPIER_DB_PROVIDER=postgres --env DATABASE_URL=...` to remote server setup, and verifies both a live server connection and at least one completed Prisma migration.
 - `--remote-installer=shim|official`
   - `shim` (default in `--mode=local`): remote host overrides `curl https://happier.dev/install` to install from tarballs mounted at `/packs` (`cli.tgz` / `stack.tgz`).
     - In `--mode=local` these tarballs come from `npm pack` on your working tree.

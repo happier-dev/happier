@@ -14,6 +14,7 @@ export type TabBarSize = 'compact' | 'regular' | 'large';
 
 export type TabBarMetrics = Readonly<{
     iconSize: number;
+    tabMinWidth: number;
     tabPaddingVertical: number;
     tabPaddingHorizontal: number;
     rowGap: number;
@@ -21,10 +22,16 @@ export type TabBarMetrics = Readonly<{
     activePillRadius: number;
 }>;
 
-const SIZE_PRESETS: Record<TabBarSize, Readonly<{ iconSize: number; padV: number; gap: number; pillRadius: number }>> = {
-    compact: { iconSize: 20, padV: 4, gap: 4, pillRadius: 14 },
-    regular: { iconSize: 24, padV: 6, gap: 6, pillRadius: 18 },
-    large: { iconSize: 28, padV: 8, gap: 8, pillRadius: 22 },
+const SIZE_PRESETS: Record<TabBarSize, Readonly<{
+    iconSize: number;
+    minWidth: number;
+    padV: number;
+    gap: number;
+    pillRadius: number;
+}>> = {
+    compact: { iconSize: 20, minWidth: 44, padV: 3, gap: 4, pillRadius: 13 },
+    regular: { iconSize: 24, minWidth: 50, padV: 5, gap: 5, pillRadius: 16 },
+    large: { iconSize: 28, minWidth: 54, padV: 7, gap: 7, pillRadius: 20 },
 };
 
 const LABELED_PILL_RADIUS_BOOST = 6;
@@ -33,9 +40,10 @@ export function resolveTabBarMetrics(size: TabBarSize, showLabels: boolean): Tab
     const preset = SIZE_PRESETS[size] ?? SIZE_PRESETS.regular;
     return {
         iconSize: preset.iconSize,
+        tabMinWidth: preset.minWidth,
         tabPaddingVertical: showLabels ? preset.padV : preset.padV + 4,
         // Horizontal padding is aligned to the vertical (base) padding so each tab's
-        // padding is symmetric — H = V = padV per size (compact 4, regular 6, large 8).
+        // padding is symmetric — H = V = padV per size.
         tabPaddingHorizontal: preset.padV,
         rowGap: preset.gap,
         showLabels,

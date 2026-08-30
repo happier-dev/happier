@@ -72,6 +72,27 @@ describe('desktop pet overlay bridge probe', () => {
     );
   });
 
+  it('provides the configured native window state when another Tauri invoke was installed first', async () => {
+    const forwarded: string[] = [];
+    const fakeWindow = {
+      __TAURI_INTERNALS__: {
+        invoke: async (command: string) => {
+          forwarded.push(command);
+          return null;
+        },
+      },
+    } as unknown as DesktopPetOverlayProbeWindow;
+    Reflect.set(globalThis, 'window', fakeWindow);
+    const windowState = createDesktopPetOverlayWindowState({ sessionId: 'session-1' });
+
+    createDesktopPetOverlayBridgeProbeInitScript({ windowState })();
+
+    await expect(fakeWindow.__TAURI_INTERNALS__?.invoke?.('desktop_pet_overlay_read_window_state')).resolves.toEqual(
+      windowState,
+    );
+    expect(forwarded).toEqual([]);
+  });
+
   it('builds a native tray activity payload for a session', () => {
     expect(createDesktopPetOverlayWindowState({ sessionId: 'session-1', title: 'Session one' })).toMatchObject({
       activity: {

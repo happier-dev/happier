@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { fetchSessionOrganizationSnapshot } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { SessionOrganizationSnapshotRequest } from '@happier-dev/protocol';
 import { openSessionOrganizationSnapshotDisplayEnvelopes } from './sessionOrganizationDisplayEnvelope';
 
@@ -11,9 +12,15 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
     request?: Partial<SessionOrganizationSnapshotRequest>;
     shouldContinue?: () => boolean;
 }>): Promise<void> {
+    const requestedServerId = params.serverId.trim();
+    const resolveCurrentServerId = () => (
+        resolveServerProfileScopeIdForIdentifier(requestedServerId) || requestedServerId
+    );
+    const initialServerId = resolveCurrentServerId();
+    let currentServerId = initialServerId;
     const store = getStorage().getState();
-    store.setSessionOrganizationLoading(params.serverId, true);
-    store.setSessionOrganizationError(params.serverId, null);
+    store.setSessionOrganizationLoading(initialServerId, true);
+    store.setSessionOrganizationError(initialServerId, null);
     try {
         const response = await fetchSessionOrganizationSnapshot({
             credentials: params.credentials,
@@ -26,20 +33,30 @@ export async function fetchAndApplySessionOrganizationSnapshot(params: Readonly<
             snapshot: response.snapshot,
         });
         if (params.shouldContinue && !params.shouldContinue()) return;
+        currentServerId = resolveCurrentServerId();
+        if (currentServerId !== initialServerId) {
+            getStorage().getState().setSessionOrganizationLoading(initialServerId, false);
+            getStorage().getState().setSessionOrganizationLoading(currentServerId, true);
+            getStorage().getState().setSessionOrganizationError(currentServerId, null);
+        }
         getStorage().getState().applySessionOrganizationSnapshot(
-            params.serverId,
+            currentServerId,
             snapshot,
             params.request,
         );
     } catch (error) {
+        currentServerId = resolveCurrentServerId();
         getStorage().getState().setSessionOrganizationError(
-            params.serverId,
+            currentServerId,
             error instanceof Error ? error.message : 'Failed to fetch session organization snapshot',
         );
         throw error;
     } finally {
         if (!params.shouldContinue || params.shouldContinue()) {
-            getStorage().getState().setSessionOrganizationLoading(params.serverId, false);
+            getStorage().getState().setSessionOrganizationLoading(initialServerId, false);
+            if (currentServerId !== initialServerId) {
+                getStorage().getState().setSessionOrganizationLoading(currentServerId, false);
+            }
         }
     }
 }

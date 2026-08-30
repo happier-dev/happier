@@ -6,7 +6,7 @@ import { appendFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
-import { resolveAutomaticReleaseValidationExecution } from './registry.mjs';
+import { RELEASE_VALIDATION_SUITE_IDS, resolveAutomaticReleaseValidationExecution } from './registry.mjs';
 
 const OUTPUT_KEYS = Object.freeze([
   'run_installers_smoke',
@@ -22,6 +22,36 @@ const OUTPUT_KEYS = Object.freeze([
   'run_self_host_daemon',
 ]);
 
+const SUITE_OUTPUT_KEYS = Object.freeze({
+  'installers-smoke': 'run_installers_smoke',
+  'artifact-verify': 'run_artifact_verify',
+  'binary-smoke': 'run_binary_smoke',
+  'cli-update': 'run_cli_update_continuity',
+  'daemon-continuity': 'run_daemon_continuity',
+  'session-continuity': 'run_session_continuity',
+  'docker-release-assets': 'run_release_assets_docker',
+});
+const NON_WAIVABLE_SUITES = new Set(['artifact-verify', 'binary-smoke']);
+
+function validateSuiteIds(values, label) {
+  const ids = [...new Set(values ?? [])];
+  for (const id of ids) {
+    if (!RELEASE_VALIDATION_SUITE_IDS.includes(id) || !Object.hasOwn(SUITE_OUTPUT_KEYS, id)) {
+      throw new Error(`Unknown release validation suite in ${label}: ${id}`);
+    }
+  }
+  return ids;
+}
+
+export function validateReleaseValidationRefinements(input) {
+  const includeSuiteIds = validateSuiteIds(input.includeSuiteIds, '--include-suites');
+  const waiveSuiteIds = validateSuiteIds(input.waiveSuiteIds, '--waive-suites');
+  for (const suiteId of waiveSuiteIds) {
+    if (NON_WAIVABLE_SUITES.has(suiteId)) throw new Error(`Release validation suite ${suiteId} cannot be waived`);
+  }
+  return { includeSuiteIds, waiveSuiteIds };
+}
+
 /** @param {unknown} value @param {string} label */
 function bool(value, label) {
   if (value === true || value === 'true') return true;
@@ -36,16 +66,12 @@ function bool(value, label) {
  *   hasServerCandidate: boolean;
  *   hasPublishedRelayPredecessor: boolean;
  *   risks: { cliUpgrade: boolean; sessionContinuity: boolean; relayUpgrade: boolean };
- *   legacy?: Record<string, string>;
+ *   includeSuiteIds?: string[];
+ *   waiveSuiteIds?: string[];
  * }} input
  */
 export function resolveReleaseValidationPlan(input) {
-  if (!input.profileId) {
-    /** @type {Record<string, string>} */
-    const legacy = {};
-    for (const key of OUTPUT_KEYS) legacy[key] = input.legacy?.[key] === 'true' ? 'true' : 'false';
-    return legacy;
-  }
+  if (!input.profileId) throw new Error('A normal release validation profile is required');
   const execution = resolveAutomaticReleaseValidationExecution(input.profileId, {
     hasCliCandidate: input.hasCliCandidate,
     hasServerCandidate: input.hasServerCandidate,
@@ -53,8 +79,11 @@ export function resolveReleaseValidationPlan(input) {
     risks: input.risks,
   });
   const automatic = new Set(execution.selectedSuiteIds);
+  const { includeSuiteIds, waiveSuiteIds } = validateReleaseValidationRefinements(input);
+  for (const suiteId of includeSuiteIds) automatic.add(suiteId);
+  for (const suiteId of waiveSuiteIds) automatic.delete(suiteId);
   return {
-    run_installers_smoke: 'false',
+    run_installers_smoke: String(automatic.has('installers-smoke')),
     run_artifact_verify: String(automatic.has('artifact-verify')),
     run_binary_smoke: String(automatic.has('binary-smoke')),
     run_cli_update_continuity: String(automatic.has('cli-update')),
@@ -65,6 +94,7 @@ export function resolveReleaseValidationPlan(input) {
     run_self_host_launchd: 'false',
     run_self_host_schtasks: 'false',
     run_self_host_daemon: 'false',
+    waivedSuiteIds: waiveSuiteIds,
   };
 }
 
@@ -78,13 +108,12 @@ export async function main(argv = process.argv.slice(2)) {
     'risk-cli-upgrade': { type: 'string', default: 'false' },
     'risk-session-continuity': { type: 'string', default: 'false' },
     'risk-relay-upgrade': { type: 'string', default: 'false' },
+    'include-suites': { type: 'string', default: '' },
+    'waive-suites': { type: 'string', default: '' },
     'github-output': { type: 'string', default: '' },
   };
-  for (const key of OUTPUT_KEYS) options[`legacy-${key.replaceAll('_', '-')}`] = { type: 'string', default: 'false' };
   const { values } = parseArgs({ args: argv, options, allowPositionals: false });
-  /** @type {Record<string, string>} */
-  const legacy = {};
-  for (const key of OUTPUT_KEYS) legacy[key] = String(values[`legacy-${key.replaceAll('_', '-')}`] ?? 'false');
+  const csv = (value) => String(value ?? '').split(',').map((item) => item.trim()).filter(Boolean);
   const result = resolveReleaseValidationPlan({
     profileId: String(values.profile ?? ''),
     hasCliCandidate: bool(values['has-cli-candidate'], '--has-cli-candidate'),
@@ -95,9 +124,13 @@ export async function main(argv = process.argv.slice(2)) {
       sessionContinuity: bool(values['risk-session-continuity'], '--risk-session-continuity'),
       relayUpgrade: bool(values['risk-relay-upgrade'], '--risk-relay-upgrade'),
     },
-    legacy,
+    includeSuiteIds: csv(values['include-suites']),
+    waiveSuiteIds: csv(values['waive-suites']),
   });
-  const lines = Object.entries(result).map(([key, value]) => `${key}=${value}`).join('\n');
+  const lines = [
+    ...OUTPUT_KEYS.map((key) => `${key}=${result[key]}`),
+    `waived_suite_ids=${result.waivedSuiteIds.join(',')}`,
+  ].join('\n');
   const githubOutput = String(values['github-output'] ?? '');
   if (githubOutput) appendFileSync(githubOutput, `${lines}\n`, 'utf8');
   else process.stdout.write(`${JSON.stringify(result)}\n`);

@@ -316,6 +316,12 @@ async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, t
     if (dbTransition.reason === 'missing_mysql_database_url') {
       throw new Error('[setup] mysql requires an explicit DATABASE_URL');
     }
+    if (dbTransition.reason === 'missing_postgres_database_url') {
+      throw new Error('[setup] postgres requires an explicit DATABASE_URL with the light preset');
+    }
+    if (dbTransition.reason === 'invalid_postgres_database_url') {
+      throw new Error('[setup] postgres DATABASE_URL must use postgres:// or postgresql://');
+    }
     throw new Error(`[setup] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
   }
   const updates = [
@@ -326,9 +332,7 @@ async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, t
       : []),
     { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: serverComponent },
     { key: 'HAPPIER_DB_PROVIDER', value: dbTransition.provider },
-    ...(dbTransition.provider === 'mysql'
-      ? [{ key: 'DATABASE_URL', value: dbTransition.databaseUrl }]
-      : []),
+    ...(dbTransition.databaseUrl ? [{ key: 'DATABASE_URL', value: dbTransition.databaseUrl }] : []),
     // Default for selfhost:
     // - monorepo: upstream (Happier)
     // - server-light: fork-only today (handled in bootstrap)

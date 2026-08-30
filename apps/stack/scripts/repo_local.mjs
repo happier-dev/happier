@@ -1,7 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
-import { homedir } from 'node:os';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +10,8 @@ import { ensureEnvFileMutated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
+import { resolveExecutionHostController, runExecutionHostAdapter } from './utils/execution_host_adapter.mjs';
+import { resolveRepoStackIdentity, resolveStacksStorageRoot } from './utils/stack/repo_stack_identity.mjs';
 
 function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   const c = String(cmd ?? '').trim();
@@ -88,43 +88,6 @@ function isPortWithinRange(port, base, range) {
   return p >= b && p < b + r;
 }
 
-function sanitizeStackNameToken(s) {
-  const raw = String(s ?? '').trim().toLowerCase();
-  const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
-  return cleaned || 'repo';
-}
-
-function isHexToken(s, { minLen = 6 } = {}) {
-  const raw = String(s ?? '').trim().toLowerCase();
-  if (!raw || raw.length < minLen) return false;
-  return /^[a-f0-9]+$/.test(raw);
-}
-
-function resolveGitDir(repoRoot) {
-  try {
-    const gitPath = join(repoRoot, '.git');
-    if (!existsSync(gitPath)) return null;
-
-    // Common case: .git is a directory.
-    try {
-      const stat = readFileSync(gitPath, { encoding: 'utf-8' });
-      void stat;
-    } catch {
-      return gitPath;
-    }
-
-    // Worktree case: .git is a file like "gitdir: /path/to/actual/git/dir".
-    const raw = readFileSync(gitPath, 'utf-8').trim();
-    const m = raw.match(/^gitdir:\s*(.+)\s*$/i);
-    if (!m) return null;
-    const p = m[1].trim();
-    if (!p) return null;
-    return p.startsWith('/') ? p : join(repoRoot, p);
-  } catch {
-    return null;
-  }
-}
-
 function readTextFile(path) {
   try {
     if (!path || !existsSync(path)) return '';
@@ -144,15 +107,6 @@ function readEnvFileObject(path) {
   }
 }
 
-function writeTextFileBestEffort(path, contents) {
-  try {
-    if (!path) return;
-    writeFileSync(path, String(contents ?? ''), { encoding: 'utf-8' });
-  } catch {
-    // ignore
-  }
-}
-
 async function syncRepoLocalEnvFile({ envPath, managedEnv = {}, pruneKeys = [] } = {}) {
   const target = String(envPath ?? '').trim();
   if (!target) return;
@@ -164,66 +118,6 @@ async function syncRepoLocalEnvFile({ envPath, managedEnv = {}, pruneKeys = [] }
   const removeKeys = Array.from(new Set((pruneKeys ?? []).map((k) => String(k ?? '').trim()).filter(Boolean)));
   // Preserve user keys while applying the managed projection atomically.
   await ensureEnvFileMutated({ envPath: target, updates, removeKeys });
-}
-
-function stacklessIdForRepo({ repoRoot, stacksStorageRoot, createIfMissing }) {
-  const oldHash = createHash('sha256').update(String(repoRoot)).digest('hex').slice(0, 10);
-  const base = sanitizeStackNameToken(repoRoot.split('/').filter(Boolean).at(-1));
-  const oldName = `repo-${base}-${oldHash}`;
-
-  const gitDir = resolveGitDir(repoRoot);
-  if (!gitDir) {
-    // Best-effort fallback when .git is unavailable (e.g. a tarball checkout).
-    // This keeps behavior stable for a given path without creating new local state.
-    return oldHash;
-  }
-
-  const idPath = gitDir ? join(gitDir, 'happier-stack-stackless-id') : null;
-  const existing = readTextFile(idPath);
-  if (isHexToken(existing, { minLen: 8 })) {
-    return existing.slice(0, 20);
-  }
-
-  // Back-compat: if the old stack dir exists, pin the id to the previous hash to keep ports/state stable.
-  try {
-    const oldDir = join(stacksStorageRoot, oldName);
-    if (existsSync(oldDir)) {
-      if (createIfMissing) writeTextFileBestEffort(idPath, oldHash);
-      return oldHash;
-    }
-  } catch {
-    // ignore
-  }
-
-  if (!createIfMissing) {
-    // Dry-run / read-only mode: do not create new local state.
-    return oldHash;
-  }
-
-  // Fresh repo-local stack: generate a persistent id under git metadata (so it survives repo moves).
-  const generated = randomBytes(8).toString('hex');
-  writeTextFileBestEffort(idPath, generated);
-  return generated;
-}
-
-function stacklessStackNameForRepo({ repoRoot, stacksStorageRoot, createIfMissing }) {
-  const base = sanitizeStackNameToken(repoRoot.split('/').filter(Boolean).at(-1));
-  const id = stacklessIdForRepo({ repoRoot, stacksStorageRoot, createIfMissing });
-  return `repo-${base}-${id.slice(0, 10)}`;
-}
-
-function expandHomePath(p) {
-  const s = String(p ?? '').trim();
-  if (!s) return '';
-  if (s === '~') return homedir();
-  if (s.startsWith('~/')) return join(homedir(), s.slice(2));
-  return s;
-}
-
-function resolveStacksStorageRoot(env) {
-  const raw = (env.HAPPIER_STACK_STORAGE_DIR ?? '').toString().trim();
-  if (raw) return expandHomePath(raw);
-  return join(homedir(), '.happier', 'stacks');
 }
 
 function readRuntimeServerPort(runtimeStatePath) {
@@ -256,6 +150,34 @@ async function main() {
   const preflightOnly = String(process.env.HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY ?? '').trim();
 
   const argvRaw = process.argv.slice(2);
+  const scriptsDir = dirname(fileURLToPath(import.meta.url)); // <repo>/apps/stack/scripts
+  const repoRoot = dirname(dirname(dirname(scriptsDir))); // <repo>
+  const invokedCwd =
+    (process.env.HAPPIER_STACK_INVOKED_CWD ?? '').toString().trim() ||
+    (process.env.INIT_CWD ?? '').toString().trim() ||
+    process.cwd();
+  const executionHostController = resolveExecutionHostController({ env: process.env });
+  if (executionHostController) {
+    const { stackName } = resolveRepoStackIdentity({
+      repoRoot,
+      stacksStorageRoot: resolveStacksStorageRoot(process.env),
+      createIfMissing: false,
+    });
+    const outcome = await runExecutionHostAdapter({
+      controllerEntrypoint: executionHostController,
+      localEntrypoint: fileURLToPath(import.meta.url),
+      stackName,
+      argv: argvRaw,
+      cwd: invokedCwd,
+      env: process.env,
+    });
+    if (outcome.signal) {
+      process.kill(process.pid, outcome.signal);
+      return;
+    }
+    process.exit(outcome.exitCode ?? 1);
+  }
+
   const firstArg = argvRaw[0];
   const showWrapperHelp =
     argvRaw.length === 0 || firstArg === 'help' || firstArg === '--help' || firstArg === '-h';
@@ -269,24 +191,17 @@ async function main() {
 
   // Root script convenience:
   // `yarn tui` should work from monorepo checkout without additional args.
-  // Default to `hstack tui dev` while preserving explicit forwarded args.
+  // Default to `hstack tui dev --mobile` while preserving explicit forwarded args.
   let argv = argvWithoutDryRun;
   if (argvWithoutDryRun[0] === 'tui') {
     const forwarded = argvWithoutDryRun.slice(1);
     if (forwarded.length === 0) {
-      argv = ['tui', 'dev', ...forwarded];
+      argv = ['tui', 'dev', '--mobile'];
     }
   }
   const wantsTuiMobile = argv[0] === 'tui' && argv.some((arg) => String(arg ?? '').trim() === '--mobile' || String(arg ?? '').trim() === '--with-mobile');
 
-  const scriptsDir = dirname(fileURLToPath(import.meta.url)); // <repo>/apps/stack/scripts
-  const repoRoot = dirname(dirname(dirname(scriptsDir))); // <repo>
   const hstackBin = join(repoRoot, 'apps', 'stack', 'bin', 'hstack.mjs');
-
-  const invokedCwd =
-    (process.env.HAPPIER_STACK_INVOKED_CWD ?? '').toString().trim() ||
-    (process.env.INIT_CWD ?? '').toString().trim() ||
-    process.cwd();
 
   const subcommand = String(argv[0] ?? '').trim();
   const isStop = subcommand === 'stop';
@@ -297,7 +212,7 @@ async function main() {
     subcommand === 'worktrees';
 
   const stacksStorageRoot = resolveStacksStorageRoot(process.env);
-  const stacklessName = stacklessStackNameForRepo({
+  const { stackName: stacklessName } = resolveRepoStackIdentity({
     repoRoot,
     stacksStorageRoot,
     createIfMissing: !dryRun && !isStop,
@@ -435,20 +350,19 @@ async function main() {
 	      if (dbTransition.reason === 'missing_mysql_database_url') {
 	        throw new Error('[repo-local] mysql requires an explicit DATABASE_URL');
 	      }
+	      if (dbTransition.reason === 'missing_postgres_database_url') {
+	        throw new Error('[repo-local] postgres requires an explicit DATABASE_URL with the light preset');
+	      }
+	      if (dbTransition.reason === 'invalid_postgres_database_url') {
+	        throw new Error('[repo-local] postgres DATABASE_URL must use postgres:// or postgresql://');
+	      }
 	      throw new Error(`[repo-local] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
 	    }
 	    effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT = serverComponent;
 	    effectiveEnv.HAPPIER_DB_PROVIDER = dbTransition.provider;
-	    delete effectiveEnv.HAPPY_DB_PROVIDER;
-	    const persistedDatabaseUrl = String(existingStacklessEnv.DATABASE_URL ?? '').trim();
-	    if (dbTransition.provider === 'mysql') {
+	    effectiveEnv.HAPPY_DB_PROVIDER = dbTransition.provider;
+	    if (dbTransition.databaseUrl) {
 	      effectiveEnv.DATABASE_URL = dbTransition.databaseUrl;
-	    } else if (
-	      dbTransition.provider === 'postgres' &&
-	      !dbTransition.removeDatabaseUrl &&
-	      persistedDatabaseUrl
-	    ) {
-	      effectiveEnv.DATABASE_URL = persistedDatabaseUrl;
 	    } else {
 	      delete effectiveEnv.DATABASE_URL;
 	    }

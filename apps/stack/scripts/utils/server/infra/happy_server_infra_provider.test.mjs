@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './happy_server_infra.mjs';
+import { ensureHappyServerManagedInfra } from './happy_server_infra.mjs';
+import { applyServerMigrations } from '../server_migrations.mjs';
 
 function parseEnvText(text) {
   return Object.fromEntries(String(text).split('\n').flatMap((line) => {
@@ -245,10 +246,10 @@ test('postgres managed infra retains its service, readiness wait, and persisted 
   assert.match(await readFile(restarted.composePath, 'utf8'), /^  postgres:/m);
 });
 
-test('applyHappyServerMigrations selects the existing mysql deploy contract', async () => {
+test('applyServerMigrations delegates mysql to the canonical provider dispatcher', async () => {
   const calls = [];
   const env = { DATABASE_URL: 'mysql://operator/db', HAPPIER_DB_PROVIDER: 'mysql' };
-  await applyHappyServerMigrations(
+  await applyServerMigrations(
     { serverDir: '/server', env, dbProvider: 'mysql', quiet: true },
     {
       pmExecBinImpl: async (input) => calls.push(input),
@@ -256,20 +257,34 @@ test('applyHappyServerMigrations selects the existing mysql deploy contract', as
   );
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].bin, 'migrate:mysql:deploy');
+  assert.equal(calls[0].bin, 'migrate:deploy');
   assert.deepEqual(calls[0].args, []);
   assert.equal(calls[0].dir, '/server');
-  assert.equal(calls[0].env, env);
+  assert.deepEqual(calls[0].env, env);
   assert.equal(calls[0].quiet, true);
 });
 
-test('applyHappyServerMigrations retains the default-schema postgres migration', async () => {
+test('applyServerMigrations delegates postgres to the canonical provider dispatcher', async () => {
   const calls = [];
-  await applyHappyServerMigrations(
+  await applyServerMigrations(
     { serverDir: '/server', env: { HAPPIER_DB_PROVIDER: 'postgres' }, dbProvider: 'postgres' },
     {
       pmExecBinImpl: async (input) => calls.push(input),
     },
   );
-  assert.deepEqual(calls[0].args, ['migrate', 'deploy']);
+  assert.equal(calls[0].bin, 'migrate:deploy');
+  assert.deepEqual(calls[0].args, []);
+});
+
+test('applyServerMigrations routes embedded providers through the canonical dispatcher', async () => {
+  for (const dbProvider of ['sqlite', 'pglite']) {
+    const calls = [];
+    await applyServerMigrations(
+      { serverDir: '/server', env: { HAPPIER_DB_PROVIDER: dbProvider }, dbProvider },
+      { pmExecBinImpl: async (input) => calls.push(input) },
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].bin, 'migrate:deploy');
+    assert.deepEqual(calls[0].args, []);
+  }
 });

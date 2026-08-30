@@ -16,9 +16,10 @@ import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { applyStackCacheEnv, ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
-import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
-import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
+import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
+import { ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
+import { applyServerMigrations } from './utils/server/server_migrations.mjs';
+import { resolvePrismaClientImportForDbProvider } from './utils/server/prisma_client_import.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { copyFileIfMissing, linkFileIfMissing, removeFileOrSymlinkIfExists, writeSecretFileIfMissing } from './utils/auth/files.mjs';
@@ -594,14 +595,14 @@ function resolveDatabaseUrlFromEnvOrThrow({ env, stackName, label, provider }) {
   return resolvePostgresDatabaseUrlFromEnvOrThrow({ env, stackName, label });
 }
 
-function resolveLightDirsForStack({ env, baseDir }) {
+function resolveEmbeddedDirsForStack({ env, baseDir }) {
   const dataDir = (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim() || join(baseDir, 'server-light');
   const filesDir = (env.HAPPIER_SERVER_LIGHT_FILES_DIR ?? env.HAPPY_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || join(dataDir, 'files');
   const dbDir = (env.HAPPIER_SERVER_LIGHT_DB_DIR ?? env.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim() || join(dataDir, 'pglite');
   return { dataDir, filesDir, dbDir };
 }
 
-export function buildLightMigrationBaseEnv(processEnv, envIn) {
+export function buildEmbeddedMigrationBaseEnv(processEnv, envIn) {
   const baseEnv = { ...(processEnv && typeof processEnv === 'object' ? processEnv : {}) };
   delete baseEnv.DATABASE_URL;
   delete baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR;
@@ -615,23 +616,15 @@ export function buildLightMigrationBaseEnv(processEnv, envIn) {
   return { ...baseEnv, ...(envIn && typeof envIn === 'object' ? envIn : {}) };
 }
 
-export function resolveDbProviderForLightFromEnv(env) {
+export function resolveDbProviderFromEnv({ serverComponentName, env }) {
   return applyEffectiveDbProviderEnv({
-    serverComponentName: 'happier-server-light',
+    serverComponentName,
     env,
     targetEnv: { ...env },
   });
 }
 
-function resolveDbProviderForFullFromEnv(env) {
-  return applyEffectiveDbProviderEnv({
-    serverComponentName: 'happier-server',
-    env,
-    targetEnv: { ...env },
-  });
-}
-
-function resolveSqliteDatabaseUrlForLight({ dataDir, env }) {
+function resolveEmbeddedSqliteDatabaseUrl({ dataDir, env }) {
   return renderPrismaCompatibleSqliteDatabaseUrl({
     dbPath: join(dataDir, 'happier-server-light.sqlite'),
     platform: process.platform,
@@ -639,11 +632,11 @@ function resolveSqliteDatabaseUrlForLight({ dataDir, env }) {
   });
 }
 
-async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet = false }) {
+async function ensureEmbeddedMigrationsApplied({ serverComponentName, serverDir, baseDir, envIn, quiet = false }) {
   // IMPORTANT: envIn is often parsed from a stack env file (so it does not include PATH).
   // Start from the current process env so we can spawn Yarn reliably, then overlay stack-specific vars.
-  const env = buildLightMigrationBaseEnv(process.env, envIn);
-  const { dataDir, filesDir, dbDir } = resolveLightDirsForStack({ env, baseDir });
+  const env = buildEmbeddedMigrationBaseEnv(process.env, envIn);
+  const { dataDir, filesDir, dbDir } = resolveEmbeddedDirsForStack({ env, baseDir });
   env.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
   env.HAPPIER_SERVER_LIGHT_FILES_DIR = filesDir;
   env.HAPPIER_SERVER_LIGHT_DB_DIR = dbDir;
@@ -651,17 +644,14 @@ async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet =
   env.HAPPY_SERVER_LIGHT_FILES_DIR = env.HAPPY_SERVER_LIGHT_FILES_DIR ?? filesDir;
   env.HAPPY_SERVER_LIGHT_DB_DIR = env.HAPPY_SERVER_LIGHT_DB_DIR ?? dbDir;
 
-  const provider = resolveDbProviderForLightFromEnv(env);
+  const provider = resolveDbProviderFromEnv({ serverComponentName, env });
+  if (provider !== 'sqlite' && provider !== 'pglite') {
+    throw new Error(`[auth] embedded migration path does not support provider ${provider}`);
+  }
   env.HAPPIER_DB_PROVIDER = provider;
 
-  // Migration step:
-  // - pglite: spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma
-  // - sqlite: runs migrate:sqlite:deploy against prisma/sqlite/schema.prisma
-  //
-  // Both are idempotent and safe to re-run when the light DB is not held open.
   const envWithCache = await applyStackCacheEnv(env);
-  const migrateScript = provider === 'sqlite' ? 'migrate:sqlite:deploy' : 'migrate:light:deploy';
-  await pmExecBin({ dir: serverDir, bin: migrateScript, args: [], env: envWithCache, quiet });
+  await applyServerMigrations({ serverDir, env: envWithCache, dbProvider: provider, quiet });
   return { dataDir, filesDir, dbDir };
 }
 
@@ -922,139 +912,6 @@ const accounts = raw ? JSON.parse(raw) : [];
 function resolveServerComponentDir({ rootDir, serverComponent }) {
   return getComponentDir(rootDir, serverComponent === 'happier-server' ? 'happier-server' : 'happier-server-light');
 }
-
-async function seedAccountsFromSourceDbToTargetDb({
-  rootDir,
-  fromStackName,
-  fromServerComponent,
-  fromDatabaseUrl,
-  targetStackName,
-  targetServerComponent,
-  targetDatabaseUrl,
-  force = false,
-}) {
-  const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
-  const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
-
-  const sourceClientImport = resolvePrismaClientImportForServerComponent({
-    serverComponentName: fromServerComponent,
-    serverDir: sourceCwd,
-  });
-  const targetClientImport = resolvePrismaClientImportForServerComponent({
-    serverComponentName: targetServerComponent,
-    serverDir: targetCwd,
-  });
-
-  const listScript = `
-process.on('uncaughtException', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-process.on('unhandledRejection', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-const mod = await import(${JSON.stringify(sourceClientImport)});
-const PrismaClient = mod?.PrismaClient ?? mod?.default?.PrismaClient;
-if (!PrismaClient) {
-  throw new Error('Failed to load PrismaClient for DB seed (source).');
-}
-const db = new PrismaClient();
-try {
-  const accounts = await db.account.findMany({ select: { id: true, publicKey: true } });
-  console.log(JSON.stringify(accounts));
-} finally {
-  await db.$disconnect();
-}
-`.trim();
-
-  const insertScript = `
-process.on('uncaughtException', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-process.on('unhandledRejection', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-const mod = await import(${JSON.stringify(targetClientImport)});
-const PrismaClient = mod?.PrismaClient ?? mod?.default?.PrismaClient;
-if (!PrismaClient) {
-  throw new Error('Failed to load PrismaClient for DB seed (target).');
-}
-import fs from 'node:fs';
-const FORCE = ${force ? 'true' : 'false'};
-const raw = fs.readFileSync(0, 'utf8').trim();
-const accounts = raw ? JSON.parse(raw) : [];
-const db = new PrismaClient();
-try {
-  let insertedCount = 0;
-  for (const a of accounts) {
-    // eslint-disable-next-line no-await-in-loop
-    try {
-      await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-      insertedCount += 1;
-    } catch (e) {
-      // Prisma unique constraint violation
-      if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
-        // Two common cases:
-        // - id already exists (fine)
-        // - publicKey already exists on a different id (auth mismatch -> machine FK failures later)
-        //
-        // For --force, we try to delete the conflicting row by publicKey and then retry insert.
-        // Without --force, fail-closed with a helpful error so users don't end up with "seeded" but broken stacks.
-        try {
-          const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
-          if (existing?.id && existing.id !== a.id) {
-            if (!FORCE) {
-              throw new Error(
-                \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
-              );
-            }
-            // Best-effort delete; will fail if other rows reference this account (then we fail closed).
-            await db.account.delete({ where: { publicKey: a.publicKey } });
-            await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-            insertedCount += 1;
-            continue;
-          }
-        } catch (inner) {
-          throw inner;
-        }
-        continue;
-      }
-      throw e;
-    }
-  }
-  console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
-} finally {
-  await db.$disconnect();
-}
-`.trim();
-
-  const { stdout: srcOut } = await runNodeCapture({
-    cwd: sourceCwd,
-    env: { ...process.env, DATABASE_URL: fromDatabaseUrl },
-    args: ['--input-type=module', '-e', listScript],
-  });
-  const accounts = srcOut.trim() ? JSON.parse(srcOut.trim()) : [];
-
-  const { stdout: insOut } = await runNodeCapture({
-    cwd: targetCwd,
-    env: { ...process.env, DATABASE_URL: targetDatabaseUrl },
-    args: ['--input-type=module', '-e', insertScript],
-    stdin: JSON.stringify(accounts),
-  });
-  const res = insOut.trim() ? JSON.parse(insOut.trim()) : { sourceCount: accounts.length, insertedCount: 0 };
-
-  return {
-    ok: true,
-    fromStackName,
-    targetStackName,
-    sourceCount: Number(res.sourceCount ?? accounts.length) || 0,
-    insertedCount: Number(res.insertedCount ?? 0) || 0,
-  };
-}
-
 async function cmdCopyFrom({ argv, json }) {
   const rootDir = getRootDir(import.meta.url);
   const stackName = getStackName();
@@ -1281,39 +1138,23 @@ async function cmdCopyFrom({ argv, json }) {
 
   const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
   const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
-  const sourceDbProvider =
-    fromServerComponent === 'happier-server-light'
-      ? resolveDbProviderForLightFromEnv(sourceEnv)
-      : resolveDbProviderForFullFromEnv(sourceEnv);
-  const targetDbProvider =
-    targetServerComponent === 'happier-server-light'
-      ? resolveDbProviderForLightFromEnv(targetEnv)
-      : resolveDbProviderForFullFromEnv(targetEnv);
+  const sourceDbProvider = resolveDbProviderFromEnv({ serverComponentName: fromServerComponent, env: sourceEnv });
+  const targetDbProvider = resolveDbProviderFromEnv({ serverComponentName: targetServerComponent, env: targetEnv });
 
-  const sourceClientImport =
-    fromServerComponent === 'happier-server-light'
-      ? sourceDbProvider === 'sqlite'
-        ? resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: 'sqlite' })
-        : resolvePrismaClientImportForServerComponent({ serverComponentName: fromServerComponent, serverDir: sourceCwd })
-      : resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
-  const targetClientImport =
-    targetServerComponent === 'happier-server-light'
-      ? targetDbProvider === 'sqlite'
-        ? resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: 'sqlite' })
-        : resolvePrismaClientImportForServerComponent({ serverComponentName: targetServerComponent, serverDir: targetCwd })
-      : resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
+  const sourceClientImport = resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
+  const targetClientImport = resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
 
   const readSourceAccounts = async () => {
-    if (fromServerComponent === 'happier-server-light') {
-      const lightProvider = resolveDbProviderForLightFromEnv(sourceEnv);
-      const { dataDir, dbDir } = await ensureLightMigrationsApplied({
+    if (sourceDbProvider === 'sqlite' || sourceDbProvider === 'pglite') {
+      const { dataDir, dbDir } = await ensureEmbeddedMigrationsApplied({
+        serverComponentName: fromServerComponent,
         serverDir: sourceCwd,
         baseDir: sourceBaseDir,
         envIn: sourceEnv,
         quiet: json,
       });
-      if (lightProvider === 'sqlite') {
-        const url = resolveSqliteDatabaseUrlForLight({ dataDir, env: sourceEnv });
+      if (sourceDbProvider === 'sqlite') {
+        const url = resolveEmbeddedSqliteDatabaseUrl({ dataDir, env: sourceEnv });
         return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
       }
       return await listAccountsFromPglite({ cwd: sourceCwd, dbDir });
@@ -1354,7 +1195,7 @@ async function cmdCopyFrom({ argv, json }) {
   const canValidateSourceTokenSubject =
     !(sourceTokenValidation && sourceTokenValidation.checked && sourceTokenValidation.valid === true) &&
     Boolean(sourceTokenSubject) &&
-    (fromServerComponent === 'happier-server-light' || hasSourceDatabaseUrl);
+    (sourceDbProvider === 'sqlite' || sourceDbProvider === 'pglite' || hasSourceDatabaseUrl);
   if (canValidateSourceTokenSubject) {
     try {
       sourceAccounts = await readSourceAccounts();
@@ -1439,11 +1280,10 @@ async function cmdCopyFrom({ argv, json }) {
 
     // 2) Insert Account rows into the target DB.
     const runInsert = async () => {
-	      if (targetServerComponent === 'happier-server-light') {
-	        const lightProvider = resolveDbProviderForLightFromEnv(targetEnv);
-	        const { dataDir, dbDir } = await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
-	        if (lightProvider === 'sqlite') {
-	          const url = resolveSqliteDatabaseUrlForLight({ dataDir, env: targetEnv });
+	      if (targetDbProvider === 'sqlite' || targetDbProvider === 'pglite') {
+	        const { dataDir, dbDir } = await ensureEmbeddedMigrationsApplied({ serverComponentName: targetServerComponent, serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
+	        if (targetDbProvider === 'sqlite') {
+	          const url = resolveEmbeddedSqliteDatabaseUrl({ dataDir, env: targetEnv });
 	          return await insertAccountsIntoPostgres({
 	            cwd: targetCwd,
 	            clientImport: targetClientImport,
@@ -1507,10 +1347,10 @@ async function cmdCopyFrom({ argv, json }) {
         if (!looksLikeMissingTable) throw e;
 
         // Best-effort: apply schema, then retry once.
-        if (targetServerComponent === 'happier-server-light') {
-          await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json }).catch(() => {});
-        } else if (targetServerComponent === 'happier-server') {
-          await applyHappyServerMigrations({
+        if (targetDbProvider === 'sqlite' || targetDbProvider === 'pglite') {
+          await ensureEmbeddedMigrationsApplied({ serverComponentName: targetServerComponent, serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json }).catch(() => {});
+        } else {
+          await applyServerMigrations({
             serverDir: targetCwd,
             env: targetEnv,
             quiet: json,

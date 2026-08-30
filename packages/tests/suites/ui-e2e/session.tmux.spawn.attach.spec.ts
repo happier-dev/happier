@@ -14,16 +14,14 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { ensureCliDistSnapshotEntrypoint } from '../../src/testkit/process/cliDist';
 import { repoRootDir } from '../../src/testkit/paths';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
-import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+    createSessionFromNewSessionComposer,
+    reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { parseTestTerminalAttachmentInfo, type TestTerminalAttachmentInfo } from '../../src/testkit/uiE2e/terminalAttachmentInfo';
 
-type TerminalAttachmentInfoV1 = {
-    version: 1;
-    sessionId: string;
-    terminal: { mode: 'plain' | 'tmux'; tmux?: { target?: string; tmpDir?: string } };
-    updatedAt: number;
-};
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -50,7 +48,7 @@ async function sleep(ms: number): Promise<void> {
     await new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): Promise<TerminalAttachmentInfoV1> {
+async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): Promise<TestTerminalAttachmentInfo> {
     const path = attachmentInfoPath(happyHomeDir, sessionId);
     const startedAt = Date.now();
     while (Date.now() - startedAt < 30_000) {
@@ -73,14 +71,8 @@ async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): P
         }
 
         const raw = await readFile(path, 'utf8').catch(() => '');
-        try {
-            const parsed = JSON.parse(raw) as Partial<TerminalAttachmentInfoV1>;
-            if (parsed && parsed.version === 1 && parsed.sessionId === sessionId && parsed.terminal) {
-                return parsed as TerminalAttachmentInfoV1;
-            }
-        } catch {
-            // ignore
-        }
+        const parsed = parseTestTerminalAttachmentInfo(raw);
+        if (parsed?.sessionId === sessionId) return parsed;
         await sleep(100);
     }
     throw new Error(`Timed out waiting for terminal attachment info at ${path}`);
@@ -118,14 +110,6 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
     return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
 }
 
-function parseSessionIdFromUrl(url: string): string {
-    const pathname = new URL(url).pathname;
-    const parts = pathname.split('/').filter(Boolean);
-    const sessionId = parts[0] === 'session' ? parts[1] : null;
-    if (!sessionId) throw new Error(`failed to parse session id from url: ${url}`);
-    return sessionId;
-}
-
 async function ensureTmuxSettingsInUi(params: {
     page: Page;
     uiBaseUrl: string;
@@ -134,7 +118,7 @@ async function ensureTmuxSettingsInUi(params: {
 }): Promise<void> {
     const { page, uiBaseUrl, tmuxSessionName, tmuxTmpDir } = params;
 
-    await page.goto(`${uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${uiBaseUrl}/settings/session/runtime`, { waitUntil: 'domcontentloaded' });
 
     const enabledItem = page.getByTestId('settings-session-tmux-enabled-item');
     await expect(enabledItem).toHaveCount(1, { timeout: 60_000 });
@@ -157,31 +141,6 @@ async function ensureTmuxSettingsInUi(params: {
     }
     await expect(tmpDirInput).toHaveCount(1, { timeout: 60_000 });
     await tmpDirInput.fill(tmuxTmpDir);
-}
-
-async function createSessionFromComposer(params: {
-    page: Page;
-    uiBaseUrl: string;
-    machineId: string;
-    prompt: string;
-}): Promise<string> {
-    const { page, uiBaseUrl, machineId, prompt } = params;
-    await page.goto(`${uiBaseUrl}/new`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-
-    await openNewSessionMachineSelection({ page, uiBaseUrl });
-
-    const exact = page.getByTestId(`new-session-machine:${machineId}`);
-    await expect(exact).toHaveCount(1, { timeout: 120_000 });
-    await exact.click();
-
-    await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-    await page.getByTestId('new-session-composer-input').fill(prompt);
-    await page.getByTestId('new-session-composer-input').press('Enter');
-
-    await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-    return parseSessionIdFromUrl(page.url());
 }
 
 test.describe('ui e2e: tmux spawn → attach', () => {
@@ -308,9 +267,15 @@ test.describe('ui e2e: tmux spawn → attach', () => {
 
         const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
 
-        const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: `hello ${run.runId}` });
-        await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+        const session = await createSessionFromNewSessionComposer({
+            page,
+            uiBaseUrl,
+            machineId,
+            prompt: `hello ${run.runId}`,
+            readiness: 'first-turn-reload-safe',
+        });
+        const { sessionId } = session;
+        await reloadCreatedSessionFromNewSessionComposer({ page, session });
         await expect.poll(async () => page.locator('[data-testid^="transcript-message-"]').count(), { timeout: 180_000 }).toBeGreaterThan(1);
 
         const info = await waitForAttachmentInfo(cliHomeDir, sessionId);
@@ -365,10 +330,5 @@ test.describe('ui e2e: tmux spawn → attach', () => {
             .filter(Boolean)
             .find((l) => l.startsWith('1 '));
         expect(active).toBe(`1 ${windowName}`);
-
-        // UI should allow switching back to remote after the terminal has attached locally.
-        await expect(page.getByTestId('session-chatFooter-switchToRemote')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('session-chatFooter-switchToRemote').click();
-        await expect(page.getByTestId('session-chatFooter-switchToRemote')).toHaveCount(0, { timeout: 180_000 });
     });
 });

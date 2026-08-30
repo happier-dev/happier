@@ -12,6 +12,7 @@ Session forking lets you branch a session without losing the original conversati
 - **Hidden replay seed**: the replay prompt is sent only to the model on the first user turn and never shown in the transcript.
 - **Ancestor context without duplication**: the child renders read-only ancestor messages inline; scrolling pages parent segments automatically.
 - **Branch-and-edit**: when you fork on a user message, the child composer is prefilled with that message so you can revise and resend.
+- **Recognizable child titles**: when the parent has a session title, the child keeps it with `(fork 1)` appended. Forking that child increments the number instead of stacking another suffix.
 - **Provider-native when available**: OpenCode server-native fork-at-message; Codex app-server native fork-at-latest plus rollback-to-point; ACP fork-at-latest when supported. Compatibility callers that choose `auto` can use replay otherwise.
 
 ## How fork selection works

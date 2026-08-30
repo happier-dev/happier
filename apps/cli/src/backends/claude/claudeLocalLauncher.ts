@@ -203,8 +203,8 @@ export async function claudeLocalLauncher(
             if (observation?.historicalReplay) {
                 await transcriptProjector.observeCommitted(message);
             } else {
-                await transcriptProjector.observe(message);
                 lifecycleTracker.observeTranscript(message);
+                await transcriptProjector.observe(message);
             }
         },
         // Native Claude `/goal` source (plan H7): goal_status attachments + the
@@ -453,7 +453,6 @@ export async function claudeLocalLauncher(
                 });
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
-
                 try {
                     await claudeLocal({
                         path: session.path,
@@ -463,10 +462,13 @@ export async function claudeLocalLauncher(
                         onLifecycleGapDetected: (event) => emitClaudeUnifiedLifecycleGapDetected(unifiedTelemetry, event),
                         abort: processAbortController.signal,
                         claudeArgs: session.claudeArgs,
+                        happierSessionId: session.client.sessionId,
                         systemPromptText: session.defaultSystemPromptText,
-                        envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
-                            claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
-                        }),
+                        envOverlay: {
+                            ...resolveClaudeCodeExperimentalEnvOverlay({
+                                claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
+                            }),
+                        },
                         happierMcpConfigJson: baseMcpConfigJson,
                         hookSettingsPath: session.hookSettingsPath,
                         hookPluginDir: session.hookPluginDir,

@@ -110,7 +110,9 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
 
     const baseFontSize = readNumber(flattenedTextStyle.fontSize, roundTo2(16 * uiFontScale));
     const baseLineHeight = readNumber(flattenedTextStyle.lineHeight, roundTo2(24 * uiFontScale));
-    const inlineCodeFontSize = roundTo2(baseFontSize * 0.88);
+    const inlineCodeFontSize = params.profile === 'thinking'
+        ? baseFontSize
+        : roundTo2(baseFontSize * 0.88);
     const baseColor = readString(flattenedTextStyle.color, params.colors.text.primary);
     const textAlign = readTextAlign(flattenedTextStyle);
     const mathTextAlign = textAlign === 'left' || textAlign === 'right' || textAlign === 'center'

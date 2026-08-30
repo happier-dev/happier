@@ -18,8 +18,9 @@ function buildAgentOptionTestIds(agentId: string): string[] {
 }
 
 async function findActionableLocator(locator: Locator, timeout = 250): Promise<Locator | null> {
-  const candidates = (await locator.all()).reverse();
-  for (const candidate of candidates) {
+  const count = await locator.count();
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const candidate = locator.nth(index);
     try {
       await candidate.click({ trial: true, timeout });
       return candidate;
@@ -39,7 +40,7 @@ async function clickFirstActionableByTestIds(params: Readonly<{
   for (const testId of params.testIds) {
     const actionable = await findActionableLocator(params.page.getByTestId(testId), params.timeout);
     if (actionable) {
-      await actionable.click();
+      await actionable.click({ timeout: 1_000 });
       return true;
     }
   }
@@ -49,19 +50,19 @@ async function clickFirstActionableByTestIds(params: Readonly<{
 async function maybeApplyAndClosePicker(page: Page): Promise<void> {
   const applyButton = await findActionableLocator(page.getByTestId(AGENT_PICKER_APPLY_TEST_ID));
   if (applyButton) {
-    await applyButton.click();
+    await applyButton.click({ timeout: 1_000 });
   }
 
   const closeButton = await findActionableLocator(page.getByTestId(AGENT_PICKER_CLOSE_TEST_ID));
   if (closeButton) {
-    await closeButton.click();
+    await closeButton.click({ timeout: 1_000 });
   }
 }
 
 async function openAgentSelectionSurface(page: Page): Promise<void> {
   for (const pathInputTestId of ['path-selection-list:header:input', 'path-selector-input']) {
     const pathInput = page.getByTestId(pathInputTestId).first();
-    if ((await pathInput.getAttribute('aria-expanded').catch(() => null)) === 'true') {
+    if ((await pathInput.getAttribute('aria-expanded', { timeout: 250 }).catch(() => null)) === 'true') {
       // A retained path suggestion list sits above the all-fields wizard and intercepts
       // the backend trigger. Close that sibling surface before opening agent selection.
       await pathInput.press('Escape');
@@ -73,13 +74,13 @@ async function openAgentSelectionSurface(page: Page): Promise<void> {
     15_000,
   );
   if (wizardDropdownTrigger) {
-    await wizardDropdownTrigger.click();
+    await wizardDropdownTrigger.click({ timeout: 1_000 });
     return;
   }
 
   const agentChip = await findActionableLocator(page.getByTestId(AGENT_CHIP_TEST_ID), 15_000);
   if (agentChip) {
-    await agentChip.click();
+    await agentChip.click({ timeout: 1_000 });
     return;
   }
 
@@ -120,6 +121,25 @@ export async function selectNewSessionAgent(params: Readonly<{
       testIds: agentOptionTestIds,
       timeout: 2_000,
     })) {
+      await maybeApplyAndClosePicker(params.page);
+      return true;
+    }
+
+    const escapedAgentId = params.agentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const semanticOption = await findActionableLocator(
+      params.page.getByRole('option', { name: new RegExp(escapedAgentId, 'i') }),
+      250,
+    ) ?? await findActionableLocator(
+      params.page
+        .getByTestId(AGENT_PICKER_POPOVER_TEST_ID)
+        .getByRole('button', { name: new RegExp(escapedAgentId, 'i') }),
+      250,
+    ) ?? await findActionableLocator(
+      params.page.getByRole('button', { name: new RegExp(`^${escapedAgentId}(?:\\s|$)`, 'i') }),
+      250,
+    );
+    if (semanticOption) {
+      await semanticOption.click({ timeout: 1_000 });
       await maybeApplyAndClosePicker(params.page);
       return true;
     }

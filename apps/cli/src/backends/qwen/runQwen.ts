@@ -27,7 +27,7 @@ export async function runQwen(opts: StandardAcpProviderRunOptions & {
     agentMessageType: 'qwen',
     machineMetadata: initialMachineMetadata,
     terminalDisplay: QwenTerminalDisplay,
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createQwenAcpRuntime({
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createQwenAcpRuntime({
       directory,
       machineId,
       session,
@@ -37,6 +37,7 @@ export async function runQwen(opts: StandardAcpProviderRunOptions & {
       onThinkingChange: setThinking,
       memoryRecallGuidanceEnabled,
       getPermissionMode,
+      processEnv,
       pendingQueueDrainMaxPopPerWake,
       providerInputConsumer,
     }),

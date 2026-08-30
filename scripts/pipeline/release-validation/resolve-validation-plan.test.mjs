@@ -22,6 +22,7 @@ test('validation plan keeps fast evidence and selects heavy suites only from cha
     run_self_host_launchd: 'false',
     run_self_host_schtasks: 'false',
     run_self_host_daemon: 'false',
+    waivedSuiteIds: [],
   });
 
   const affected = resolveReleaseValidationPlan({
@@ -36,15 +37,32 @@ test('validation plan keeps fast evidence and selects heavy suites only from cha
   assert.equal(affected.run_release_assets_docker, 'true');
 });
 
-test('validation plan retains explicit legacy selections only when no profile is supplied', () => {
+test('validation plan supports explicit reasoned refinements without a legacy flag matrix', () => {
   const result = resolveReleaseValidationPlan({
+    profileId: 'integrated',
+    hasCliCandidate: true,
+    hasServerCandidate: true,
+    hasPublishedRelayPredecessor: true,
+    risks: { cliUpgrade: true, sessionContinuity: true, relayUpgrade: true },
+    includeSuiteIds: ['installers-smoke'],
+    waiveSuiteIds: ['docker-release-assets'],
+  });
+  assert.equal(result.run_installers_smoke, 'true');
+  assert.equal(result.run_release_assets_docker, 'false');
+  assert.deepEqual(result.waivedSuiteIds, ['docker-release-assets']);
+  assert.throws(() => resolveReleaseValidationPlan({
     profileId: '',
     hasCliCandidate: false,
     hasServerCandidate: false,
     hasPublishedRelayPredecessor: false,
     risks: { cliUpgrade: false, sessionContinuity: false, relayUpgrade: false },
-    legacy: { run_binary_smoke: 'true', run_release_assets_docker: 'false' },
-  });
-  assert.equal(result.run_binary_smoke, 'true');
-  assert.equal(result.run_release_assets_docker, 'false');
+  }), /profile is required/);
+  assert.throws(() => resolveReleaseValidationPlan({
+    profileId: 'integrated',
+    hasCliCandidate: true,
+    hasServerCandidate: false,
+    hasPublishedRelayPredecessor: false,
+    risks: { cliUpgrade: false, sessionContinuity: false, relayUpgrade: false },
+    waiveSuiteIds: ['artifact-verify'],
+  }), /cannot be waived/);
 });

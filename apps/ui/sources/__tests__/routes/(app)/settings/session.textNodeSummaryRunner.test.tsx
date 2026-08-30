@@ -35,6 +35,10 @@ const settingsState: Record<string, any> = {
 };
 
 installSessionSettingsEntryModuleMocks({
+    textModule: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key) => key });
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({

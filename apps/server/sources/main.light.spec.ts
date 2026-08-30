@@ -64,4 +64,14 @@ describe('runLightServerMain', () => {
     expect(mocks.registerProcessHandlers).toHaveBeenCalledOnce();
     expect(mocks.startServer).toHaveBeenCalledWith('light');
   });
+
+  it('honors an explicit full flavor in the packaged relay runtime', async () => {
+    process.env.HAPPIER_SERVER_FLAVOR = 'full';
+
+    await runLightServerMain([]);
+
+    expect(mocks.startServer).toHaveBeenCalledWith('full');
+    expect(process.env.HAPPY_SERVER_FLAVOR).toBe('full');
+    expect(process.env.HAPPIER_SERVER_FLAVOR).toBe('full');
+  });
 });

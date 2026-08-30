@@ -66,6 +66,11 @@ function areSessionConfigOptionOverridesEqual(
     return true;
 }
 
+type SessionConfigOptionOverridesState = Readonly<{
+    source: AcpConfigOptionOverridesV1 | null;
+    value: AcpConfigOptionOverridesV1 | null;
+}>;
+
 type DraftBackendTargetOwnership = 'match' | 'mismatch' | 'unknown';
 
 function resolveDraftBackendTargetOwnership(
@@ -212,15 +217,42 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         params.rememberedEngineSelection?.sessionConfigOptionOverrides,
     ]);
 
-    const [sessionConfigOptionOverrides, setSessionConfigOptionOverrides] = React.useState<AcpConfigOptionOverridesV1 | null>(
-        () => initialSessionConfigOptionOverrides,
+    const [sessionConfigOptionOverridesState, setSessionConfigOptionOverridesState] = React.useState<SessionConfigOptionOverridesState>(
+        () => ({
+            source: initialSessionConfigOptionOverrides,
+            value: initialSessionConfigOptionOverrides,
+        }),
     );
+    let sessionConfigOptionOverrides = sessionConfigOptionOverridesState.value;
+    if (!areSessionConfigOptionOverridesEqual(
+        sessionConfigOptionOverridesState.source,
+        initialSessionConfigOptionOverrides,
+    )) {
+        sessionConfigOptionOverrides = initialSessionConfigOptionOverrides;
+        setSessionConfigOptionOverridesState({
+            source: initialSessionConfigOptionOverrides,
+            value: initialSessionConfigOptionOverrides,
+        });
+    }
 
-    React.useEffect(() => {
-        setSessionConfigOptionOverrides((current) => {
-            return areSessionConfigOptionOverridesEqual(current, initialSessionConfigOptionOverrides)
-                ? current
+    const setSessionConfigOptionOverrides = React.useCallback<React.Dispatch<React.SetStateAction<AcpConfigOptionOverridesV1 | null>>>((next) => {
+        setSessionConfigOptionOverridesState((current) => {
+            const currentValue = areSessionConfigOptionOverridesEqual(current.source, initialSessionConfigOptionOverrides)
+                ? current.value
                 : initialSessionConfigOptionOverrides;
+            const value = typeof next === 'function'
+                ? (next as (value: AcpConfigOptionOverridesV1 | null) => AcpConfigOptionOverridesV1 | null)(currentValue)
+                : next;
+            if (
+                currentValue === value
+                && areSessionConfigOptionOverridesEqual(current.source, initialSessionConfigOptionOverrides)
+            ) {
+                return current;
+            }
+            return {
+                source: initialSessionConfigOptionOverrides,
+                value,
+            };
         });
     }, [initialSessionConfigOptionOverrides]);
 

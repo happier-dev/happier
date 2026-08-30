@@ -180,6 +180,7 @@ type InstallSessionShellCommonModuleMocksOptions = Readonly<{
     unistyles?: SessionShellModuleFactory;
     text?: SessionShellModuleFactory;
     modal?: SessionShellModuleFactory;
+    featureEnabled?: SessionShellModuleFactory;
     router?: SessionShellModuleFactory;
     storage?: SessionShellStorageModuleFactory;
 }>;
@@ -190,6 +191,7 @@ const sessionShellModuleState = vi.hoisted(() => ({
         unistyles: undefined as SessionShellModuleFactory | undefined,
         text: undefined as SessionShellModuleFactory | undefined,
         modal: undefined as SessionShellModuleFactory | undefined,
+        featureEnabled: undefined as SessionShellModuleFactory | undefined,
         router: undefined as SessionShellModuleFactory | undefined,
         storage: undefined as SessionShellStorageModuleFactory | undefined,
     },
@@ -203,6 +205,7 @@ export function installSessionShellCommonModuleMocks(
         unistyles: options.unistyles,
         text: options.text,
         modal: options.modal,
+        featureEnabled: options.featureEnabled,
         router: options.router,
         storage: options.storage,
     };
@@ -245,6 +248,15 @@ export function installSessionShellCommonModuleMocks(
 
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock().module;
+    });
+
+    vi.mock('@/hooks/server/useFeatureEnabled', async () => {
+        const activeOptions = sessionShellModuleState.options;
+        if (activeOptions.featureEnabled) {
+            return await activeOptions.featureEnabled();
+        }
+
+        return { useFeatureEnabled: () => false };
     });
 
     vi.mock('expo-router', async () => {

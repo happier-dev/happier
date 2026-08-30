@@ -64,7 +64,10 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
-import type { SessionDraftCurrentness } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import {
+    areSessionDraftCurrentnessCapturesEqual,
+    type SessionDraftCurrentness,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
     SessionDraftConflictResolution,
     useSessionDraftConflictComposerBanner,
@@ -406,20 +409,6 @@ const SESSION_COMPOSER_SEMANTIC_DRAFT_FIELD_IDS = [
     'routing.executionRunDelivery',
 ] as const;
 
-function areSessionDraftCurrentnessCapturesEqual(
-    left: SessionDraftCurrentness | null,
-    right: SessionDraftCurrentness | null,
-): boolean {
-    if (!left || !right || left.address.kind !== right.address.kind) return left === right;
-    if (left.address.kind === 'session') {
-        if (right.address.kind !== 'session' || left.address.sessionId !== right.address.sessionId) return false;
-    } else if (right.address.kind !== 'newSession' || left.address.draftId !== right.address.draftId) {
-        return false;
-    }
-    const leftEntries = Object.entries(left.mutationIds);
-    return leftEntries.length === Object.keys(right.mutationIds).length
-        && leftEntries.every(([fieldId, mutationId]) => right.mutationIds[fieldId] === mutationId);
-}
 import {
     isHiddenSystemSession,
     ConnectedServiceIdSchema,
@@ -4162,7 +4151,7 @@ function SessionViewLoaded({
         clearDraftCurrentness,
         draftSnapshot,
         draftScope,
-    } = useDraft(sessionId, message, setMessage);
+    } = useDraft(sessionId, message, setMessage, { active: surfaceFocused });
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftSnapshot?.conflict ?? null);
     const messageRef = React.useRef(message);
     React.useEffect(() => {

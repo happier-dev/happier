@@ -1,10 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
-import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import {
   installDesktopPetOverlayBridgeProbe,
   readDesktopPetOverlayBridgeInvocations,
@@ -13,54 +9,12 @@ import {
 } from '../../src/testkit/pets/desktopPetOverlayBridgeProbe';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
+import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { setSingleAccountPetsEnabled, setSingleAccountUiFeatureToggle } from '../../src/testkit/pets/uiPetsFeatureToggle';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-async function writeDelayedFakeClaudeWrapper(params: Readonly<{
-  scriptPath: string;
-  wrappedFixturePath: string;
-  delayMs: number;
-}>): Promise<void> {
-  const script = [
-    '#!/usr/bin/env node',
-    'const { spawn } = require("node:child_process");',
-    'const readline = require("node:readline");',
-    `const wrappedFixturePath = ${JSON.stringify(params.wrappedFixturePath)};`,
-    `const delayMs = ${JSON.stringify(params.delayMs)};`,
-    'const child = spawn(process.execPath, [wrappedFixturePath, ...process.argv.slice(2)], {',
-    '  stdio: ["pipe", "pipe", "inherit"],',
-    '  env: process.env,',
-    '});',
-    'process.stdin.pipe(child.stdin);',
-    'let outputChain = Promise.resolve();',
-    'function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }',
-    'const rl = readline.createInterface({ input: child.stdout });',
-    'rl.on("line", (line) => {',
-    '  outputChain = outputChain.then(async () => {',
-    '    let messageType = null;',
-    '    try { messageType = JSON.parse(line)?.type ?? null; } catch {}',
-    '    if (messageType === "assistant" || messageType === "result") await sleep(delayMs);',
-    '    process.stdout.write(`${line}\\n`);',
-    '  });',
-    '});',
-    'function stop(signal) { child.kill(signal); }',
-    'process.on("SIGTERM", () => stop("SIGTERM"));',
-    'process.on("SIGINT", () => stop("SIGINT"));',
-    'child.on("exit", (code, signal) => {',
-    '  outputChain.then(() => {',
-    '    if (typeof code === "number") process.exit(code);',
-    '    process.exit(signal ? 1 : 0);',
-    '  });',
-    '});',
-  ].join('\n');
-
-  await writeFile(params.scriptPath, `${script}\n`, { encoding: 'utf8', mode: 0o755 });
-}
 
 function collectTrayInteractionIssues(params: Readonly<{
   sessionId: string;
@@ -100,17 +54,14 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
   test.describe.configure({ mode: 'serial' });
 
   const suiteDir = run.testDir('pets-overlay-tray-session-suite');
-  const cliHomeDir = resolve(join(suiteDir, 'cli-home'));
-  const fakeClaudeActiveStateDelayMs = 5_000;
+  const syntheticSessionId = 'pets-overlay-tray-session-e2e';
 
   let server: StartedServer | null = null;
   let ui: StartedUiWeb | null = null;
-  let daemon: StartedDaemon | null = null;
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
     test.setTimeout(900_000);
-    await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
       testDir: suiteDir,
@@ -137,7 +88,6 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
 
   test.afterAll(async () => {
     test.setTimeout(120_000);
-    await daemon?.stop().catch(() => {});
     await ui?.stop().catch(() => {});
     await server?.stop().catch(() => {});
   });
@@ -147,28 +97,9 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
-
-    const testDir = resolve(join(suiteDir, 'tray-session-interaction'));
-    const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
-    const delayedFakeClaudePath = resolve(join(testDir, 'fake-claude-delayed.cjs'));
-    await mkdir(testDir, { recursive: true });
-    await writeDelayedFakeClaudeWrapper({
-      scriptPath: delayedFakeClaudePath,
-      wrappedFixturePath: fakeClaudeFixturePath(),
-      delayMs: fakeClaudeActiveStateDelayMs,
-    });
-
-    daemon = await authenticateAndStartDaemon({
-      page,
-      testDir,
-      cliHomeDir,
-      serverUrl: server.baseUrl,
-      uiBaseUrl,
-      extraEnv: {
-        HAPPIER_CLAUDE_PATH: delayedFakeClaudePath,
-        HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLogPath,
-      },
-    });
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
     await setSingleAccountUiFeatureToggle({
       page,
@@ -182,16 +113,11 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
       enabled: true,
     });
 
-    const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir, timeoutMs: 120_000 });
-    const sessionId = await createSessionFromNewSessionComposer({
-      page,
-      uiBaseUrl,
-      machineId,
-      prompt: 'pets overlay tray e2e',
-    });
-
     await installDesktopPetOverlayBridgeProbe(page, {
-      windowState: createDesktopPetOverlayWindowState({ sessionId, title: 'pets overlay tray e2e' }),
+      windowState: createDesktopPetOverlayWindowState({
+        sessionId: syntheticSessionId,
+        title: 'pets overlay tray e2e',
+      }),
     });
     await gotoDomContentLoadedWithRetries(
       page,
@@ -199,15 +125,27 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
       180_000,
     );
     await expect(page.getByTestId('desktop-pet-overlay-root')).toHaveCount(1, { timeout: 120_000 });
+    await expect.poll(
+      async () => (await readDesktopPetOverlayBridgeInvocations(page)).some(
+        (invocation) => invocation.command === 'desktop_pet_overlay_read_window_state',
+      ),
+      { timeout: 120_000 },
+    ).toBe(true);
     const tray = page.getByTestId('desktop-pet-overlay-tray');
     await expect(tray).toHaveCount(1, { timeout: 120_000 });
-    const sessionTrayItem = page.locator(`[data-testid^="desktop-pet-overlay-tray-item-${sessionId}"]`).first();
+    const sessionTrayItem = page.locator(`[data-testid^="desktop-pet-overlay-tray-item-${syntheticSessionId}"]`).first();
     await expect(sessionTrayItem).toHaveCount(1, { timeout: 120_000 });
     const noDragValue = await sessionTrayItem.getAttribute('data-pet-no-drag');
 
-    await sessionTrayItem.click();
+    await sessionTrayItem.dispatchEvent('click');
+    await expect.poll(
+      async () => (await readDesktopPetOverlayBridgeInvocations(page)).some(
+        (invocation) => invocation.command === 'desktop_pet_overlay_show_main_window',
+      ),
+      { timeout: 120_000 },
+    ).toBe(true);
     const invocations = await readDesktopPetOverlayBridgeInvocations(page);
 
-    expect(collectTrayInteractionIssues({ sessionId, noDragValue, invocations })).toEqual([]);
+    expect(collectTrayInteractionIssues({ sessionId: syntheticSessionId, noDragValue, invocations })).toEqual([]);
   });
 });

@@ -163,18 +163,12 @@ const styles = StyleSheet.create((theme) => ({
         position: 'absolute',
         // Keep the disclosure affordance on the left of the folder icon (not as a right-side row chevron).
         left: -20,
-        top: 2,
+        top: 0,
         width: 16,
-        height: 16,
+        height: 18,
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 2,
-    },
-    directoryFolderIcon: {
-        position: 'absolute',
-        right: -1,
-        top: 1,
-        zIndex: 1,
     },
     headerActions: {
         flexDirection: 'row',
@@ -1184,7 +1178,6 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                                         name={node.isExpanded ? 'folder-open' : 'folder'}
                                         size={16}
                                         color={theme.colors.text.link}
-                                        style={styles.directoryFolderIcon}
                                     />
                                 </View>
                             )

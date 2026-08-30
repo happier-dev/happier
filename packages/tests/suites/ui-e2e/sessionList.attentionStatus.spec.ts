@@ -9,7 +9,8 @@ import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
-import { createSessionScopedSocketCollector } from '../../src/testkit/socketClient';
+import { createMachineBoundSessionScopedSocketCollector } from '../../src/testkit/sessionSocketBinding';
+import type { SocketCollector } from '../../src/testkit/socketClient';
 import { waitFor } from '../../src/testkit/timing';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
@@ -171,16 +172,29 @@ async function markWorkingSessionInProgress(params: Readonly<{
   });
 }
 
-async function connectWorkingSessionInProgress(params: Readonly<{
+async function connectAuthenticatedMachinePublisher(params: Readonly<{
   baseUrl: string;
   token: string;
   sessionId: string;
-}>): Promise<Readonly<{ close: () => void }>> {
-  await updateSessionRuntimeStatus({
-    ...params,
-    latestTurnStatus: 'in_progress',
-  });
-  return { close: () => {} };
+  thinking: boolean;
+}>): Promise<SocketCollector> {
+  const { socket } = await createMachineBoundSessionScopedSocketCollector(params);
+  socket.connect();
+  try {
+    await waitFor(async () => socket.isConnected(), {
+      timeoutMs: 20_000,
+      context: `connect authenticated machine publisher for ${params.sessionId}`,
+    });
+    socket.emit('session-alive', {
+      sid: params.sessionId,
+      time: Date.now(),
+      thinking: params.thinking,
+    });
+    return socket;
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 
 async function updateSessionRuntimeStatus(params: Readonly<{
@@ -250,31 +264,6 @@ async function postSessionTurnMutation(params: Readonly<{
 
   if (res.status !== 200 || res.data?.success !== true) {
     throw new Error(`Failed to post session turn mutation (status=${res.status}, reason=${String(res.data?.reason)})`);
-  }
-}
-
-async function connectLegacyThinkingFallback(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-}>): Promise<ReturnType<typeof createSessionScopedSocketCollector>> {
-  const socket = createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId);
-  socket.connect();
-
-  try {
-    await waitFor(async () => socket.isConnected(), {
-      timeoutMs: 20_000,
-      context: `connect legacy thinking fallback socket for ${params.sessionId}`,
-    });
-    socket.emit('session-alive', {
-      sid: params.sessionId,
-      time: Date.now(),
-      thinking: true,
-    });
-    return socket;
-  } catch (error) {
-    socket.close();
-    throw error;
   }
 }
 
@@ -572,24 +561,43 @@ test.describe('ui e2e: session list attention', () => {
     test.setTimeout(420_000);
     if (!server || !token || !uiBaseUrl || !working || !ready) throw new Error('missing session list attention fixtures');
 
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-    await chooseSessionListPlacementMode({
-      page,
-      baseUrl: uiBaseUrl,
-      triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
-      placement: 'withinGroups',
+    // The narrow-density scenario intentionally leaves its shared session in progress. Use a
+    // fresh session here so this scenario proves the live in-progress projection it establishes,
+    // rather than accidentally accepting the prior test's still-in-progress status.
+    const currentWorking = await createPlainSession({
+        baseUrl: server.baseUrl,
+        token,
+        title: 'Static working attention e2e',
     });
-    await disableWorkingStatusAnimatedText({ page, baseUrl: uiBaseUrl });
-    await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+    const workingRuntime = await connectAuthenticatedMachinePublisher({
+      baseUrl: server.baseUrl,
+      token,
+      sessionId: currentWorking.id,
+      thinking: false,
+    });
 
-    await expect(row(page, working.id)).toHaveCount(1, { timeout: 120_000 });
-    await expect(row(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
-    const workingRuntime = await connectWorkingSessionInProgress({ baseUrl: server.baseUrl, token, sessionId: working.id });
     try {
+      await markWorkingSessionInProgress({
+        baseUrl: server.baseUrl,
+        token,
+        sessionId: currentWorking.id,
+      });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+
+      await chooseSessionListPlacementMode({
+        page,
+        baseUrl: uiBaseUrl,
+        triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
+        placement: 'withinGroups',
+      });
+      await disableWorkingStatusAnimatedText({ page, baseUrl: uiBaseUrl });
+      await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+
+      await expect(row(page, currentWorking.id)).toHaveCount(1, { timeout: 120_000 });
+      await expect(row(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
       await updateSessionRuntimeStatus({
         baseUrl: server.baseUrl,
@@ -602,59 +610,15 @@ test.describe('ui e2e: session list attention', () => {
       await expect(page.getByTestId(sessionListTestIds.secondaryReadyIndicator(ready.id))).toHaveCount(1, { timeout: 60_000 });
       await expect(readySubtitleText(page, ready.id)).not.toHaveText('', { timeout: 60_000 });
 
-      const workingStatus = workingSubtitle(page, working.id);
+      const workingStatus = workingSubtitle(page, currentWorking.id);
       await expect(workingStatus).toHaveCount(1, { timeout: 60_000 });
-      const workingText = workingSubtitleText(page, working.id);
+      const workingText = workingSubtitleText(page, currentWorking.id);
       await expect(workingText).not.toHaveText('', { timeout: 60_000 });
       const firstStatusText = await workingText.textContent();
       await page.waitForTimeout(3_500);
       await expect(workingText).toHaveText(firstStatusText ?? '');
     } finally {
       workingRuntime.close();
-    }
-  });
-
-  test('keeps old-preview thinking fallback as a separate working placement path', async ({ page }) => {
-    test.setTimeout(420_000);
-    if (!server || !token || !uiBaseUrl) throw new Error('missing session list attention fixtures');
-
-    const legacyThinking = await createPlainSession({
-      baseUrl: server.baseUrl,
-      token,
-      title: 'Legacy thinking fallback e2e',
-    });
-    const before = await fetchSessionV2(server.baseUrl, token, legacyThinking.id);
-    expect(before.latestTurnStatus).toBeNull();
-
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-    await chooseSessionListPlacementMode({
-      page,
-      baseUrl: uiBaseUrl,
-      triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
-      placement: 'global',
-    });
-    await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'narrow' });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-    await expect(row(page, legacyThinking.id)).toHaveCount(1, { timeout: 120_000 });
-    const legacyRuntime = await connectLegacyThinkingFallback({
-      baseUrl: server.baseUrl,
-      token,
-      sessionId: legacyThinking.id,
-    });
-    try {
-      await expect(workingHeader(page)).toHaveCount(1, { timeout: 60_000 });
-      await expectRowInSection({
-        page,
-        headerTestId: sessionListTestIds.workingHeader,
-        sessionId: legacyThinking.id,
-      });
-    } finally {
-      legacyRuntime.close();
     }
   });
 

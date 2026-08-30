@@ -33,6 +33,14 @@ const resolveSessionComposerSendMock = vi.hoisted(() => vi.fn(() => ({ kind: 'no
 const sessionAbortMock = vi.hoisted(() => vi.fn());
 
 installSessionShellCommonModuleMocks({
+  featureEnabled: () => ({
+    useFeatureEnabled: (featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
+      if (featureId === 'attachments.uploads' && attachmentsFeatureScopeState.enabledForServerId != null) {
+        return scope?.scopeKind === 'spawn' && scope.serverId === attachmentsFeatureScopeState.enabledForServerId;
+      }
+      return featureEnabledState[featureId] === true;
+    },
+  }),
   reactNative: async () =>
     createReactNativeWebMock({
       View: 'View',
@@ -193,14 +201,6 @@ const featureEnabledState: Record<string, boolean> = {
   'execution.runs': false,
   'attachments.uploads': false,
 };
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
-    if (featureId === 'attachments.uploads' && attachmentsFeatureScopeState.enabledForServerId != null) {
-      return scope?.scopeKind === 'spawn' && scope.serverId === attachmentsFeatureScopeState.enabledForServerId;
-    }
-    return featureEnabledState[featureId] === true;
-  },
-}));
 
 vi.mock('@/utils/platform/responsive', () => ({
   getDeviceType: () => 'phone',

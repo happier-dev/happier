@@ -23,6 +23,9 @@ async function runAuthLoginPrintJson({ rootDir, prefix, stackEnvLines, extraEnv 
         cwd: rootDir,
         env: fixture.buildEnv({
           HAPPIER_STACK_RUNTIME_MODE: 'source',
+          HAPPIER_SERVER_URL: '',
+          HAPPIER_PUBLIC_SERVER_URL: '',
+          HAPPIER_WEBAPP_URL: '',
           ...extraEnv,
         }),
       }

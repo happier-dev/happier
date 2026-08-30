@@ -22,7 +22,6 @@ const styles = StyleSheet.create((theme) => ({
     tab: {
         alignItems: 'center',
         justifyContent: 'center',
-        minWidth: 50,
         flexShrink: 1,
         zIndex: 1,
     },
@@ -143,7 +142,11 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                             onAccessibilityAction={props.onBandAccessibilityAction
                                 ? (event) => props.onBandAccessibilityAction?.(event.nativeEvent.actionName)
                                 : undefined}
-                            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
+                            style={[styles.tab, {
+                                minWidth: metrics.tabMinWidth,
+                                paddingVertical: metrics.tabPaddingVertical,
+                                paddingHorizontal: metrics.tabPaddingHorizontal,
+                            }]}
                         >
                             {active ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
                             <View style={styles.iconContainer}>

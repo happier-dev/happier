@@ -66,9 +66,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
                 accessibilityRole="button"
                 accessibilityLabel={t('newSession.title')}
                 onPress={handlePress}
-                // No `hitSlop`: the capsule is the full bar height, so even the
-                // smallest tab-bar size paints a ≥41pt target, and slop here would
-                // overlap the neighbouring tab's own slop across the 8pt gap.
+                // Keep this capsule's hit area out of the neighbouring tab's expanded press area.
                 focusRingRadius={CAPSULE_RADIUS}
                 style={styles.press}
             >

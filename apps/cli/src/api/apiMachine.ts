@@ -116,6 +116,7 @@ const REQUIRED_MACHINE_CONTROL_RPC_METHODS = Object.freeze([
     RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
     RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
     RPC_METHODS.STOP_SESSION,
+    RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
 ]);
 const MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS = 10_000;
 
@@ -812,11 +813,29 @@ export class ApiMachineClient {
                                 missingMethods: unregisteredCoreHandlers,
                             });
                         } else {
-                            const registrationResult = await this.publishMachineControlRunningWhenReady({
+                            let registrationResult = await this.publishMachineControlRunningWhenReady({
                                 socket,
                                 transportGeneration,
                                 timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS,
                             });
+                            const isCurrentTransport = () => (
+                                this.socket === socket
+                                && this.activeTransportGeneration === transportGeneration
+                                && socket.connected === true
+                            );
+                            if (
+                                registrationResult.readiness.status === 'timeout'
+                                && isCurrentTransport()
+                            ) {
+                                this.rpcHandlerManager.replayUnacknowledgedHandlerRegistrations(
+                                    REQUIRED_MACHINE_CONTROL_RPC_METHODS,
+                                );
+                                registrationResult = await this.publishMachineControlRunningWhenReady({
+                                    socket,
+                                    transportGeneration,
+                                    timeoutMs: MACHINE_CONTROL_RPC_REGISTRATION_TIMEOUT_MS,
+                                });
+                            }
                             controlReady = registrationResult.ready;
                             if (registrationResult.readiness.status !== 'ready') {
                                 logger.warn('[API MACHINE] Machine-control registration did not become ready; daemon remains offline', {

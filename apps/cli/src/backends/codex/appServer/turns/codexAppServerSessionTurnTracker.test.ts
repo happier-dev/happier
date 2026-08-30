@@ -67,6 +67,85 @@ describe('createCodexAppServerSessionTurnTracker', () => {
         expect(session.updateMetadata).not.toHaveBeenCalled();
     });
 
+    it('starts the provider turn without waiting on the provider-acceptance commit, then backfills rollback anchors', async () => {
+        const { lifecycle, session } = createLifecycleHarness();
+        let resolveCommittedSeq!: (seq: number | null) => void;
+        const waitForCommittedUserMessageSeq = vi.fn(async () => await new Promise<number | null>((resolve) => {
+            resolveCommittedSeq = resolve;
+        }));
+        const tracker = createCodexAppServerSessionTurnTracker({
+            session: {
+                ...session,
+                getCommittedUserMessageSeq: vi.fn(() => null),
+                waitForCommittedUserMessageSeq,
+            },
+            getProviderThreadId: () => 'thread-1',
+            now: () => 100,
+        });
+
+        const beginPromise = tracker.beginTurn({
+            turnId: null,
+            startUserMessageLocalId: 'prompt-local-slow',
+            startSeqInclusive: null,
+        });
+        await expect(beginPromise).resolves.toBeUndefined();
+
+        expect(waitForCommittedUserMessageSeq).toHaveBeenCalledWith('prompt-local-slow', {
+            timeoutMs: 10_000,
+        });
+        expect(lifecycle.beginTurn).toHaveBeenCalledWith({ provider: 'codex' });
+        expect(lifecycle.appendTranscriptAnchors).not.toHaveBeenCalled();
+
+        resolveCommittedSeq(10);
+        await tracker.completeActiveTurn({ endSeqInclusive: 15 });
+
+        expect(lifecycle.appendTranscriptAnchors).toHaveBeenCalledWith({
+            provider: 'codex',
+            transcriptAnchors: expect.objectContaining({ startUserMessageSeq: 10 }),
+        });
+        expect(lifecycle.markRollbackEligible).toHaveBeenCalledWith(expect.objectContaining({
+            turnId: 'session-turn-1',
+            transcriptAnchors: expect.objectContaining({ startUserMessageSeq: 10, endSeqInclusive: 15 }),
+        }));
+    });
+
+    it('uses the already committed prompt seq when no pending local id is available', async () => {
+        const { lifecycle, session } = createLifecycleHarness();
+        const tracker = createCodexAppServerSessionTurnTracker({
+            session: {
+                ...session,
+                getCommittedUserMessageSeq: vi.fn(() => null),
+                waitForCommittedUserMessageSeq: vi.fn(async () => null),
+            },
+            getProviderThreadId: () => 'thread-1',
+            now: () => 100,
+        });
+
+        await tracker.beginTurn({
+            turnId: 'provider-turn-1',
+            startUserMessageLocalId: null,
+            startUserMessageSeq: 10,
+            startSeqInclusive: 9,
+        });
+        await tracker.completeActiveTurn({ endSeqInclusive: 15 });
+
+        expect(lifecycle.beginTurn).toHaveBeenCalledWith(expect.objectContaining({
+            transcriptAnchors: expect.objectContaining({
+                startUserMessageSeq: 10,
+                userMessageSeqs: [10],
+                startSeqInclusive: 9,
+            }),
+        }));
+        expect(lifecycle.markRollbackEligible).toHaveBeenCalledWith({
+            turnId: 'session-turn-1',
+            provider: 'codex',
+            transcriptAnchors: expect.objectContaining({
+                startUserMessageSeq: 10,
+                endSeqInclusive: 15,
+            }),
+        });
+    });
+
     it('adds prompt anchors to a generic lifecycle begin without starting another turn', async () => {
         const { lifecycle, session } = createLifecycleHarness();
         const tracker = createCodexAppServerSessionTurnTracker({

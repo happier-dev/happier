@@ -53,6 +53,12 @@ test('release dry-run JSON resolves the actual promotion source independently of
       operationId: 'rel_candidate_20260809',
       releaseNotesId: '2026-08-09.1',
       approvals: { qualifiedV4Activation: false },
+      overrides: {
+        waiveCi: false,
+        includeValidationSuiteIds: [],
+        waiveValidationSuiteIds: [],
+        reason: '',
+      },
     });
   } finally {
     stub.cleanup();

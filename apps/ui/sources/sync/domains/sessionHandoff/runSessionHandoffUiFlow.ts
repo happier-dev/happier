@@ -6,9 +6,10 @@ import { openSessionHandoffProgressModal } from '@/components/sessions/handoff/o
 import { openSessionHandoffFailureRecoveryModal } from '@/components/sessions/handoff/openSessionHandoffFailureRecoveryModal';
 
 import { executeSessionHandoffAction } from './executeSessionHandoffAction';
-import { subscribeSessionHandoffProgress } from './sessionHandoffProgressEvents';
+import { subscribeActionOperationByRequest } from '@/sync/domains/actionOperations/subscribeActionOperationByRequest';
 import { performSessionHandoffRecoveryAction } from '../../ops/sessionHandoffs';
 import { sync } from '@/sync/sync';
+import { randomUUID } from '@/platform/randomUUID';
 
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<unknown>;
 
@@ -16,6 +17,7 @@ export type RunSessionHandoffUiFlowArgs = Readonly<{
     execute: ExecuteAction;
     sessionId: string;
     targetMachineId: string;
+    targetPath?: string;
     targetSessionStorageMode?: 'direct' | 'persisted';
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     context: ActionExecutorContext;
@@ -56,14 +58,17 @@ export async function runSessionHandoffUiFlow(
     args: RunSessionHandoffUiFlowArgs,
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
+        const actionRequestId = randomUUID();
         const modalId = openSessionHandoffProgressModal();
-        const unsubscribeProgress = subscribeSessionHandoffProgress((update) => {
-            if (update.sessionId !== args.sessionId || update.targetMachineId !== args.targetMachineId) {
-                return;
-            }
+        const unsubscribeProgress = subscribeActionOperationByRequest({
+            actionId: 'session.handoff',
+            requestId: actionRequestId,
+            sessionId: args.sessionId,
+            onUpdate: (operation) => {
             Modal.update(modalId, {
-                status: update.status,
+                operation,
             });
+            },
         });
         let progressModalClosed = false;
         const closeProgressModal = () => {
@@ -78,7 +83,10 @@ export async function runSessionHandoffUiFlow(
             const releaseUserRequestLease = sync.acquireUserRequestLease();
             let result: Awaited<ReturnType<typeof executeSessionHandoffAction>>;
             try {
-                result = await executeSessionHandoffAction(args as any);
+                result = await executeSessionHandoffAction({
+                    ...args,
+                    context: { ...args.context, actionRequestId },
+                } as any);
             } finally {
                 releaseUserRequestLease();
             }

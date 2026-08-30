@@ -37,8 +37,19 @@ test('hstack start materializes the full server default and postgresql alias', a
   }
 });
 
-test('hstack start rejects incompatible, empty, and unsupported full providers before startup', async () => {
-  for (const provider of ['sqlite', 'pglite', '', 'unsupported']) {
+test('hstack start accepts every supported provider under the full server preset', async () => {
+  for (const provider of ['sqlite', 'pglite']) {
+    const result = await runNode([runScript, '--server=happier-server', '--no-ui', '--json'], {
+      cwd: stackRootDir,
+      env: isolatedEnv({ HAPPIER_DB_PROVIDER: provider }),
+    });
+    assert.equal(result.code, 0, `provider=${JSON.stringify(provider)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(JSON.parse(result.stdout).dbProvider, provider);
+  }
+});
+
+test('hstack start rejects empty and unsupported providers before startup', async () => {
+  for (const provider of ['', 'unsupported']) {
     const result = await runNode([runScript, '--server=happier-server', '--no-ui', '--json'], {
       cwd: stackRootDir,
       env: isolatedEnv({ HAPPIER_DB_PROVIDER: provider }),

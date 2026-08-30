@@ -835,7 +835,11 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     const onMessage = vi.fn<(message: RawJSONLines) => void>();
     const onTranscriptMessageSuppressed = vi.fn<(message: RawJSONLines) => void>();
     const onPromptAcceptedByProvider = vi.fn();
-    const onReady = vi.fn();
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const onReady = vi.fn(() => resolveReady());
     let subscribedHook: ((data: SessionHookData) => void) | undefined;
     let injected = false;
     let consumed = false;
@@ -980,7 +984,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
       });
 
       await waitUntil(() => onMessage.mock.calls.some(([message]) => message.uuid === 'resumed-hook-assistant-row'));
-      await waitUntil(() => onReady.mock.calls.length === 1);
+      await ready;
       expect(onPromptAcceptedByProvider).toHaveBeenCalledTimes(1);
       expect(onPromptAcceptedByProvider).toHaveBeenCalledWith({
         message: prompt,

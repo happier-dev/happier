@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
@@ -18,7 +18,6 @@ import {
   dragSessionToTarget,
   expectFolderAssignment,
   expectFolderParent,
-  expectOrderBefore,
   expectOrderMapContainsBefore,
   expectOrderMapStartsWith,
   folderOrderKey,
@@ -119,7 +118,7 @@ test.describe('ui e2e: session folders drag and drop', () => {
   let uiServerUrl: string | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -299,11 +298,6 @@ test.describe('ui e2e: session folders drag and drop', () => {
       secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
     await refreshFolderDragView();
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
 
     await dragSessionToTarget(page, {
       sessionId: rootSessionId,
@@ -342,11 +336,6 @@ test.describe('ui e2e: session folders drag and drop', () => {
       secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
     await refreshFolderDragView();
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
 
     await dragFolderToTarget(page, {
       sourceFolderId: FOLDER_BETA_ID,

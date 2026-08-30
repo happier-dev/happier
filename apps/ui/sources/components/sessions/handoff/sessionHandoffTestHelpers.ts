@@ -89,9 +89,13 @@ export function installSessionHandoffCommonModuleMocks(
         }
 
         return {
+            FontWeights: { regular: '400', semiBold: '500', bold: '600' },
             Typography: {
                 default: () => ({}),
                 mono: () => ({}),
+                keyHint: () => ({}),
+                pillLabel: () => ({}),
+                tabular: () => ({}),
             },
         };
     });

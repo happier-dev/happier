@@ -61,8 +61,8 @@ export function createDesktopPetOverlayBridgeProbeInitScript(
       ...(target.__TAURI_INTERNALS__ ?? {}),
       invoke: async (command: string, args?: Record<string, unknown>) => {
         target[invocationKey]?.push({ command, args });
-        if (existingInvoke) return existingInvoke(command, args);
         if (command === 'desktop_pet_overlay_read_window_state') return resolvedWindowState;
+        if (existingInvoke) return existingInvoke(command, args);
         return null;
       },
     };

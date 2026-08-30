@@ -169,7 +169,7 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         });
     });
 
-    it('ignores internal workspace dist publications while continuing to watch source', () => {
+    it('blocks generated workspace artifacts while retaining canonical source paths', () => {
         process.env.HAPPIER_STACK_STACK = 'qa-test';
         delete process.env.CI;
 
@@ -183,5 +183,21 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
 
         expect(isBlocked(path.resolve(__dirname, '../../../../packages/agents/dist/models.js'))).toBe(true);
         expect(isBlocked(path.resolve(__dirname, '../../../../packages/agents/src/models.ts'))).toBe(false);
+
+        for (const transientFilePath of [
+            '/workspace/.tmp.4182/apps/ui/sources/index.ts',
+            String.raw`C:\workspace\.tmp.4182\apps\ui\sources\index.ts`,
+            '/workspace/packages/agents/dist.__finalize_backup__.4182/index.js',
+            String.raw`C:\workspace\packages\agents\dist.__finalize_backup__.4182\index.js`,
+        ]) {
+            expect(isBlocked(transientFilePath)).toBe(true);
+        }
+
+        for (const sourceFilePath of [
+            '/workspace/packages/agents/src/index.ts',
+            String.raw`C:\workspace\packages\agents\src\index.ts`,
+        ]) {
+            expect(isBlocked(sourceFilePath)).toBe(false);
+        }
     });
 });

@@ -10,6 +10,7 @@ import {
   type SessionHandoffMetadataV2,
   type SessionHandoffPrepareTargetResultGetResponse,
   type SessionHandoffStartResponse,
+  type SessionHandoffStatus,
   type SessionHandoffWorkspaceTransfer,
 } from '@happier-dev/protocol';
 
@@ -17,6 +18,7 @@ export type SessionHandoffCoordinatorInput = Readonly<{
   sessionId: string;
   sourceMachineId: string;
   targetMachineId: string;
+  targetPath?: string;
   sessionStorageMode: 'direct' | 'persisted';
   targetSessionStorageMode?: 'direct' | 'persisted';
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
@@ -136,6 +138,47 @@ function phase(update: (value: OperationUpdate) => void, value: string, label: s
   update({ progress: { kind: 'phase', phase: value, label } });
 }
 
+function workspaceProgressLabel(status: SessionHandoffStatus): string | null {
+  const checkpoint = status.progress?.checkpoint;
+  if (checkpoint === 'scan_source') return 'Scanning source workspace';
+  if (checkpoint === 'plan') return 'Planning workspace transfer';
+  if (checkpoint === 'transfer_blobs') return 'Transferring workspace';
+  if (checkpoint === 'stage_target') return 'Staging target workspace';
+  if (checkpoint === 'apply') return 'Applying workspace changes';
+  if (checkpoint === 'import_session') return 'Importing session state';
+  if (checkpoint === 'finalize') return 'Finalizing handoff';
+  return null;
+}
+
+function projectTargetStatusProgress(update: (value: OperationUpdate) => void, value: unknown): void {
+  const candidate = record(value);
+  const parsed = SessionHandoffStatusSchema.safeParse(candidate?.status ?? value);
+  if (!parsed.success) return;
+  const status = parsed.data;
+  const progress = status.progress;
+  if (!progress) return;
+  const label = workspaceProgressLabel(status);
+  if (!label) return;
+  if (
+    progress.checkpoint === 'transfer_blobs'
+    && typeof progress.planned.totalBytes === 'number'
+    && progress.planned.totalBytes > 0
+    && typeof progress.transferred.bytes === 'number'
+  ) {
+    const relativePath = progress.current?.relativePath?.trim();
+    update({
+      progress: {
+        kind: 'determinate',
+        current: Math.min(progress.transferred.bytes, progress.planned.totalBytes),
+        total: progress.planned.totalBytes,
+        label: relativePath ? `${label} · ${relativePath}` : label,
+      },
+    });
+    return;
+  }
+  phase(update, `workspace_${progress.checkpoint}`, label);
+}
+
 function readCapability(value: unknown): TargetCapability | null {
   const candidate = record(value);
   return candidate?.protocolVersion === 2
@@ -231,11 +274,12 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
             allowServerRoutedFallback: false,
             sourceSessionStorageMode: input.sessionStorageMode,
             ...(input.targetSessionStorageMode ? { targetSessionStorageMode: input.targetSessionStorageMode } : {}),
-            targetPath: started.targetPath,
+            targetPath: input.targetPath ?? started.targetPath,
             endpointCandidates: started.endpointCandidates,
             ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
             ...(input.workspaceTransfer ? { workspaceTransfer: input.workspaceTransfer } : {}),
           });
+          projectTargetStatusProgress(update, preparedRaw);
           const cancelledAfterPrepare = await acknowledgeCancellation();
           if (cancelledAfterPrepare) return cancelledAfterPrepare;
           if (isFailure(preparedRaw)) {
@@ -249,6 +293,7 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
             const cancelledBeforePoll = await acknowledgeCancellation();
             if (cancelledBeforePoll) return cancelledBeforePoll;
             const statusRaw = port.getTargetStatus ? await port.getTargetStatus({ handoffId }) : null;
+            projectTargetStatusProgress(update, statusRaw);
             const statusRecord = record(statusRaw);
             // Result-get `not_found` only means the final payload is not ready. Status-get owns
             // durable target-job reconciliation, so its `not_found` means there is no execution
@@ -290,10 +335,20 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
           });
           const cancelledAfterResume = await acknowledgeCancellation();
           if (cancelledAfterResume) return cancelledAfterResume;
-          if (!SessionHandoffTargetResumeResponseV2Schema.safeParse(resumedRaw).success) {
+          const resumedParsed = SessionHandoffTargetResumeResponseV2Schema.safeParse(resumedRaw);
+          if (!resumedParsed.success) {
             const resumedFailure = failure(resumedRaw, 'target_resume_failed', 'Failed to resume handoff target');
             await abortBeforeCommit(resumedFailure.errorCode);
             return resumedFailure;
+          }
+          if (resumedParsed.data.disposition === 'preexisting_or_adopted') {
+            const alreadyRunningFailure = {
+              ok: false,
+              errorCode: 'target_session_already_running',
+              error: 'This session is already running on the selected target',
+            } as const;
+            await abortBeforeCommit(alreadyRunningFailure.errorCode);
+            return alreadyRunningFailure;
           }
 
           phase(update, 'confirming_target', 'Confirming target session');

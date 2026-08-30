@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import type { PathLike, RmOptions } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -8,6 +9,13 @@ import { installProviderCli } from './install.js';
 
 function windowsCodexAssetName(): string {
   return `codex-package-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-pc-windows-msvc.tar.gz`;
+}
+
+function nativeCodexAssetName(): string {
+  if (process.platform === 'darwin') {
+    return `codex-package-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin.tar.gz`;
+  }
+  return `codex-package-${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-musl.tar.gz`;
 }
 
 function filesystemError(code: string, message: string): NodeJS.ErrnoException {
@@ -112,6 +120,86 @@ describe('installProviderCli managed promotion', () => {
       expect(await readFile(join(installRoot, 'current', 'bin', 'codex.exe'), 'utf8')).toBe('release-two:bin/codex.exe');
     } finally {
       releaseFirstPromotion.resolve();
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the managed Codex command reachable while an update is being activated', async () => {
+    if (process.platform === 'win32') return;
+
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-continuity-home-'));
+    const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-continuity-log-'));
+    const installRoot = join(homeDir, 'tools', 'providers', 'codex');
+    const currentCommandPath = join(installRoot, 'current', 'bin', 'codex');
+    const activeCommandPath = join(installRoot, 'active', 'bin', 'codex');
+    const candidatePromotionPaused = deferred();
+    const releaseCandidatePromotion = deferred();
+    try {
+      await mkdir(dirname(currentCommandPath), { recursive: true });
+      await writeFile(currentCommandPath, '#!/bin/sh\nexit 0\n', 'utf8');
+      await chmod(currentCommandPath, 0o755);
+      const renameManagedInstallPath = vi.fn(async (source: string, destination: string) => {
+        if (basename(source) === 'candidate') {
+          candidatePromotionPaused.resolve();
+          await releaseCandidatePromotion.promise;
+        }
+        await rename(source, destination);
+      }) as typeof rename;
+
+      const installUpdate = () => installProviderCli({
+        providerId: 'codex',
+        platform: process.platform as 'darwin' | 'linux',
+        logDir,
+        env: {
+          ...process.env,
+          HAPPIER_HOME_DIR: homeDir,
+          PATH: '',
+        },
+        skipIfInstalled: false,
+        deps: {
+          fetchGitHubLatestRelease: async () => ({
+            assets: [{
+              name: nativeCodexAssetName(),
+              browser_download_url: 'https://example.invalid/codex.tar.gz',
+              digest: 'sha256:test-fixture',
+            }],
+          }),
+          downloadGitHubReleaseAsset: async () => undefined,
+          extractGitHubReleaseAsset: async ({ outputDir, archiveEntries }) => {
+            for (const entry of archiveEntries ?? []) {
+              const destinationPath = join(outputDir ?? '', ...entry.destinationPath.split('/'));
+              await mkdir(dirname(destinationPath), { recursive: true });
+              const contents = entry.destinationPath === 'bin/codex'
+                ? '#!/bin/sh\nexit 0\n'
+                : `release-one:${entry.destinationPath}`;
+              await writeFile(destinationPath, contents, 'utf8');
+              if (entry.destinationPath === 'bin/codex') await chmod(destinationPath, 0o755);
+            }
+          },
+          renameManagedInstallPath,
+        },
+      });
+      const promotion = installUpdate();
+
+      const paused = await Promise.race([
+        candidatePromotionPaused.promise.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+      ]);
+      expect(paused).toBe(true);
+      if (!paused) return;
+      expect(spawnSync(currentCommandPath).status).toBe(0);
+      releaseCandidatePromotion.resolve();
+
+      const result = await promotion;
+      expect(result.ok).toBe(true);
+      expect(spawnSync(currentCommandPath).status).toBe(0);
+      expect(spawnSync(activeCommandPath).status).toBe(0);
+      const repeatResult = await installUpdate();
+      expect(repeatResult.ok).toBe(true);
+      expect(spawnSync(activeCommandPath).status).toBe(0);
+    } finally {
+      releaseCandidatePromotion.resolve();
       await rm(homeDir, { recursive: true, force: true });
       await rm(logDir, { recursive: true, force: true });
     }

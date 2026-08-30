@@ -23,6 +23,7 @@ const mockState = vi.hoisted(() => ({
     wizardRenders: 0,
     portalScopeRenders: 0,
     routerPush: vi.fn(),
+    routerReplace: vi.fn(),
     routerSetParams: vi.fn(),
     ordinaryPointerSet: vi.fn(),
 }));
@@ -123,6 +124,7 @@ vi.mock('expo-router', async () => {
         params: mockState.localSearchParams,
         router: {
             push: (...args: unknown[]) => mockState.routerPush(...args),
+            replace: (...args: unknown[]) => mockState.routerReplace(...args),
             setParams: (...args: unknown[]) => mockState.routerSetParams(...args),
         },
     });
@@ -233,6 +235,7 @@ afterEach(() => {
     mockState.wizardRenders = 0;
     mockState.portalScopeRenders = 0;
     mockState.routerPush.mockReset();
+    mockState.routerReplace.mockReset();
     mockState.routerSetParams.mockReset();
     mockState.ordinaryPointerSet.mockReset();
 });
@@ -367,7 +370,7 @@ describe('/new (blocking guidance)', () => {
         expect(mockState.ordinaryPointerSet).not.toHaveBeenCalled();
 
         await pressTestInstanceAsync(screen.findByProps({ testID: 'new-session-draft-start-another' }));
-        expect(mockState.routerPush).toHaveBeenCalledWith({
+        expect(mockState.routerReplace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
                 draftId: '85ffed43-744d-4bad-86ac-f2882dcaa6f8',

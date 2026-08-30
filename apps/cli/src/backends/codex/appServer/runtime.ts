@@ -4310,6 +4310,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         activeThreadId: string,
         options?: Readonly<{
             localId?: string | null;
+            userMessageSeq?: number | null;
             providerPrompt?: CodexAppServerPendingProviderPrompt | null;
         }>,
     ): Promise<PendingTurn> => {
@@ -4340,6 +4341,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         await turnBoundaryTracker.beginTurn({
             turnId: null,
             startUserMessageLocalId: options?.localId ?? null,
+            startUserMessageSeq: options?.userMessageSeq ?? null,
             startSeqInclusive: pendingTurnStartSeqInclusive,
         });
         return activeTurn;
@@ -4758,6 +4760,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 const pendingProviderPrompt = trackPendingProviderPrompt(promptForAttempt, optionsForAttempt);
                 const activeTurn = await beginPendingTurnForThread(activeThreadId, {
                     localId: optionsForAttempt?.localId ?? null,
+                    userMessageSeq: optionsForAttempt?.userMessageSeq ?? null,
                     providerPrompt: pendingProviderPrompt,
                 });
                 try {
@@ -5083,7 +5086,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     ...(applied.recovery ? { recovery: applied.recovery } : {}),
                 };
             }
-            latestConnectedServiceRuntimeIdentity = buildAppliedRuntimeIdentity(applied.activeAccountId, null);
+            const appliedRuntimeIdentity = buildAppliedRuntimeIdentity(applied.activeAccountId, null);
+            latestConnectedServiceRuntimeIdentity = appliedRuntimeIdentity;
             if (applied.durability.persisted === false) {
                 const errorCode = applied.durability.errorCode;
                 return {
@@ -5094,72 +5098,54 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     activeAccountId: applied.activeAccountId,
                     partialState: 'runtime_auth_applied',
                     recovery: 'restart_resume',
-                    verification: buildDirectLiveExactVerification(latestConnectedServiceRuntimeIdentity),
+                    verification: buildDirectLiveExactVerification(appliedRuntimeIdentity),
                     durability: applied.durability,
                 };
             }
             unavailableConnectedServiceAuthGroup = null;
 
-            let accountLabel: string | null = null;
-            let diagnostics: Readonly<{
-                accountRead: Readonly<{
-                    status: 'failed';
-                    reason: 'account_read_diagnostics_failed';
-                }>;
-            }> | undefined;
-            try {
-                accountLabel = (await readCodexLiveAccountIdentityFromClient({
-                    request: async (_method, params) => await client.request('account/read', params),
-                })).accountLabel;
-                latestConnectedServiceRuntimeIdentity = {
-                    ...latestConnectedServiceRuntimeIdentity,
-                    accountLabel,
-                };
-            } catch (error) {
-                logger.debug('[codex-app-server] Failed to read account diagnostics after connected-service auth apply (non-fatal)', error);
-                diagnostics = {
-                    accountRead: {
-                        status: 'failed',
-                        reason: 'account_read_diagnostics_failed',
-                    },
-                };
-            }
+            // Application settlement ends at the exact provider apply + durable auth-store
+            // boundary above. Account/quota reads are useful observations, but making the
+            // fan-out RPC wait for them turns a slow provider diagnostic into a false hot-
+            // apply failure. Keep those observations on the existing provider-owned path
+            // and fence their writes against the exact applied identity instead.
+            void (async () => {
+                let observationIdentity = appliedRuntimeIdentity;
+                try {
+                    const accountLabel = (await readCodexLiveAccountIdentityFromClient({
+                        request: async (_method, params) => await client.request('account/read', params),
+                    })).accountLabel;
+                    if (latestConnectedServiceRuntimeIdentity !== appliedRuntimeIdentity) return;
+                    observationIdentity = {
+                        ...appliedRuntimeIdentity,
+                        accountLabel,
+                    };
+                    latestConnectedServiceRuntimeIdentity = observationIdentity;
+                } catch (error) {
+                    logger.debug('[codex-app-server] Failed to read account diagnostics after connected-service auth apply (non-fatal)', error);
+                }
 
-            try {
-                const operationIdentityAtStart = latestConnectedServiceRuntimeIdentity;
-                const rawSnapshot = await readCodexRateLimitsSnapshot({
-                    request: async (_method, params) => await client.request('account/rateLimits/read', params),
-                });
-                await publishRateLimitSnapshot(rawSnapshot, {
-                    operationIdentityAtStart,
-                });
-            } catch (error) {
-                logger.debug('[codex-app-server] Failed to publish quota snapshot after connected-service auth apply', error);
-                return {
-                    ok: true,
-                    appliedVia: applied.appliedVia,
-                    activeAccountId: applied.activeAccountId,
-                    verification: buildDirectLiveExactVerification(latestConnectedServiceRuntimeIdentity),
-                    durability: applied.durability,
-                    ...(diagnostics ? { diagnostics } : {}),
-                    quotaSnapshotDelivery: {
-                        delivered: false,
-                        errorCode: 'post_apply_quota_probe_failed',
-                    },
-                };
-            }
+                try {
+                    const rawSnapshot = await readCodexRateLimitsSnapshot({
+                        request: async (_method, params) => await client.request('account/rateLimits/read', params),
+                    });
+                    await publishRateLimitSnapshot(rawSnapshot, {
+                        operationIdentityAtStart: observationIdentity,
+                    });
+                } catch (error) {
+                    logger.debug('[codex-app-server] Failed to publish quota snapshot after connected-service auth apply (non-fatal)', error);
+                }
+            })();
 
             return {
                 ok: true,
                 appliedVia: applied.appliedVia,
                 activeAccountId: applied.activeAccountId,
                 verification: {
-                    ...buildDirectLiveExactVerification(latestConnectedServiceRuntimeIdentity, accountLabel),
+                    ...buildDirectLiveExactVerification(appliedRuntimeIdentity),
                     durability: applied.durability,
                 },
                 durability: applied.durability,
-                ...(diagnostics ? { diagnostics } : {}),
-                accountLabel,
             };
         },
         readConnectedServiceRuntimeIdentity: async (request) => {
@@ -5213,7 +5199,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 },
                 runtime: {
                     safeToProbe: true,
-                    safeToApply: !isProviderTurnInFlight(),
+                    // Codex account/login/start is the provider-owned direct-live
+                    // hot-auth boundary and is supported while a turn is active.
+                    // `inProviderTurn` remains informational; it must not make the
+                    // generic coordinator defer or restart an otherwise valid apply.
+                    safeToApply: true,
                     inProviderTurn: isProviderTurnInFlight(),
                     profileId: identity.profileId,
                     ...(identity.groupId ? { groupId: identity.groupId } : {}),

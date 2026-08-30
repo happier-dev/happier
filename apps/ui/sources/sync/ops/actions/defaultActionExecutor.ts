@@ -235,6 +235,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
     sessionHandoffStart: async ({
       sessionId,
       targetMachineId,
+      targetPath,
       requestId: requestedRequestId,
       targetSessionStorageMode,
       workspaceTransfer,
@@ -264,6 +265,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         sessionId: sid,
         sourceMachineId,
         targetMachineId: tid,
+        ...(targetPath ? { targetPath } : {}),
         sessionStorageMode,
         requestId,
         ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),

@@ -45,7 +45,12 @@ describe('core e2e: Claude fast-start', () => {
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    const { serverId } = await seedCliAuthForServer({
+      cliHome,
+      serverUrl: server.baseUrl,
+      token: auth.token,
+      secret,
+    });
 
     const fakeClaudePath = fakeClaudeFixturePath();
     const fakeLog = resolve(join(testDir, 'fake-claude.jsonl'));
@@ -68,6 +73,7 @@ describe('core e2e: Claude fast-start', () => {
       CI: '1',
       HAPPIER_VARIANT: 'dev',
       HAPPIER_HOME_DIR: cliHome,
+      HAPPIER_ACTIVE_SERVER_ID: serverId,
       HAPPIER_SERVER_URL: server.baseUrl,
       HAPPIER_WEBAPP_URL: server.baseUrl,
       HAPPIER_CLAUDE_PATH: fakeClaudePath,

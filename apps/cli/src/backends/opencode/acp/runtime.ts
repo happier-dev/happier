@@ -26,6 +26,7 @@ export function createOpenCodeAcpRuntime(params: {
    * Used for provider-enforced permission/sandbox policies that are configured at process start.
    */
   getPermissionMode?: () => PermissionMode | null | undefined;
+  processEnv?: NodeJS.ProcessEnv;
 }) {
   const turnChangeCollector = new TurnChangeSetCollector({
     provider: 'opencode',
@@ -47,6 +48,7 @@ export function createOpenCodeAcpRuntime(params: {
       machineId: params.machineId,
     },
     getPermissionMode: params.getPermissionMode,
+    processEnv: params.processEnv,
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: params.providerInputConsumer,
     hooks: {

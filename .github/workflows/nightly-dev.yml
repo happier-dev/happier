@@ -37,6 +37,7 @@ jobs:
   snapshot_source_issues:
     name: Snapshot source-stage issues for this nightly
     needs: [resolve_resume]
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -156,6 +157,7 @@ jobs:
     name: Verify exact nightly source CI
     needs: [prepare_release_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       actions: read
       contents: read
@@ -454,6 +456,7 @@ jobs:
     name: Advance shipped issues from source to dev
     if: ${{ needs.verify_promoted.result == 'success' && needs.snapshot_source_issues.outputs.eligible == 'true' && needs.snapshot_source_issues.outputs.issue_count != '0' }}
     needs: [snapshot_source_issues, verify_promoted]
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read

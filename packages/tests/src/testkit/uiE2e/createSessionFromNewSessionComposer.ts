@@ -1,15 +1,29 @@
 import { expect, type Page } from '@playwright/test';
 
-import { gotoDomContentLoadedWithPathFallback } from './pageNavigation';
+import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries } from './pageNavigation';
+
+export type CreateSessionFromNewSessionComposerReadiness = 'route' | 'first-turn-reload-safe';
+
+export type CreatedSessionFromNewSessionComposer = Readonly<{
+  sessionId: string;
+  sessionHref: string;
+}>;
 
 type CreateSessionFromNewSessionComposerParams = Readonly<{
   page: Page;
   uiBaseUrl: string;
   machineId: string;
   prompt: string;
+  readiness?: CreateSessionFromNewSessionComposerReadiness;
 }>;
 
 type MachineSelectionOpenResult = 'picker_open' | 'returned_to_new';
+
+const COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR = '[data-testid^="transcript-message-"]:not([data-testid*=":"])';
+
+export function visibleNewSessionComposer(page: Page) {
+  return page.locator('textarea[data-testid="new-session-composer-input"]:visible').first();
+}
 
 function normalizePathname(input: string): string {
   try {
@@ -69,7 +83,7 @@ async function clickFirstMachineMatch(page: Page, machineId: string): Promise<Ma
   }
 }
 
-async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
+export async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
   let checkoutChip: ReturnType<Page['getByTestId']>;
   try {
     checkoutChip = page.getByTestId('new-session-checkout-chip');
@@ -191,7 +205,7 @@ export async function openNewSessionPathSelection(
 
 export async function createSessionFromNewSessionComposer(
   params: CreateSessionFromNewSessionComposerParams,
-): Promise<string> {
+): Promise<CreatedSessionFromNewSessionComposer> {
   const { page, uiBaseUrl, machineId, prompt } = params;
 
   await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/new`, '/new');
@@ -222,10 +236,11 @@ export async function createSessionFromNewSessionComposer(
   }
 
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+  const newSessionComposer = visibleNewSessionComposer(page);
+  await expect(newSessionComposer).toHaveCount(1, { timeout: 60_000 });
   await selectCurrentPathCheckoutIfPresent(page);
 
-  await page.getByTestId('new-session-composer-input').fill(prompt);
+  await newSessionComposer.fill(prompt);
   await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('new-session-composer-send').click();
 
@@ -242,11 +257,32 @@ export async function createSessionFromNewSessionComposer(
     await expect(sessionComposerTextarea).toHaveCount(1, { timeout: 1 });
   }
 
-  const pathname = new URL(page.url()).pathname;
+  const sessionHref = page.url();
+  const pathname = new URL(sessionHref).pathname;
   const parts = pathname.split('/').filter(Boolean);
   const sessionId = parts[0] === 'session' ? parts[1] : null;
   if (!sessionId) {
-    throw new Error(`failed to parse session id from url: ${page.url()}`);
+    throw new Error(`failed to parse session id from url: ${sessionHref}`);
   }
-  return sessionId;
+
+  if (params.readiness === 'first-turn-reload-safe') {
+    const committedPrompt = page.locator(COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR).filter({ hasText: prompt });
+    if (!(await waitForCount(page, committedPrompt, 1, 180_000))) {
+      await expect(committedPrompt).toHaveCount(1, { timeout: 1 });
+    }
+  }
+
+  return { sessionId, sessionHref };
+}
+
+export async function reloadCreatedSessionFromNewSessionComposer(params: Readonly<{
+  page: Page;
+  session: CreatedSessionFromNewSessionComposer;
+  timeoutMs?: number;
+}>): Promise<void> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  await gotoDomContentLoadedWithRetries(params.page, params.session.sessionHref, timeoutMs);
+  await expect(params.page.getByTestId('transcript-chat-list')).toHaveCount(1, {
+    timeout: timeoutMs,
+  });
 }

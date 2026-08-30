@@ -131,6 +131,30 @@ test('hstack stack audit --fix-ports preserves explicit MySQL DATABASE_URL autho
   assert.doesNotMatch(raw, new RegExp(`^HAPPIER_STACK_SERVER_PORT=${sharedPort}$`, 'm'));
 });
 
+test('hstack stack audit port repair preserves external Postgres authority', async (t) => {
+  const fixture = await createAuditFixture(t);
+  const databaseUrl = 'postgresql://operator:secret@db.example.test:5432/happier?sslmode=require';
+  const unpinEnvPath = await fixture.writeStack('postgres-external-unpin', {
+    serverPort: await reserveLocalhostPort(),
+    databaseUrl,
+    dbProvider: 'postgres',
+  });
+  const unpin = await fixture.audit(['--unpin-ports']);
+  assert.equal(unpin.code, 0, `stdout:\n${unpin.stdout}\nstderr:\n${unpin.stderr}`);
+  assert.ok((await readFile(unpinEnvPath, 'utf8')).includes(`DATABASE_URL=${databaseUrl}\n`));
+
+  const sharedPort = await reserveLocalhostPort();
+  await fixture.writeStack('postgres-a-keep', {
+    serverPort: sharedPort,
+    databaseUrl: 'postgresql://keep:secret@keep.example.test:5432/happier',
+    dbProvider: 'postgres',
+  });
+  const fixedEnvPath = await fixture.writeStack('postgres-z-repair', { serverPort: sharedPort, databaseUrl, dbProvider: 'postgres' });
+  const fixed = await fixture.audit(['--fix-ports']);
+  assert.equal(fixed.code, 0, `stdout:\n${fixed.stdout}\nstderr:\n${fixed.stderr}`);
+  assert.ok((await readFile(fixedEnvPath, 'utf8')).includes(`DATABASE_URL=${databaseUrl}\n`));
+});
+
 test('hstack stack audit reports MySQL without DATABASE_URL and does not invent authority', async (t) => {
   const fixture = await createAuditFixture(t);
   const envPath = await fixture.writeStack('mysql-missing-url', { serverPort: await reserveLocalhostPort() });
@@ -141,6 +165,18 @@ test('hstack stack audit reports MySQL without DATABASE_URL and does not invent 
 
   const raw = await readFile(envPath, 'utf-8');
   assert.doesNotMatch(raw, /^DATABASE_URL=/m);
+});
+
+test('hstack stack audit reports light Postgres without external authority', async (t) => {
+  const fixture = await createAuditFixture(t);
+  const envPath = await fixture.writeStack('light-postgres-missing-url', {
+    serverComponent: 'happier-server-light',
+    dbProvider: 'postgres',
+  });
+  const result = await fixture.audit([]);
+  assert.equal(result.code, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  assert.match(result.stdout, /missing_postgres_database_url/);
+  assert.doesNotMatch(await readFile(envPath, 'utf8'), /^DATABASE_URL=/m);
 });
 
 test('hstack stack edit preserves MySQL provider and DATABASE_URL for an ephemeral stack', async (t) => {

@@ -11,29 +11,6 @@ function quoteRemotePathWithHomeExpansion(path: string): string {
   return quoteShellArg(path);
 }
 
-export function buildRemoteRelayRuntimeMigrationCommand(params: Readonly<{
-  serverBinaryPath: string;
-  env?: Readonly<Record<string, unknown>>;
-}>): string | null {
-  const env = params.env ?? {};
-  const rawProvider = String(env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').trim().toLowerCase();
-  const provider = rawProvider === 'postgresql' ? 'postgres' : rawProvider;
-  const databaseUrl = String(env.DATABASE_URL ?? '').trim();
-  if (!databaseUrl || (provider !== 'postgres' && provider !== 'mysql')) {
-    return null;
-  }
-
-  return [
-    `server_binary=${quoteRemotePathWithHomeExpansion(params.serverBinaryPath)}`,
-    'payload_root="$(dirname -- "$server_binary")"',
-    [
-      `DATABASE_URL=${quoteShellArg(databaseUrl)}`,
-      `HAPPIER_DB_PROVIDER=${quoteShellArg(provider)}`,
-      '"$payload_root/happier-server-migrate"',
-    ].join(' '),
-  ].join('; ');
-}
-
 export function buildRemoteRelayRuntimeInstallCommand(params: Readonly<{
   cliBinaryPath: string;
   channel: 'stable' | 'preview' | 'dev';

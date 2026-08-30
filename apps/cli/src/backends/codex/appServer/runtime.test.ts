@@ -3068,7 +3068,7 @@ describe('createCodexAppServerRuntime', () => {
             ok: true,
             runtime: {
                 inProviderTurn: true,
-                safeToApply: false,
+                safeToApply: true,
             },
         });
         await expect((runtime as any).rollbackConversation({
@@ -10382,6 +10382,10 @@ describe('createCodexAppServerRuntime', () => {
             },
         });
 
+        await waitForCondition(() => quotaSnapshots.length > 0, {
+            timeoutMs: 2_000,
+            label: 'post-apply quota observation to finish',
+        });
         await expect((runtime as any).readConnectedServiceRuntimeIdentity({
             serviceId: 'openai-codex',
             reason: 'diagnostic',
@@ -10496,14 +10500,12 @@ describe('createCodexAppServerRuntime', () => {
                 source: 'applied_credential',
                 reason: 'direct_live_exact_proof_accepted',
             },
-            diagnostics: {
-                accountRead: {
-                    status: 'failed',
-                    reason: 'account_read_diagnostics_failed',
-                },
-            },
         });
 
+        await waitForCondition(() => quotaSnapshots.length > 0, {
+            timeoutMs: 2_000,
+            label: 'quota observation to continue after account diagnostics failed',
+        });
         expect(quotaSnapshots.at(-1)).toMatchObject({
             context: {
                 activeAccountId: 'acct_target',
@@ -10515,6 +10517,83 @@ describe('createCodexAppServerRuntime', () => {
             'account/read',
             'account/rateLimits/read',
         ]));
+    });
+
+    it('settles exact hot auth before post-apply quota publication finishes', async () => {
+        const { root } = await createRuntimeFixture(
+            'happier-codex-app-server-runtime-live-auth-observation-settlement-',
+            {
+                accountReadResult: { account: { email: 'target@example.test', planType: 'team' } },
+                rateLimitReadResult: {
+                    plan_type: 'team',
+                    primary: { used_percent: 3, resets_at: '2026-05-17T12:00:00.000Z' },
+                },
+            },
+        );
+        let releaseQuotaPublication!: () => void;
+        const quotaPublicationGate = new Promise<void>((resolve) => {
+            releaseQuotaPublication = resolve;
+        });
+        const onRateLimitSnapshot = vi.fn(async () => {
+            await quotaPublicationGate;
+        });
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            onRateLimitSnapshot,
+            session: {
+                updateMetadata: vi.fn(),
+                sendCodexMessage: vi.fn(),
+                sendSessionEvent: vi.fn(),
+            } as any,
+        });
+        const candidate = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'openai-codex',
+            profileId: 'target',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'target-access',
+                refreshToken: 'target-refresh',
+                idToken: 'target-id',
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'acct_target',
+                providerEmail: 'target@example.test',
+            },
+        });
+
+        await runtime.startOrLoad({});
+        let applySettled = false;
+        const applyPromise = (runtime as any).applyConnectedServiceAuthGeneration({
+            serviceId: 'openai-codex',
+            reason: 'usage_limit',
+            authGeneration: {
+                credential: candidate,
+                forcedWorkspaceId: null,
+            },
+        }).then((result: unknown) => {
+            applySettled = true;
+            return result;
+        });
+
+        await waitForCondition(() => onRateLimitSnapshot.mock.calls.length === 1, {
+            timeoutMs: 2_000,
+            label: 'post-apply quota publication to start',
+        });
+        try {
+            await Promise.resolve();
+            expect(applySettled).toBe(true);
+            await expect(applyPromise).resolves.toMatchObject({
+                ok: true,
+                appliedVia: 'direct_live_hot_auth',
+                activeAccountId: 'acct_target',
+            });
+        } finally {
+            releaseQuotaPublication();
+            await applyPromise;
+        }
     });
 
     it('reports auth-store persistence failure after direct-live auth as restart-required partial state', async () => {
@@ -11146,7 +11225,7 @@ describe('createCodexAppServerRuntime', () => {
             },
             runtime: {
                 inProviderTurn: true,
-                safeToApply: false,
+                safeToApply: true,
                 profileId: 'target',
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
             },
@@ -11433,7 +11512,6 @@ describe('createCodexAppServerRuntime', () => {
             session: {
                 updateMetadata,
                 getLastObservedMessageSeq: vi.fn(() => lastObservedMessageSeq),
-                waitForCommittedUserMessageSeq: vi.fn(async (localId: string) => localId === 'rollback-latest-local' ? 7 : null),
                 sendAgentMessageCommitted: vi.fn(async () => {
                     lastObservedMessageSeq = 11;
                 }),
@@ -11442,7 +11520,7 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
-        await (runtime as any).sendPrompt('bridge-streams', { localId: 'rollback-latest-local' });
+        await runtime.sendPrompt('bridge-streams', { userMessageSeq: 7 });
         await (runtime as any).rollbackConversation({ v: 1, target: { type: 'latest_turn' } });
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));

@@ -53,11 +53,15 @@ function normalizeSpawnSessionSuccess(record: Record<string, unknown>): Extract<
             : record.status === 'pending'
                 ? 'pending'
             : undefined;
+    const pendingFirstInputAccepted = typeof record.pendingFirstInputAccepted === 'boolean'
+        ? record.pendingFirstInputAccepted
+        : undefined;
     return {
         type: 'success',
         ...(sessionId ? { sessionId } : {}),
         ...(spawnNonce ? { spawnNonce } : {}),
         ...(sessionIdStatus ? { sessionIdStatus } : {}),
+        ...(pendingFirstInputAccepted !== undefined ? { pendingFirstInputAccepted } : {}),
     };
 }
 

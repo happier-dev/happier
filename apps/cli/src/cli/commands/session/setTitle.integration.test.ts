@@ -29,6 +29,7 @@ describe('happier session set-title (integration)', () => {
     requireApprovalForCliSurface = false;
     allowMetadataUpdate = true;
     createdArtifacts.length = 0;
+    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
 
     const secret = new Uint8Array(32).fill(7);
     const { encodeBase64, encryptLegacy } = await import('@/api/encryption');

@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { getProjectPath } from '../utils/path';
@@ -100,10 +100,14 @@ export async function exportClaudeSessionBundle(params: Readonly<{
   env: NodeJS.ProcessEnv;
 }>): Promise<ClaudeSessionBundle> {
   const transcriptPath = await resolveReadableTranscriptPath(params);
-  const transcript = await readFile(transcriptPath, 'utf8');
   return {
     providerId: 'claude',
     remoteSessionId: params.remoteSessionId,
-    transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
+    transcriptFile: {
+      t: 'happier.handoff.file.v1',
+      filePath: transcriptPath,
+      offsetBytes: 0,
+      sizeBytes: (await stat(transcriptPath)).size,
+    },
   };
 }

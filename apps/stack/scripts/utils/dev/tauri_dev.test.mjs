@@ -57,6 +57,7 @@ test('buildTauriDevInvocation disables beforeDevCommand and reuses the existing 
 
 test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri with the repo-local binary', () => {
   const expectedTauriEntrypoint = join(repoRootDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
+  const cargoBinDir = join(repoRootDir, '.fixture-cargo', 'bin');
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
@@ -68,6 +69,7 @@ test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri 
         devUrl: 'http://localhost:8081',
       },
     },
+    assertCargoAvailableForTauriImpl: () => cargoBinDir,
   });
 
   assert.equal(invocation.command, process.execPath);
@@ -90,6 +92,7 @@ test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri 
 
 test('buildStackTauriDevProcessInvocation scopes the cargo target directory to the active stack', () => {
   const stackName = 'codex-bootstrap-qa-24534';
+  const cargoBinDir = join(repoRootDir, '.fixture-cargo', 'bin');
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
     env: {
@@ -103,6 +106,7 @@ test('buildStackTauriDevProcessInvocation scopes the cargo target directory to t
         devUrl: 'http://localhost:8081',
       },
     },
+    assertCargoAvailableForTauriImpl: () => cargoBinDir,
   });
 
   assert.equal(
@@ -114,6 +118,7 @@ test('buildStackTauriDevProcessInvocation scopes the cargo target directory to t
 test('buildStackTauriDevProcessInvocation uses the explicitly resolved UI dir even when stack env points elsewhere', async () => {
   const explicitUiDir = join(repoRootDir, 'apps', 'ui');
   const expectedTauriEntrypoint = join(repoRootDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
+  const cargoBinDir = join(repoRootDir, '.fixture-cargo', 'bin');
   const fakeRepo = await mkdir(`${tmpdir()}/happier-tauri-bad-repo-${Date.now()}`, { recursive: true });
 
   const invocation = buildStackTauriDevProcessInvocation({
@@ -131,6 +136,7 @@ test('buildStackTauriDevProcessInvocation uses the explicitly resolved UI dir ev
         devUrl: 'http://localhost:8081',
       },
     },
+    assertCargoAvailableForTauriImpl: () => cargoBinDir,
   });
 
   assert.equal(invocation.cwd, join(explicitUiDir, 'src-tauri'));

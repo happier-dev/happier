@@ -50,8 +50,8 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'[\s\S]*?needs\.snapshot_release_issues\.result == 'success'/,
-    'release.yml planning must fail closed unless resume admission, the canonical profile, and pre-release CI all succeed',
+    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
+    'release.yml planning must fail closed unless resume admission, the canonical profile, and pre-release CI admission succeed',
   );
   assert.match(
     raw,
@@ -68,7 +68,7 @@ test('post-promotion verification receives the selected server runtime probe URL
     workflow.jobs.release_verify.with.server_api_version_url,
     "${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}",
   );
-  assert.equal(workflow.jobs.release_verify.with.validation_profile, undefined);
+  assert.equal(workflow.jobs.release_verify.with.validation_profile, 'integrated');
   for (const suite of [
     'run_installers_smoke',
     'run_binary_smoke',
@@ -81,7 +81,7 @@ test('post-promotion verification receives the selected server runtime probe URL
     'run_self_host_schtasks',
     'run_self_host_daemon',
   ]) {
-    assert.equal(workflow.jobs.release_verify.with[suite], false, `${suite} should not rerun after promotion`);
+    assert.equal(workflow.jobs.release_verify.with[suite], undefined, `${suite} should be owned by the integrated profile`);
   }
   assert.doesNotMatch(
     String(workflow.jobs.release_verify.if),
@@ -114,9 +114,11 @@ test('preview and stable releases advance a pre-promotion issue snapshot only af
     /source_issues_json="\[\]"[\s\S]*?dev_issues_json="\[\]"[\s\S]*?if \[ "\$INCLUDE_DEVELOPMENT_STAGES" = "true" \]; then[\s\S]*?stage:source[\s\S]*?stage:dev[\s\S]*?fi/,
     'source/dev queues must only be captured when the selected candidate comes from dev',
   );
-  assert.ok(workflow.jobs.plan.needs.includes('snapshot_release_issues'));
+  assert.equal(snapshot['continue-on-error'], true);
+  assert.ok(!workflow.jobs.plan.needs.includes('snapshot_release_issues'));
 
   assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify']);
+  assert.equal(advance['continue-on-error'], true);
   assert.equal(advance.permissions.issues, 'write');
   assert.match(String(advance.if), /needs\.release_verify\.result == 'success'/);
   assert.match(JSON.stringify(advance.steps), /reconcile-issue-stage\.mjs advance/);

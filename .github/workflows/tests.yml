@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      runner_pool:
+        description: "Runner pool for approved non-secret Linux test lanes"
+        required: false
+        default: github
+        type: string
       run_ui_e2e:
         required: false
         default: false
@@ -182,7 +187,10 @@ on:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve the active collector so late lanes can report their failures. GitHub retains at most
+  # one pending run per group, so newer pushes replace stale pending work without discarding the
+  # evidence already being collected by the running workflow.
+  cancel-in-progress: false
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).
@@ -192,12 +200,13 @@ env:
 jobs:
   ui-e2e:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
-    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/9
+    needs: [trusted_ref_guard]
+    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/18
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || '[1,2,3,4,5,6,7,8,9]') }}
-    runs-on: ubuntu-22.04
+        shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]') }}
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
@@ -277,7 +286,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$UI_E2E_SPECS" ]; then
-            yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/9
+            yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/18
             exit 0
           fi
 
@@ -306,7 +315,7 @@ jobs:
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-9
+          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-18
           compression-level: 0
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
@@ -371,7 +380,7 @@ jobs:
     # Native E2E is intentionally opt-in for now (not a PR check).
     if: ${{ github.event_name == 'workflow_call' && inputs.run_mobile_e2e_android }}
     name: Mobile E2E (Maestro) (android) (opt-in)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -462,12 +471,13 @@ jobs:
 
   ui-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    needs: [trusted_ref_guard]
     name: UI Unit Tests / part ${{ matrix.part }}/4
     strategy:
       fail-fast: false
       matrix:
         part: [1, 2, 3, 4]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
@@ -533,8 +543,9 @@ jobs:
 
   ui-integration:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    needs: [trusted_ref_guard]
     name: UI Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -593,8 +604,9 @@ jobs:
 
   shared-packages-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    needs: [trusted_ref_guard]
     name: Shared Package Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -643,8 +655,9 @@ jobs:
 
   server:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
+    needs: [trusted_ref_guard]
     name: Server Tests (unit + integration)
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -698,8 +711,9 @@ jobs:
 
   server-db-contract:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server_db_contract }}
+    needs: [trusted_ref_guard]
     name: Server DB Contract (Postgres)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 25
     services:
       postgres:
@@ -757,12 +771,15 @@ jobs:
 
   cli:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
+    needs: [trusted_ref_guard]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         part: [1, 2]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 60
     env:
       # Some CLI tests fetch/inspect GitHub Release assets. Prefer the built-in
@@ -869,8 +886,11 @@ jobs:
 
   stack:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
+    needs: [trusted_ref_guard]
     name: Stack Tests (unit + integration)
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -1091,8 +1111,9 @@ jobs:
 
   binary-smoke:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_binary_smoke }}
+    needs: [trusted_ref_guard]
     name: Binary Smoke (isolated cwd)
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1483,8 +1504,9 @@ jobs:
 
   typecheck:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_typecheck }}
+    needs: [trusted_ref_guard]
     name: Typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -1757,8 +1779,9 @@ jobs:
 
   e2e-core:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_core }}
+    needs: [trusted_ref_guard]
     name: Core E2E (fast, packages/tests, server-light, sqlite)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1814,7 +1837,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_call' && inputs.run_e2e_core_slow }}
     needs: [trusted_ref_guard]
     name: Core E2E (slow, packages/tests, server-light, sqlite)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1899,6 +1922,9 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
+      ubuntu_2404: ${{ steps.runner_pool.outputs.ubuntu_2404 }}
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -1925,6 +1951,30 @@ jobs:
             echo "checkout_sha must be exactly 40 lowercase hexadecimal characters when supplied." >&2
             exit 1
           fi
+      - name: Resolve runner pool
+        id: runner_pool
+        env:
+          RUNNER_POOL: ${{ inputs.runner_pool || 'github' }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_POOL" in
+            github)
+              ubuntu_2204=ubuntu-22.04
+              ubuntu_2404=ubuntu-latest
+              ;;
+            blacksmith-linux-4vcpu)
+              ubuntu_2204=blacksmith-4vcpu-ubuntu-2204
+              ubuntu_2404=blacksmith-4vcpu-ubuntu-2404
+              ;;
+            *)
+              echo "Unsupported runner_pool: $RUNNER_POOL" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "ubuntu_2204=$ubuntu_2204"
+            echo "ubuntu_2404=$ubuntu_2404"
+          } >> "$GITHUB_OUTPUT"
 
   release_actor_guard:
     needs: [trusted_ref_guard]

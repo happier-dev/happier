@@ -116,6 +116,7 @@ import { formatGeminiPromptDebugSummary } from '@/backends/gemini/runtime/format
 import { buildGeminiPromptForMessage } from '@/backends/gemini/utils/buildGeminiPromptForMessage';
 import { resolveGeminiSystemPromptText } from '@/backends/gemini/prompting/resolveGeminiSystemPromptText';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 
 function buildGeminiTurnOutcomeError(outcome: AcpTurnOutcome | null | undefined | void): Error {
@@ -254,6 +255,7 @@ export async function runGemini(opts: {
     startupMetadataOverrides: createStartupMetadataOverrides(opts),
     startupSideEffectsOrder: 'persist-first',
     allowOfflineStub: true,
+    deferPendingFirstInputCommitUntilRuntimeReady: true,
     onSessionSwap: (newSession) => {
       // If we're processing a message, queue the swap for later
       // This prevents race conditions where session changes mid-processing
@@ -280,6 +282,8 @@ export async function runGemini(opts: {
   session = initializedSession.session;
   bindProviderInputOutcomeProducer(session);
   reconnectionHandle = initializedSession.reconnectionHandle;
+  const resolveGeminiProviderProcessEnv = (): NodeJS.ProcessEnv =>
+    withCurrentHappierSessionId(process.env, session.sessionId);
   const geminiSessionIdPublisher = createVendorResumeIdMetadataPublisher({
     agentId: 'gemini',
     getMetadataSnapshot: () => session.getMetadataSnapshot(),
@@ -804,6 +808,7 @@ export async function runGemini(opts: {
       if (providerInputAdmissionClosed) {
         providerInputDispatchDrain = inputConsumer.closeProviderInputAdmissionAndWaitForDispatches();
       }
+      await initializedSession.commitPendingFirstInputAfterRuntimeReady?.();
 
     while (!shouldExit) {
       let message: MessageBatch<GeminiMode, string> | null = pending;
@@ -860,6 +865,7 @@ export async function runGemini(opts: {
         const modelToUse = message.mode?.model === undefined ? undefined : (message.mode.model || null);
         const backendResult = await createGeminiBackendInstance({
           cwd: process.cwd(),
+          processEnv: resolveGeminiProviderProcessEnv(),
           mcpServers,
           permissionHandler,
           currentUserEmail,
@@ -967,6 +973,7 @@ export async function runGemini(opts: {
             const modelToUse = message.mode?.model === undefined ? undefined : (message.mode.model || null);
             const backendResult = await createGeminiBackendInstance({
               cwd: process.cwd(),
+              processEnv: resolveGeminiProviderProcessEnv(),
               mcpServers,
               permissionHandler,
               currentUserEmail,

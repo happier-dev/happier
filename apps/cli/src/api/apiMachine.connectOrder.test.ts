@@ -19,13 +19,16 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
+const requiredMachineControlMethods = [
+  RPC_METHODS.SPAWN_HAPPY_SESSION,
+  RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+  RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
+  RPC_METHODS.STOP_SESSION,
+  RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
+] as const;
+
 function registerRequiredMachineControlHandlers(rpcHandlerManager: RpcHandlerManager): void {
-  for (const method of [
-    RPC_METHODS.SPAWN_HAPPY_SESSION,
-    RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-    RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
-    RPC_METHODS.STOP_SESSION,
-  ]) {
+  for (const method of requiredMachineControlMethods) {
     rpcHandlerManager.registerHandler(method, async () => ({ ok: true }));
   }
 }
@@ -240,7 +243,7 @@ describe('ApiMachineClient connect ordering', () => {
     const updateDaemonState = vi.spyOn(client, 'updateDaemonState');
 
     client.connect();
-    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(2));
     await Promise.resolve();
 
     expect(updateDaemonState).not.toHaveBeenCalled();
@@ -266,12 +269,7 @@ describe('ApiMachineClient connect ordering', () => {
     vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers')
       .mockResolvedValueOnce({
         status: 'timeout',
-        missingMethods: [
-          RPC_METHODS.SPAWN_HAPPY_SESSION,
-          RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-          RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
-          RPC_METHODS.STOP_SESSION,
-        ],
+        missingMethods: [...requiredMachineControlMethods],
       })
       .mockImplementation(waitForRegisteredHandlers);
     const updateDaemonState = vi.spyOn(client, 'updateDaemonState').mockResolvedValue();
@@ -280,12 +278,13 @@ describe('ApiMachineClient connect ordering', () => {
     await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalled());
     expect(updateDaemonState).not.toHaveBeenCalled();
 
-    for (const method of [
-      RPC_METHODS.SPAWN_HAPPY_SESSION,
-      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
-      RPC_METHODS.STOP_SESSION,
-    ]) {
+    await vi.waitFor(() => expect(socket.emit.mock.calls.filter(([event, payload]) => (
+      event === SOCKET_RPC_EVENTS.REGISTER
+      && (payload as { method?: unknown })?.method
+        === `machine-1:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET}`
+    ))).toHaveLength(2));
+
+    for (const method of requiredMachineControlMethods) {
       socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
     }
     await vi.waitFor(() => expect(updateDaemonState).toHaveBeenCalledTimes(1));
@@ -312,31 +311,23 @@ describe('ApiMachineClient connect ordering', () => {
     vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers')
       .mockResolvedValueOnce({ status: 'timeout', missingMethods: [RPC_METHODS.STOP_SESSION] })
       .mockResolvedValueOnce({ status: 'timeout', missingMethods: [RPC_METHODS.STOP_SESSION] })
+      .mockResolvedValueOnce({ status: 'timeout', missingMethods: [RPC_METHODS.STOP_SESSION] })
+      .mockResolvedValueOnce({ status: 'timeout', missingMethods: [RPC_METHODS.STOP_SESSION] })
       .mockImplementation(waitForRegisteredHandlers);
     const updateDaemonState = vi.spyOn(client, 'updateDaemonState').mockResolvedValue();
 
     client.connect();
-    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(1));
-    await connectionHarness.connectNextTransport();
     await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(2));
+    await connectionHarness.connectNextTransport();
+    await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(4));
 
-    for (const method of [
-      RPC_METHODS.SPAWN_HAPPY_SESSION,
-      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
-      RPC_METHODS.STOP_SESSION,
-    ]) {
+    for (const method of requiredMachineControlMethods) {
       firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
     }
     await Promise.resolve();
     expect(updateDaemonState).not.toHaveBeenCalled();
 
-    for (const method of [
-      RPC_METHODS.SPAWN_HAPPY_SESSION,
-      RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-      RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
-      RPC_METHODS.STOP_SESSION,
-    ]) {
+    for (const method of requiredMachineControlMethods) {
       secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
     }
     await vi.waitFor(() => expect(updateDaemonState).toHaveBeenCalledTimes(1));

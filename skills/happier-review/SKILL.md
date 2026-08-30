@@ -67,7 +67,7 @@ Run available deterministic inventory, schema, generated-output, formatting, typ
 
 ## 4. Select review scopes
 
-When we talk about overengineering in review, the target is not the feature; it is the underlying implementation logic. Start from the feature's real intent and requirements, preserve those outcomes, and look for disproportionate machinery that exists only to satisfy unreal, assumed, speculative, or unreachable requirements. Test whether the implementation is the simplest design that satisfies the real requirements. Inspect whether the behavior could be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; treat new split-brain, similar-but-different, or parallel logic as a finding when an existing owner can satisfy the need.
+Apply root **Scope-preserving solution economy** in review: preserve the complete authorized feature outcome, challenge unsupported implementation machinery rather than the feature itself, and treat a new split-brain or parallel path as a finding when the canonical owner can satisfy the need.
 
 Always review:
 

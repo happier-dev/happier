@@ -69,3 +69,22 @@ export async function materializeSessionDraftSocketWake(params: Readonly<{
     await params.materializeExact(params.capturedScope, update.address);
     return areServerAccountScopesEqual(params.readActiveScope(), params.capturedScope);
 }
+
+export async function materializeVisibleExistingSessionDraft(params: Readonly<{
+    sessionId: string;
+    capturedScope: ServerAccountScope;
+    readActiveScope: () => ServerAccountScope | null;
+    ensureRuntimeReady: () => Promise<void>;
+    materializeExact: (scope: ServerAccountScope, address: SessionDraftAddressV1) => Promise<void>;
+}>): Promise<boolean> {
+    const sessionId = params.sessionId.trim();
+    if (!sessionId || !areServerAccountScopesEqual(params.readActiveScope(), params.capturedScope)) {
+        return false;
+    }
+    await params.ensureRuntimeReady();
+    if (!areServerAccountScopesEqual(params.readActiveScope(), params.capturedScope)) {
+        return false;
+    }
+    await params.materializeExact(params.capturedScope, { kind: 'session', sessionId });
+    return areServerAccountScopesEqual(params.readActiveScope(), params.capturedScope);
+}

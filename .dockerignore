@@ -5,3 +5,36 @@ node_modules
 **/dist
 **/.turbo
 **/.next
+
+# Local agent, review, profiling, and build artifacts are not Docker inputs.
+.project
+.reviews
+.agent-contexts
+.clawpatch
+.argent
+.playwright-mcp
+.happier
+.dev
+graphify-out
+output
+subagents
+*.trace
+**/.project
+**/graphify-out
+
+# The root Dockerfile builds web/server targets, not native app artifacts.
+apps/ui/.expo
+apps/ui/.argent
+apps/ui/.vite-node
+apps/ui/android
+apps/ui/ios
+apps/ui/src-tauri/target
+apps/cli/.npm-cache
+apps/cli/.restore.*
+apps/cli/.runner-snapshots
+apps/cli/package-dist
+apps/cli/tmp
+apps/cli/*.tgz
+packages/sherpa-native/android/build
+packages/sherpa-native/ios/vendor
+packages/tests/playwright-report

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Fastify } from "../../types";
-import { db, getDbProviderFromEnv } from "@/storage/db";
+import { db, getActiveDbProvider } from "@/storage/db";
 import { RelationshipStatus, type RelationshipStatus as RelationshipStatusType } from "@/storage/prisma";
 import { friendAdd } from "@/app/social/friendAdd";
 import { Context } from "@/context";
@@ -97,9 +97,7 @@ export async function userRoutes(app: Fastify) {
 
         const { query } = request.query;
 
-        const serverFlavorRaw = (process.env.HAPPIER_SERVER_FLAVOR ?? process.env.HAPPY_SERVER_FLAVOR)?.trim();
-        const fallbackProvider = serverFlavorRaw === "light" ? "sqlite" : "postgres";
-        const dbProvider = getDbProviderFromEnv(process.env, fallbackProvider);
+        const dbProvider = getActiveDbProvider();
         const username =
             dbProvider === "sqlite"
                 ? { startsWith: query }

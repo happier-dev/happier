@@ -104,12 +104,9 @@ describe('RelayHostEngine remote installation ownership', () => {
     expect(installCommand).not.toContain('--server-binary');
     expect(installCommand).toContain('--mode system');
     expect(installCommand).toMatch(/^sudo -n /u);
-    expect(commands).toEqual(expect.arrayContaining([
-      expect.stringContaining('happier-server-migrate'),
-    ]));
-    expect(commands.find((command) => command.includes('happier-server-migrate'))).toContain(
-      'DATABASE_URL=',
-    );
+    expect(installCommand).toContain('--env \'HAPPIER_DB_PROVIDER=postgres\'');
+    expect(installCommand).toContain('--env \'DATABASE_URL=postgresql://happier:secret@postgres/happier\'');
+    expect(commands.some((command) => command.includes('happier-server-migrate'))).toBe(false);
   });
 
   it('surfaces the canonical remote installer error instead of interpreting partial output', async () => {

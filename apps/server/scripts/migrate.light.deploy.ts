@@ -1,11 +1,6 @@
 import { spawn } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { applyLightDefaultEnv } from '../sources/flavors/light/env';
-import { requireLightDataDir } from './migrate.light.deployPlan';
-import { PGlite } from '@electric-sql/pglite';
-import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
-import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
+import { openPgliteMigrationSession } from './pgliteMigrationSession';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -24,46 +19,15 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
 
 async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env };
-    applyLightDefaultEnv(env);
-
-    const dataDir = requireLightDataDir(env);
-    await mkdir(dataDir, { recursive: true });
-
-    const dbDir = env.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
-    if (!dbDir) {
-        throw new Error('Missing HAPPY_SERVER_LIGHT_DB_DIR (set it or ensure applyLightDefaultEnv sets it)');
-    }
-    await mkdir(dbDir, { recursive: true });
-
-    let releaseLock: (() => Promise<void>) | undefined;
-    let pglite: PGlite | undefined;
-    let server: PGLiteSocketServer | undefined;
+    const session = await openPgliteMigrationSession(env, { purpose: 'script:migrate.light.deploy' });
     try {
-        releaseLock = await acquirePgliteDirLock(dbDir, { purpose: 'script:migrate.light.deploy' });
-        pglite = new PGlite(dbDir);
-        // Ensure pglite is ready before starting the socket server.
-        await pglite.waitReady;
-        server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-        await server.start();
-
-        const url = (() => {
-            const raw = server!.getServerConn();
-            try {
-                return new URL(raw);
-            } catch {
-                return new URL(`postgresql://postgres@${raw}/postgres?sslmode=disable`);
-            }
-        })();
-        url.searchParams.set('connection_limit', '1');
-        env.DATABASE_URL = url.toString();
+        env.DATABASE_URL = session.databaseUrl;
 
         const require = createRequire(import.meta.url);
         const prismaCliPath = require.resolve('prisma/build/index.js');
         await run(process.execPath, [prismaCliPath, 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], env);
     } finally {
-        await server?.stop().catch(() => {});
-        await pglite?.close().catch(() => {});
-        await releaseLock?.().catch(() => {});
+        await session.close();
     }
 }
 

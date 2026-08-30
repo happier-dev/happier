@@ -141,6 +141,7 @@ import {
 } from '@/daemon/actionOperations/coreActionOperationProjection';
 import { createSessionHandoffCoordinator } from '@/session/handoff/orchestration/sessionHandoffCoordinator';
 import { bindSessionHandoffTarget } from '@/session/handoff/orchestration/sessionHandoffTargetBinding';
+import { buildTrackedSessionHandoffMachineCall } from '@/session/handoff/trackedSessionHandoffMachineCall';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
   normalizeSpawnSessionDirectory,
@@ -979,7 +980,16 @@ export function registerMachineRpcHandlers(params: Readonly<{
             spawnNonce: result.spawnNonce,
           });
         }
-        return result;
+        return {
+          ...result,
+          ...(pendingFirstInput !== undefined
+            ? {
+                pendingFirstInputAccepted:
+                  normalizedPendingFirstInput !== undefined
+                  && result.runnerAcceptance !== 'preexisting_or_adopted',
+              }
+            : {}),
+        };
 
       case 'requestToApproveDirectoryCreation':
         logger.debug(`[API MACHINE] Requesting directory creation approval for: ${result.directory}`);
@@ -1187,7 +1197,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       wrapStartHandler: (startUntracked) => createTrackedSessionHandoffStart({
         runner: actionOperationRuntime.runner,
         getScope: actionOperationRuntime.getScope,
-        startUntracked: async (request) => await startUntracked(request),
+        startUntracked: async (request, options) => await startUntracked(request, options),
         coordinate: async (request, context, startSource) => {
           const scope = await actionOperationRuntime.getScope();
           if (request.sourceMachineId !== scope.machineId) {
@@ -1212,12 +1222,12 @@ export function registerMachineRpcHandlers(params: Readonly<{
             && Object.prototype.hasOwnProperty.call(sourceMetadata, 'connectedServices')
             ? sourceMetadata.connectedServices
             : undefined;
-          const targetRpc = async (method: string, payload: unknown): Promise<unknown> => await callMachineRpc({
+          const targetRpc = async (method: string, payload: unknown): Promise<unknown> => await callMachineRpc(buildTrackedSessionHandoffMachineCall({
             credentials,
             machineId: request.targetMachineId,
             method,
             request: payload,
-          });
+          }));
           const coordinator = createSessionHandoffCoordinator({
             transportStrategy: request.negotiatedTransportStrategy
               ?? (request.preferredTransportStrategies.includes('direct_peer') ? 'direct_peer' : 'server_routed_stream'),
@@ -1242,6 +1252,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
             sessionId: request.sessionId,
             sourceMachineId: request.sourceMachineId,
             targetMachineId: request.targetMachineId,
+            ...(request.targetPath ? { targetPath: request.targetPath } : {}),
             sessionStorageMode: request.sessionStorageMode,
             ...(request.targetSessionStorageMode ? { targetSessionStorageMode: request.targetSessionStorageMode } : {}),
             ...(request.workspaceTransfer ? { workspaceTransfer: request.workspaceTransfer } : {}),

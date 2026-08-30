@@ -12,7 +12,7 @@ import {
 import { SessionListVirtualizedList } from '@/components/ui/lists/flashListCompat/SessionListVirtualizedList';
 import { usePathname, useRouter } from 'expo-router';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { SessionListViewItem, storage, useSetting } from '@/sync/domains/state/storage';
+import { SessionListViewItem, storage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -84,6 +84,7 @@ import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     buildVisibleSessionNavigationEntries,
     findVisibleSessionNavigationEntryByScope,
@@ -770,6 +771,14 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
     const sessionListIdentityDisplay = useSetting('sessionListIdentityDisplay');
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const sessionListSectionModeRaw = useSetting('sessionListSectionModeV1');
+    const sessionReplayEnabled = useSetting('sessionReplayEnabled');
+    const sessionForkReplaySettings = useSettings();
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const forkActionContext = React.useMemo(() => ({
+        settings: sessionForkReplaySettings,
+        replayEnabled: sessionReplayEnabled === true,
+        executionRunsEnabled: executionRunsEnabled === true,
+    }), [executionRunsEnabled, sessionForkReplaySettings, sessionReplayEnabled]);
     const sessionListSectionMode: SessionListOrderingSectionMode = sessionListSectionModeRaw === 'single'
         ? 'single'
         : 'activity';
@@ -2219,6 +2228,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
                 draggingSessionKey={draggingSessionKey}
                 folderMoveMenuItems={folderMoveMenuItems}
                 folderViewEnabled={folderViewEnabled}
+                forkActionContext={forkActionContext}
                 getRowMoveActionHandlers={getRowMoveActionHandlers}
                 getRowNativeContextMenuOpenChangeHandler={getRowNativeContextMenuOpenChangeHandler}
                 getRowSetTagsHandler={getRowSetTagsHandler}
@@ -2243,6 +2253,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         );
     }, [
         draggingSessionKey,
+        forkActionContext,
         selection.activeServerId,
         surfaceOwnership.dataActive,
         nativeContextMenuSessionKey,

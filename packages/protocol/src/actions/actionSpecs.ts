@@ -549,6 +549,7 @@ const SessionRollbackInputSchema = z.object({
 const SessionHandoffInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   targetMachineId: z.string().min(1).optional(),
+  targetPath: z.string().min(1).optional(),
   targetSessionStorageMode: z.enum(['direct', 'persisted']).optional(),
   workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
 }).passthrough();

@@ -119,31 +119,23 @@ async function selectDirectoryFromPathBrowser(
     }
 
     await expect(page.getByTestId('path-browser-modal')).toHaveCount(1, { timeout: 60_000 });
-    const candidates = ['/tmp', '/Users'] as const;
     let visiblePath: string | null = null;
 
     const findVisibleCandidate = async () => {
-        for (const candidate of candidates) {
-            if (await page.getByTestId(`path-browser-row:${candidate}`).count()) {
-                visiblePath = candidate;
-                return true;
-            }
-        }
-        return false;
+        const visiblePaths = await page.locator('[data-testid^="path-browser-row:"]:visible').evaluateAll((elements) =>
+            elements
+                .map((element) => element.getAttribute('data-testid')?.slice('path-browser-row:'.length) ?? '')
+                .filter((path) => path.length > 0 && path !== '/'),
+        );
+        visiblePath = visiblePaths[0] ?? null;
+        return visiblePath !== null;
     };
 
-    const candidateAppearedFromInitialExpansion = await page.waitForFunction(
-        async (candidateIds: readonly string[]) => {
-            for (const candidateId of candidateIds) {
-                if (document.querySelector(`[data-testid="${candidateId}"]`)) {
-                    return true;
-                }
-            }
-            return false;
-        },
-        candidates.map((candidate) => `path-browser-row:${candidate}`),
-        { timeout: 5_000 }
-    ).then(() => true).catch(() => false);
+    const candidateAppearedFromInitialExpansion = await expect
+        .poll(findVisibleCandidate, { timeout: 5_000 })
+        .toBe(true)
+        .then(() => true)
+        .catch(() => false);
 
     if (candidateAppearedFromInitialExpansion) {
         await findVisibleCandidate();
@@ -191,16 +183,20 @@ async function selectDirectoryFromPathBrowser(
 
 async function openPathBrowserFromNewSession(page: Page): Promise<void> {
     const modernPathChip = page.getByTestId('agent-input-path-chip').first();
+    const legacyTrigger = page.getByTestId('path-browser-trigger').first();
+    await expect(modernPathChip.or(legacyTrigger).first()).toHaveCount(1, { timeout: 180_000 });
     if (await modernPathChip.count()) {
+        await expect(modernPathChip).toBeVisible({ timeout: 60_000 });
         await modernPathChip.click();
-        const treeBrowserButton = page.getByTestId('path-selection-list:open-tree-browser').first();
-        await expect(treeBrowserButton).toHaveCount(1, { timeout: 60_000 });
+        const activePopover = page.getByTestId('agent-input-content-popover');
+        await expect(activePopover).toHaveCount(1, { timeout: 60_000 });
+        const treeBrowserButton = activePopover.getByTestId('path-selection-list:open-tree-browser');
+        await expect(treeBrowserButton).toBeVisible({ timeout: 60_000 });
         await treeBrowserButton.click();
         return;
     }
 
-    const legacyTrigger = page.getByTestId('path-browser-trigger').first();
-    await expect(legacyTrigger).toHaveCount(1, { timeout: 180_000 });
+    await expect(legacyTrigger).toBeVisible({ timeout: 60_000 });
     await legacyTrigger.click();
 }
 

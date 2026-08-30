@@ -149,6 +149,56 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
         }
     });
 
+    it('runs the canonical provider migration plan after payload promotion and before service activation', async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-migration-'));
+        try {
+            const payloadRoot = join(homeDir, 'payload');
+            await mkdir(payloadRoot, { recursive: true });
+            const serverBinaryPath = join(payloadRoot, 'happier-server');
+            await writeFile(serverBinaryPath, '#!/bin/sh\n', 'utf8');
+            await mkdir(join(payloadRoot, 'runtime'), { recursive: true });
+            await mkdir(join(payloadRoot, 'prisma', 'migrations'), { recursive: true });
+            await writeFile(join(payloadRoot, 'runtime', 'fixture.txt'), 'runtime\n', 'utf8');
+            await writeFile(join(payloadRoot, 'prisma', 'migrations', 'fixture.sql'), '-- fixture\n', 'utf8');
+            const migrationMarkerPath = join(homeDir, 'migration-ran.txt');
+            const migrationBinaryPath = join(payloadRoot, 'happier-server-migrate');
+            await writeFile(migrationBinaryPath, [
+                '#!/bin/sh',
+                'set -eu',
+                'root="$(dirname "$0")"',
+                'test -f "$root/runtime/fixture.txt"',
+                'test -f "$root/prisma/migrations/fixture.sql"',
+                'printf "%s\\n" "$HAPPIER_DB_PROVIDER" > "$MIGRATION_MARKER_PATH"',
+                '',
+            ].join('\n'), 'utf8');
+            await chmod(migrationBinaryPath, 0o755);
+
+            await installOrUpdateRelayRuntimeLocal({
+                serverBinaryPath,
+                channel: 'preview',
+                mode: 'user',
+                platform: 'linux',
+                homeDir,
+                env: {
+                    HAPPIER_DB_PROVIDER: 'postgres',
+                    DATABASE_URL: 'postgresql://operator:secret@db.example.test/happier',
+                    MIGRATION_MARKER_PATH: migrationMarkerPath,
+                },
+                runServiceCommands: false,
+                skipHealthCheck: true,
+            });
+
+            const defaults = resolveRelayRuntimeDefaults({ platform: 'linux', mode: 'user', channel: 'preview', homeDir });
+            await expect(readFile(migrationMarkerPath, 'utf8')).resolves.toBe('postgres\n');
+            await expect(readFile(join(defaults.installRoot, 'bin', 'runtime', 'fixture.txt'), 'utf8')).resolves.toBe('runtime\n');
+            await expect(readFile(join(defaults.installRoot, 'bin', 'prisma', 'migrations', 'fixture.sql'), 'utf8'))
+                .resolves.toBe('-- fixture\n');
+            await expect(access(join(defaults.installRoot, 'happier-server-migrate'))).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
     it('stops the existing relay service before replacing the persistent runtime payload', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-sequence-'));
         try {

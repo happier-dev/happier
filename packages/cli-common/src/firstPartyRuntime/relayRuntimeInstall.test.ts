@@ -398,6 +398,7 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
       const installedUiPath = join(defaults.installRoot, 'ui-web', 'current', 'index.html');
       const installedMigrationPath = join(
         defaults.installRoot,
+        'bin',
         'prisma',
         'sqlite',
         'migrations',

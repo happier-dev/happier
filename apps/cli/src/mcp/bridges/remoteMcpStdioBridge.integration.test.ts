@@ -53,7 +53,10 @@ const remoteTools: ListToolsResult['tools'] = [
   },
 ];
 
-function createRemoteTestMcpServer(name: string): Server {
+function createRemoteTestMcpServer(
+  name: string,
+  beforeRememberResult?: () => Promise<void>,
+): Server {
   const server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: remoteTools }));
@@ -74,6 +77,7 @@ function createRemoteTestMcpServer(name: string): Server {
             message: String(request.params._meta?.requestTrace ?? 'missing-trace'),
           },
         });
+        await beforeRememberResult?.();
       }
       return { content: [{ type: 'text' as const, text: `${String(args.content ?? '')}:${String(request.params._meta?.requestTrace ?? '')}` }], isError: false as const };
     }
@@ -133,9 +137,15 @@ async function resolveRemoteBridgeInvocation(): Promise<{
   });
 }
 
-async function startTestMcpHttpServer(): Promise<{ url: string; stop: () => void }> {
+async function startTestMcpHttpServer(): Promise<{
+  url: string;
+  releaseRememberResult: () => void;
+  stop: () => void;
+}> {
+  let releaseRememberResult = () => {};
+  const rememberResultGate = new Promise<void>((resolve) => { releaseRememberResult = resolve; });
   const server = createServer(async (req, res) => {
-    const mcp = createRemoteTestMcpServer('test-mcp');
+    const mcp = createRemoteTestMcpServer('test-mcp', async () => await rememberResultGate);
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -157,7 +167,14 @@ async function startTestMcpHttpServer(): Promise<{ url: string; stop: () => void
     });
   });
 
-  return { url: baseUrl.toString(), stop: () => server.close() };
+  return {
+    url: baseUrl.toString(),
+    releaseRememberResult,
+    stop: () => {
+      releaseRememberResult();
+      server.close();
+    },
+  };
 }
 
 async function startTestMcpSseServer(): Promise<{ url: string; stop: () => void }> {
@@ -252,14 +269,19 @@ describe('remoteMcpStdioBridge', () => {
       expect(text).toBe('hi');
 
       const progressEvents: Array<{ progress: number; total?: number; message?: string }> = [];
-      const rememberRes = await client.callTool(
+      const rememberResult = client.callTool(
         { name: 'remember', arguments: { content: 'store this', tags: ['workflow'], metadata: { source: 'test' } }, _meta: { requestTrace: 'trace-http' } },
         undefined,
         { onprogress: (progress) => progressEvents.push(progress) },
       );
+      await expect.poll(
+        () => progressEvents,
+        { timeout: 10_000 },
+      ).toEqual([{ progress: 1, total: 2, message: 'trace-http' }]);
+      httpServer.releaseRememberResult();
+      const rememberRes = await rememberResult;
       const rememberText = readFirstTextContent(rememberRes);
       expect(rememberText).toBe('store this:trace-http');
-      expect(progressEvents).toEqual([{ progress: 1, total: 2, message: 'trace-http' }]);
 
       const closeStartedAt = Date.now();
       await client.close();
@@ -267,6 +289,7 @@ describe('remoteMcpStdioBridge', () => {
       expect(Date.now() - closeStartedAt).toBeLessThan(1_500);
 
     } finally {
+      httpServer.releaseRememberResult();
       await client?.close().catch(() => {});
       httpServer.stop();
       await rm(tmp, { recursive: true, force: true });

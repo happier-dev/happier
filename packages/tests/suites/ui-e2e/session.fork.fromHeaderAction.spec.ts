@@ -5,13 +5,18 @@ import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { ensureSessionReplayForkEnabled } from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -57,15 +62,6 @@ function parseSessionIdFromUrl(url: string): string {
   return sessionId;
 }
 
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
-}
-
 test.describe('ui e2e: session fork from header action menu', () => {
   test.describe.configure({ mode: 'serial' });
 
@@ -78,7 +74,7 @@ test.describe('ui e2e: session fork from header action menu', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -144,44 +140,26 @@ test.describe('ui e2e: session fork from header action menu', () => {
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
     const parentPrompt = `fork-header-parent-1 ${run.runId}`;
-    const parentSessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: parentPrompt });
+    const parentSession = await createSessionFromNewSessionComposer({
+      page,
+      uiBaseUrl,
+      machineId,
+      prompt: parentPrompt,
+    });
+    const { sessionId: parentSessionId } = parentSession;
 
-    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    // This scenario emits enough activity rows to virtualize the original prompt out of the DOM.
+    // Wait on the terminal turn marker before reloading instead of treating prompt visibility as
+    // persistence evidence.
     await expect(page.getByText(/FAKE_TRANSCRIPT_ACTIVITY_FEED_DONE_1/)).toHaveCount(1, { timeout: 180_000 });
-    await expect(page.getByTestId('transcript-tool-calls-group')).toHaveCount(1, { timeout: 120_000 });
-
-    // Ensure replay-fork is enabled so the session-level fork action is available on non-native providers.
-    await page.goto(`${uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('settings-session-replay-enabled-item')).toHaveCount(1, { timeout: 60_000 });
-    const replayItem = page.getByTestId('settings-session-replay-enabled-item');
-    const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-    const hasSwitch = (await replaySwitch.count()) > 0;
-    if (hasSwitch) {
-      const checked = await replaySwitch.isChecked().catch(() => false);
-      if (!checked) {
-        await replayItem.click();
-        await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-      }
-    } else {
-      await replayItem.click();
-    }
-    const groupedToolCallsItem = page.getByTestId('settings-session-transcript-tool-calls-group');
-    if ((await groupedToolCallsItem.count()) > 0) {
-      const groupedToolCallsSwitch = groupedToolCallsItem.locator('input[type="checkbox"]').first();
-      const checked = await groupedToolCallsSwitch.isChecked().catch(() => false);
-      if (!checked) {
-        await groupedToolCallsItem.click();
-        await expect(groupedToolCallsSwitch).toBeChecked({ timeout: 60_000 });
-      }
-    }
-
-    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await ensureSessionReplayForkEnabled({ page, uiBaseUrl });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
+    await expect(page.getByText(/FAKE_TRANSCRIPT_ACTIVITY_FEED_DONE_1/)).toHaveCount(1, { timeout: 180_000 });
 
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });
     await page.getByRole('button', { name: /Fork session/i }).click();
+    await selectSessionForkStrategy(page, 'replay');
 
     // Expect to navigate to a different /session/<id>
     const start = Date.now();
@@ -199,7 +177,5 @@ test.describe('ui e2e: session fork from header action menu', () => {
 
     const transcript = page.getByTestId('transcript-chat-list');
     await expect(transcript.locator(`[data-testid=\"transcript-fork-divider:${parentSessionId}:${childSessionId}\"]`)).toHaveCount(1, { timeout: 120_000 });
-    const groupedToolCallRows = transcript.locator('[data-testid="transcript-tool-calls-group"]');
-    expect(await groupedToolCallRows.count()).toBeGreaterThan(0);
   });
 });

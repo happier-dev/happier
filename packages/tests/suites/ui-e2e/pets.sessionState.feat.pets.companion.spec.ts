@@ -11,7 +11,7 @@ import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticate
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { waitForDaemonMachineIdFromCliSettings } from '../../src/testkit/uiE2e/daemonMachineId';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { setSingleAccountPetsEnabled, setSingleAccountUiFeatureToggle } from '../../src/testkit/pets/uiPetsFeatureToggle';
+import { mutateUiE2eLocalSettings } from '../../src/testkit/uiE2e/localSettingsStorage';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const fakeClaudeActiveStateDelayMs = 5_000;
@@ -145,16 +145,9 @@ test.describe('ui e2e: pets session state mapping', () => {
       },
     });
 
-    await setSingleAccountUiFeatureToggle({
+    await mutateUiE2eLocalSettings({
       page,
-      baseUrl: uiBaseUrl,
-      featureId: 'pets.companion',
-      enabled: true,
-    });
-    await setSingleAccountPetsEnabled({
-      page,
-      baseUrl: uiBaseUrl,
-      enabled: true,
+      settingsPatch: { petsEnabledOverride: 'enabled' },
     });
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
@@ -170,6 +163,7 @@ test.describe('ui e2e: pets session state mapping', () => {
         uiBaseUrl,
         machineId,
         prompt: 'pets session state e2e',
+        readiness: 'first-turn-reload-safe',
       }),
       expectPetState(page, /^(running|waiting|review)$/),
     ]);

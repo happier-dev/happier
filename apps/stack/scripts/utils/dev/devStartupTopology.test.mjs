@@ -1,7 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { decideDevStartupTopology, observeDevServerStartupTopology } from './devStartupTopology.mjs';
+import {
+  decideDevStartupTopology,
+  observeDevServerStartupTopology,
+  shouldExitAdoptedDevRuntime,
+} from './devStartupTopology.mjs';
+
+test('an explicit watch keeps the dev lifecycle owner alive after adopting healthy components', () => {
+  const adopted = {
+    devTargetCount: 0,
+    restart: false,
+    serverRequested: false,
+    adoptedServer: false,
+    daemonRequested: true,
+    daemonRunning: true,
+    expoRequested: false,
+    expoRunning: false,
+  };
+
+  assert.equal(shouldExitAdoptedDevRuntime({ ...adopted, watchEnabled: false }), true);
+  assert.equal(shouldExitAdoptedDevRuntime({ ...adopted, watchEnabled: true }), false);
+});
 
 test('startup topology observes occupied ownership independently of application health', async () => {
   let availabilityOptions = null;

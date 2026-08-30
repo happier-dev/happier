@@ -6116,7 +6116,7 @@ export const pl: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Wersje robocze', badge: 'Wersja robocza', untitled: 'Wersja bez tytułu', continueEditing: 'Kontynuuj edycję', startAnother: 'Rozpocznij nową',
-    status: { offline: 'Offline', syncing: 'Synchronizowanie', conflict: 'Konflikt', machineUnavailable: 'Maszyna niedostępna', attachmentNeedsAttention: 'Załącznik wymaga uwagi', startInterrupted: 'Uruchamianie przerwane' },
+    status: { offline: 'Poza siecią', syncing: 'Synchronizowanie', conflict: 'Konflikt', machineUnavailable: 'Maszyna niedostępna', attachmentNeedsAttention: 'Załącznik wymaga uwagi', startInterrupted: 'Uruchamianie przerwane' },
     new: { action: 'Nowa wersja robocza' }, delete: { action: 'Usuń wersję roboczą', confirmTitle: 'Usunąć wersję roboczą?', confirmDescription: 'Ta wersja robocza zostanie usunięta z Twoich urządzeń.' },
     conflict: { title: 'Konflikt wersji roboczej', description: 'To pole zmieniono na innym urządzeniu.', mine: 'Na tym urządzeniu', synced: 'Zsynchronizowane', useSynced: 'Użyj zsynchronizowanej', keepDevice: 'Zachowaj z urządzenia', copyMine: 'Kopiuj moją', copied: 'Skopiowano', copyFailed: 'Nie udało się skopiować', field: { text: 'Tekst', mentions: 'Wzmianki', attachments: 'Załączniki', recipient: 'Odbiorca', agentContinuation: 'Kontynuacja agenta', executionRunDelivery: 'Dostarczenie wykonania' } },
   },

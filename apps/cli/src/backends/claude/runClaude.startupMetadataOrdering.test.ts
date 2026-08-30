@@ -56,10 +56,12 @@ const getOrCreateSessionMock = vi.fn<() => Promise<StartupSessionResponse>>(asyn
 let lastSessionClient: {
     onUserMessage: ReturnType<typeof vi.fn>;
     sendSessionEvent: ReturnType<typeof vi.fn>;
+    enqueueSessionUserMessage: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
 } | null = null;
 const runtimeActivityPublisherCloseMock = vi.fn(async () => {});
 const sessionCloseMock = vi.fn(async () => {});
+const enqueueSessionUserMessageMock = vi.fn(async () => undefined);
 
 function createRuntimeOverridesSynchronizer(
     overrides: Partial<RuntimeOverridesSynchronizer> = {},
@@ -125,6 +127,7 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
                 lastSessionClient = {
                     onUserMessage: vi.fn(),
                     sendSessionEvent: vi.fn(),
+                    enqueueSessionUserMessage: enqueueSessionUserMessageMock,
                     close: sessionCloseMock,
                 };
                 return {
@@ -134,6 +137,7 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
                 getMetadataSnapshot: vi.fn(() => ({ path: '/srv/project' })),
                 onUserMessage: lastSessionClient.onUserMessage,
                 sendSessionEvent: lastSessionClient.sendSessionEvent,
+                enqueueSessionUserMessage: lastSessionClient.enqueueSessionUserMessage,
                 updateMetadata: vi.fn(),
                 updateAgentState: vi.fn(),
                 getRuntimeActivitySnapshotPublisher: vi.fn(() => ({
@@ -307,6 +311,8 @@ describe('runClaude startup metadata ordering', () => {
         runtimeActivityPublisherCloseMock.mockClear();
         sessionCloseMock.mockReset();
         sessionCloseMock.mockResolvedValue(undefined);
+        enqueueSessionUserMessageMock.mockReset();
+        enqueueSessionUserMessageMock.mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -551,6 +557,52 @@ describe('runClaude startup metadata ordering', () => {
             updateMock.mock.invocationCallOrder[updateMock.mock.calls.indexOf(readyCall!)]!,
         );
         expect(runtimeActivityPublisherCloseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('commits daemon-carried first input after binding the consumer and before launching the direct provider path', async () => {
+        vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
+            text: 'Commit this first turn before launch.',
+            localId: 'spawn-first:claude-direct',
+            meta: { model: 'opus' },
+        }));
+        initializeRuntimeOverridesSynchronizerMock.mockImplementationOnce(async (params: RuntimeOverridesSynchronizerParams) => {
+            lastRuntimeOverridesSynchronizerParams = params;
+            return createRuntimeOverridesSynchronizer({
+                seedFromSession: vi.fn(async () => {}),
+                syncFromMetadata: vi.fn(),
+            });
+        });
+        const { loop } = await import('@/backends/claude/loop');
+        const { runClaude } = await import('./runClaude');
+
+        try {
+            const runPromise = runClaude(testCredentials, {
+                startedBy: 'daemon',
+                startingMode: 'remote',
+                claudeRemoteMetaDefaults: {
+                    claudeUnifiedTerminalEnabled: true,
+                },
+            });
+
+            await waitFor(() => applyStartupMetadataUpdateToSessionMock.mock.calls.length === 1);
+            metadataUpdateDeferred.resolve();
+            await runPromise;
+
+            expect(enqueueSessionUserMessageMock).toHaveBeenCalledExactlyOnceWith({
+                text: 'Commit this first turn before launch.',
+                localId: 'spawn-first:claude-direct',
+                meta: { model: 'opus', source: 'ui', sentFrom: 'cli' },
+            });
+            expect(lastSessionClient!.onUserMessage.mock.invocationCallOrder[0]!).toBeLessThan(
+                enqueueSessionUserMessageMock.mock.invocationCallOrder[0]!,
+            );
+            expect(enqueueSessionUserMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+                vi.mocked(loop).mock.invocationCallOrder[0]!,
+            );
+            expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined();
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it('keeps Agent SDK capabilities and stop semantics after a later message selects Unified terminal', async () => {

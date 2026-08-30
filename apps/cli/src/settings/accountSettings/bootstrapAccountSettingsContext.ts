@@ -474,7 +474,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       throw new AccountSettingsStaleError();
     }
     const publication = publishContext(candidate);
-    if (!publication.didCommit) {
+    if (!publication.didCommit && publication.context.settingsVersion > candidate.settingsVersion) {
       return publication.context;
     }
     try {

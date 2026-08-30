@@ -37,10 +37,7 @@ import {
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from '../firstPartyRuntime/selfHostServerEnv.js';
 import { buildRelayRuntimeHealthProbeCommand, RELAY_RUNTIME_HEALTH_OK_TOKEN } from './buildRelayRuntimeHealthProbeCommand.js';
-import {
-  buildRemoteRelayRuntimeInstallCommand,
-  buildRemoteRelayRuntimeMigrationCommand,
-} from './remoteRelayRuntimeInstallCommand.js';
+import { buildRemoteRelayRuntimeInstallCommand } from './remoteRelayRuntimeInstallCommand.js';
 
 import type {
   RelayRuntimeStatusSnapshot,
@@ -1814,27 +1811,6 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
           localBinaryPath: localServerOverride,
         })
       : null;
-
-    const migrationCommand = uploadedServer
-      ? buildRemoteRelayRuntimeMigrationCommand({
-          serverBinaryPath: uploadedServer.binaryPath,
-          env: params.parsed.env ?? {},
-        })
-      : null;
-    if (migrationCommand) {
-      const migration = await deps.runRemoteText({
-        ssh: params.ssh,
-        knownHostsMode,
-        remoteCommand: migrationCommand,
-      });
-      if (migration.status !== 0) {
-        throw new Error(
-          migration.stderr.trim()
-          || migration.stdout.trim()
-          || 'Remote relay database migration failed',
-        );
-      }
-    }
 
     const result = await deps.runRemoteText({
       ssh: params.ssh,

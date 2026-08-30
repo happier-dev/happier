@@ -219,6 +219,43 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         expect(screen.findByTestId('overrides-json')?.props.children).toContain('"service_tier"');
     });
 
+    it('reconciles changed hydrated config overrides without a passive follow-up commit', async () => {
+        const commitPhases: string[] = [];
+        const render = (value: string) => (
+            <React.Profiler
+                id="HookProbe"
+                onRender={(_id, phase) => {
+                    commitPhases.push(phase);
+                }}
+            >
+                <HookProbe
+                    persistedDraft={{
+                        modelId: 'default',
+                        acpSessionModeId: 'default',
+                        sessionConfigOptionOverrides: {
+                            v: 1,
+                            updatedAt: value === 'fast' ? 123 : 456,
+                            overrides: {
+                                service_tier: {
+                                    updatedAt: value === 'fast' ? 123 : 456,
+                                    value,
+                                },
+                            },
+                        },
+                    }}
+                />
+            </React.Profiler>
+        );
+
+        const screen = await renderScreen(render('fast'));
+        commitPhases.length = 0;
+
+        await screen.update(render('flex'));
+
+        expect(commitPhases).toEqual(['update']);
+        expect(screen.findByTestId('overrides-json')?.props.children).toContain('"flex"');
+    });
+
     it('does not rewrite override metadata when the same value is selected again', async () => {
         const nowSpy = vi.spyOn(Date, 'now');
         nowSpy.mockReturnValue(200);

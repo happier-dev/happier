@@ -7,7 +7,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { fakeClaudeFixturePath, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
@@ -150,21 +150,30 @@ test.describe('ui e2e: session subagents agents panel', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}`, 120_000);
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
-    await expect(page.getByTestId('session-header-subagents-button')).toHaveCount(1, { timeout: 180_000 });
-    await page.getByTestId('session-header-subagents-button').click();
+    const rightSidebarToggle = page.getByTestId('session-header-right-sidebar-button');
+    await expect(rightSidebarToggle).toHaveCount(1, { timeout: 60_000 });
+    await rightSidebarToggle.click();
+
+    const agentsTab = page.getByTestId('session-rightpanel-tab:agents');
+    await expect(agentsTab).toHaveCount(1, { timeout: 60_000 });
+    await agentsTab.click();
     await waitForAgentsRightPanel({ page });
     await expect(page.getByTestId('session-subagent-launch-execution-run:plan')).toHaveCount(1, { timeout: 60_000 });
 
     await page.getByTestId('session-subagent-launch-execution-run:plan').click();
     await expect(page.getByTestId('execution-run-new-instructions-input')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('execution-run-new-instructions-input').fill('Generate a concise execution-run plan for the smoke test.');
+    const executionRunInstructions = `Generate a concise execution-run plan for the smoke test ${run.runId}.`;
+    await page.getByTestId('execution-run-new-instructions-input').fill(executionRunInstructions);
     await page.getByTestId('execution-run-new-start-button').click();
+    await waitForFakeClaudeUserText(
+      fakeClaudeLog,
+      (text) => text.includes(executionRunInstructions),
+      { timeoutMs: 180_000, pollMs: 100 },
+    );
     await expect(page.getByTestId('execution-run-new-instructions-input')).toHaveCount(0, { timeout: 120_000 });
 
-    const recentExecutionRunRows = page
-      .getByTestId('session-agents-section-recent')
-      .locator('[data-testid^="session-subagent-row:execution_run:"]');
+    const executionRunRows = page.locator('[data-testid^="session-agents-roster:row:execution_run:"]');
 
-    await expect(recentExecutionRunRows.first()).toBeVisible({ timeout: 180_000 });
+    await expect(executionRunRows.first()).toBeVisible({ timeout: 180_000 });
   });
 });

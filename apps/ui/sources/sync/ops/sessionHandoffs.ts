@@ -233,10 +233,9 @@ function resolveTargetPreparePathForCrossPlatformHandoff(params: Readonly<{
     return `${targetHomeDir.replace(/\/+$/u, '')}/${relative}`;
 }
 
-const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 15_000;
-const DEFAULT_TARGET_PREPARE_POLL_TIMEOUT_MS = 300_000;
+const DEFAULT_TARGET_PREPARE_RETRY_TIMEOUT_MS = 600_000;
 const DEFAULT_TARGET_PREPARE_RETRY_INTERVAL_MS = 500;
-const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 15_000;
+const DEFAULT_SOURCE_START_RETRY_TIMEOUT_MS = 600_000;
 const DEFAULT_SOURCE_START_RETRY_INTERVAL_MS = 500;
 
 function defaultSleep(delayMs: number): Promise<void> {

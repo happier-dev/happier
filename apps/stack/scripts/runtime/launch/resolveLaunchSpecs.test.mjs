@@ -100,6 +100,7 @@ test('resolveServerRuntimeLaunchSpec returns the runtime server binary command f
     entrypoint: '/tmp/stack/runtime/builds/snap-1/server/happier-server',
     command: '/tmp/stack/runtime/builds/snap-1/server/happier-server',
     args: [],
+    migration: { mode: 'in-process' },
   });
 });
 
@@ -141,6 +142,7 @@ test('resolveServerRuntimeLaunchSpec rejects both requested/admitted server comp
 test('resolveServerRuntimeLaunchSpec derives the Windows full-server migration executable beside the admitted entrypoint', () => {
   const resolved = resolveServerRuntimeLaunchSpec({
     serverComponent: 'happier-server',
+    dbProvider: 'postgres',
     snapshot: {
       snapshotPath: 'C:\\runtime\\builds\\snap-1',
       manifest: {
@@ -155,6 +157,45 @@ test('resolveServerRuntimeLaunchSpec derives the Windows full-server migration e
   assert.equal(resolved.migration.command, 'C:\\runtime\\builds\\snap-1/server/happier-server-migrate.exe');
   assert.deepEqual(resolved.migration.args, []);
   assert.equal(resolved.migration.cwd, 'C:\\runtime\\builds\\snap-1/server');
+});
+
+test('resolveServerRuntimeLaunchSpec derives packaged migrations from the provider, not the preset', () => {
+  const snapshot = {
+    snapshotPath: '/tmp/stack/runtime/builds/snap-1',
+    manifest: {
+      source: { serverComponent: 'happier-server-light' },
+      components: { server: { entrypoint: 'server/happier-server' } },
+    },
+  };
+
+  const postgres = resolveServerRuntimeLaunchSpec({
+    serverComponent: 'happier-server-light',
+    dbProvider: 'postgres',
+    snapshot,
+  });
+  assert.equal(postgres.migration.command, '/tmp/stack/runtime/builds/snap-1/server/happier-server-migrate');
+
+  const pglite = resolveServerRuntimeLaunchSpec({
+    serverComponent: 'happier-server-light',
+    dbProvider: 'pglite',
+    snapshot,
+  });
+  assert.equal(pglite.migration.command, '/tmp/stack/runtime/builds/snap-1/server/happier-server-migrate');
+
+  const sqlite = resolveServerRuntimeLaunchSpec({
+    serverComponent: 'happier-server-light',
+    dbProvider: 'sqlite',
+    snapshot,
+  });
+  assert.deepEqual(sqlite.migration, { mode: 'in-process' });
+
+  const disabled = resolveServerRuntimeLaunchSpec({
+    serverComponent: 'happier-server-light',
+    dbProvider: 'postgres',
+    migrationsEnabled: false,
+    snapshot,
+  });
+  assert.deepEqual(disabled.migration, { mode: 'disabled' });
 });
 
 test('resolveCliRuntimeLaunchSpec falls back to the canonical cli path when the manifest entrypoint escapes the snapshot root', () => {
@@ -185,6 +226,7 @@ test('resolveCliRuntimeLaunchSpec falls back to the canonical cli path when the 
 test('resolveServerRuntimeLaunchSpec falls back to the canonical server path when the manifest entrypoint escapes the snapshot root', () => {
   const resolved = resolveServerRuntimeLaunchSpec({
     serverComponent: 'happier-server',
+    dbProvider: 'postgres',
     snapshot: {
       snapshotPath: '/tmp/stack/runtime/builds/snap-1',
       manifest: {
@@ -203,6 +245,7 @@ test('resolveServerRuntimeLaunchSpec falls back to the canonical server path whe
     command: '/tmp/stack/runtime/builds/snap-1/server/happier-server',
     args: [],
     migration: {
+      mode: 'packaged',
       command: '/tmp/stack/runtime/builds/snap-1/server/happier-server-migrate',
       args: [],
       cwd: '/tmp/stack/runtime/builds/snap-1/server',

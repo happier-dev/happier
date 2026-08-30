@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 	import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 	import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 	import { seedCliDataKeyAuthForServer } from '../../src/testkit/cliAuth';
+	import { parseTestTerminalAttachmentInfo, type TestTerminalAttachmentInfo } from '../../src/testkit/uiE2e/terminalAttachmentInfo';
 
 function tmuxAvailable(): boolean {
   if (process.platform === 'win32') return false;
@@ -39,14 +40,8 @@ function parseDaemonListChildren(data: unknown): DaemonListChild[] {
   });
 }
 
-type TerminalAttachmentInfoV1 = {
-  version: 1;
-  sessionId: string;
-  terminal: { mode: 'plain' | 'tmux'; tmux?: { target?: string; tmpDir?: string } };
-  updatedAt: number;
-};
 
-async function waitForAnyAttachmentInfo(happyHomeDir: string): Promise<TerminalAttachmentInfoV1> {
+async function waitForAnyAttachmentInfo(happyHomeDir: string): Promise<TestTerminalAttachmentInfo> {
   const dir = resolve(join(happyHomeDir, 'terminal', 'sessions'));
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30_000) {
@@ -69,14 +64,8 @@ async function waitForAnyAttachmentInfo(happyHomeDir: string): Promise<TerminalA
       if (!s2 || s2.size !== s1.size) continue;
 
       const raw = await readFile(full, 'utf8').catch(() => '');
-      try {
-        const parsed = JSON.parse(raw) as Partial<TerminalAttachmentInfoV1>;
-        if (parsed && parsed.version === 1 && typeof parsed.sessionId === 'string' && parsed.terminal) {
-          return parsed as TerminalAttachmentInfoV1;
-        }
-      } catch {
-        // ignore
-      }
+      const parsed = parseTestTerminalAttachmentInfo(raw);
+      if (parsed) return parsed;
     }
 
     await sleep(100);

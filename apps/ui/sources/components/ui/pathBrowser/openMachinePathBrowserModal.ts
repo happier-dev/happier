@@ -2,7 +2,7 @@ import { Modal } from '@/modal';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
-import { MachinePathBrowserModal } from './MachinePathBrowserModal';
+import { MachinePathBrowserModalEntry } from './MachinePathBrowserModalEntry';
 
 export async function openMachinePathBrowserModal(params: Readonly<{
     machineId: string;
@@ -20,7 +20,7 @@ export async function openMachinePathBrowserModal(params: Readonly<{
             kind: 'card',
             dimensions: { maxHeightRatio: 0.92 },
         },
-        component: MachinePathBrowserModal,
+        component: MachinePathBrowserModalEntry,
         props: {
             machineId: params.machineId,
             serverId: params.serverId ?? null,

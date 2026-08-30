@@ -79,6 +79,59 @@ describe('useSessionFileEditorState (start from diff)', () => {
         expect(latest.isEditingFile).toBe(true);
     });
 
+    it('keeps a cached editing draft active while remount display mode catches up', async () => {
+        const { useSessionFileEditorState } = await import('./useSessionFileEditorState');
+        const { sessionFileEditorDraftCache } = await import('./sessionFileEditorDraftCache');
+        let latest: SessionFileEditorState | null = null;
+        const getLatest = () => {
+            if (!latest) throw new Error('editor state was not captured');
+            return latest;
+        };
+        const sessionId = 'cached-remount';
+        const filePath = 'src/cached-remount.ts';
+        sessionFileEditorDraftCache.setDraft({
+            sessionId,
+            filePath,
+            draft: {
+                isEditingFile: true,
+                editorOriginalText: 'base',
+                editorOriginalHash: 'base-hash',
+                editorText: 'unsaved draft',
+            },
+        });
+
+        function Harness() {
+            latest = useSessionFileEditorState({
+                sessionId,
+                sessionPath: '/repo',
+                filePath,
+                displayMode: 'diff',
+                fileText: 'base',
+                fileHash: 'base-hash',
+                fileWriteSupported: true,
+                setFileWriteSupported: vi.fn(),
+                fileEditorFeatureEnabled: true,
+                filesEditorWebMonacoEnabled: true,
+                filesEditorNativeCodeMirrorEnabled: true,
+                filesEditorAutoSave: false,
+                filesEditorChangeDebounceMs: 10,
+                filesEditorMaxFileBytes: 10_000,
+                filesEditorBridgeMaxChunkBytes: 10_000,
+                mountedRef: { current: true },
+                refreshAll: vi.fn(async () => undefined),
+            });
+            return null;
+        }
+
+        try {
+            await renderScreen(<Harness />);
+            expect(getLatest().isEditingFile).toBe(true);
+            expect(getLatest().getEditorText()).toBe('unsaved draft');
+        } finally {
+            sessionFileEditorDraftCache.setDraft({ sessionId, filePath, draft: null });
+        }
+    });
+
     it('does not clobber dirty edits when fileText refreshes', async () => {
         const { useSessionFileEditorState } = await import('./useSessionFileEditorState');
 

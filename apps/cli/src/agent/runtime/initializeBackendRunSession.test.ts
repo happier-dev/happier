@@ -745,6 +745,57 @@ describe('initializeBackendRunSession', () => {
     }
   })
 
+  it('defers daemon-carried first input until the provider input consumer is ready', async () => {
+    vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
+      text: 'Commit after runtime readiness.',
+      localId: 'spawn-first:runtime-ready',
+    }))
+    const metadata = {} as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const enqueueSessionUserMessage = vi.fn(async () => undefined)
+    const session = createSessionStub({ enqueueSessionUserMessage })
+
+    try {
+      const result = await initializeBackendRunSession(
+        {
+          api: {
+            getOrCreateSession: async () => createSessionResponse('runtime-ready-session', metadata, state),
+            sessionSyncClient: () => session,
+          },
+          sessionTag: 'tag-runtime-ready-first-input',
+          metadata,
+          state,
+          uiLogPrefix: '[Codex]',
+          startupMetadataOverrides: {
+            permissionModeOverride: { mode: 'default', updatedAt: 1 },
+          },
+          deferPendingFirstInputCommitUntilRuntimeReady: true,
+        },
+        {
+          setupOfflineReconnectionFn: () => ({ session, reconnectionHandle: null, isOffline: false }),
+          primeAgentStateForUiFn: () => {},
+          reportSessionToDaemonIfRunningFn: async () => {},
+          persistTerminalAttachmentInfoIfNeededFn: async () => {},
+          sendTerminalFallbackMessageIfNeededFn: () => {},
+        },
+      )
+
+      expect(enqueueSessionUserMessage).not.toHaveBeenCalled()
+      expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeDefined()
+      const commit = result.commitPendingFirstInputAfterRuntimeReady
+      expect(commit).toBeTypeOf('function')
+      await Promise.all([commit!(), commit!()])
+      expect(enqueueSessionUserMessage).toHaveBeenCalledExactlyOnceWith({
+        text: 'Commit after runtime readiness.',
+        localId: 'spawn-first:runtime-ready',
+        meta: { source: 'ui', sentFrom: 'cli' },
+      })
+      expect(process.env.HAPPIER_DAEMON_PENDING_FIRST_INPUT).toBeUndefined()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('retains daemon-carried first input for retry when the Pending commit fails', async () => {
     vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
       text: 'Retry this exact turn.',

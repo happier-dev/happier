@@ -2,6 +2,10 @@ import type { IModal } from '@/modal';
 import { describe, expect, it, vi } from 'vitest';
 
 const showModalMock = vi.hoisted(() => vi.fn<IModal['show']>(() => 'modal-id'));
+const browserModuleGate = vi.hoisted(() => ({
+    block: false,
+    release: null as (() => void) | null,
+}));
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -12,7 +16,37 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
+vi.mock('./MachinePathBrowserModal', async () => {
+    if (browserModuleGate.block) {
+        await new Promise<void>((resolve) => {
+            browserModuleGate.release = resolve;
+        });
+    }
+    return { MachinePathBrowserModal: () => null };
+});
+
 describe('openMachinePathBrowserModal', () => {
+    it('can show the modal shell without loading the path browser implementation first', async () => {
+        await import('./openMachinePathBrowserModal');
+        vi.resetModules();
+        browserModuleGate.block = true;
+        const openerImport = import('./openMachinePathBrowserModal');
+        let openerLoaded = false;
+        void openerImport.then(() => {
+            openerLoaded = true;
+        });
+
+        try {
+            await vi.waitFor(() => {
+                expect(openerLoaded).toBe(true);
+            }, { timeout: 1000 });
+        } finally {
+            browserModuleGate.release?.();
+        }
+
+        expect(openerLoaded).toBe(true);
+    });
+
     it('opens the path browser with shared modal-card chrome so contained native modals own the sizing frame', async () => {
         const { openMachinePathBrowserModal } = await import('./openMachinePathBrowserModal');
 

@@ -10,6 +10,38 @@ import { installPanelCommonModuleMocks } from '../panelTestHelpers';
 installPanelCommonModuleMocks();
 
 describe('ResizableDockedPaneVertical (web pointer drag)', () => {
+    it('reserves the resize-handle strip outside interactive pane content', async () => {
+        const { ResizableDockedPaneVertical } = await import('./ResizableDockedPaneVertical');
+
+        const topTree = (await renderScreen(
+            <ResizableDockedPaneVertical
+                testID="top-pane"
+                heightPx={320}
+                minHeightPx={200}
+                maxHeightPx={480}
+                resizeEdge="top"
+                onCommitHeightPx={vi.fn()}
+            >
+                <ViewStub />
+            </ResizableDockedPaneVertical>,
+        )).tree;
+        expect(topTree.root.findByProps({ testID: 'top-pane-content' }).props.style).toMatchObject({ paddingTop: 18 });
+
+        const bottomTree = (await renderScreen(
+            <ResizableDockedPaneVertical
+                testID="bottom-pane"
+                heightPx={320}
+                minHeightPx={200}
+                maxHeightPx={480}
+                resizeEdge="bottom"
+                onCommitHeightPx={vi.fn()}
+            >
+                <ViewStub />
+            </ResizableDockedPaneVertical>,
+        )).tree;
+        expect(bottomTree.root.findByProps({ testID: 'bottom-pane-content' }).props.style).toMatchObject({ paddingBottom: 18 });
+    });
+
     it('commits height as the user drags (resizeEdge=bottom)', async () => {
         const onCommitHeightPx = vi.fn();
 

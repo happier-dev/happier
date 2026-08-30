@@ -14,6 +14,7 @@ import {
 
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -25,6 +26,7 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { CLAUDE_CODE_E2E_OAUTH_SCOPE } from '../../src/testkit/connectedServicesRecovery';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const CONNECTED_SERVICE_FEATURE_ENV = {
@@ -333,8 +335,8 @@ async function createConnectedServiceProfile(params: Readonly<{
             accessToken: `access-${params.profileId}`,
             refreshToken: `refresh-${params.profileId}`,
             idToken: `id-${params.profileId}`,
-            scope: null,
-            tokenType: null,
+            scope: CLAUDE_CODE_E2E_OAUTH_SCOPE,
+            tokenType: 'Bearer',
             providerAccountId: `acct-${params.profileId}`,
             providerEmail: params.providerEmail,
         },
@@ -456,12 +458,11 @@ async function fetchConnectedServiceAuthGroup(params: Readonly<{
     return group;
 }
 
-async function expectRealSwitchSessionEventRecorded(params: Readonly<{
+async function expectRealSwitchAttemptSessionEventRecorded(params: Readonly<{
     baseUrl: string;
     token: string;
     sessionId: string;
-    serviceId: ConnectedServiceId;
-    groupId: string;
+    secret: Uint8Array;
 }>): Promise<void> {
     await waitFor(async () => {
         const url = new URL(`${params.baseUrl}/v1/sessions/${params.sessionId}/messages`);
@@ -475,20 +476,38 @@ async function expectRealSwitchSessionEventRecorded(params: Readonly<{
         });
         expect(response.status).toBe(200);
         const messages = Array.isArray(response.data?.messages) ? response.data.messages : [];
-        const localIdPrefix = [
-            'connected-service-account-switch',
-            params.serviceId,
-            params.groupId,
-        ].join(':');
         return messages.some((message) => {
             const record = asRecord(message);
-            return record?.messageRole === 'event'
-                && typeof record.localId === 'string'
-                && record.localId.startsWith(`${localIdPrefix}:`);
+            if (
+                record?.messageRole !== 'event'
+                || typeof record.localId !== 'string'
+                || !record.localId.startsWith('connected-service-account-switch-attempt:failed:')
+            ) {
+                return false;
+            }
+            const storedContent = asRecord(record.content);
+            let payload: UnknownRecord | null = null;
+            if (storedContent?.t === 'plain') {
+                payload = asRecord(storedContent.v);
+            } else if (storedContent?.t === 'encrypted' && typeof storedContent.c === 'string') {
+                payload = asRecord(decryptLegacyBase64Normalized(storedContent.c, params.secret));
+            }
+            const content = asRecord(payload?.content);
+            const data = asRecord(content?.data);
+            return payload?.role === 'agent'
+                && content?.type === 'event'
+                && data?.type === 'connected-service-account-switch-attempt'
+                && data.ok === false
+                && data.action === 'hot_applied'
+                && data.reason === 'usage_limit'
+                && data.attemptedContinuityMode === 'hot_apply'
+                && data.outcome === 'failed'
+                && data.outcomeAction === 'none'
+                && data.errorCode === 'hot_apply_restart_required';
         });
     }, {
         timeoutMs: 30_000,
-        context: 'real auth-group switch path records a session event',
+        context: 'usage-limit auth-group switch with restart-required runtime records an attempt event',
     });
 }
 
@@ -975,7 +994,6 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
                         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
                         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
                         HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-                        HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false',
                         HAPPIER_CONNECTED_SERVICES_DISABLE_CLAUDE_SUBSCRIPTION_QUOTA_ENDPOINT: '1',
                         HAPPIER_CONNECTED_SERVICES_LEGACY_CLAUDE_RESTART_SAME_HOME: '1',
                         HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_RESTART_SIGNAL_DELAY_MS: '0',
@@ -1029,12 +1047,11 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
                 timeoutMs: 30_000,
                 context: 'auth-group switch commits backup active profile',
             });
-            await expectRealSwitchSessionEventRecorded({
+            await expectRealSwitchAttemptSessionEventRecorded({
                 baseUrl: server.baseUrl,
                 token: authToken,
                 sessionId,
-                serviceId,
-                groupId,
+                secret,
             });
         } finally {
             await daemon?.stop().catch(() => {});

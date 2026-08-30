@@ -25,6 +25,11 @@ export {
   type AgentInputChipPickerPanelProps,
 } from "./AgentInputChipPickerTypes";
 
+type AgentInputChipPickerFocusState = Readonly<{
+  selectedOptionId: string | null;
+  focusedOptionId: string | null;
+}>;
+
 export function AgentInputChipPickerPanel(
   props: AgentInputChipPickerPanelProps,
 ) {
@@ -39,41 +44,29 @@ export function AgentInputChipPickerPanel(
     [props.options],
   );
   const showDetailedSelector = detailed && props.options.length > 1;
-  const [focusedOptionId, setFocusedOptionId] = React.useState<string | null>(
-    props.selectedOptionId ?? props.options[0]?.id ?? null,
-  );
-  const previousSelectedOptionIdRef = React.useRef<string | null>(
-    props.selectedOptionId ?? null,
-  );
+  const selectedOptionId = props.selectedOptionId ?? null;
+  const fallbackFocusedOptionId = selectedOptionId ?? props.options[0]?.id ?? null;
+  const [focusState, setFocusState] = React.useState<AgentInputChipPickerFocusState>(() => ({
+    selectedOptionId,
+    focusedOptionId: fallbackFocusedOptionId,
+  }));
+  let focusedOptionId = focusState.focusedOptionId;
 
-  React.useEffect(() => {
-    const nextSelectedOptionId =
-      props.selectedOptionId ?? props.options[0]?.id ?? null;
-    const selectedOptionChanged =
-      previousSelectedOptionIdRef.current !== (props.selectedOptionId ?? null);
-    previousSelectedOptionIdRef.current = props.selectedOptionId ?? null;
-
-    setFocusedOptionId((current) => {
-      if (selectedOptionChanged) {
-        const currentOption = current
-          ? props.options.find((option) => option.id === current) ?? null
-          : null;
-        if (
-          currentOption?.preserveFocusOnExternalSelectionChange === true
-          && props.options.some((option) => option.id === current)
-        ) {
-          return current;
-        }
-        return nextSelectedOptionId;
-      }
-
-      if (current && props.options.some((option) => option.id === current)) {
-        return current;
-      }
-
-      return nextSelectedOptionId;
-    });
-  }, [props.options, props.selectedOptionId]);
+  if (focusState.selectedOptionId !== selectedOptionId) {
+    const currentOption = focusedOptionId
+      ? props.options.find((option) => option.id === focusedOptionId) ?? null
+      : null;
+    if (currentOption?.preserveFocusOnExternalSelectionChange !== true) {
+      focusedOptionId = fallbackFocusedOptionId;
+    }
+    setFocusState({ selectedOptionId, focusedOptionId });
+  } else if (
+    focusedOptionId !== fallbackFocusedOptionId
+    && !props.options.some((option) => option.id === focusedOptionId)
+  ) {
+    focusedOptionId = fallbackFocusedOptionId;
+    setFocusState({ selectedOptionId, focusedOptionId });
+  }
 
   const focusedOption = React.useMemo(
     () =>
@@ -84,7 +77,9 @@ export function AgentInputChipPickerPanel(
   );
 
   const handleDetailedOptionFocus = React.useCallback((optionId: string) => {
-    setFocusedOptionId(optionId);
+    setFocusState((current) => current.focusedOptionId === optionId
+      ? current
+      : { ...current, focusedOptionId: optionId });
     const option = props.options.find((candidate) => candidate.id === optionId) ?? null;
     if (!option || option.disabled) {
       return;

@@ -66,6 +66,8 @@ import { ensureDevExpoServer } from './utils/dev/expo_dev.mjs';
 import { requireDir } from './utils/proc/pm.mjs';
 import { waitForHttpOk } from './utils/server/server.mjs';
 import {
+  isCanonicalManagedPostgresAuthority,
+  resolveDbProviderDatabaseUrl,
   resolveEffectiveDbProvider,
   resolveEffectiveDbProviderTransition,
 } from './utils/server/effective_db_provider.mjs';
@@ -206,13 +208,24 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     );
   }
   const effectiveDbProvider = dbProviderResolution.provider;
-  if (serverComponent === 'happier-server' && effectiveDbProvider === 'mysql' && !databaseUrlOverride) {
+  const databaseAuthority = resolveDbProviderDatabaseUrl({
+    provider: effectiveDbProvider,
+    databaseUrl: databaseUrlOverride,
+  });
+  if (databaseUrlOverride && databaseAuthority.removeDatabaseUrl) {
+    throw new Error(`[stack] --database-url is not valid for --db-provider=${effectiveDbProvider}`);
+  }
+  if (effectiveDbProvider === 'mysql' && !databaseUrlOverride) {
+    const presetDefaultProvider = resolveEffectiveDbProvider({ serverComponentName: serverComponent, env: {} }).provider;
     throw new Error(
       `[stack] mysql support requires an explicit DATABASE_URL.\n` +
         `Fix:\n` +
         `- re-run with: --database-url=mysql://...\n` +
-        `- or use the default: --db-provider=postgres\n`
+        `- or omit --db-provider to use the ${presetDefaultProvider} preset default\n`
     );
+  }
+  if (serverComponent === 'happier-server-light' && effectiveDbProvider === 'postgres' && !databaseUrlOverride) {
+    throw new Error('[stack] the light preset requires --database-url when --db-provider=postgres');
   }
 
   const baseDir = resolveStackEnvPath(stackName).baseDir;
@@ -263,9 +276,6 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   stackEnv.HAPPIER_DB_PROVIDER = effectiveDbProvider;
   // Power user knob: override DATABASE_URL (required for mysql today, useful for external DBs).
   if (databaseUrlOverride) {
-    if (serverComponent === 'happier-server-light') {
-      throw new Error('[stack] --database-url is not supported for happier-server-light');
-    }
     stackEnv.DATABASE_URL = databaseUrlOverride;
   }
   if (port != null) {
@@ -274,11 +284,13 @@ async function cmdNew({ rootDir, argv, emit = true }) {
 
   // Server-light storage isolation: ensure stacks have their own light data dir.
   // (This prevents a dev stack from mutating main stack's data when schema changes.)
-  if (serverComponent === 'happier-server-light') {
+  if (serverComponent === 'happier-server-light' || effectiveDbProvider === 'sqlite' || effectiveDbProvider === 'pglite') {
     const dataDir = join(baseDir, 'server-light');
     stackEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-    stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    if (effectiveDbProvider !== 'sqlite') {
+    if (serverComponent === 'happier-server-light') {
+      stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    }
+    if (effectiveDbProvider === 'pglite') {
       stackEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
     }
   }
@@ -470,6 +482,12 @@ async function cmdEdit({ rootDir, argv }) {
     if (dbTransition.reason === 'missing_mysql_database_url') {
       throw new Error('[stack] mysql support requires an explicit DATABASE_URL');
     }
+    if (dbTransition.reason === 'missing_postgres_database_url') {
+      throw new Error('[stack] postgres requires an explicit DATABASE_URL with the light preset');
+    }
+    if (dbTransition.reason === 'invalid_postgres_database_url') {
+      throw new Error('[stack] postgres DATABASE_URL must use postgres:// or postgresql://');
+    }
     throw new Error(`[stack] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
   }
   const effectiveDbProvider = dbTransition.provider;
@@ -493,16 +511,19 @@ async function cmdEdit({ rootDir, argv }) {
     next.HAPPIER_STACK_SERVER_PORT = String(port);
   }
 
-  if (serverComponent === 'happier-server-light') {
+  if (serverComponent === 'happier-server-light' || effectiveDbProvider === 'sqlite' || effectiveDbProvider === 'pglite') {
     const dataDir = join(baseDir, 'server-light');
     next.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-    next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    if (serverComponent === 'happier-server-light') {
+      next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    }
     if (effectiveDbProvider === 'pglite') {
       next.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
     }
-    // Light flavor manages its own embedded pglite connection string at runtime.
-    // Do not persist DATABASE_URL in the stack env.
-    delete next.DATABASE_URL;
+    if (dbTransition.removeDatabaseUrl) delete next.DATABASE_URL;
+  }
+  if (dbTransition.databaseUrl) {
+    next.DATABASE_URL = dbTransition.databaseUrl;
   }
   if (serverComponent === 'happier-server') {
     // Persist stable infra credentials. Ports are ephemeral unless explicitly pinned.
@@ -516,7 +537,8 @@ async function cmdEdit({ rootDir, argv }) {
     const s3SecretKey = (existingEnv.S3_SECRET_KEY ?? '').trim() || randomToken(24);
 
     next.HAPPIER_STACK_MANAGED_INFRA = (existingEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').trim() || '1';
-    if (effectiveDbProvider === 'postgres') {
+    const usesManagedPostgres = effectiveDbProvider === 'postgres' && !dbTransition.databaseUrl;
+    if (usesManagedPostgres) {
       next.HAPPIER_STACK_PG_USER = pgUser;
       next.HAPPIER_STACK_PG_PASSWORD = pgPassword;
       next.HAPPIER_STACK_PG_DATABASE = pgDb;
@@ -526,10 +548,6 @@ async function cmdEdit({ rootDir, argv }) {
     next.S3_ACCESS_KEY = s3AccessKey;
     next.S3_SECRET_KEY = s3SecretKey;
     next.S3_BUCKET = s3Bucket;
-    if (effectiveDbProvider === 'mysql') {
-      next.DATABASE_URL = dbTransition.databaseUrl;
-    }
-
     if (port != null) {
       // If user pinned the server port, keep ports + derived URLs stable as well.
       const reservedPorts = await collectReservedStackPorts({ excludeStackName: stackName });
@@ -538,7 +556,7 @@ async function cmdEdit({ rootDir, argv }) {
         ? Number(existingEnv.HAPPIER_STACK_SERVER_BACKEND_PORT.trim())
         : await pickNextFreePort(port + 10, { reservedPorts });
       reservedPorts.add(backendPort);
-      const pgPort = effectiveDbProvider === 'postgres'
+      const pgPort = usesManagedPostgres
         ? (existingEnv.HAPPIER_STACK_PG_PORT?.trim()
           ? Number(existingEnv.HAPPIER_STACK_PG_PORT.trim())
           : await pickNextFreePort(port + 1000, { reservedPorts }))
@@ -564,9 +582,11 @@ async function cmdEdit({ rootDir, argv }) {
       next.HAPPIER_STACK_MINIO_PORT = String(minioPort);
       next.HAPPIER_STACK_MINIO_CONSOLE_PORT = String(minioConsolePort);
 
-      next.DATABASE_URL = effectiveDbProvider === 'mysql'
-        ? dbTransition.databaseUrl
-        : `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
+      if (dbTransition.databaseUrl) {
+        next.DATABASE_URL = dbTransition.databaseUrl;
+      } else if (usesManagedPostgres) {
+        next.DATABASE_URL = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
+      }
       next.REDIS_URL = `redis://127.0.0.1:${redisPort}`;
       next.S3_HOST = '127.0.0.1';
       next.S3_PORT = String(minioPort);
@@ -660,11 +680,15 @@ async function cmdAudit({ rootDir, argv }) {
         nextEnv.HAPPIER_STACK_SERVER_PORT = String(port);
       }
 
-      if (serverComponent === 'happier-server-light') {
+      if (serverComponent === 'happier-server-light' || ['sqlite', 'pglite'].includes(repairedProvider.provider)) {
         const dataDir = join(baseDir, 'server-light');
         nextEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-        nextEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-        nextEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
+        if (serverComponent === 'happier-server-light') {
+          nextEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+        }
+        if (repairedProvider.provider === 'pglite') {
+          nextEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
+        }
       }
 
       await writeStackEnv({ stackName, env: nextEnv });
@@ -677,6 +701,13 @@ async function cmdAudit({ rootDir, argv }) {
 
     // Optional: unpin ports for non-main stacks (ephemeral port model).
     if (unpinPorts && stackName !== 'main' && !unpinPortsExcept.has(stackName) && raw.trim()) {
+      const databaseUrlBeforePortRepair = getEnvValue(env, 'DATABASE_URL');
+      const managedPostgresBeforePortRepair = effectiveDbProvider.ok
+        && effectiveDbProvider.provider === 'postgres'
+        && (
+          !databaseUrlBeforePortRepair
+          || isCanonicalManagedPostgresAuthority({ databaseUrl: databaseUrlBeforePortRepair, env })
+        );
       const remove = [
         // Always remove pinned public server port.
         'HAPPIER_STACK_SERVER_PORT',
@@ -690,7 +721,7 @@ async function cmdAudit({ rootDir, argv }) {
       ];
       if (serverComponent === 'happier-server') {
         // These are derived from the ports above; safe to re-compute at start time.
-        if (effectiveDbProvider.ok && effectiveDbProvider.provider === 'postgres') {
+        if (managedPostgresBeforePortRepair) {
           remove.push('DATABASE_URL');
         }
         remove.push('REDIS_URL', 'S3_PORT', 'S3_PUBLIC_URL');
@@ -711,16 +742,25 @@ async function cmdAudit({ rootDir, argv }) {
     }
 
     const issues = [];
+    const dbAuthority = effectiveDbProvider.ok
+      ? resolveEffectiveDbProviderTransition({
+          previousServerComponentName: serverComponent,
+          nextServerComponentName: serverComponent,
+          env,
+        })
+      : null;
     if (!effectiveDbProvider.ok) {
       issues.push({
         code: effectiveDbProvider.reason,
         message: `unsupported DB provider ${JSON.stringify(effectiveDbProvider.input ?? '')} for ${serverComponent}`,
       });
-    } else if (effectiveDbProvider.provider === 'mysql' && !getEnvValue(env, 'DATABASE_URL')) {
+    } else if (dbAuthority && !dbAuthority.ok) {
       issues.push({
-        code: 'missing_mysql_database_url',
-        message: 'mysql requires an explicit DATABASE_URL; audit repair will not invent database authority',
+        code: dbAuthority.reason,
+        message: `${dbAuthority.provider} requires a compatible explicit DATABASE_URL; audit repair will not invent database authority`,
       });
+    } else if (dbAuthority?.removeDatabaseUrl) {
+      issues.push({ code: 'incompatible_database_url', message: `DATABASE_URL is incompatible with ${dbAuthority.provider}` });
     }
 
     if (!raw.trim()) {
@@ -762,30 +802,32 @@ async function cmdAudit({ rootDir, argv }) {
     }
 
     // Server-light DB/files isolation.
-    const isServerLight = serverComponent === 'happier-server-light';
-    if (isServerLight) {
+    const dbProvider = effectiveDbProvider.ok ? effectiveDbProvider.provider : null;
+    const needsLocalData = serverComponent === 'happier-server-light' || dbProvider === 'sqlite' || dbProvider === 'pglite';
+    const needsLocalFiles = serverComponent === 'happier-server-light'
+      || ['local', 'filesystem'].includes(String(env.HAPPIER_FILES_BACKEND ?? env.HAPPY_FILES_BACKEND ?? '').trim().toLowerCase());
+    if (needsLocalData || needsLocalFiles) {
       const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
       const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
       const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
-      const dbProvider = effectiveDbProvider.ok ? effectiveDbProvider.provider : null;
       const expectedDataDir = join(baseDir, 'server-light');
       const expectedFilesDir = join(expectedDataDir, 'files');
       const expectedDbDir = join(expectedDataDir, 'pglite');
 
-      if (!dataDir) issues.push({ code: 'missing_server_light_data_dir', message: `missing HAPPIER_SERVER_LIGHT_DATA_DIR (expected ${expectedDataDir})` });
-      if (!filesDir) issues.push({ code: 'missing_server_light_files_dir', message: `missing HAPPIER_SERVER_LIGHT_FILES_DIR (expected ${expectedFilesDir})` });
-      if (dataDir && dataDir !== expectedDataDir) issues.push({ code: 'server_light_data_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir} (expected ${expectedDataDir})` });
-      if (filesDir && filesDir !== expectedFilesDir) issues.push({ code: 'server_light_files_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir} (expected ${expectedFilesDir})` });
+      if (needsLocalData && !dataDir) issues.push({ code: 'missing_server_light_data_dir', message: `missing HAPPIER_SERVER_LIGHT_DATA_DIR (expected ${expectedDataDir})` });
+      if (needsLocalFiles && !filesDir) issues.push({ code: 'missing_server_light_files_dir', message: `missing HAPPIER_SERVER_LIGHT_FILES_DIR (expected ${expectedFilesDir})` });
+      if (needsLocalData && dataDir && dataDir !== expectedDataDir) issues.push({ code: 'server_light_data_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir} (expected ${expectedDataDir})` });
+      if (needsLocalFiles && filesDir && filesDir !== expectedFilesDir) issues.push({ code: 'server_light_files_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir} (expected ${expectedFilesDir})` });
       if (dbProvider === 'pglite') {
         if (!dbDir) issues.push({ code: 'missing_server_light_db_dir', message: `missing HAPPIER_SERVER_LIGHT_DB_DIR (expected ${expectedDbDir})` });
         if (dbDir && dbDir !== expectedDbDir) issues.push({ code: 'server_light_db_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir} (expected ${expectedDbDir})` });
       }
 
       const legacyDbUrl = getEnvValue(env, 'DATABASE_URL');
-      if (legacyDbUrl) {
+      if (dbProvider === 'pglite' && legacyDbUrl && !issues.some((issue) => issue.code === 'incompatible_database_url')) {
         issues.push({
-          code: 'legacy_database_url',
-          message: `DATABASE_URL is set for a light stack (${legacyDbUrl}); light manages its own local database and does not require DATABASE_URL in the stack env`,
+          code: 'incompatible_database_url',
+          message: `DATABASE_URL is set for a PGlite stack (${legacyDbUrl}); PGlite manages its local socket authority`,
         });
       }
     }
@@ -816,16 +858,16 @@ async function cmdAudit({ rootDir, argv }) {
       }
 
       // Server-light storage isolation.
-      if (isServerLight) {
+      if (needsLocalData || needsLocalFiles) {
         const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
         const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
         const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
         const expectedDataDir = join(baseDir, 'server-light');
         const expectedFilesDir = join(expectedDataDir, 'files');
         const expectedDbDir = join(expectedDataDir, 'pglite');
-        if (!dataDir || (fixPaths && dataDir !== expectedDataDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DATA_DIR', value: expectedDataDir });
-        if (!filesDir || (fixPaths && filesDir !== expectedFilesDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_FILES_DIR', value: expectedFilesDir });
-        if (!dbDir || (fixPaths && dbDir !== expectedDbDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DB_DIR', value: expectedDbDir });
+        if (needsLocalData && (!dataDir || (fixPaths && dataDir !== expectedDataDir))) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DATA_DIR', value: expectedDataDir });
+        if (needsLocalFiles && (!filesDir || (fixPaths && filesDir !== expectedFilesDir))) updates.push({ key: 'HAPPIER_SERVER_LIGHT_FILES_DIR', value: expectedFilesDir });
+        if (dbProvider === 'pglite' && (!dbDir || (fixPaths && dbDir !== expectedDbDir))) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DB_DIR', value: expectedDbDir });
       }
 
       if (fixWorkspace) {
@@ -850,13 +892,13 @@ async function cmdAudit({ rootDir, argv }) {
         await ensureEnvFileUpdated({ envPath, updates });
       }
 
-      // Light stacks no longer persist DATABASE_URL in the env file (light uses embedded PGlite).
-      // For legacy SQLite-era stacks, prune it when fixing paths so future commands don't accidentally
-      // treat the stack as SQLite-backed.
-      if (isServerLight && fixPaths) {
+      if ((needsLocalData || needsLocalFiles) && fixPaths) {
         const legacyDbUrl = getEnvValue(env, 'DATABASE_URL');
-        if (legacyDbUrl) {
+        if (dbAuthority?.ok && dbAuthority.removeDatabaseUrl && legacyDbUrl) {
           await ensureEnvFilePruned({ envPath, removeKeys: ['DATABASE_URL'] });
+        }
+        if (dbProvider === 'sqlite') {
+          await ensureEnvFilePruned({ envPath, removeKeys: ['HAPPIER_SERVER_LIGHT_DB_DIR', 'HAPPY_SERVER_LIGHT_DB_DIR'] });
         }
       }
     }
@@ -945,7 +987,11 @@ async function cmdAudit({ rootDir, argv }) {
           planned.add(newServerPort);
           const backendPort = await pickNextFreePort(newServerPort + 10, { reservedPorts: planned });
           planned.add(backendPort);
-          const pgPort = entry.dbProvider === 'postgres'
+          const databaseUrl = getEnvValue(env, 'DATABASE_URL');
+          const managedPostgres = entry.dbProvider === 'postgres' && (
+            !databaseUrl || isCanonicalManagedPostgresAuthority({ databaseUrl, env })
+          );
+          const pgPort = managedPostgres
             ? await pickNextFreePort(newServerPort + 1000, { reservedPorts: planned })
             : null;
           if (pgPort != null) planned.add(pgPort);
@@ -962,8 +1008,8 @@ async function cmdAudit({ rootDir, argv }) {
           updates.push({ key: 'HAPPIER_STACK_MINIO_PORT', value: String(minioPort) });
           updates.push({ key: 'HAPPIER_STACK_MINIO_CONSOLE_PORT', value: String(minioConsolePort) });
 
-          // Update the managed Postgres URL while preserving existing credentials.
-          if (entry.dbProvider === 'postgres' && pgPort != null) {
+          // Update only managed Postgres; external database authority is operator-owned.
+          if (managedPostgres && pgPort != null) {
             const pgUser = getEnvValue(env, 'HAPPIER_STACK_PG_USER') || 'handy';
             const pgPassword = getEnvValue(env, 'HAPPIER_STACK_PG_PASSWORD') || '';
             const pgDb = getEnvValue(env, 'HAPPIER_STACK_PG_DATABASE') || 'handy';

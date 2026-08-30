@@ -33,6 +33,7 @@ import {
 import type { createClaudeProviderRuntimeActivityAdapter } from './providerActivity/createClaudeProviderRuntimeActivityAdapter';
 import { isClaudeLegacyRequiredHookObservationFailure } from './remote/runtimeActivityEvidence';
 import { materializeClaudeMcpConfigArgsForSpawn } from './utils/materializeClaudeMcpConfigArgsForSpawn';
+import { normalizeCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 function buildClaudeEffortArgs(params: Readonly<{
     modelId: unknown;
@@ -104,6 +105,7 @@ export async function claudeRemote(opts: {
 
     // Fixed parameters
     sessionId: string | null,
+    happySessionId?: string | null,
     transcriptPath: string | null,
     path: string,
     claudeArgs?: string[],
@@ -155,7 +157,7 @@ export async function claudeRemote(opts: {
     onProviderActivityObservationLost?: (() => void) | null,
     runtimeActivityAdapter?: ReturnType<typeof createClaudeProviderRuntimeActivityAdapter> | null,
     onWorkflowActivityObserverReady?: (() => void) | null,
-}) {
+}): Promise<void> {
 
     // Determine how we should (re)start the Claude session.
     //
@@ -245,11 +247,13 @@ export async function claudeRemote(opts: {
     ];
     const runtimeExecutable = await ensureClaudeJsRuntimeExecutable(opts.jsRuntime);
     const resolvedClaudeCliPath = resolveClaudeCliPath();
-    const launcherEnv = {
+    const happierSessionId = normalizeCurrentHappierSessionId(opts.happySessionId);
+    const launcherEnv: NodeJS.ProcessEnv = {
         ...resolveClaudeCodeExperimentalEnvOverlay({
             claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
         }),
         ...resolveClaudeConfigDirEnvOverlay(process.env),
+        ...(happierSessionId ? { HAPPIER_SESSION_ID: happierSessionId } : {}),
     };
     if (!launcherEnv.HAPPIER_CLAUDE_PATH && !launcherEnv.HAPPY_CLAUDE_PATH) {
         launcherEnv.HAPPIER_CLAUDE_PATH = resolvedClaudeCliPath;

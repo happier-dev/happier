@@ -4,6 +4,8 @@ import {
   type PendingFirstInputV1,
 } from '@happier-dev/protocol';
 
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+
 export const HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY = 'HAPPIER_DAEMON_PENDING_FIRST_INPUT';
 
 export type PendingFirstInput = Readonly<PendingFirstInputV1>;
@@ -52,4 +54,45 @@ export function readPendingFirstInputFromEnv(
 
 export function clearPendingFirstInputFromEnv(env: NodeJS.ProcessEnv = process.env): void {
   delete env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY];
+}
+
+export type PendingFirstInputCommitter = Readonly<{
+  hasPendingInput: boolean;
+  commit(session: Pick<ApiSessionClient, 'enqueueSessionUserMessage'>): Promise<void>;
+}>;
+
+export function createPendingFirstInputCommitter(
+  env: NodeJS.ProcessEnv = process.env,
+): PendingFirstInputCommitter {
+  const pendingFirstInput = readPendingFirstInputFromEnv(env);
+  let committed = pendingFirstInput === null;
+  let inFlight: Promise<void> | null = null;
+
+  return Object.freeze({
+    get hasPendingInput() {
+      return !committed;
+    },
+    commit: (session) => {
+      if (committed || pendingFirstInput === null) return Promise.resolve();
+      if (inFlight) return inFlight;
+
+      const attempt = (async () => {
+        const result = await session.enqueueSessionUserMessage({
+          text: pendingFirstInput.text,
+          localId: pendingFirstInput.localId,
+          meta: { ...pendingFirstInput.meta, source: 'ui', sentFrom: 'cli' },
+        });
+        if (result?.recoveryBlocked) {
+          throw new Error(`Pending first input was blocked: ${result.recoveryBlocked.status}`);
+        }
+        committed = true;
+        clearPendingFirstInputFromEnv(env);
+      })();
+      const tracked = attempt.finally(() => {
+        if (inFlight === tracked) inFlight = null;
+      });
+      inFlight = tracked;
+      return tracked;
+    },
+  });
 }

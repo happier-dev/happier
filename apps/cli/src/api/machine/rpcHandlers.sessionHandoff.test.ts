@@ -31,6 +31,10 @@ import {
   tryAcquireSessionHandoffPrepareTargetJobLease,
 } from '../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 import { buildSessionHandoffProviderBundleTransferId } from '../../session/handoff/sessionHandoffProviderBundleTransferPublication';
+import {
+  createSessionHandoffProviderBundlePayloadSource,
+  readSessionHandoffProviderBundleFile,
+} from '../../session/handoff/sessionHandoffProviderBundleFile';
 import { createSessionHandoffSourceExportStore } from '../../session/handoff/state/sessionHandoffSourceExportStore';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 import { withJsonOwnerFileLock } from '../../utils/fs/jsonOwnerFileLock';
@@ -5289,7 +5293,7 @@ function createLoopbackMachineTransferChannels() {
 	      );
 	      // Start() may acknowledge before the source export finishes, so only require persistence
 	      // after prepare has converged.
-	      await expect(access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'provider-bundle.json'))).resolves.toBeUndefined();
+	      await expect(access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'provider-bundle.bin'))).resolves.toBeUndefined();
 	      await expect(access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'workspace-manifest.txt'))).resolves.toBeUndefined();
 	      const openEnvelopes = channels.sentEnvelopes
 	        .filter((entry) => entry.envelope.kind === 'open')
@@ -5401,7 +5405,7 @@ function createLoopbackMachineTransferChannels() {
       // Wait for the durable source export artifacts. The restart path must be able to serve
       // provider bundle + manifest + blob packs without relying on in-memory state.
       await vi.waitFor(async () => {
-        await access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'provider-bundle.json'));
+        await access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'provider-bundle.bin'));
         await access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'workspace-manifest.txt'));
         await access(join(sourceActiveServerDir, 'session-handoff', started.handoffId, 'source-export.json'));
       });
@@ -6877,7 +6881,25 @@ function createLoopbackMachineTransferChannels() {
       },
     });
 
-	    await expect(preparePromise).rejects.toThrow();
+	    // The asynchronous prepare owner may either surface a fast-path validation error or
+	    // acknowledge the job before validation settles. Both must converge on fail-closed state.
+	    let prepared: any | null = null;
+	    let prepareError: unknown = null;
+	    try {
+	      prepared = await preparePromise;
+	    } catch (error) {
+	      prepareError = error;
+	    }
+
+	    if (!prepareError) {
+	      expect(prepared?.status?.status).toBe('pending');
+	    }
+
+	    await vi.waitFor(async () => {
+	      const latest = await statusGet!({ handoffId });
+	      expect(latest?.status?.status).toBe('awaiting_recovery');
+	    }, { timeout: 2000 });
+
 	    expect(importSessionBundle).not.toHaveBeenCalled();
 	  });
 
@@ -7320,6 +7342,108 @@ function createLoopbackMachineTransferChannels() {
     }
   });
 
+  it('keeps a received binary provider bundle available until the target importer consumes its file slices', async () => {
+    vi.resetModules();
+
+    const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-binary-target-'));
+    const targetPath = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-binary-workspace-'));
+    const sourceDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-binary-source-'));
+    const sourceTranscriptPath = join(sourceDirectory, 'transcript.jsonl');
+    const transcript = Buffer.from('{"type":"session_meta"}\n{"type":"response_item"}\n', 'utf8');
+    await writeFile(sourceTranscriptPath, transcript);
+    const payloadSource = await createSessionHandoffProviderBundlePayloadSource({
+      providerId: 'claude',
+      remoteSessionId: 'claude_session_binary',
+      transcriptFile: {
+        t: 'happier.handoff.file.v1',
+        filePath: sourceTranscriptPath,
+        offsetBytes: 0,
+        sizeBytes: transcript.length,
+      },
+    });
+    if (payloadSource.kind !== 'file') throw new Error('Expected a file-backed provider bundle');
+
+    try {
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: targetActiveServerDir,
+            activeServerId: 'test_binary_provider_bundle_target',
+          },
+        };
+      });
+      const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
+      const registered = new Map<string, (params: unknown) => Promise<any>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
+          registered.set(method, handler);
+        },
+      } as any;
+      const importSessionBundle = vi.fn(async (bundle: any, directory: string) => {
+        const received = bundle.transcriptFile;
+        const artifact = await readFile(received.filePath);
+        expect(artifact.subarray(received.offsetBytes, received.offsetBytes + received.sizeBytes)).toEqual(transcript);
+        return {
+          remoteSessionId: 'claude_session_binary',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: buildClaudeResumePlan({
+            directory,
+            resume: 'claude_session_binary',
+            transcriptStorage: 'persisted',
+          }),
+        };
+      });
+      const transferId = buildSessionHandoffProviderBundleTransferId('handoff_binary_provider_bundle');
+      registerTargetHandlers({
+        rpcHandlerManager,
+        importSessionBundle,
+        directPeerTransfer: {
+          publishTransfer: vi.fn(() => []),
+          requestPayloadFile: vi.fn(async ({ destinationPath }) => {
+            await copyFile(payloadSource.filePath, destinationPath);
+            return { destinationPath };
+          }),
+          clearPublishedTransfer: vi.fn(),
+        },
+      });
+
+      const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      expect(prepare).toBeDefined();
+      await prepare!({
+        handoffId: 'handoff_binary_provider_bundle',
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        sourceSessionStorageMode: 'persisted',
+        targetPath,
+        handoffMetadataV2: {
+          providerBundleTransferPublication: {
+            transferId,
+            sizeBytes: payloadSource.sizeBytes,
+            manifestHash: payloadSource.manifestHash,
+            endpointCandidates: [buildDirectPeerEndpointCandidate({ transferId })],
+          },
+        },
+      });
+
+      await vi.waitFor(() => expect(importSessionBundle).toHaveBeenCalledTimes(1));
+    } finally {
+      vi.doUnmock('@/configuration');
+      vi.resetModules();
+      await payloadSource.dispose?.();
+      await rm(targetActiveServerDir, { recursive: true, force: true });
+      await rm(targetPath, { recursive: true, force: true });
+      await rm(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when the direct-peer provider bundle payload fails schema validation', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
     const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
@@ -7346,6 +7470,7 @@ function createLoopbackMachineTransferChannels() {
         registered.set(method, handler);
       },
     } as any;
+    const transferId = 'session-handoff:handoff_invalid_direct_peer_workspace_artifacts:provider-bundle-file';
 
     try {
       registerMachineSessionHandoffRpcHandlers({
@@ -7370,13 +7495,13 @@ function createLoopbackMachineTransferChannels() {
         targetPath: '/repo',
         handoffMetadataV2: {
           providerBundleTransferPublication: {
-            transferId: 'session-handoff:handoff_invalid_direct_peer_workspace_artifacts:provider-bundle-file',
+            transferId,
             sizeBytes: 0,
             manifestHash: `sha256:${'0'.repeat(64)}`,
             endpointCandidates: [
               {
                 kind: 'http',
-                url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_invalid_direct_peer_workspace_artifacts' }).url,
+                url: buildDirectPeerEndpointCandidate({ transferId }).url,
                 authorizationToken: 'test-token',
                 expiresAt: Date.now() + 30_000,
               },
@@ -7386,7 +7511,7 @@ function createLoopbackMachineTransferChannels() {
         endpointCandidates: [
           {
             kind: 'http',
-            url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_invalid_direct_peer_workspace_artifacts' }).url,
+            url: buildDirectPeerEndpointCandidate({ transferId }).url,
             authorizationToken: 'test-token',
             expiresAt: Date.now() + 30_000,
           },
@@ -7925,8 +8050,7 @@ function createLoopbackMachineTransferChannels() {
 	          const received = await transferPromise;
           expect(received.destinationPath).toEqual(destinationPath);
           expect(received.sizeBytes).toBeGreaterThan(0);
-          const rawProviderBundle = await readFile(received.destinationPath, 'utf8');
-          const parsedProviderBundle = JSON.parse(rawProviderBundle) as { providerId?: unknown };
+	          const parsedProviderBundle = await readSessionHandoffProviderBundleFile(received.destinationPath);
           expect(parsedProviderBundle.providerId).toEqual('claude');
         } finally {
           await rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

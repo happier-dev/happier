@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useSyncExternalStore, useLayoutEffect } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useIsFocused } from '@react-navigation/native';
@@ -15,6 +15,7 @@ import { useWebLifecycleFlush } from './useWebLifecycleFlush';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     captureSessionDraftCurrentness,
+    areSessionDraftCurrentnessCapturesEqual,
     clearSessionDraftCurrentness,
     flushSessionDraft,
     getSessionDraftSnapshot,
@@ -25,6 +26,7 @@ import {
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
+    active?: boolean;
 }
 
 export type SessionDraftTextSnapshot = Readonly<{
@@ -58,7 +60,8 @@ export function useDraft(
     const lastSessionScope = useRef<ServerAccountScope | null>(null);
     const latestValue = useRef<string>(value);
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
-    const isFocused = useIsFocused();
+    const routeFocused = useIsFocused();
+    const active = options.active ?? routeFocused;
     const session = sessionId ? storage.getState().sessions[sessionId] : null;
     const storedDraft = draftSnapshot?.document.composer.text.value ?? null;
     const forkInitialPrompt = readForkInitialPromptV1(session?.metadata);
@@ -80,7 +83,12 @@ export function useDraft(
         ? sessionInitialPrompt
         : null;
 
-    latestValue.current = value;
+    // A render that React later abandons must not become the imperative draft authority. Sync
+    // controlled values only after commit; input handlers and draft lifecycle operations update
+    // this ref synchronously when they take custody.
+    useLayoutEffect(() => {
+        latestValue.current = value;
+    }, [value]);
 
     const saveDraftForSession = useCallback((targetScope: ServerAccountScope | null, targetSessionId: string, draft: string) => {
         if (!targetScope) return;
@@ -260,7 +268,7 @@ export function useDraft(
             return;
         }
 
-        if (!isFocused) return;
+        if (!active) return;
 
         const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
         if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
@@ -299,11 +307,16 @@ export function useDraft(
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, isFocused, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
+    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, flushDraftForSession, forkInitialPromptText, onChange, persistSeededDraftText, readDraftSnapshot, saveDraftForSession, scope, sessionId, storedDraft]);
 
     // Auto-save with smart debouncing
     useEffect(() => {
         if (!scope || !sessionId) return;
+
+        // A later input/lifecycle operation can supersede this committed render before passive
+        // effects run. In that case its value is historical and must never be written back over
+        // the canonical replica (notably after an outbound handoff clears the composer).
+        if (value !== latestValue.current) return;
 
         // Only save if value has changed
         const skip = autosaveSkip.current;
@@ -506,6 +519,10 @@ export function useDraft(
         if (lastSessionId.current === targetSessionId && latestValue.current !== snapshot.text) {
             saveDraftForSession(snapshot.scope, targetSessionId, latestValue.current);
         }
+        const beforeClear = captureSessionDraftCurrentness({
+            scope: snapshot.scope,
+            address: targetAddress,
+        });
         fireAndForget(
             clearSessionDraftCurrentness({
                 scope: snapshot.scope,
@@ -514,6 +531,11 @@ export function useDraft(
             }),
             { tag: 'useDraft.clearDraftCurrentness' },
         );
+        const afterClear = captureSessionDraftCurrentness({
+            scope: snapshot.scope,
+            address: targetAddress,
+        });
+        const didClear = !areSessionDraftCurrentnessCapturesEqual(beforeClear, afterClear);
         if (lastSessionId.current === targetSessionId) {
             const remainingText = getSessionDraftSnapshot(snapshot.scope, targetAddress)?.document.composer.text.value ?? '';
             onChange(remainingText);
@@ -521,7 +543,7 @@ export function useDraft(
             lastSavedValue.current = remainingText;
             autosaveSkip.current = { sessionId: targetSessionId, value: remainingText };
         }
-        return true;
+        return didClear;
     }, [onChange, saveDraftForSession]);
 
     return {

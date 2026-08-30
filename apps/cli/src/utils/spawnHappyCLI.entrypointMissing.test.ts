@@ -1,12 +1,36 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createSpawnHappyCliEnvScope } from '@/testkit/process/spawnHappyCliHarness';
+
+const envScope = createSpawnHappyCliEnvScope();
 
 describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
+  beforeEach(() => {
+    envScope.patch({
+      HAPPIER_CLI_SUBPROCESS_RUNTIME: undefined,
+      HAPPIER_MANAGED_NODE_BIN: undefined,
+      HAPPIER_VARIANT: undefined,
+      HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: undefined,
+      HAPPIER_CLI_SUBPROCESS_PREFER_TSX: undefined,
+      HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: undefined,
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: undefined,
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: undefined,
+      HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined,
+      HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: undefined,
+      HAPPIER_WINDOWS_SESSION_RUNNER_BINARY: undefined,
+      HAPPIER_STACK_REPO_DIR: undefined,
+      HAPPIER_STACK_CLI_ROOT_DIR: undefined,
+      HAPPIER_STACK_STACK: undefined,
+      TSX_TSCONFIG_PATH: undefined,
+    });
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.doUnmock('node:fs');
     vi.restoreAllMocks();
     vi.resetModules();
-    delete process.env.TSX_TSCONFIG_PATH;
+    envScope.restore();
   });
 
   it('throws a clear error when dist/index.mjs is missing, even under Vitest', async () => {
@@ -57,7 +81,6 @@ describe('buildHappyCliSubprocessInvocation (missing entrypoint)', () => {
 
   it('falls back to tsx entrypoint in a source checkout even when variant/stack env is missing', async () => {
     vi.resetModules();
-    vi.unstubAllEnvs();
 
     vi.doMock('node:fs', async () => {
       const actual = await vi.importActual<typeof import('node:fs')>('node:fs');

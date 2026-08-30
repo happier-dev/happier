@@ -56,14 +56,29 @@ function createDefaultPrismaClient(): PrismaClientType {
     return new PrismaClient();
 }
 
-export function getDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
-    const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER)?.toString().trim().toLowerCase();
-    if (!raw) return fallback;
+export function parseDbProvider(rawValue: unknown): DbProvider | null {
+    const raw = rawValue?.toString().trim().toLowerCase();
+    if (!raw) return null;
     if (raw === "postgresql" || raw === "postgres") return "postgres";
     if (raw === "pglite") return "pglite";
     if (raw === "sqlite") return "sqlite";
     if (raw === "mysql") return "mysql";
-    return fallback;
+    return null;
+}
+
+export function getDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
+    const raw = env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER;
+    return parseDbProvider(raw) ?? fallback;
+}
+
+export function requireDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
+    const raw = env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER;
+    if (raw === undefined || raw === null || !raw.toString().trim()) return fallback;
+    const provider = parseDbProvider(raw);
+    if (provider) return provider;
+    throw new Error(
+        `Unsupported HAPPIER_DB_PROVIDER/HAPPY_DB_PROVIDER: ${raw}. Supported: postgres|mysql|pglite|sqlite`,
+    );
 }
 
 export function resolveGeneratedClientEntrypoint(modulePath: string): string {

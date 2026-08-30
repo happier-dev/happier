@@ -14,7 +14,7 @@ function workflow(name) {
 test('the Ubuntu slow gate prepares and runs the two exact server-v0.2.1 regression scenarios', () => {
   const testsWorkflow = workflow('tests.yml');
   const job = testsWorkflow.jobs['e2e-core-slow'];
-  assert.equal(job['runs-on'], 'ubuntu-22.04');
+  assert.equal(job['runs-on'], '${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}');
 
   const prepareStep = job.steps.find((step) => step.name === 'Prepare immutable server-v0.2.1 artifact');
   assert.ok(prepareStep, 'slow gate must prepare the pinned immutable server artifact');

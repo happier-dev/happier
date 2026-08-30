@@ -11,7 +11,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-const CONNECTED_SERVICE_OAUTH_REFRESH_FETCH_TIMEOUT_MS = 120_000;
+export const CONNECTED_SERVICE_OAUTH_REFRESH_FETCH_TIMEOUT_MS = 120_000;
 
 function buildRefreshAbortSignal(): AbortSignal | undefined {
   return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'

@@ -120,11 +120,13 @@ test('npm-e2e-smoke remote-server-smoke.sh parses multi-line server.env output',
   assert.match(script, /sudo -n cat .*remote_config_env_path/);
 });
 
-test('npm-e2e-smoke postgres validation asserts connectivity (pg_stat_activity) instead of table creation', () => {
+test('npm-e2e-smoke postgres validation requires both connectivity and applied migrations', () => {
   const content = fs.readFileSync(runScript, 'utf8');
   assert.match(content, /POSTGRES_APP_NAME=/);
   assert.match(content, /pg_stat_activity/);
   assert.match(content, /application_name/);
+  assert.match(content, /_prisma_migrations/);
+  assert.match(content, /finished_at/);
 
   const remoteServerSmoke = fs.readFileSync(join(here, 'bin', 'remote-server-smoke.sh'), 'utf8');
   assert.match(remoteServerSmoke, /application_name=/);

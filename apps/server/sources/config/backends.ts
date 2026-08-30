@@ -9,6 +9,13 @@ function normalizeToken(raw: string): string {
     return raw.trim().toLowerCase();
 }
 
+export function resolveServerFlavorFromEnv(env: NodeJS.ProcessEnv, fallback: ServerFlavor): ServerFlavor {
+    const raw = (env.HAPPIER_SERVER_FLAVOR ?? env.HAPPY_SERVER_FLAVOR)?.toString();
+    if (!raw) return fallback;
+    const value = normalizeToken(raw);
+    return value === "full" || value === "light" ? value : fallback;
+}
+
 export function getFilesBackendFromEnv(env: NodeJS.ProcessEnv, fallback: FilesBackend): FilesBackend {
     const raw = (env.HAPPIER_FILES_BACKEND ?? env.HAPPY_FILES_BACKEND)?.toString();
     if (!raw) return fallback;

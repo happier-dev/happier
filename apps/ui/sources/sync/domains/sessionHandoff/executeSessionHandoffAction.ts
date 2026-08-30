@@ -10,6 +10,7 @@ type ExecuteSessionHandoffActionArgs = Readonly<{
   execute: ExecuteAction;
   sessionId: string;
   targetMachineId: string;
+  targetPath?: string;
   targetSessionStorageMode?: 'direct' | 'persisted';
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
   context: ActionExecutorContext;
@@ -33,6 +34,7 @@ export async function executeSessionHandoffAction(
     {
       sessionId: args.sessionId,
       targetMachineId: args.targetMachineId,
+      ...(args.targetPath ? { targetPath: args.targetPath } : {}),
       ...(args.targetSessionStorageMode ? { targetSessionStorageMode: args.targetSessionStorageMode } : {}),
       ...(args.workspaceTransfer ? { workspaceTransfer: args.workspaceTransfer } : {}),
     },

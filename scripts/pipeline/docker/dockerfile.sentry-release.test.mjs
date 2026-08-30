@@ -48,6 +48,7 @@ test("relay-server target is artifact based and keeps the self-host runtime cont
   assert.match(artifactSection, /happier-server/);
   assert.doesNotMatch(artifactSection, /--product happier-ui-web/);
   assert.doesNotMatch(artifactSection, /rm -rf \/opt\/happier\/server\/ui-web/);
+  assert.match(artifactSection, /rm -rf \/opt\/happier\/server\/generated\/mysql-client \/opt\/happier\/server\/prisma\/mysql/);
 
   assert.match(runtimeSection, /COPY --from=relay-artifacts --chown=happier:happier \/opt\/happier\/server \/opt\/happier\/server/);
   assert.doesNotMatch(runtimeSection, /COPY --from=relay-artifacts --chown=happier:happier \/opt\/happier\/ui-web/);
@@ -64,5 +65,6 @@ test("relay-server target is artifact based and keeps the self-host runtime cont
   assert.match(runtimeSection, /\bENV HAPPIER_SQLITE_MIGRATIONS_DIR=\/opt\/happier\/server\/prisma\/sqlite\/migrations\b/);
   assert.match(runtimeSection, /\bENV HAPPY_SQLITE_MIGRATIONS_DIR=\/opt\/happier\/server\/prisma\/sqlite\/migrations\b/);
   assert.match(runtimeSection, /\bVOLUME \["\/data"\]/);
-  assert.match(runtimeSection, /\bCMD \["\/opt\/happier\/server\/happier-server"\]/);
+  assert.match(runtimeSection, /COPY apps\/server\/scripts\/run-server\.sh \/usr\/local\/bin\/run-server/);
+  assert.match(runtimeSection, /\bCMD \["run-server", "\/opt\/happier\/server\/happier-server"\]/);
 });

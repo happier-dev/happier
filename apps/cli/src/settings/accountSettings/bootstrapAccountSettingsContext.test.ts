@@ -570,6 +570,53 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(fetchFromServer).toHaveBeenCalledTimes(1);
   });
 
+  it('persists a forced fetch when an equal-version live snapshot is already active', async () => {
+    const credentials = createCredentialsStub();
+    const cachePath = '/tmp/server/account.settings.cache.json';
+    const scopeKey = createAccountSettingsScopeKey({ cachePath, token: credentials.token });
+    const settingsContent = {
+      t: 'plain' as const,
+      v: { schemaVersion: 6, claudeUnifiedTerminalEnabled: true },
+    };
+    const writeCache = vi.fn(async () => {});
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse(settingsContent.v),
+      settingsVersion: 3,
+      loadedAtMs: 900,
+      settingsSecretsReadKeys: [],
+      scopeKey,
+    });
+
+    await bootstrapAccountSettingsContext({
+      credentials,
+      mode: 'blocking',
+      refresh: 'force',
+      minSettingsVersion: 3,
+      nowMs: 1_000,
+      deps: {
+        resolveCachePath: () => cachePath,
+        readCache: async () => ({
+          version: 2,
+          cachedAt: 800,
+          settingsContent: { t: 'plain', v: { schemaVersion: 6, claudeUnifiedTerminalEnabled: false } },
+          settingsVersion: 2,
+        }),
+        fetchFromServer: async () => ({ settingsContent, settingsVersion: 3 }),
+        writeCache,
+        decryptCiphertext: async () => null,
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(writeCache).toHaveBeenCalledExactlyOnceWith(cachePath, {
+      version: 2,
+      cachedAt: 1_000,
+      settingsContent,
+      settingsVersion: 3,
+    });
+  });
+
   it('still applies network-fetched settings when cache write fails', async () => {
     const nowMs = 1_000_000;
     const applySideEffects = vi.fn();

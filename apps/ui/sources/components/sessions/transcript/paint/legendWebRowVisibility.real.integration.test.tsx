@@ -278,4 +278,67 @@ describe('Legend web row visibility contract', () => {
         expect(settled.rows).toBeGreaterThan(0);
         expect(settled.opacity).toBe(1);
     });
+
+    it('never re-covers an already painted dataset when a transient empty snapshot refills', async () => {
+        let loadCount = 0;
+        const render = (data: readonly Row[]) => (
+            <div id={HOST_ID} style={{ height: VIEWPORT_HEIGHT }}>
+                <LegendList
+                    data={data}
+                    dataKey="stable-transcript"
+                    drawDistance={0}
+                    estimatedItemSize={ROW_HEIGHT}
+                    initialScrollAtEnd
+                    keyExtractor={keyExtractor}
+                    maintainVisibleContentPosition={{ data: true, size: true }}
+                    onLoad={() => {
+                        loadCount += 1;
+                    }}
+                    recycleItems={false}
+                    renderItem={renderRow}
+                />
+            </div>
+        );
+
+        await act(async () => {
+            root.render(render(DATA));
+        });
+        for (let pass = 0; pass < 12; pass += 1) {
+            await act(async () => {
+                flushResizeObservers();
+                await vi.runOnlyPendingTimersAsync();
+            });
+        }
+        expect(loadCount).toBe(1);
+        expect(readRowContainerOpacity()).toBe(1);
+
+        await act(async () => {
+            root.render(render([]));
+            await vi.runOnlyPendingTimersAsync();
+        });
+        expect(countMountedRows()).toBe(0);
+        await act(async () => {
+            root.render(render(DATA));
+        });
+
+        const refilledSamples: Array<Readonly<{ opacity: number | null; rows: number }>> = [];
+        for (let pass = 0; pass < 12; pass += 1) {
+            refilledSamples.push({
+                opacity: readRowContainerOpacity(),
+                rows: countMountedRows(),
+            });
+            await act(async () => {
+                flushResizeObservers();
+                await vi.runOnlyPendingTimersAsync();
+            });
+        }
+
+        expect(refilledSamples.some((sample) => sample.rows > 0)).toBe(true);
+        expect(
+            refilledSamples
+                .filter((sample) => sample.rows > 0)
+                .map((sample) => sample.opacity),
+        ).toEqual(refilledSamples.filter((sample) => sample.rows > 0).map(() => 1));
+        expect(loadCount).toBe(1);
+    });
 });

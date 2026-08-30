@@ -1,10 +1,103 @@
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { ensureDepsInstalled } from '../proc/pm.mjs';
+import { withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
-const repoDir = resolve(process.cwd());
-await ensureDepsInstalled(
-  join(repoDir, 'apps', 'stack'),
-  'remote Happier workspace',
-  { env: process.env },
-);
+export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
+  'install',
+  '--production=false',
+  '--ignore-engines',
+  '--ignore-scripts',
+  '--pure-lockfile',
+];
+
+function resolveInitialInstallEnv(env) {
+  const resolved = {
+    ...(env ?? process.env),
+    NODE_ENV: 'development',
+    YARN_PRODUCTION: '0',
+    npm_config_production: 'false',
+    NPM_CONFIG_PRODUCTION: 'false',
+    COREPACK_ENABLE_AUTO_PIN: '0',
+  };
+  const cacheBaseDir = String(resolved.HAPPIER_STACK_PM_CACHE_BASE_DIR ?? '').trim();
+  if (cacheBaseDir) {
+    resolved.XDG_CACHE_HOME ||= join(cacheBaseDir, 'xdg');
+    resolved.YARN_CACHE_FOLDER ||= join(cacheBaseDir, 'yarn');
+    resolved.npm_config_cache ||= join(cacheBaseDir, 'npm');
+    resolved.COREPACK_HOME ||= join(cacheBaseDir, 'corepack');
+  }
+  return resolved;
+}
+
+async function installInitialDependencies({ repoDir, env }) {
+  const { execYarn } = await import(pathToFileURL(join(
+    repoDir,
+    'scripts',
+    'workspaces',
+    'execYarnCommand.mjs',
+  )).href);
+  const installEnv = resolveInitialInstallEnv(env);
+  for (const path of [
+    installEnv.XDG_CACHE_HOME,
+    installEnv.YARN_CACHE_FOLDER,
+    installEnv.npm_config_cache,
+    installEnv.COREPACK_HOME,
+  ]) {
+    if (path) await mkdir(path, { recursive: true });
+  }
+  execYarn(REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS, {
+    cwd: repoDir,
+    env: installEnv,
+    preferCorepack: true,
+    stdio: 'inherit',
+  });
+}
+
+export async function bootstrapRemoteDependencies({
+  repoDir = resolve(process.cwd()),
+  env = process.env,
+  packageExists = existsSync,
+  installInitialDependencies: installInitialDependenciesImpl = installInitialDependencies,
+  withDependencyRefresh: withDependencyRefreshImpl = withDependencyRefresh,
+  loadWorkspaceBuildOwner = async (targetRepoDir) => await import(pathToFileURL(join(
+    targetRepoDir,
+    'scripts',
+    'workspaces',
+    'ensureWorkspacePackagesBuilt.mjs',
+  )).href),
+  loadDependencyOwner = async () => await import('../proc/pm.mjs'),
+} = {}) {
+  const componentDir = join(repoDir, 'apps', 'stack');
+  const dependencyOwnerEntrypoints = ['workspaces', 'process'].map((domain) => join(
+    repoDir,
+    'packages',
+    'cli-common',
+    'dist',
+    domain,
+    'index.js',
+  ));
+  const dependencyOwnerReady = dependencyOwnerEntrypoints.every((entrypoint) => packageExists(entrypoint));
+  if (!dependencyOwnerReady) {
+    await withDependencyRefreshImpl(
+      { installDir: repoDir, componentDir, env },
+      async () => await installInitialDependenciesImpl({ repoDir, env }),
+    );
+    const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner(repoDir);
+    await ensureWorkspacePackagesBuiltByName(
+      repoDir,
+      ['@happier-dev/cli-common'],
+      { env, includeDevDependencies: false },
+    );
+  }
+
+  const { ensureDepsInstalled } = await loadDependencyOwner();
+  await ensureDepsInstalled(componentDir, 'remote Happier workspace', { env });
+}
+
+const entryPath = String(process.argv[1] ?? '').trim();
+if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
+  await bootstrapRemoteDependencies();
+}

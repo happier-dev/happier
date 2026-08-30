@@ -4,14 +4,34 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
 
 const execFileAsync = promisify(execFile);
+let fixtureCargoHome = '';
+
+test.before(async () => {
+  fixtureCargoHome = await mkdtemp(join(tmpdir(), 'happier-tauri-dev-cargo-'));
+  const cargoBinDir = join(fixtureCargoHome, 'bin');
+  const cargoBinary = join(cargoBinDir, process.platform === 'win32' ? 'cargo.exe' : 'cargo');
+  await mkdir(cargoBinDir, { recursive: true });
+  // A copy of Node is a portable executable fixture: `cargo --version` only needs
+  // to prove that the resolved runner can execute for these plan-only CLI tests.
+  await copyFile(process.execPath, cargoBinary);
+  if (process.platform !== 'win32') await chmod(cargoBinary, 0o755);
+});
+
+test.after(async () => {
+  if (fixtureCargoHome) await rm(fixtureCargoHome, { recursive: true, force: true });
+});
 
 function isolatedTauriEnv(extraEnv = {}) {
-  return buildStackFixtureEnv({ baseEnv: process.env, stripStackEnv: true, extraEnv });
+  return buildStackFixtureEnv({
+    baseEnv: process.env,
+    stripStackEnv: true,
+    extraEnv: { CARGO_HOME: fixtureCargoHome, ...extraEnv },
+  });
 }
 
 test('tauri_dev --json prints the resolved launch plan without running build hooks', async () => {

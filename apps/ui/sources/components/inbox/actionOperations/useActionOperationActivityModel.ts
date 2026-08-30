@@ -4,6 +4,7 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import {
     useActiveServerAccountScope,
     useAllMachines,
+    useAllSessionListRenderables,
     useAllSessions,
 } from '@/sync/domains/state/storage';
 import {
@@ -15,7 +16,11 @@ import {
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import {
+    getSessionDisplayTitle,
+    getSessionName,
+    type SessionNameSource,
+} from '@/utils/sessions/sessionUtils';
 
 import type { ActionOperationObservationPresentation } from './actionOperationPresentation';
 
@@ -31,6 +36,25 @@ export type ActionOperationActivityModel = Readonly<{
     dismissOperation: (operationId: string) => void;
 }>;
 
+export function resolveActionOperationSessionNameById(
+    sessions: readonly SessionNameSource[],
+    sessionListRenderables: readonly SessionNameSource[],
+): ReadonlyMap<string, string> {
+    const resolved = new Map<string, string>();
+    for (const renderable of sessionListRenderables) {
+        resolved.set(renderable.id, getSessionName(renderable));
+    }
+    for (const session of sessions) {
+        const explicitTitle = getSessionDisplayTitle(session);
+        if (explicitTitle) {
+            resolved.set(session.id, explicitTitle);
+        } else if (!resolved.has(session.id)) {
+            resolved.set(session.id, getSessionName(session));
+        }
+    }
+    return resolved;
+}
+
 export function useActionOperationActivityModel(): ActionOperationActivityModel {
     const accountId = useActiveServerAccountScope()?.accountId ?? '';
     const operations = useAllActionOperations(accountId);
@@ -43,10 +67,11 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         actionOperationReentry.getRevision,
     );
     const sessions = useAllSessions();
+    const sessionListRenderables = useAllSessionListRenderables();
     const machines = useAllMachines();
-    const sessionById = React.useMemo(
-        () => new Map(sessions.map((session) => [session.id, session])),
-        [sessions],
+    const sessionNameById = React.useMemo(
+        () => resolveActionOperationSessionNameById(sessions, sessionListRenderables),
+        [sessionListRenderables, sessions],
     );
     const machineById = React.useMemo(
         () => new Map(machines.map((machine) => [machine.id, machine])),
@@ -80,11 +105,12 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
         [observations, unavailableOperationIds],
     );
     const contextForOperation = React.useCallback((operation: ActionOperationSnapshotV1): string | null => {
-        const session = operation.scope.sessionId ? sessionById.get(operation.scope.sessionId) : null;
-        if (session) return getSessionName(session);
+        if (operation.scope.sessionId) {
+            return sessionNameById.get(operation.scope.sessionId) ?? null;
+        }
         const machine = machineById.get(operation.scope.machineId);
         return machine ? getMachineDisplayName(machine) : null;
-    }, [machineById, sessionById]);
+    }, [machineById, sessionNameById]);
     const markVisibleTerminalSeen = React.useCallback(() => {
         actionOperationStore.markAllTerminalSeen();
     }, []);

@@ -129,7 +129,7 @@ test('dependency refresh marker invalidates on root patch additions and deletion
   assert.equal(refreshes, 2);
 });
 
-test('dependency refresh marker compares per-path size metadata even when mtimes are preserved', async (t) => {
+test('dependency refresh marker detects content changes when mtimes are preserved', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-yarn-guard-metadata-'));
   t.after(async () => rm(dir, { recursive: true, force: true }));
   const previousHome = process.env.HAPPIER_STACK_HOME_DIR;
