@@ -16,6 +16,10 @@ test('sanitizeStackTestRunnerEnv removes live stack and server scope from inheri
     HAPPIER_WEBAPP_URL: 'http://happier-repo-live.localhost:18829',
     HAPPIER_ACTIVE_SERVER_ID: 'stack_repo_live__id_default',
     HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo_live__id_default',
+    HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '/Users/alice/live-stack-repo/apps/cli/dist/index.mjs',
+    HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: '/Users/alice/.happier/stacks/repo-live/stack.runtime.json',
+    HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: 'live-fingerprint',
+    HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
     HAPPIER_FEATURE_POLICY_ENV: '',
     HAPPIER_TEST_FEATURES_DENY: 'voice',
   });
