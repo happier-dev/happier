@@ -11406,6 +11406,65 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
+    it('observes an already-missing tracked runner before stop attempts signaling', async () => {
+        const sessionId = 'session-missing-runner-stop';
+        const trackedPid = 2_147_482_997;
+        const trackedSessions = new Map<number, TrackedSession>([[
+            trackedPid,
+            {
+                startedBy: 'daemon',
+                happySessionId: sessionId,
+                pid: trackedPid,
+                reattachedFromDiskMarker: true,
+                stopRequestedAtMs: 123,
+            },
+        ]]);
+        const killSpy = vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
+            if (targetPid === trackedPid && signal === 0) {
+                throw Object.assign(new Error('runner is missing'), { code: 'ESRCH' });
+            }
+            throw new Error(`Unexpected process signal for PID ${targetPid}: ${String(signal)}`);
+        }) as typeof process.kill);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-missing-runner-stop',
+            credentials: {
+                token: 'token-daemon',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
+            api: {} as never,
+            loadLocalHandoffMetadataByVendorResumeId: vi.fn(),
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: trackedSessions,
+            pidToAwaiter: new Map(),
+            pidToSpawnResultResolver: new Map(),
+            pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByPid: new Map(),
+            sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(),
+            loadTerminalHostAdapters: async () => ({}),
+            startupTerminalRecovery: {
+                disconnectedTerminalHostCandidates: [],
+                unresolvedTerminalHostSessionIds: [],
+            },
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            processEnv: {},
+        });
+        try {
+            await expect(runtime.stopSession(sessionId)).resolves.toEqual({ status: 'stopped' });
+            expect(trackedSessions.has(trackedPid)).toBe(false);
+            expect(killSpy).not.toHaveBeenCalledWith(trackedPid, 'SIGTERM');
+            expect(killSpy).not.toHaveBeenCalledWith(-trackedPid, 'SIGTERM');
+        } finally {
+            killSpy.mockRestore();
+            await runtime.stopControlServer();
+        }
+    });
+
     it('allows Resume after the tracked-runner stop path retires the cached exact host candidate', async () => {
         const sessionId = 'session-exact-live-terminal-tracked-stop';
         const trackedPid = 2_147_483_001;

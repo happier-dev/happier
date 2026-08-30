@@ -3911,6 +3911,23 @@ export async function startDaemonSessionControlRuntime(
                 retireExactTerminalControlServiceability: async (input) =>
                     await retireTerminalControlServiceabilityForCurrentAccount(input),
             }),
+        areTrackedRunnersExited: async ({ trackedPids }) => {
+            const exited = await waitForTrackedRunnerProcessesExit({
+                runners: trackedPids.map((pid) => ({ pid })),
+                timeoutMs: 0,
+                pollIntervalMs: 0,
+            });
+            if (!exited) return false;
+
+            for (const pid of trackedPids) {
+                await onChildExited(pid, {
+                    reason: 'process-missing',
+                    code: null,
+                    signal: null,
+                });
+            }
+            return true;
+        },
         waitForTrackedRunnersExit: async ({ sessionId, trackedPids }) => {
             await waitForExistingSessionExitIfStopRequested({
                 sessionId,
