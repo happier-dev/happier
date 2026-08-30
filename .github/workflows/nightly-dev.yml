@@ -181,14 +181,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/release/verify-existing-ci.mjs \
-            --repository "$GITHUB_REPOSITORY" \
-            --workflow tests.yml \
-            --source-sha "$SOURCE_SHA" \
-            --source-branch dev \
-            ${{ inputs.ci_run_id != '' && format('--run-id {0}', inputs.ci_run_id) || '' }}
+          args=(
+            --repository "$GITHUB_REPOSITORY"
+            --workflow tests.yml
+            --source-sha "$SOURCE_SHA"
+            --source-branch dev
+          )
+          if [ -n "$CI_RUN_ID" ]; then
+            args+=(--run-id "$CI_RUN_ID")
+          fi
+          node scripts/pipeline/release/verify-existing-ci.mjs "${args[@]}"
 
   nightly_noop:
     name: Skip already completed nightly

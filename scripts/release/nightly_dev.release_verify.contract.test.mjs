@@ -60,9 +60,12 @@ test('nightly-dev admits exact-SHA CI before builds and safely skips an already 
 
   assert.match(
     raw,
-    /verify_source_ci:[\s\S]*?needs:\s*\[prepare_release_candidate\][\s\S]*?actions:\s*read[\s\S]*?verify-existing-ci\.mjs[\s\S]*?--source-sha "\$SOURCE_SHA"[\s\S]*?--source-branch dev/,
+    /verify_source_ci:[\s\S]*?needs:\s*\[prepare_release_candidate\][\s\S]*?actions:\s*read[\s\S]*?args=\([\s\S]*?--source-sha "\$SOURCE_SHA"[\s\S]*?--source-branch dev[\s\S]*?verify-existing-ci\.mjs "\$\{args\[@\]\}"/,
     'the exact candidate SHA must have successful canonical push CI before publication starts',
   );
+  assert.match(raw, /CI_RUN_ID:\s*\$\{\{ inputs\.ci_run_id \}\}/, 'explicit CI run id must be passed through an environment variable');
+  assert.match(raw, /args\+=\(--run-id "\$CI_RUN_ID"\)/, 'CI run id must be shell-quoted when forwarded to the verifier');
+  assert.doesNotMatch(raw, /format\(\x27--run-id \{0\}\x27/, 'CI run id must not be interpolated into an unquoted shell fragment');
   assert.match(
     raw,
     /prepare_release_candidate:[\s\S]*?release_needed:\s*\$\{\{ steps\.release_need\.outputs\.release_needed \}\}[\s\S]*?EVENT_NAME:[\s\S]*?github\.event_name[\s\S]*?gh run list[\s\S]*?for tag in server-dev stack-dev cli-dev ui-web-dev[\s\S]*?release_needed=false/,
