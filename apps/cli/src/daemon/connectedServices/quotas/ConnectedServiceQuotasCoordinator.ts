@@ -285,6 +285,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly recoveryCreditConsumeResultsByKey = new Map<string, ConnectedServiceQuotaRecoveryCreditConsumeResult>();
   private readonly recoveryCreditConsumeInFlightByKey = new Map<string, Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>>();
   private readonly startupCurrentSourceRefreshByKey = new Map<string, ConnectedServiceUsageSourceV1>();
+  private readonly discoveredProfileIdsByServiceId = new Map<ConnectedServiceId, ReadonlySet<string>>();
   private lastDiscoveryAt = 0;
 
   public constructor(params: Readonly<{
@@ -3725,6 +3726,7 @@ export class ConnectedServiceQuotasCoordinator {
     const activeGroupTargetsByServiceId = new Map<ConnectedServiceId, ActiveGroupQuotaSwitchTarget[]>();
     const pendingSoftSwitchTargets: ActiveGroupQuotaSwitchTarget[] = [];
     const profileHealthByServiceId: ProfileHealthByServiceId = new Map();
+    const profileHealthLoadFailures = new Set<ConnectedServiceId>();
     const authGroupByKey = new Map<string, Promise<ConnectedServiceAuthGroupV1 | null>>();
     const loadProfileHealth = async (serviceId: ConnectedServiceId): Promise<Map<string, ConnectedServiceCredentialHealthStatusV1>> => {
       const existing = profileHealthByServiceId.get(serviceId);
@@ -3747,6 +3749,7 @@ export class ConnectedServiceQuotasCoordinator {
         profileHealthByServiceId.set(serviceId, byProfileId);
         return byProfileId;
       } catch {
+        profileHealthLoadFailures.add(serviceId);
         const empty = new Map<string, ConnectedServiceCredentialHealthStatusV1>();
         profileHealthByServiceId.set(serviceId, empty);
         return empty;
@@ -3887,24 +3890,30 @@ export class ConnectedServiceQuotasCoordinator {
     if (this.discoveryEnabled && typeof this.api.listConnectedServiceProfiles === 'function') {
       const discoveryDue = this.lastDiscoveryAt <= 0 || now - this.lastDiscoveryAt >= this.discoveryIntervalMs;
       if (discoveryDue) {
-        this.lastDiscoveryAt = now;
+        let discoverySucceeded = true;
         for (const serviceId of this.quotaFetchersByServiceId.keys()) {
-          try {
-            const profiles = await loadProfileHealth(serviceId);
-            for (const [profileId, status] of profiles.entries()) {
-              if (!isConnectedServiceCredentialHealthStatusUsable(status)) continue;
-              if (!profileId) continue;
-              const existing = bindingsByServiceId.get(serviceId);
-              if (existing) {
-                existing.add(profileId);
-              } else {
-                bindingsByServiceId.set(serviceId, new Set([profileId]));
-              }
-            }
-          } catch {
-            // Best-effort only.
+          const profiles = await loadProfileHealth(serviceId);
+          if (profileHealthLoadFailures.has(serviceId)) {
+            discoverySucceeded = false;
             continue;
           }
+          const usableProfileIds = new Set<string>();
+          for (const [profileId, status] of profiles.entries()) {
+            if (!isConnectedServiceCredentialHealthStatusUsable(status)) continue;
+            if (!profileId) continue;
+            usableProfileIds.add(profileId);
+          }
+          this.discoveredProfileIdsByServiceId.set(serviceId, usableProfileIds);
+        }
+        if (discoverySucceeded) this.lastDiscoveryAt = now;
+      }
+
+      for (const [serviceId, profileIds] of this.discoveredProfileIdsByServiceId.entries()) {
+        const existing = bindingsByServiceId.get(serviceId);
+        if (existing) {
+          for (const profileId of profileIds) existing.add(profileId);
+        } else if (profileIds.size > 0) {
+          bindingsByServiceId.set(serviceId, new Set(profileIds));
         }
       }
     }
