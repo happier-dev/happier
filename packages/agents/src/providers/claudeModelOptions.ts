@@ -3,6 +3,17 @@ import type { AgentModelOption } from '@happier-dev/protocol';
 export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ClaudeEffortLevel = (typeof CLAUDE_EFFORT_LEVELS)[number];
 
+/**
+ * Anthropic model lists may repeat the provider in names such as `Claude Sonnet 5`.
+ * Provider-scoped pickers already supply that context, so dynamic rows use the same relative
+ * label style as curated rows while non-Claude gateway model names remain unchanged.
+ */
+export function normalizeClaudeModelDisplayName(nameRaw: unknown, fallback: string): string {
+  const name = typeof nameRaw === 'string' ? nameRaw.trim() : '';
+  const prefixed = /^claude\s+(.+)$/iu.exec(name);
+  return prefixed?.[1]?.trim() || name || fallback.trim();
+}
+
 export function normalizeClaudeEffortLevel(raw: unknown): ClaudeEffortLevel | null {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   return CLAUDE_EFFORT_LEVELS.find((level) => level === value) ?? null;
