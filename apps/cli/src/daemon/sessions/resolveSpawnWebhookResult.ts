@@ -20,6 +20,17 @@ export function resolveSpawnWebhookResult(params: Readonly<{
     return params.result;
   }
 
+  const attachSessionId =
+    tracked.spawnOptions && typeof tracked.spawnOptions.existingSessionId === 'string'
+      ? tracked.spawnOptions.existingSessionId.trim()
+      : '';
+  if (attachSessionId) {
+    params.warn(
+      `[DAEMON RUN] Session webhook timed out for PID ${params.pid} while attaching to an existing session; keeping timeout error until webhook or child-exit proof arrives`,
+    );
+    return params.result;
+  }
+
   const trackedSessionId = typeof tracked.happySessionId === 'string' ? tracked.happySessionId.trim() : '';
   if (trackedSessionId && !isPidPlaceholderSessionId(trackedSessionId)) {
     params.warn(
