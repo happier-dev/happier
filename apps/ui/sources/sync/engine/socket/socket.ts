@@ -1998,6 +1998,11 @@ export function flushActivityUpdates(params: {
             const isTimestampOnlyPatch = isTimestampOnlyActivityPatch(session, patch);
             const isTurningOff = update.active === false && nextThinking === false;
             const isThinkingResurrection = nextThinking === true && session.thinking !== true;
+            const isThinkingStop =
+                nextThinking === false
+                && session.thinking === true
+                && update.active === session.active
+                && update.activeAt >= session.activeAt;
 
             // Most state-changing activity ephemerals should be ignored when they predate a newer durable/lifecycle update
             // (for example a recent turn_aborted/task_complete clear). Otherwise old "thinking=true" ephemerals
@@ -2014,7 +2019,11 @@ export function flushActivityUpdates(params: {
             if (isTimestampOnlyPatch && isStaleTimestampOnlyActivityPatch(session, patch)) {
                 continue;
             }
-            if (!isTimestampOnlyPatch) {
+            // A durable terminal projection can advance `updatedAt` before the
+            // daemon's activity-off event arrives. That event is still the
+            // authoritative working -> online transition when its activity
+            // timestamp is newer than the last activity heartbeat.
+            if (!isTimestampOnlyPatch && !isThinkingStop) {
                 if (isTurningOff) {
                     if (update.activeAt < session.activeAt) continue;
                 } else {

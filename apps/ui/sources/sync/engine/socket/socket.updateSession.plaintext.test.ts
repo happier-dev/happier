@@ -82,6 +82,41 @@ describe('socket update handling: plaintext update-session', () => {
         storage.setState(initialStorageState, true);
     });
 
+    it('applies working-to-online activity even when a newer durable projection advanced updatedAt', () => {
+        const session = {
+            ...buildSession('s_working_to_online'),
+            updatedAt: 200,
+            activeAt: 100,
+            thinking: true,
+            thinkingAt: 100,
+        };
+        storage.setState({
+            ...initialStorageState,
+            sessions: { [session.id]: session },
+        });
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity',
+                id: session.id,
+                active: true,
+                activeAt: 150,
+                thinking: false,
+            }]]),
+            applySessions,
+        });
+
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: session.id,
+                active: true,
+                thinking: false,
+                activeAt: 150,
+            }),
+        ]);
+    });
+
     afterEach(() => {
         clearActiveViewingSessionsForServerScopeReset();
         clearMountedSessionRealtimeTranscriptConsumers();
