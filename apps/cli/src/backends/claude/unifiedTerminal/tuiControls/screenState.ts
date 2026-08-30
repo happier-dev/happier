@@ -365,7 +365,7 @@ function readCursorComposerRelation(params: Readonly<{
   context?: ClaudeScreenParseContext | undefined;
 }>): ClaudeScreenState['composerCursorRelation'] {
   const cursor = params.context?.cursor;
-  if (cursor === undefined || params.content.length === 0) return null;
+  if (cursor === undefined) return null;
   const promptOffset = params.match[0].search(/[>›❯]/u);
   if (promptOffset === -1) return null;
   const promptIndex = params.match.index + promptOffset;
@@ -376,6 +376,7 @@ function readCursorComposerRelation(params: Readonly<{
   const line = params.text.slice(lineStart, lineEnd === -1 ? params.text.length : lineEnd);
   const contentStartColumn = readComposerContentStartColumn(line);
   if (contentStartColumn === null) return null;
+  if (params.content.length === 0) return 'at_content_start';
   return cursor.x <= contentStartColumn ? 'at_content_start' : 'inside_or_after_content';
 }
 
@@ -404,9 +405,9 @@ function readComposerState(
   const match = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
   if (!match) return { content: null, cursorRelation: null };
   const content = (match[1] ?? '').trim();
-  if (content.length === 0) return { content, cursorRelation: null };
-  const continuation = readComposerContinuationLines(text, match.index + match[0].length);
   const cursorRelation = readCursorComposerRelation({ text, match, content, context });
+  if (content.length === 0) return { content, cursorRelation };
+  const continuation = readComposerContinuationLines(text, match.index + match[0].length);
   if (continuation.length === 0 && composerContentIsDimPlaceholder(rawText, content, cursorRelation)) {
     return { content: '', cursorRelation };
   }

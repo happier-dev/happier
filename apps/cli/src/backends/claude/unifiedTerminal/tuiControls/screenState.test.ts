@@ -925,6 +925,31 @@ describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail
     ].join('\n')).unrecognizedConfirmationDialogVisible).toBe(false);
   });
 
+  it('lets direct cursor ownership of an empty composer override a selection-shaped transcript artifact', () => {
+    const screen = [
+      'Assistant response:',
+      '❯ 2. Payment: cash only',
+      '',
+      '──────────────────────────────',
+      '❯',
+      '──────────────────────────────',
+    ].join('\n');
+
+    const cursorOwned = parseClaudeScreenState(screen, { cursor: { x: 2, y: 4 } });
+    expect(cursorOwned.composerContent).toBe('');
+    expect(cursorOwned.composerCursorRelation).toBe('at_content_start');
+    expect(cursorOwned.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(cursorOwned)).toBeNull();
+
+    const cursorElsewhere = parseClaudeScreenState(screen, { cursor: { x: 2, y: 1 } });
+    expect(cursorElsewhere.composerCursorRelation).toBeNull();
+    expect(cursorElsewhere.unrecognizedConfirmationDialogVisible).toBe(true);
+
+    const cursorUnavailable = parseClaudeScreenState(screen);
+    expect(cursorUnavailable.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(cursorUnavailable)).toBe('unrecognized_confirmation_dialog');
+  });
+
   it('vetoes in-flight steering on an unrecognized confirmation dialog (typed text would answer it)', () => {
     expect(resolveClaudeScreenInFlightSteerVeto(parseClaudeScreenState(unrecognizedDialog)))
       .toBe('unrecognized_confirmation_dialog');
