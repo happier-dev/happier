@@ -1,6 +1,6 @@
 import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
@@ -15,7 +15,6 @@ import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import {
   applyStackActiveServerScopeEnv,
   applyStackDaemonLifecycleScopeEnv,
-  buildStackStableScopeId,
 } from './utils/auth/stable_scope_id.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
@@ -25,10 +24,33 @@ import {
   resolveCliRuntimeLaunchSpec,
 } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers/managedJavaScriptRuntime';
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import {
+  buildStackServerProfileSetArgs,
+  deriveEnvServerIdFromUrl,
+  readActiveServerUrlsFromCliSettings,
+} from './utils/stack/server_profile_reconciliation.mjs';
 
 function isNodeRuntimeEntrypoint(entrypoint) {
   return /\.(?:cjs|js|mjs)$/i.test(String(entrypoint ?? '').trim());
+}
+
+function runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl }) {
+  if (!existsSync(join(cliHomeDir, 'settings.json'))) return;
+  const serverId = String(env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+  if (!serverId) return;
+  const args = buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl });
+  const reconciliationEnv = { ...env, HAPPIER_DEFER_SERVER_SELECTION_FOLLOW_UP: '1' };
+  const result =
+    resolvedCli.kind === 'runtime'
+      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...args], { stdio: 'ignore', env: reconciliationEnv })
+      : spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', ...resolvedCli.nodeArgs, ...args], {
+          stdio: 'ignore',
+          env: reconciliationEnv,
+        });
+  if (result.error || result.status !== 0) {
+    const detail = result.error instanceof Error ? result.error.message : `exit=${result.status ?? 'unknown'}`;
+    throw new Error(`[happier] failed to refresh the stack-owned relay profile before launch (${detail}).`);
+  }
 }
 
 function printHstackHappierHelp({ json }) {
@@ -129,48 +151,6 @@ function readPrefixServerSelection(argv) {
   };
 }
 
-function normalizeServerUrl(url) {
-  return String(url ?? '').trim().replace(/\/+$/, '');
-}
-
-function comparableServerUrl(url) {
-  const normalized = normalizeServerUrl(url);
-  if (!normalized) return '';
-  try {
-    return createServerUrlComparableKey(normalized);
-  } catch {
-    return '';
-  }
-}
-
-function deriveEnvServerIdFromUrl(url) {
-  const normalized = comparableServerUrl(url) || normalizeServerUrl(url);
-  if (!normalized) return null;
-  let h = 2166136261;
-  for (let i = 0; i < normalized.length; i += 1) {
-    h ^= normalized.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return `env_${(h >>> 0).toString(16)}`;
-}
-
-function coerceServerProfileFromSettings(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
-  const serverUrl = normalizeServerUrl(raw.serverUrl);
-  const webappUrl = normalizeServerUrl(raw.webappUrl);
-  const localServerUrl = normalizeServerUrl(raw.localServerUrl);
-  const legacyPublicServerUrl = normalizeServerUrl(raw.publicServerUrl);
-  const canonicalServerUrl = legacyPublicServerUrl && legacyPublicServerUrl !== serverUrl ? legacyPublicServerUrl : serverUrl;
-  if (!id || !canonicalServerUrl || !webappUrl) return null;
-  return {
-    id,
-    serverUrl: canonicalServerUrl,
-    localServerUrl: localServerUrl || null,
-    webappUrl,
-  };
-}
-
 function resolveStackScopedWrapperEnv({ env = process.env, stackName }) {
   const base = { ...(env ?? {}) };
   const name = String(stackName ?? '').trim() || getStackName(base);
@@ -202,127 +182,8 @@ function resolveStackScopedWrapperEnv({ env = process.env, stackName }) {
   return { env: next, stackEnvPath };
 }
 
-function readActiveServerUrlsFromCliSettings(homeDir) {
-  const baseDir = String(homeDir ?? '').trim();
-  if (!baseDir) return null;
-  const settingsPath = join(baseDir, 'settings.json');
-  if (!existsSync(settingsPath)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    if (!parsed || typeof parsed !== 'object') return null;
-    const schemaVersion = Number(parsed.schemaVersion ?? 0);
-    if (!Number.isFinite(schemaVersion) || schemaVersion < 5) return null;
-    const activeServerId = typeof parsed.activeServerId === 'string' ? parsed.activeServerId.trim() : '';
-    const servers = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : null;
-    if (!activeServerId || !servers) return null;
-    return coerceServerProfileFromSettings(servers[activeServerId]);
-  } catch {
-    return null;
-  }
-}
-
 function isIdentityScopedCliHomeDir(value) {
   return /(^|[\\/])cli-identities([\\/]|$)/.test(String(value ?? '').trim());
-}
-
-function bestEffortReconcileStackServerProfileInCliSettings({ cliHomeDir, stackName, cliIdentity, internalServerUrl, publicServerUrl }) {
-  const home = String(cliHomeDir ?? '').trim();
-  if (!home) return;
-  const serverUrl = normalizeServerUrl(internalServerUrl);
-  const webappUrl = normalizeServerUrl(publicServerUrl);
-  if (!serverUrl || !webappUrl) return;
-
-  const settingsPath = join(home, 'settings.json');
-  if (!existsSync(settingsPath)) return;
-
-  let parsed = null;
-  try {
-    parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-  } catch {
-    return;
-  }
-  if (!parsed || typeof parsed !== 'object') return;
-  const schemaVersion = Number(parsed.schemaVersion ?? 0);
-  if (!Number.isFinite(schemaVersion) || schemaVersion < 5) return;
-
-  const serversRaw = parsed.servers && typeof parsed.servers === 'object' ? parsed.servers : {};
-  const servers = { ...serversRaw };
-
-  const matchingIds = Object.entries(servers).filter(([, profile]) => {
-    const coerced = coerceServerProfileFromSettings(profile);
-    if (!coerced) return false;
-    const targetComparableKey = comparableServerUrl(serverUrl);
-    return (
-      (targetComparableKey && comparableServerUrl(coerced.serverUrl) === targetComparableKey)
-      || (targetComparableKey && comparableServerUrl(coerced.localServerUrl) === targetComparableKey)
-      || normalizeServerUrl(coerced.serverUrl) === serverUrl
-      || normalizeServerUrl(coerced.localServerUrl) === serverUrl
-    );
-  }).map(([id]) => id);
-
-  const stableId = buildStackStableScopeId({ stackName, cliIdentity });
-  const activeServerId = typeof parsed.activeServerId === 'string' ? parsed.activeServerId.trim() : '';
-  const sourceId = matchingIds.includes(activeServerId)
-    ? activeServerId
-    : matchingIds.length === 1
-      ? matchingIds[0]
-      : '';
-  const targetId = stableId;
-
-  const source = sourceId && servers[sourceId] && typeof servers[sourceId] === 'object' ? servers[sourceId] : {};
-  const existing = servers[targetId] && typeof servers[targetId] === 'object' ? servers[targetId] : source;
-  const now = Date.now();
-  const nextProfile = {
-    ...existing,
-    id: targetId,
-    name: typeof existing.name === 'string' && existing.name.trim() ? existing.name : `Stack ${stackName}`,
-    serverUrl,
-    localServerUrl: serverUrl,
-    webappUrl,
-    createdAt: Number.isFinite(existing.createdAt) ? existing.createdAt : now,
-    updatedAt: now,
-    lastUsedAt: now,
-  };
-
-  let nextSettings = { ...parsed, activeServerId: targetId, servers: { ...servers, [targetId]: nextProfile } };
-  let didMigrateServerScopedState = false;
-  if (sourceId && sourceId !== targetId) {
-    const migrateServerScopedEntry = (key) => {
-      const sourceMap = parsed[key];
-      if (!sourceMap || typeof sourceMap !== 'object' || !(sourceId in sourceMap)) return;
-      const targetMap = { ...sourceMap };
-      if (!(targetId in targetMap)) {
-        targetMap[targetId] = sourceMap[sourceId];
-        didMigrateServerScopedState = true;
-      }
-      nextSettings = { ...nextSettings, [key]: targetMap };
-    };
-    for (const key of [
-      'machineIdByServerId',
-      'machineIdByServerIdByAccountId',
-      'machineReplacementCandidatesByServerIdByAccountId',
-      'lastTokenSubByServerId',
-      'machineIdConfirmedByServerByServerId',
-      'lastChangesCursorByServerIdByAccountId',
-    ]) {
-      migrateServerScopedEntry(key);
-    }
-  }
-
-  const shouldWrite =
-    parsed.activeServerId !== targetId ||
-    !servers[targetId] ||
-    normalizeServerUrl(servers[targetId].serverUrl) !== serverUrl ||
-    normalizeServerUrl(servers[targetId].webappUrl) !== webappUrl ||
-    didMigrateServerScopedState;
-
-  if (!shouldWrite) return;
-
-  try {
-    writeFileSync(settingsPath, JSON.stringify(nextSettings, null, 2) + '\n', 'utf-8');
-  } catch {
-    // best-effort
-  }
 }
 
 async function resolveCliEntrypoint(cliDir) {
@@ -467,17 +328,6 @@ async function main() {
     env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
   }
 
-  if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
-    const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
-    bestEffortReconcileStackServerProfileInCliSettings({
-      cliHomeDir,
-      stackName,
-      cliIdentity,
-      internalServerUrl,
-      publicServerUrl,
-    });
-  }
-
   const settingsDefaults =
     !isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection
       ? readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR)
@@ -549,6 +399,9 @@ async function main() {
   }
 
   env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec });
+  if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
+    runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl });
+  }
   const forwardedArgv = stripHstackHappierWrapperFlags(argv);
   const res =
     resolvedCli.kind === 'runtime'

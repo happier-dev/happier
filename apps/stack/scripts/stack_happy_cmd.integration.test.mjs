@@ -13,9 +13,16 @@ const rootDir = dirname(scriptsDir);
 
 function buildStubHappyCliScript({ message }) {
   return [
+      `import { appendFileSync } from 'node:fs';`,
+      `import { join } from 'node:path';`,
+      `const args = process.argv.slice(2);`,
+      `if (args[0] === 'server' && args[1] === 'set') {`,
+      `  appendFileSync(join(process.env.HAPPIER_HOME_DIR, '.hstack-test-server-set-calls.ndjson'), JSON.stringify(args) + '\\n');`,
+      `  process.exit(0);`,
+      `}`,
       `console.log(JSON.stringify({`,
       `  message: ${JSON.stringify(message)},`,
-      `  args: process.argv.slice(2),`,
+      `  args,`,
       `  stack: process.env.HAPPIER_STACK_STACK || null,`,
       `  envFile: process.env.HAPPIER_STACK_ENV_FILE || null,`,
       `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
@@ -176,7 +183,7 @@ test('hstack stack happier <name> ignores stale cloud settings defaults and keep
   assert.equal(out.webappUrl, 'http://localhost:44123');
 });
 
-test('hstack stack happier <name> seeds stack server profile in CLI settings for env-hardened subcommands', async (t) => {
+test('hstack stack happier <name> delegates stack profile reconciliation to the selected CLI runtime', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happier-stack-stack-happy-seed-settings-',
     message: 'seed-settings',
@@ -200,6 +207,7 @@ test('hstack stack happier <name> seeds stack server profile in CLI settings for
   });
 
   const settingsPath = join(fixture.storageDir, fixture.stackName, 'cli', 'settings.json');
+  const serverSetCallsPath = join(fixture.storageDir, fixture.stackName, 'cli', '.hstack-test-server-set-calls.ndjson');
 
   const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
     cwd: rootDir,
@@ -211,56 +219,24 @@ test('hstack stack happier <name> seeds stack server profile in CLI settings for
   assert.equal(out.message, 'seed-settings');
   assert.ok(out.activeServerId, 'expected wrapper to export HAPPIER_ACTIVE_SERVER_ID');
 
+  const serverSetCalls = (await readFile(serverSetCallsPath, 'utf-8')).trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(serverSetCalls, [[
+    'server',
+    'set',
+    '--server-id',
+    out.activeServerId,
+    '--server-url',
+    'http://127.0.0.1:45123',
+    '--local-server-url',
+    'http://127.0.0.1:45123',
+    '--webapp-url',
+    'http://localhost:45123',
+    '--migrate-matching-profile-state',
+    '--json',
+  ]]);
+
   const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
-  assert.equal(settings.schemaVersion, 6);
-  assert.equal(settings.activeServerId, out.activeServerId);
-  assert.ok(settings.servers?.[out.activeServerId], `expected settings.servers[${out.activeServerId}] to exist`);
-  assert.equal(settings.servers[out.activeServerId].serverUrl, 'http://127.0.0.1:45123');
-  assert.equal(settings.servers[out.activeServerId].webappUrl, 'http://localhost:45123');
-});
-
-test('hstack stack happier <name> migrates an equivalent loopback profile into the stable stack scope', async (t) => {
-  const fixture = await createHappyStackFixture(t, {
-    prefix: 'happier-stack-stack-happy-seed-loopback-',
-    message: 'seed-loopback',
-    serverPort: 45124,
-    stackCliSettings: {
-      schemaVersion: 6,
-      onboardingCompleted: true,
-      activeServerId: 'stack-local',
-      machineIdByServerId: { 'stack-local': 'machine-stack-local' },
-      machineIdByServerIdByAccountId: { 'stack-local': { 'account-1': 'machine-stack-local-account-1' } },
-      servers: {
-        'stack-local': {
-          id: 'stack-local',
-          name: 'Stack local',
-          serverUrl: 'http://localhost:45124',
-          localServerUrl: 'http://127.0.0.1:45124',
-          webappUrl: 'http://localhost:45124',
-          createdAt: 1,
-          updatedAt: 1,
-          lastUsedAt: 1,
-        },
-      },
-    },
-  });
-
-  const settingsPath = join(fixture.storageDir, fixture.stackName, 'cli', 'settings.json');
-  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
-    cwd: rootDir,
-    env: fixture.baseEnv,
-  });
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-
-  const out = JSON.parse(res.stdout.trim());
-  const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
-  const stableScopeId = buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: 'default' });
-  assert.equal(out.activeServerId, stableScopeId);
-  assert.equal(settings.activeServerId, stableScopeId);
-  assert.ok(settings.servers[stableScopeId]);
-  assert.ok(settings.servers['stack-local']);
-  assert.equal(settings.machineIdByServerId[stableScopeId], 'machine-stack-local');
-  assert.equal(settings.machineIdByServerIdByAccountId[stableScopeId]['account-1'], 'machine-stack-local-account-1');
+  assert.equal(settings.activeServerId, 'cloud', 'the wrapper must not mutate settings behind the CLI owner');
 });
 
 test('hstack stack happier <name> uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {

@@ -871,6 +871,7 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
+if (args[0] === 'server' && args[1] === 'set' && process.env.HAPPIER_TEST_FAIL_SERVER_SET === '1') process.exit(73);
 if (args[0] !== 'daemon') process.exit(0);
 if (args[1] === '--help') process.exit(0);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
@@ -1647,6 +1648,7 @@ test('startLocalDaemonWithAuth cold-starts runnable prior dist and preserves the
       ...env,
       HAPPIER_STACK_REPO_DIR: '',
       HAPPIER_STACK_CLI_ROOT_DIR: tmp,
+      HAPPIER_TEST_FAIL_SERVER_SET: '1',
     },
     stackName: 'dev',
     cliIdentity: 'default',
