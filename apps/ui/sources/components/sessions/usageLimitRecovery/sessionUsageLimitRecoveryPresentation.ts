@@ -10,6 +10,7 @@ import {
     summarizeConnectedServiceQuotaRecoveryCredits,
     type ConnectedServiceQuotaRecoveryCreditSummary,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditSummary';
+import { t, type TranslationParams } from '@/text';
 
 export type UsageLimitRecoveryRememberedMode = 'ask' | 'auto_wait';
 export type UsageLimitRecoveryOperationStatus = 'checking' | 'ready' | 'waiting' | 'resumed' | 'exhausted' | 'inactive';
@@ -85,22 +86,58 @@ export type SessionUsageLimitRecoveryTranslationKey =
     | 'session.usageLimitRecovery.resetCreditBody'
     | 'session.usageLimitRecovery.resetCreditExpiresBody';
 
-type SessionUsageLimitRecoveryTimeTranslationKey =
-    | 'session.usageLimitRecovery.resetBody'
-    | 'session.usageLimitRecovery.statusWaitingUntil'
-    | 'session.usageLimitRecovery.statusWaitingResetUntil'
-    | 'session.usageLimitRecovery.resetCreditBody'
-    | 'session.usageLimitRecovery.resetCreditExpiresBody';
+type SessionUsageLimitRecoveryTranslationParams = Readonly<{ count?: number; time?: string }>;
+
+type SessionUsageLimitRecoveryParameterizedTranslationKey = {
+    [K in SessionUsageLimitRecoveryTranslationKey]: [TranslationParams<K>] extends [never] ? never : K;
+}[SessionUsageLimitRecoveryTranslationKey];
 
 type SessionUsageLimitRecoveryStaticTranslationKey = Exclude<
     SessionUsageLimitRecoveryTranslationKey,
-    SessionUsageLimitRecoveryTimeTranslationKey
+    SessionUsageLimitRecoveryParameterizedTranslationKey
 >;
 
 export type SessionUsageLimitRecoveryTranslate = (
     key: SessionUsageLimitRecoveryTranslationKey,
-    params?: Readonly<{ count?: number; time?: string }>,
+    params?: SessionUsageLimitRecoveryTranslationParams,
 ) => string;
+
+const parameterizedSessionUsageLimitRecoveryTranslations = {
+    'session.usageLimitRecovery.resetBody': (params: SessionUsageLimitRecoveryTranslationParams) => (
+        t('session.usageLimitRecovery.resetBody', { time: params.time ?? '' })
+    ),
+    'session.usageLimitRecovery.statusWaitingUntil': (params: SessionUsageLimitRecoveryTranslationParams) => (
+        t('session.usageLimitRecovery.statusWaitingUntil', { time: params.time ?? '' })
+    ),
+    'session.usageLimitRecovery.statusWaitingResetUntil': (params: SessionUsageLimitRecoveryTranslationParams) => (
+        t('session.usageLimitRecovery.statusWaitingResetUntil', { time: params.time ?? '' })
+    ),
+    'session.usageLimitRecovery.resetCreditBody': (params: SessionUsageLimitRecoveryTranslationParams) => (
+        t('session.usageLimitRecovery.resetCreditBody', { count: params.count ?? 0 })
+    ),
+    'session.usageLimitRecovery.resetCreditExpiresBody': (params: SessionUsageLimitRecoveryTranslationParams) => (
+        t('session.usageLimitRecovery.resetCreditExpiresBody', {
+            count: params.count ?? 0,
+            time: params.time ?? '',
+        })
+    ),
+} satisfies Record<
+    SessionUsageLimitRecoveryParameterizedTranslationKey,
+    (params: SessionUsageLimitRecoveryTranslationParams) => string
+>;
+
+function isParameterizedSessionUsageLimitRecoveryTranslationKey(
+    key: SessionUsageLimitRecoveryTranslationKey,
+): key is SessionUsageLimitRecoveryParameterizedTranslationKey {
+    return key in parameterizedSessionUsageLimitRecoveryTranslations;
+}
+
+export const translateSessionUsageLimitRecovery: SessionUsageLimitRecoveryTranslate = (key, params) => {
+    if (isParameterizedSessionUsageLimitRecoveryTranslationKey(key)) {
+        return parameterizedSessionUsageLimitRecoveryTranslations[key](params ?? {});
+    }
+    return t(key);
+};
 
 type PresentationParams = Readonly<{
     featureEnabled: boolean;

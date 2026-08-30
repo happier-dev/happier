@@ -309,7 +309,13 @@ installSessionShellCommonModuleMocks({
   text: async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
-      translate: (key: string) => key,
+      translate: (key: string, params?: Record<string, unknown>) => {
+        if (key === 'session.usageLimitRecovery.statusWaitingResetUntil') {
+          const { time } = params as { time: string };
+          return `${key}:${time}`;
+        }
+        return key;
+      },
     });
   },
   modal: async () => {
@@ -1185,6 +1191,54 @@ describe('SessionView (direct sessions)', () => {
       v: 1,
       mode: 'auto_wait',
       resumePromptMode: 'off',
+    }));
+  });
+
+  it('reopens a session while usage-limit recovery is waiting for a known reset time', async () => {
+    featureEnabledState['sessions.usageLimitRecovery'] = true;
+    settingByKeyState.current.usageLimitRecoverySettingsV1 = { v: 1, mode: 'auto_wait', resumePromptMode: 'off' };
+    const resetAtMs = Date.UTC(2026, 4, 17, 17, 30, 0);
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        sessionUsageLimitRecoveryV1: {
+          v: 1,
+          status: 'waiting',
+          issueFingerprint: `usage-limit:claude:unknown-turn:1:${resetAtMs}`,
+          armedAtMs: 1,
+          resetAtMs,
+          nextCheckAtMs: resetAtMs,
+          attemptCount: 1,
+          maxAttempts: 3,
+          lastProbeError: null,
+          resumePromptMode: 'off',
+          selectedAuth: { kind: 'native' },
+        },
+      },
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1,
+        provider: 'claude',
+        usageLimit: {
+          v: 1,
+          resetAtMs,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+
+    expect(findUsageLimitStatusBadge(screen)).toEqual(expect.objectContaining({
+      label: expect.stringContaining('session.usageLimitRecovery.statusWaitingResetUntil:'),
+      testID: 'session-usageLimit-status-badge',
     }));
   });
 

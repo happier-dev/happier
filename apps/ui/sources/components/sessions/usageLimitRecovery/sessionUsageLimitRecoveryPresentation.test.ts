@@ -5,6 +5,7 @@ import type { SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happie
 import {
     buildSessionUsageLimitRecoveryPresentation,
     buildSessionUsageLimitStatusBadgePresentation,
+    translateSessionUsageLimitRecovery,
 } from './sessionUsageLimitRecoveryPresentation';
 
 function usageIssue(
@@ -49,6 +50,13 @@ function temporaryThrottleIssue(provider: string): SessionRuntimeIssueV1 {
 }
 
 describe('sessionUsageLimitRecoveryPresentation', () => {
+    it('translates a waiting-for-reset status with its required reset time', () => {
+        expect(translateSessionUsageLimitRecovery(
+            'session.usageLimitRecovery.statusWaitingResetUntil',
+            { time: '17:30' },
+        )).toContain('17:30');
+    });
+
     it('builds the same generic recovery actions for normalized usage-limit issues from different providers', () => {
         const translate = vi.fn((key: string, params?: Record<string, unknown>) => (
             params ? `${key}:${JSON.stringify(params)}` : key

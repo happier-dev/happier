@@ -441,8 +441,8 @@ import {
 import {
     buildSessionUsageLimitRecoveryPresentation,
     buildSessionUsageLimitStatusBadgePresentation,
+    translateSessionUsageLimitRecovery,
     type SessionUsageLimitRecoveryActionKind,
-    type SessionUsageLimitRecoveryTranslate,
     type UsageLimitRecoveryOperationStatus,
 } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
 import { hasMeaningfulActivityAfterRuntimeIssue } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitActivityStaleness';
@@ -2784,20 +2784,6 @@ function SessionViewLoaded({
             ? usageLimitRecoverySettingsV1.resumePromptMode
             : 'standard';
     const formatUsageLimitRecoveryTime = React.useCallback((timeMs: number) => new Date(timeMs).toLocaleString(), []);
-    const translateUsageLimitRecovery = React.useCallback<SessionUsageLimitRecoveryTranslate>((key, params) => {
-        switch (key) {
-            case 'session.usageLimitRecovery.resetBody':
-                return t(key, { time: params?.time ?? '' });
-            case 'session.usageLimitRecovery.statusWaitingUntil':
-                return t(key, { time: params?.time ?? '' });
-            case 'session.usageLimitRecovery.resetCreditBody':
-                return t(key, { count: params?.count ?? 0 });
-            case 'session.usageLimitRecovery.resetCreditExpiresBody':
-                return t(key, { count: params?.count ?? 0, time: params?.time ?? '' });
-            default:
-                return t(key);
-        }
-    }, []);
     const translateStaleSessionRunnerNotice = React.useCallback<StaleSessionRunnerNoticeTranslate>((key) => t(key), []);
     const usageLimitRuntimeState = React.useMemo(() => {
         const pendingFlags = derivePendingRequestFlagsFromSession(sessionRuntimeStatusSource);
@@ -2835,7 +2821,7 @@ function SessionViewLoaded({
         rememberedMode: usageLimitRecoveryMode,
         checkNowSupported: usageLimitRecoveryCheckNowSupported,
         nowMs: usageLimitRecoveryNowMs,
-        translate: translateUsageLimitRecovery,
+        translate: translateSessionUsageLimitRecovery,
         formatTime: formatUsageLimitRecoveryTime,
     }), [
         formatUsageLimitRecoveryTime,
@@ -2843,7 +2829,6 @@ function SessionViewLoaded({
         sessionRuntimeStatusSource.latestTurnStatusObservedAt,
         sessionRuntimeStatusSource.lastRuntimeIssue,
         sessionRuntimeStatusSource.meaningfulActivityAt,
-        translateUsageLimitRecovery,
         hasInterruptedWorkToResume,
         usageLimitRecovery,
         usageLimitRecoveryCredits,
@@ -2882,7 +2867,7 @@ function SessionViewLoaded({
         rememberedMode: usageLimitRecoveryMode,
         checkNowSupported: usageLimitRecoveryCheckNowSupported,
         nowMs: usageLimitRecoveryNowMs,
-        translate: translateUsageLimitRecovery,
+        translate: translateSessionUsageLimitRecovery,
         formatTime: formatUsageLimitRecoveryTime,
     }), [
         activeUsageLimitRecoveryOperationRetryAtMs,
@@ -2892,7 +2877,6 @@ function SessionViewLoaded({
         sessionRuntimeStatusSource.latestTurnStatusObservedAt,
         sessionRuntimeStatusSource.lastRuntimeIssue,
         sessionRuntimeStatusSource.meaningfulActivityAt,
-        translateUsageLimitRecovery,
         hasInterruptedWorkToResume,
         usageLimitRecovery,
         usageLimitRecoveryCredits,
@@ -2917,7 +2901,7 @@ function SessionViewLoaded({
         hasActivityAfterRuntimeIssue: hasMeaningfulActivityAfterRuntimeIssue(sessionRuntimeStatusSource),
         hasInterruptedWorkToResume,
         nowMs: usageLimitRecoveryNowMs,
-        translate: translateUsageLimitRecovery,
+        translate: translateSessionUsageLimitRecovery,
         formatTime: formatUsageLimitRecoveryTime,
     }), [
         activeUsageLimitRecoveryOperationRetryAtMs,
@@ -2927,7 +2911,6 @@ function SessionViewLoaded({
         sessionRuntimeStatusSource.latestTurnStatusObservedAt,
         sessionRuntimeStatusSource.lastRuntimeIssue,
         sessionRuntimeStatusSource.meaningfulActivityAt,
-        translateUsageLimitRecovery,
         hasInterruptedWorkToResume,
         usageLimitRecovery,
         usageLimitRecoveryFeatureEnabled,
