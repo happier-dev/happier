@@ -44,7 +44,7 @@ describe('parseProviderCatalogResponse', () => {
       models: [
         {
           id: 'claude-future-6',
-          name: 'Claude Future 6',
+          name: 'Future 6',
           contextWindowTokens: 1_000_000,
           capabilities: { reasoningControls: 'supported' },
           modelOptions: [{
@@ -85,6 +85,10 @@ describe('parseProviderCatalogResponse', () => {
     expect(() => parseProviderCatalogResponse('anthropic-models', {
       models: [{ id: 'wrong-envelope' }],
     })).toThrow('missing data');
+
+    expect(parseProviderCatalogResponse('anthropic-models', {
+      data: [{ id: 'glm-4.6', display_name: 'GLM 4.6' }],
+    }).models).toEqual([{ id: 'glm-4.6', name: 'GLM 4.6' }]);
   });
 
   it('rejects malformed Anthropic context and effort capability facts', () => {

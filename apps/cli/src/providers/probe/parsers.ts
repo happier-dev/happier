@@ -13,6 +13,7 @@ import {
 import {
   buildClaudeModelOptions,
   CLAUDE_EFFORT_LEVELS,
+  normalizeClaudeModelDisplayName,
   type ClaudeEffortLevel,
 } from '@happier-dev/agents/providers/claude-model-options';
 
@@ -178,7 +179,8 @@ function parseAnthropicModels(input: unknown): ParsedProviderCatalogResponse {
   return {
     models: normalizeModels(rows.map((row) => {
       const id = requiredOwnString(row, 'id');
-      const name = optionalOwnString(row, 'display_name');
+      const nameRaw = optionalOwnString(row, 'display_name');
+      const name = nameRaw === undefined ? undefined : normalizeClaudeModelDisplayName(nameRaw, id);
       const contextWindowTokens = optionalOwnContextWindowTokens(row);
       const effort = readAnthropicEffortCapability(row);
       const modelOptions = effort?.supported
