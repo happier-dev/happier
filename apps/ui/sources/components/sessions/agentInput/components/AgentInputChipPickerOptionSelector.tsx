@@ -23,6 +23,8 @@ import type {
 
 const RAIL_ACTION_SIZE = 20;
 const PICKER_OPTION_TOUCH_TARGET_SIZE = resolveAgentInputChipPickerOptionInteractiveTargetSize(Platform.OS);
+const RAIL_OPTION_VISUAL_SIZE = 36;
+const RAIL_OPTION_WEB_HIT_SLOP = (PICKER_OPTION_TOUCH_TARGET_SIZE - RAIL_OPTION_VISUAL_SIZE) / 2;
 
 type WebHoverablePressableState = Readonly<{
   pressed: boolean;
@@ -241,6 +243,7 @@ function AgentInputChipPickerOptionButton(
     return (
       <WebClickableView
         testID={testID}
+        hitSlop={Platform.OS === "web" ? { top: RAIL_OPTION_WEB_HIT_SLOP, bottom: RAIL_OPTION_WEB_HIT_SLOP } : undefined}
         accessibilityRole="button"
         accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
         accessibilityState={{
@@ -267,6 +270,7 @@ function AgentInputChipPickerOptionButton(
   return (
     <Pressable
       testID={testID}
+      hitSlop={Platform.OS === "web" ? { top: RAIL_OPTION_WEB_HIT_SLOP, bottom: RAIL_OPTION_WEB_HIT_SLOP } : undefined}
       accessibilityRole="button"
       accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
       accessibilityState={{
@@ -310,7 +314,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 6,
   },
   optionRow: {
-    minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
+    // Keep the rail's scan rhythm compact; the web hit area remains the
+    // accessible 44px target through hitSlop without adding visible gaps.
+    minHeight: Platform.OS === "web" ? RAIL_OPTION_VISUAL_SIZE : PICKER_OPTION_TOUCH_TARGET_SIZE,
     borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 8,

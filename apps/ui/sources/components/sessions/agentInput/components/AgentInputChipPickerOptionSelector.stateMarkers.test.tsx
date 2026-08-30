@@ -30,7 +30,7 @@ const SECTIONS = [{ id: "agents", options: [RUNNING, ARMED] }];
  * rail and the compact selector that has no checkmark at all.
  */
 describe("AgentInputChipPickerOptionSelector state semantics", () => {
-    it("uses the canonical minimum interactive height for rail rows", async () => {
+    it("keeps rail rows visually compact while extending the web hit target", async () => {
         const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
         const { resolveAgentInputChipPickerOptionInteractiveTargetSize } = await import("./agentInputChipPickerOptionStyles");
 
@@ -48,7 +48,8 @@ describe("AgentInputChipPickerOptionSelector state semantics", () => {
         const style = row?.props.style({ pressed: false }) ?? [];
         const flattened = Object.assign({}, ...(Array.isArray(style) ? style : [style]).filter(Boolean));
 
-        expect(flattened.minHeight).toBe(resolveAgentInputChipPickerOptionInteractiveTargetSize("web"));
+        expect(flattened.minHeight).toBe(36);
+        expect(row?.props.hitSlop).toEqual({ top: 4, bottom: 4 });
         expect(resolveAgentInputChipPickerOptionInteractiveTargetSize("android")).toBe(48);
     });
 
