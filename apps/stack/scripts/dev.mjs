@@ -471,6 +471,22 @@ async function main() {
     return;
   }
 
+  const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;
+  const configuredRemoteExpoPort = Number(baseEnv.HAPPIER_STACK_EXPO_DEV_PORT);
+  const initialRemoteExpoProjection = remoteExpoPlan
+    && Number.isInteger(configuredRemoteExpoPort)
+    && configuredRemoteExpoPort > 0
+    ? {
+        port: configuredRemoteExpoPort,
+        webPort: startUi ? configuredRemoteExpoPort : null,
+        mobilePort: startMobile ? configuredRemoteExpoPort : null,
+        webEnabled: startUi,
+        devClientEnabled: startMobile,
+        host: resolveExpoDevHost({ env: baseEnv }),
+        remoteTarget: remoteExpoPlan.target.name,
+      }
+    : null;
+
   if (stackMode && runtimeStatePath) {
     const startedRuntime = await recordStackRuntimeStart(runtimeStatePath, {
       stackName,
@@ -478,6 +494,7 @@ async function main() {
       ephemeral,
       ownerPid: process.pid,
       ports: requestedStartServer ? { server: serverPort } : {},
+      ...(initialRemoteExpoProjection ? { expo: initialRemoteExpoProjection } : {}),
       runtimeSnapshotId: null,
       serveUi: null,
     });
@@ -493,9 +510,8 @@ async function main() {
     });
   }
 
-  const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;
   const remoteExpoPort = remoteExpoPlan
-    ? (await selectExpoDevMetroPort({
+    ? initialRemoteExpoProjection?.port ?? (await selectExpoDevMetroPort({
         env: baseEnv,
         stackMode,
         stackName,
@@ -812,6 +828,7 @@ async function main() {
         runtimeStatePath,
         restart,
         startLastGreen: watchEnabled,
+        keepServerRunningOnFailure: baseEnv.HAPPIER_STACK_TUI === '1',
         isShuttingDown: () => shuttingDown,
         env: baseEnv,
         stackName,

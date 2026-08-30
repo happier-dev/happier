@@ -9,6 +9,34 @@ import { ensureCliBuilt } from './utils/proc/pm.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 
+test('dev publishes a configured remote Expo service in its initial runtime declaration', async () => {
+  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
+  const remoteExpoPlanIndex = source.indexOf('const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;');
+  const configuredRemoteExpoIndex = source.indexOf('const initialRemoteExpoProjection =');
+  const runtimeStartIndex = source.indexOf('await recordStackRuntimeStart(runtimeStatePath, {');
+  const watchdogIndex = source.indexOf('spawnStackOwnerDeathWatchdog({');
+
+  assert.notEqual(remoteExpoPlanIndex, -1, 'expected the resolved remote Expo plan');
+  assert.notEqual(configuredRemoteExpoIndex, -1, 'expected an initial configured remote Expo projection');
+  assert.notEqual(runtimeStartIndex, -1, 'expected the canonical Stack runtime start publication');
+  assert.notEqual(watchdogIndex, -1, 'expected the initial runtime publication boundary');
+  assert.ok(
+    configuredRemoteExpoIndex < runtimeStartIndex,
+    'the initial remote Expo declaration must exist before a service tunnel can discover the Stack runtime',
+  );
+  const initialRuntimePublication = source.slice(runtimeStartIndex, watchdogIndex);
+  assert.match(
+    initialRuntimePublication,
+    /\.\.\.\(initialRemoteExpoProjection \? \{ expo: initialRemoteExpoProjection \} : \{\}\)/u,
+    'the first runtime declaration must expose the configured remote Expo service',
+  );
+  assert.match(
+    source.slice(remoteExpoPlanIndex, runtimeStartIndex),
+    /remoteExpoPlan[\s\S]*HAPPIER_STACK_EXPO_DEV_PORT[\s\S]*remoteTarget/u,
+    'only a configured remote Expo plan may be published before target startup',
+  );
+});
+
 function applyEnv(t, entries) {
   for (const [key, value] of Object.entries(entries)) {
     const previous = process.env[key];
@@ -120,9 +148,9 @@ test('dev cold-start delegates CLI build admission exclusively to the daemon lau
 
 test('dev reaches Expo before starting remote development targets', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
-  const expoStartIndex = source.lastIndexOf('(await ensureDevExpoServer({');
+  const expoStartIndex = source.lastIndexOf('await ensureDevExpoServer({');
   const devTargetsStartIndex = source.indexOf(
-    'devTargetsController = startStackDevTargetsInBackground({',
+    'devTargetsController = startStackDevTargetsInBackground(',
   );
 
   assert.notEqual(expoStartIndex, -1, 'expected the canonical Expo startup call');
