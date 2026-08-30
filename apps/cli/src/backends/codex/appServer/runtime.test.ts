@@ -1951,6 +1951,7 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({
                     params: expect.objectContaining({
                         threadId: 'resume-123',
+                        cwd: root,
                         persistExtendedHistory: true,
                         excludeTurns: true,
                     }),
@@ -1958,6 +1959,7 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({
                     params: expect.objectContaining({
                         threadId: 'existing-456',
+                        cwd: root,
                         persistExtendedHistory: true,
                         excludeTurns: true,
                     }),

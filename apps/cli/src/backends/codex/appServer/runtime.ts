@@ -3974,6 +3974,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         };
         const requestParams = {
             threadId: requestedThreadId,
+            cwd: params.directory,
             ...(currentModelId ? { model: currentModelId } : {}),
             ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
             ...buildThreadConfigOverrideParams(currentReasoningEffort),
@@ -4002,6 +4003,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 try {
                     response = await client.request('thread/resume', {
                         threadId: requestedThreadId,
+                        cwd: params.directory,
                         ...(currentModelId ? { model: currentModelId } : {}),
                         ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
                         ...buildThreadConfigOverrideParams(currentReasoningEffort),
