@@ -32,7 +32,9 @@ describe('deriveSessionAuthoringSnapshot', () => {
                         updatedAt: 30,
                         modeId: 'plan',
                     },
-                    mcpSelection: {
+                    mcpSelectionV1: {
+                        v: 1,
+                        managedServersEnabled: true,
                         forceIncludeServerIds: ['managed-1'],
                         forceExcludeServerIds: [],
                     },

@@ -3,7 +3,7 @@ import {
     SESSION_MODE_OVERRIDE_KEY,
     resolveMetadataStringOverrideStateV1FromAliases,
 } from '@happier-dev/agents';
-import { SessionMcpSelectionV1Schema, isBuiltInAgentTarget } from '@happier-dev/protocol';
+import { isBuiltInAgentTarget, readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol';
 
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
@@ -51,12 +51,7 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
         [SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY],
         'modeId',
     );
-    const rawMcpSelection = metadata && Object.prototype.hasOwnProperty.call(metadata, 'mcpSelection')
-        ? (metadata as Record<string, unknown>).mcpSelection
-        : undefined;
-    const parsedMcpSelection = rawMcpSelection === undefined
-        ? null
-        : SessionMcpSelectionV1Schema.safeParse(rawMcpSelection);
+    const mcpSelection = readSessionMcpSelectionV1FromMetadata(metadata);
 
     return {
         directory: normalizeRequiredString(
@@ -74,7 +69,7 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
         agentModeUpdatedAt: sessionModeOverride ? sessionModeOverride.updatedAt : null,
         modelId: modelOverride?.modelId ?? metadataModelOverride.modelId,
         modelUpdatedAt: modelOverride?.modelUpdatedAt ?? metadataModelOverride.modelUpdatedAt,
-        mcpSelection: parsedMcpSelection?.success ? parsedMcpSelection.data : null,
+        mcpSelection,
         connectedServices: normalizeSessionAuthoringConnectedServices(
             metadata && Object.prototype.hasOwnProperty.call(metadata, 'connectedServices')
                 ? (metadata as Record<string, unknown>).connectedServices

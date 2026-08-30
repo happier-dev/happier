@@ -27,6 +27,7 @@ import {
     useSessionConnectedServicesAuthSwitch,
     type SessionConnectedServicesAuthSwitchRestartState,
 } from '@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch';
+import { useExistingSessionMcpSelection } from '@/components/sessions/agentInput/hooks/useExistingSessionMcpSelection';
 import {
     deriveSessionIntentionalRestartSignals,
     resolveSessionIntentionalRestartRecoveryEvidenceAtMs,
@@ -5010,6 +5011,16 @@ function SessionViewLoaded({
             defaultBackendId: sessionActionDefaultBackend?.defaultBackendId ?? null,
             instructionsText: message,
         });
+        const sessionMcpChip = useExistingSessionMcpSelection({
+            sessionId,
+            sessionMetadata: session.metadata,
+            machineId: controlMachineTarget?.machineId ?? machineId ?? null,
+            directory: liveAuthoringContext.snapshot.directory,
+            agentId: liveComposerState.agentId,
+            serverId: capabilityServerId,
+            isReadOnly,
+            sessionActive: session.active === true,
+        });
         const routingControls = useSessionAgentInputRoutingControls({
             isReadOnly,
             participantTargets,
@@ -5089,13 +5100,14 @@ function SessionViewLoaded({
             const chips = [
                 ...(sessionGoalActionChip ? [sessionGoalActionChip] : []),
                 ...(extraActionChips ?? []),
+                ...(sessionMcpChip ? [sessionMcpChip] : []),
                 ...(sessionConnectedServicesAuthSwitch.connectedServicesAuthChip
                     ? [sessionConnectedServicesAuthSwitch.connectedServicesAuthChip]
                     : []),
                 ...(routingControls.extraActionChips ?? []),
             ];
             return chips.length > 0 ? chips : undefined;
-        }, [extraActionChips, routingControls.extraActionChips, sessionConnectedServicesAuthSwitch.connectedServicesAuthChip, sessionGoalActionChip]);
+        }, [extraActionChips, routingControls.extraActionChips, sessionConnectedServicesAuthSwitch.connectedServicesAuthChip, sessionGoalActionChip, sessionMcpChip]);
 
     const openFileViewer = React.useCallback(() => {
         openSessionTarget({ kind: 'fileBrowser' });

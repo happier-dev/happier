@@ -11,6 +11,7 @@ import {
     createProviderSessionInfoV1Schema,
     createSessionSystemSessionV1Schema,
     createSessionWorkspaceLocationV1Schema,
+    SessionMcpSelectionV1Schema,
     type PendingDeliveryBlockedReason,
     type PrimaryTurnStatusV1,
     type SessionRuntimeActivityState,
@@ -245,6 +246,8 @@ const MetadataObjectSchema = z.object({
      * - Applied to outgoing user messages via `message.meta.model` where supported
      */
     modelOverrideV1: createModelOverrideV1Schema(z).optional(),
+    /** Per-session overlay for the account-owned managed MCP catalog. */
+    mcpSelectionV1: SessionMcpSelectionV1Schema.optional(),
     /**
      * Local-only markers for committed transcript messages that should be treated as discarded
      * (e.g. when the user switches to terminal control and abandons unprocessed remote messages).
