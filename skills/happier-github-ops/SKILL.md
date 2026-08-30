@@ -1,18 +1,18 @@
 ---
 name: happier-github-ops
-description: Read and mutate GitHub as the isolated Happier bot through `yarn ghops`, with exact or bounded standing mutation authority, secure bot-authenticated branch pushes, untrusted-issue handling, and public write-back rules.
+description: Read and mutate GitHub as the isolated Happier bot through `yarn ghops`, with exact or bounded standing mutation authority, untrusted-issue handling, public write-back rules, and a strict boundary that keeps commits and pushes on the current machine Git identity.
 ---
 
 # Happier GitHub Ops (bot `gh` wrapper)
 
-This repo provides `yarn ghops` as the canonical isolated transport for GitHub CLI operations and explicit PR-branch pushes as the bot. It **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority; on macOS, the wrapper otherwise reads the validated token from Keychain service `happier/ghops`, account `happier-bot`.
+This repo provides `yarn ghops` as the canonical isolated transport for GitHub API/UI reads and mutations as the bot. It is never the transport for commits or Git pushes: those use the current machine's configured Git identity, remote, and credentials. `ghops` **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority; on macOS, the wrapper otherwise reads the validated token from Keychain service `happier/ghops`, account `happier-bot`.
 
 ## Prerequisites
 
 - `gh` is installed on the host and reachable on `PATH`.
 - Either environment variable `HAPPIER_GITHUB_BOT_TOKEN` is set to the bot's fine-grained PAT, or the token was stored on macOS with `yarn ghops auth store`.
 - Repository issue mutations require the fine-grained PAT permission **Issues: Read and write** for the target repository. The bot account's repository role and GraphQL `viewerCanUpdate` fields do not prove that the resolved token grants write operations.
-- PR-branch pushes require **Contents: Read and write** plus repository/fork permission to update the exact target branch. Do not fall back to the local personal Git credential when the bot lacks access.
+- Branch pushes do not use `ghops` or its token. They require the current machine's normal Git credentials to update the exact repository and branch; if those credentials lack access, report the permission boundary rather than falling back to the bot.
 
 ## Contract / Safety
 
@@ -132,38 +132,32 @@ On non-macOS platforms, continue providing `HAPPIER_GITHUB_BOT_TOKEN`; Keychain 
 
 ## Commit, GitHub, and push identities
 
-Keep three identities separate:
+Keep two transport identities separate:
 
-- ordinary commits use the current checkout's existing `git config user.name` and `git config user.email`; never replace them with the bot, the PR author, or the GitHub login;
-- GitHub API/UI mutations use `yarn ghops` and therefore appear as `happier-bot`;
-- pushes performed while stewarding a GitHub PR use the bot-authenticated Git transport below, while the commits being pushed retain their independently correct author and committer metadata.
+- ordinary commits and every Git push use the current machine's Git identity and configured Git credentials; never replace them with the bot, the PR author, or the GitHub login;
+- GitHub API/UI mutations use `yarn ghops` and therefore appear as `happier-bot`.
 
 Before an ordinary commit, verify both local Git identity fields. If either is missing, stop and ask the user to configure it; never invent an identity or use `--author` to impersonate someone else. Credit material contributors with verified `Co-authored-by:` trailers as defined by the committing workflow, not by changing the primary commit identity.
 
-Push one explicit branch ref as the bot without changing remotes or persistent credential configuration:
+Before any push, resolve the exact repository, remote, source commit, and target branch. Use the repository's normal Git transport so authentication remains the current machine user's:
 
 ```bash
-yarn ghops git push \
-  --repo happier-dev/happier \
-  --source HEAD \
-  --target refs/heads/<branch>
+git push <remote> <source>:refs/heads/<branch>
 ```
 
-The wrapper validates `happier-bot`, resolves the source to one commit SHA, permits only `refs/heads/*`, disables repository hooks for the credential-bearing process, verifies the remote SHA afterward, and keeps the token out of command arguments and persistent Git configuration. Do not replace this with an authenticated remote URL, `gh auth setup-git`, a global/local credential-helper change, or ad hoc token handling.
+Use an explicit refspec and verify the remote SHA afterward. Do not pass a push through `yarn ghops`, use an authenticated remote URL, run `gh auth setup-git`, change a global/local credential helper, or handle a token ad hoc. If the current machine credentials cannot push to a contributor fork or protected branch, report that boundary rather than substituting `happier-bot`.
 
-For a rebase of another author's PR, preserve every original author identity and set only the rewritten commits' committer identity to the bot for that rebase process. Resolve the bot's current numeric id, login, and display name through `yarn ghops api user`; use the verified `ID+LOGIN@users.noreply.github.com` address, supply `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` only to the rebase process, and do not modify Git configuration. Inspect the rewritten author/committer pairs before pushing. A separate corrective commit created by the agent remains an ordinary local-user commit unless the user explicitly requests bot authorship.
+For a rebase of another author's PR, preserve every original author identity while the current machine's configured Git identity remains the committer. Do not set bot author or committer environment variables and do not modify Git configuration. Inspect the rewritten author/committer pairs before pushing. A separate corrective commit uses the same current machine identity.
 
 A rebase push is a history rewrite. It requires either exact authorization or a standing grant that explicitly includes rebasing/force-with-lease. Capture the current remote head before rebasing, then use it as the exact lease:
 
 ```bash
-yarn ghops git push \
-  --repo happier-dev/happier \
-  --source HEAD \
-  --target refs/heads/<branch> \
-  --force-with-lease <pre-rebase-remote-sha>
+git push \
+  --force-with-lease=refs/heads/<branch>:<pre-rebase-remote-sha> \
+  <remote> <source>:refs/heads/<branch>
 ```
 
-Never use unrestricted `--force`. If the contributor fork does not permit bot/maintainer writes, report that permission boundary rather than pushing as the local personal account.
+Never use unrestricted `--force`. If the current machine credentials do not permit the exact update, report that permission boundary rather than retrying through the bot.
 
 ## Public GitHub writing
 
