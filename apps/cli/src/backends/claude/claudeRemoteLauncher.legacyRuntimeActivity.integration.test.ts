@@ -208,9 +208,10 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
         secondLaunchStarted.resolve(undefined);
         try {
           const next = await opts.nextMessage();
+          if (!next) return;
           secondPromptOutcome.resolve({
             status: 'fulfilled',
-            message: next?.message,
+            message: next.message,
           });
         } catch (error) {
           secondPromptOutcome.resolve({ status: 'rejected', error });
@@ -218,7 +219,13 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
         }
         return;
       }
-      await opts.nextMessage();
+      const next = await opts.nextMessage();
+      if (next) {
+        secondPromptOutcome.resolve({
+          status: 'fulfilled',
+          message: next.message,
+        });
+      }
     });
 
     session.queue.push(
@@ -246,7 +253,17 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
       await awaitPhase('first input wait', firstWaitArmed.promise);
       finishFirstLaunch.resolve(undefined);
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      session.queue.push(
+      session.client.updateMetadata((current) => ({
+        ...current,
+        replaySeedV1: {
+          v: 1,
+          seedText: 'CARRY-OVER',
+          sourceSessionId: 'source-session',
+          sourceCutoffSeqInclusive: 10,
+          createdAtMs: 123,
+        },
+      }));
+      session.queue.pushIsolateAndClear(
         'recovery prompt',
         {
           permissionMode: 'default',
@@ -259,7 +276,7 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
       await awaitPhase('second Agent SDK launch', secondLaunchStarted.promise);
       await expect(awaitPhase('second prompt', secondPromptOutcome.promise)).resolves.toEqual({
         status: 'fulfilled',
-        message: 'recovery prompt',
+        message: 'CARRY-OVER\n\nrecovery prompt',
       });
     } finally {
       await awaitPhase('launcher shutdown', Promise.all([

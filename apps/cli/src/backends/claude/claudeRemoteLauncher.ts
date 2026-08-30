@@ -73,7 +73,8 @@ import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { createClaudePendingAwareInputConsumer } from './createClaudePendingAwareInputConsumer';
 import type { MessageBatch } from '@/agent/runtime/sessionInput/types';
 import { readDaemonInitialGoalFromEnv } from '@/agent/runtime/sessionInitialGoal';
-import { resolveClaudeRemoteQueuedPromptWithReplaySeed } from '@/backends/claude/remote/resolveClaudeRemoteQueuedPromptWithReplaySeed';
+import { resolveClaudeQueuedPromptForDispatch } from '@/backends/claude/runtime/resolveClaudeQueuedPromptForDispatch';
+import { createClaudeReplaySeedRetirement } from '@/backends/claude/runtime/createClaudeReplaySeedRetirement';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
@@ -348,51 +349,6 @@ function resolveClaudeProjectDir(session: Session): string {
 }
 
 export { createClaudeReadyHandler as createClaudeRemoteReadyHandler };
-
-/**
- * The launcher's replay-seed retirement lifecycle, in the canonical shape every seam in this
- * corridor uses: retirement is STARTED by the provider-acceptance signal and HELD, then drained
- * before the next prompt reads the seed and again when the launch ends.
- *
- * Holding it is the whole point. Retirement is an async Session-metadata write, while the
- * launcher is event-driven — acceptance arrives on a callback and the next prompt reads the seed
- * straight out of the metadata snapshot. Fire-and-forget raced that read, so an accepted prompt
- * could still be followed by a second full copy of the carry-over context.
- *
- * Retirement never starts without unambiguous acceptance: `arm` only records the settler, and an
- * unconfirmed send leaves it armed so a later prompt still carries the seed. That is the margin
- * `replaySeedV1` documents — twice is recoverable, never is not.
- *
- * Exported only so the ordering contract is unit-testable; the launcher is its sole caller.
- */
-export function createClaudeRemoteReplaySeedRetirement(): Readonly<{
-    arm: (settle: () => Promise<unknown>) => void;
-    confirmProviderAccepted: () => void;
-    drain: () => Promise<void>;
-}> {
-    let pendingSettlement: (() => Promise<unknown>) | null = null;
-    let settlement: Promise<unknown> | null = null;
-    return Object.freeze({
-        arm(settle: () => Promise<unknown>): void {
-            pendingSettlement = settle;
-        },
-        // Idempotent: the first call takes the armed settler, so a seam that reports acceptance
-        // more than once for one prompt still retires exactly once.
-        confirmProviderAccepted(): void {
-            const settle = pendingSettlement;
-            if (!settle) return;
-            pendingSettlement = null;
-            // The seed owner reports its own failures and never rejects.
-            settlement = settle();
-        },
-        async drain(): Promise<void> {
-            const inFlight = settlement;
-            if (!inFlight) return;
-            settlement = null;
-            await inFlight;
-        },
-    });
-}
 
 const MAX_CONSECUTIVE_REMOTE_UNIFIED_PARK_RELAUNCHES = 3;
 type ClaudeUnifiedTerminalRuntimeIssueSurfaceResult = ClaudeUnifiedTerminalRuntimeIssueHandlingResult;
@@ -1380,7 +1336,7 @@ export async function claudeRemoteLauncher(
             let didReplaySeedBootstrap = false;
             // Retiring the replay seed is scoped to Claude accepting the prompt it was prefixed
             // to, so the seed survives a prompt the provider never received.
-            const replaySeedRetirement = createClaudeRemoteReplaySeedRetirement();
+            const replaySeedRetirement = createClaudeReplaySeedRetirement();
             let unifiedTerminalLaunchOptionsHash: string | null = null;
             let lastUnifiedTerminalRestartOnlyNoticeHash: string | null = null;
             let readyTurnContext: ReadyNotificationTurnContext | undefined;
@@ -1484,6 +1440,26 @@ export async function claudeRemoteLauncher(
                         providerAcceptancePending: batch.providerAcceptancePending,
                         pendingProviderAction: batch.pendingProviderAction,
                     });
+
+                const resolveQueuedPromptForProvider = async (
+                    batch: MessageBatch<EnhancedMode, string>,
+                ): Promise<string> => {
+                    // Complete acceptance-triggered metadata settlement before reading the next
+                    // seed snapshot, then bind this exact prompt even when it carries no seed.
+                    await replaySeedRetirement.drain();
+                    const resolution = await resolveClaudeQueuedPromptForDispatch({
+                        sessionClient: session.client,
+                        batch: { message: batch.message, mode: batch.mode },
+                        didBootstrap: didReplaySeedBootstrap,
+                    });
+                    didReplaySeedBootstrap = resolution.didBootstrap;
+                    replaySeedRetirement.bind(
+                        resolution.seedApplied
+                            ? resolution.settleReplaySeedOnProviderAcceptance
+                            : null,
+                    );
+                    return resolution.message;
+                };
 
                 if (waitForMessageBeforeNextLaunch) {
                     waitForMessageBeforeNextLaunch = false;
@@ -1630,13 +1606,14 @@ export async function claudeRemoteLauncher(
                                 ? hashClaudeUnifiedTerminalLaunchOptionsForQueue(p.mode)
                                 : null;
                             permissionHandler.handleModeChange(p.mode.permissionMode);
+                            const providerMessage = await resolveQueuedPromptForProvider(p);
                             if (p.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(p.mode)) {
                                 await beginPromptTurn();
                             } else {
                                 unifiedBinding.noteNextInjectedPromptShouldSuppressEcho();
                             }
                             return {
-                                message: p.message,
+                                message: providerMessage,
                                 mode: p.mode,
                                 ...takeBatchDeliveryAttributionForProvider(p),
                             };
@@ -1670,22 +1647,7 @@ export async function claudeRemoteLauncher(
                         mode = nextMode;
                         unifiedTerminalLaunchOptionsHash = nextUnifiedTerminalLaunchOptionsHash;
                         permissionHandler.handleModeChange(nextMode.permissionMode);
-                        // This is the next prompt's seed snapshot read. A retirement started by
-                        // the previous prompt's acceptance must be settled before it, or this
-                        // resolution re-reads a live seed and prefixes the whole carry-over
-                        // context a second time.
-                        await replaySeedRetirement.drain();
-                        const replaySeedResolution = await resolveClaudeRemoteQueuedPromptWithReplaySeed({
-                            sessionClient: session.client,
-                            batch: { message: msg.message, mode: msg.mode },
-                            didBootstrap: didReplaySeedBootstrap,
-                        });
-                        didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
-                        if (replaySeedResolution.seedApplied) {
-                            // Held until Claude reports acceptance. A prompt that never reaches the
-                            // provider must leave the seed live so a later one still carries it.
-                            replaySeedRetirement.arm(replaySeedResolution.settleReplaySeedOnProviderAcceptance);
-                        }
+                        const providerMessage = await resolveQueuedPromptForProvider(msg);
                         if (msg.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(nextMode)) {
                             await beginPromptTurn();
                         } else {
@@ -1693,7 +1655,7 @@ export async function claudeRemoteLauncher(
                         }
 
                         return {
-                            message: typeof replaySeedResolution.message === 'string' ? replaySeedResolution.message : '',
+                            message: providerMessage,
                             mode: msg.mode,
                             ...takeBatchDeliveryAttributionForProvider(msg),
                         };

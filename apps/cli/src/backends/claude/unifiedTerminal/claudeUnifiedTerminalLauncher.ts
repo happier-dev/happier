@@ -76,6 +76,8 @@ import { prepareClaudeUnifiedStartupLifecycle } from './startupLifecycle';
 import { applyClaudeUnifiedTerminalLaunchIntent } from './launchIntent';
 import { createClaudeUnifiedProviderInputOutcomeBridge } from './claudeUnifiedProviderInputOutcome';
 import { createClaudeUnifiedTerminalSharedCallbacks } from './createClaudeUnifiedTerminalSharedCallbacks';
+import { createClaudeReplaySeedRetirement } from '../runtime/createClaudeReplaySeedRetirement';
+import { resolveClaudeQueuedPromptForDispatch } from '../runtime/resolveClaudeQueuedPromptForDispatch';
 
 function shouldForegroundAttachTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
@@ -95,7 +97,10 @@ type ParkedUnifiedTerminalMessage = Readonly<{
 
 type InFlightStartupMessage = Readonly<{
   source: 'initial' | 'parked' | 'queue';
+  /** Raw durable input; retries must never requeue the provider-expanded prompt. */
   batch: ParkedUnifiedTerminalMessage;
+  /** Exact prompt handed to the terminal, used only to correlate runner handback. */
+  providerMessage: string;
   launchAttempt: number;
 }>;
 
@@ -630,6 +635,28 @@ export async function claudeUnifiedTerminalLauncher(
   // waits for the next queued message, and relaunches the unified host with that message.
   let parkedMessage: ParkedUnifiedTerminalMessage | null = null;
   let inFlightStartupMessage: InFlightStartupMessage | null = null;
+  let didReplaySeedBootstrap = false;
+  const replaySeedRetirement = createClaudeReplaySeedRetirement();
+  const resolveQueuedPromptForProvider = async (
+    batch: ParkedUnifiedTerminalMessage,
+  ): Promise<ParkedUnifiedTerminalMessage> => {
+    // Acceptance starts an async metadata write. Complete it before the next prompt reads the
+    // seed snapshot, otherwise an accepted seed can be prefixed a second time.
+    await replaySeedRetirement.drain();
+    const resolution = await resolveClaudeQueuedPromptForDispatch({
+      sessionClient: session.client,
+      batch,
+      didBootstrap: didReplaySeedBootstrap,
+    });
+    didReplaySeedBootstrap = resolution.didBootstrap;
+    replaySeedRetirement.bind(
+      resolution.seedApplied ? resolution.settleReplaySeedOnProviderAcceptance : null,
+    );
+    return {
+      ...batch,
+      message: resolution.message,
+    };
+  };
   let lastSurfacedRuntimeAuthRecoveryWillContinue = false;
   // A4-MED-3: bounded park/relaunch budget. The undeliverable-batch handback (F-1) re-pends a
   // terminally failed message, so a deterministically dying host would otherwise relaunch with
@@ -758,7 +785,7 @@ export async function claudeUnifiedTerminalLauncher(
   }>, launchAttempt: number): boolean => {
     return inFlightStartupMessage !== null
       && inFlightStartupMessage.launchAttempt === launchAttempt
-      && inFlightStartupMessage.batch.message === input.message
+      && inFlightStartupMessage.providerMessage === input.message
       && inFlightStartupMessage.batch.maxUserMessageSeq === (input.maxUserMessageSeq ?? null)
       && areSameUserMessageLocalIds(inFlightStartupMessage.batch.userMessageLocalIds, input.userMessageLocalIds);
   };
@@ -965,6 +992,7 @@ export async function claudeUnifiedTerminalLauncher(
         if (inFlightStartupMessage?.launchAttempt === launchAttempt) inFlightStartupMessage = null;
         returnedExactInFlightMessage = false;
         lastStartupBatchUserMessageLocalIds = [];
+        replaySeedRetirement.confirmProviderAccepted();
         if (!providerInputOutcomes.observeAccepted({ userMessageLocalIds, appliedModelId })) {
           logger.debug('[unified]: ignored provider acceptance without one exact Queue localId outcome binding');
         }
@@ -1019,14 +1047,18 @@ export async function claudeUnifiedTerminalLauncher(
         if (parkedMessage) {
           const parked = parkedMessage;
           const mode = observeOutgoingBatchMode(parked.mode);
+          const rawBatch = { ...parked, mode };
+          const providerBatch = await resolveQueuedPromptForProvider(rawBatch);
           parkedMessage = null;
-          inFlightStartupMessage = { source: 'parked', batch: { ...parked, mode }, launchAttempt };
+          inFlightStartupMessage = {
+            source: 'parked',
+            batch: rawBatch,
+            providerMessage: providerBatch.message,
+            launchAttempt,
+          };
           noteStartupBatchLocalIds(parked.userMessageLocalIds);
           binding.noteNextInjectedPromptShouldSuppressEcho({ retainUntilObserved: true });
-          return {
-            ...parked,
-            mode,
-          };
+          return providerBatch;
         }
         if (initialPromptPending && initialPrompt.prompt) {
           initialPromptPending = false;
@@ -1035,48 +1067,47 @@ export async function claudeUnifiedTerminalLauncher(
             permissionMode: session.lastPermissionMode ?? 'default',
             claudeUnifiedTerminalEnabled: true,
           });
+          const rawBatch: ParkedUnifiedTerminalMessage = {
+            message: initialPrompt.prompt,
+            mode: initialBatchMode,
+            maxUserMessageSeq: null,
+            userMessageLocalIds: [],
+          };
+          const providerBatch = await resolveQueuedPromptForProvider(rawBatch);
           inFlightStartupMessage = {
             source: 'initial',
             launchAttempt,
-            batch: {
-              message: initialPrompt.prompt,
-              mode: initialBatchMode,
-              maxUserMessageSeq: null,
-              userMessageLocalIds: [],
-            },
+            batch: rawBatch,
+            providerMessage: providerBatch.message,
           };
           noteStartupBatchLocalIds([]);
           return {
-            message: initialPrompt.prompt,
-            mode: initialBatchMode,
+            message: providerBatch.message,
+            mode: providerBatch.mode,
           };
         }
         initialPromptPending = false;
         const batch = await waitForNextSessionInputBatch();
         if (!batch) return null;
         const mode = observeOutgoingBatchMode(batch.mode);
-        inFlightStartupMessage = {
-          source: 'queue',
-          launchAttempt,
-          batch: {
-            message: batch.message,
-            mode,
-            maxUserMessageSeq: batch.maxUserMessageSeq,
-            userMessageLocalIds: batch.userMessageLocalIds,
-            ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
-            ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
-          },
-        };
-        noteStartupBatchLocalIds(batch.userMessageLocalIds);
-        binding.noteNextInjectedPromptShouldSuppressEcho({ retainUntilObserved: true });
-        return {
+        const rawBatch = {
           message: batch.message,
           mode,
           maxUserMessageSeq: batch.maxUserMessageSeq,
           userMessageLocalIds: batch.userMessageLocalIds,
           ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
           ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+        } satisfies ParkedUnifiedTerminalMessage;
+        const providerBatch = await resolveQueuedPromptForProvider(rawBatch);
+        inFlightStartupMessage = {
+          source: 'queue',
+          launchAttempt,
+          batch: rawBatch,
+          providerMessage: providerBatch.message,
         };
+        noteStartupBatchLocalIds(batch.userMessageLocalIds);
+        binding.noteNextInjectedPromptShouldSuppressEcho({ retainUntilObserved: true });
+        return providerBatch;
       },
       subscribeClaudeSessionHooks: (callback) => {
         session.addClaudeSessionHookCallback(callback);
@@ -1300,6 +1331,9 @@ export async function claudeUnifiedTerminalLauncher(
       }
     }
   } finally {
+    // An accepted prompt may end the terminal session before its metadata write resolves. Do not
+    // let the next launcher instance observe the seed as still live.
+    await replaySeedRetirement.drain();
     // This teardown is the OBSERVATION that the provider process is gone: resolve every
     // shutdown-sensitive source the projector owns before the sources are drained and disposed.
     // G-6 marks an active-but-unmet goal interrupted; RULING-14 resolves live workflow runs and

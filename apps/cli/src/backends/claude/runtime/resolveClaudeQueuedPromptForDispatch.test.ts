@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveClaudeRemoteQueuedPromptWithReplaySeed } from './resolveClaudeRemoteQueuedPromptWithReplaySeed';
+import { resolveClaudeQueuedPromptForDispatch } from './resolveClaudeQueuedPromptForDispatch';
 
-describe('resolveClaudeRemoteQueuedPromptWithReplaySeed', () => {
+describe('resolveClaudeQueuedPromptForDispatch', () => {
   it('prefixes replaySeedV1 and retires it only once Claude accepted the prompt', async () => {
     const calls: string[] = [];
     let metadata: any = {};
@@ -26,7 +26,7 @@ describe('resolveClaudeRemoteQueuedPromptWithReplaySeed', () => {
       },
     };
 
-    const res = await resolveClaudeRemoteQueuedPromptWithReplaySeed({
+    const res = await resolveClaudeQueuedPromptForDispatch({
       sessionClient,
       batch: {
         message: 'hello',

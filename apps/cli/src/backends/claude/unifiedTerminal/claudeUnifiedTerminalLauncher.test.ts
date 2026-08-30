@@ -8,7 +8,6 @@ import { TerminalHostStartupError } from '@/integrations/terminalHost/errors';
 import { ZellijActionTimeoutError } from '@/integrations/zellij/actions';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { AccountSettings } from '@happier-dev/protocol';
-import type { Metadata } from '@/api/types';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 
 import type { Session } from '../session';
@@ -66,6 +65,13 @@ import { PendingQueueMaterializationAuthError } from '@/agent/runtime/sessionInp
 
 const originalStdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
 const originalStdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+
+type ReplaySeedTestMetadata = Readonly<Record<string, unknown> & {
+  replaySeedV1?: Readonly<{
+    seedText?: string;
+    appliedToLocalId?: string;
+  }>;
+}>;
 
 const RESUME_CHOICE_DIALOG = [
   'This session is 18h 2m old and 560.4k tokens.',
@@ -133,8 +139,9 @@ function abortLauncherOnEmptyQueueWait(session: Session, waitNumber = 1): AbortS
 
 function createSession(overrides: Readonly<{
   terminalRuntime?: Session['terminalRuntime'];
-  metadata?: Metadata;
+  metadata?: unknown;
 }> = {}): Session {
+  let metadata: unknown = overrides.metadata ?? {};
   return {
     path: '/workspace/project',
     client: {
@@ -146,7 +153,11 @@ function createSession(overrides: Readonly<{
         persisted: true,
         delivered: true,
       })),
-      getMetadataSnapshot: vi.fn(() => overrides.metadata ?? {}),
+      getMetadataSnapshot: vi.fn(() => metadata),
+      // SessionClient's metadata updater is intentionally untyped at this test boundary.
+      updateMetadata: vi.fn(async (updater: (current: any) => any) => {
+        metadata = updater(metadata);
+      }),
       recordClaudeJsonlMessageConsumed: vi.fn(),
       bindProviderInputOutcomeProducer: vi.fn(() => vi.fn()),
       hasPendingProviderInputAcceptance: vi.fn(() => false),
@@ -495,7 +506,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
           requested: 'tmux',
           tmux: { target: 'happy:unified-window' },
         },
-      } as Metadata,
+      },
     });
     mocks.runClaudeUnifiedTerminalSession.mockResolvedValueOnce(undefined);
 
@@ -526,7 +537,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
           requested: 'zellij',
           zellij: { sessionName: 'happy-zellij', paneId: 'terminal_7' },
         },
-      } as Metadata,
+      },
     });
     mocks.runClaudeUnifiedTerminalSession.mockResolvedValueOnce(undefined);
 
@@ -793,6 +804,76 @@ describe('claudeUnifiedTerminalLauncher', () => {
     expect(observeProviderInputOutcome).toHaveBeenCalledWith({
       kind: 'accepted',
       localId: 'l17',
+    });
+  });
+
+  it('dispatches replay carry-over through unified terminal and retires it only after exact provider acceptance', async () => {
+    setProcessTty(false);
+    const session = createSession({
+      metadata: {
+        replaySeedV1: {
+          v: 1,
+          seedText: 'CARRY-OVER',
+          sourceSessionId: 'source-session',
+          sourceCutoffSeqInclusive: 41,
+          createdAtMs: 123,
+        },
+      },
+    });
+    const mode = {
+      permissionMode: 'default',
+      claudeUnifiedTerminalEnabled: true,
+      claudeUnifiedTerminalHost: 'tmux',
+      localId: 'transition-input',
+    } as const;
+    vi.mocked(session.queue.size).mockReturnValueOnce(1).mockReturnValue(0);
+    vi.mocked(session.queue.waitForMessagesAndGetAsString).mockResolvedValueOnce({
+      message: 'continue',
+      mode,
+      isolate: false,
+      hash: 'unified-mode',
+      maxUserMessageSeq: 42,
+      userMessageLocalIds: ['transition-input'],
+    });
+    mocks.runClaudeUnifiedTerminalSession.mockImplementationOnce(async (opts: {
+      nextMessage: () => Promise<{
+        message: string;
+        mode: typeof mode;
+        maxUserMessageSeq: number | null;
+        userMessageLocalIds: readonly string[];
+      } | null>;
+      onPromptAcceptedByProvider?: (input: {
+        message: string;
+        maxUserMessageSeq: number | null;
+        userMessageLocalIds: readonly string[];
+      }) => void;
+    }) => {
+      const batch = await opts.nextMessage();
+      expect(batch).toMatchObject({
+        message: 'CARRY-OVER\n\ncontinue',
+        maxUserMessageSeq: 42,
+        userMessageLocalIds: ['transition-input'],
+      });
+      const pendingSeed = (session.client.getMetadataSnapshot() as ReplaySeedTestMetadata).replaySeedV1;
+      expect(pendingSeed).toMatchObject({ seedText: 'CARRY-OVER' });
+      expect(pendingSeed?.appliedToLocalId).toBeUndefined();
+      opts.onPromptAcceptedByProvider?.({
+        message: batch?.message ?? '',
+        maxUserMessageSeq: batch?.maxUserMessageSeq ?? null,
+        userMessageLocalIds: batch?.userMessageLocalIds ?? [],
+      });
+    });
+
+    await claudeUnifiedTerminalLauncher(session, {
+      initialMode: {
+        permissionMode: 'default',
+        claudeUnifiedTerminalHost: 'tmux',
+      },
+    });
+
+    expect((session.client.getMetadataSnapshot() as ReplaySeedTestMetadata).replaySeedV1).toMatchObject({
+      seedText: '',
+      appliedToLocalId: 'transition-input',
     });
   });
 
@@ -2788,9 +2869,19 @@ describe('claudeUnifiedTerminalLauncher', () => {
 
   it('requeues a parked message when relaunch fails during terminal-host startup before runner handback', async () => {
     setProcessTty(false);
-    const session = createSession();
+    const session = createSession({
+      metadata: {
+        replaySeedV1: {
+          v: 1,
+          seedText: 'CARRY-OVER',
+          sourceSessionId: 'source-session',
+          sourceCutoffSeqInclusive: 30,
+          createdAtMs: 123,
+        },
+      },
+    });
     const signal = abortLauncherOnEmptyQueueWait(session, 2);
-    const mode = { permissionMode: 'default' };
+    const mode = { permissionMode: 'default', localId: 'pending-retry-after-startup-failure' };
     const injectionError = Object.assign(new Error('Claude unified terminal prompt injection failed'), {
       code: 'claude_unified_terminal_injection_failed',
       failureState: 'failed_terminal',
@@ -2820,7 +2911,7 @@ describe('claudeUnifiedTerminalLauncher', () => {
         nextMessage: () => Promise<{ message: string; mode: typeof mode; maxUserMessageSeq: number | null; userMessageLocalIds: readonly string[] } | null>;
       }) => {
         await expect(runOpts.nextMessage()).resolves.toEqual(expect.objectContaining({
-          message: 'retry after startup failure',
+          message: 'CARRY-OVER\n\nretry after startup failure',
           maxUserMessageSeq: 31,
         }));
         throw startupError;
