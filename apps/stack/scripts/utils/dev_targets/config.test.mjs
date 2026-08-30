@@ -112,7 +112,7 @@ test('version 2 configuration assigns the server to mac-host while retaining loc
   });
 
   assert.deepEqual(resolveDevTargetExecutionPolicy(config), {
-    server: { mode: 'prefer-target', target: 'mac-host', fallback: 'local' },
+    server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' },
     expo: { mode: 'local' },
     daemons: { mode: 'local-and-targets', targets: ['mac-host'] },
   });
@@ -123,6 +123,24 @@ test('version 2 configuration assigns the server to mac-host while retaining loc
     }),
     /--no-dev-targets.*remote server placement/i,
   );
+});
+
+test('version 2 configuration reads the legacy server fallback without preserving local failover', () => {
+  const config = parseDevTargetsConfig({
+    version: 2,
+    targets: [
+      { name: 'mac-host', platform: 'posix', ssh: 'mac-host', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+    runtimePlacement: {
+      server: { mode: 'prefer-target', target: 'mac-host', fallback: 'local' },
+    },
+  });
+
+  assert.deepEqual(config.runtimePlacement.server, {
+    mode: 'prefer-target',
+    target: 'mac-host',
+    fallback: 'error',
+  });
 });
 
 test('version 2 placement rejects unknown targets', () => {
