@@ -59,11 +59,6 @@ on:
         required: true
         default: false
         type: boolean
-      ci_run_id:
-        description: "Completed canonical CI run ID for this exact source (optional; avoids broad run discovery)"
-        required: false
-        default: ""
-        type: string
       include_validation_suites:
         description: "Validation — additional suite IDs to require (comma-separated)"
         required: false
