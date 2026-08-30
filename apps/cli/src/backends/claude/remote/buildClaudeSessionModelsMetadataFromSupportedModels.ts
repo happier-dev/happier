@@ -1,6 +1,9 @@
 import type { Metadata } from '@/api/types';
 import { normalizeContextWindowTokens } from '@/backends/modelCapabilities/contextWindowTokens';
-import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
+import {
+    providers,
+    readNewestSessionModelsMetadataStateV1,
+} from '@happier-dev/agents';
 
 import { reconcileClaudeSessionModelsState } from '../sessionModels/reconcileClaudeSessionModelsState';
 
@@ -76,9 +79,10 @@ function normalizeSupportedModel(raw: unknown): SessionModelEntry | null {
     const id = normalizeNonEmptyString(record.id)
         || normalizeNonEmptyString(record.modelId)
         || normalizeNonEmptyString(record.value);
-    const name = normalizeNonEmptyString(record.name)
+    const rawName = normalizeNonEmptyString(record.name)
         || normalizeNonEmptyString(record.displayName);
-    if (!id || !name) return null;
+    if (!id || !rawName) return null;
+    const name = providers.claude.normalizeClaudeModelDisplayName(rawName, id);
 
     const modelOptionsRaw = Array.isArray(record.modelOptions)
         ? record.modelOptions
@@ -200,7 +204,10 @@ export function buildClaudeSessionModelsMetadataWithCurrentModelId(params: Reado
     }
 
     const updatedAt = params.nowMs ? params.nowMs() : Date.now();
-    const currentModelName = normalizeNonEmptyString(params.currentModel?.name) || currentModelId;
+    const currentModelName = providers.claude.normalizeClaudeModelDisplayName(
+        params.currentModel?.name,
+        currentModelId,
+    );
 
     const buildState = (existing: SessionModelsState | null): SessionModelsState => {
         const base: SessionModelsState = existing
