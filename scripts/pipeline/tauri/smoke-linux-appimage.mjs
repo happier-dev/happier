@@ -5,6 +5,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
+import { observeTauriStartup } from './linux-appimage-smoke-process.mjs';
+
 function fail(message) { throw new Error(`[linux-appimage-smoke] ${message}`); }
 
 async function main() {
@@ -24,12 +26,7 @@ async function main() {
       env: { ...process.env, DISPLAY: display, GDK_BACKEND: 'x11', LIBGL_ALWAYS_SOFTWARE: '1', APPIMAGE_EXTRACT_AND_RUN: '1', HAPPIER_TAURI_STARTUP_MARKER: marker },
       stdio: 'inherit',
     });
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, durationMs);
-      app.once('error', reject);
-      app.once('exit', (code, signal) => reject(new Error(`AppImage exited during startup with code=${code} signal=${signal}`)));
-    });
-    if (!fs.existsSync(marker) || JSON.parse(fs.readFileSync(marker, 'utf8')).phase !== 'ready') fail('Tauri startup-ready event was not observed');
+    await observeTauriStartup({ app, marker, durationMs, exitDescription: 'AppImage exited during startup' });
     console.log(`[linux-appimage-smoke] passed: remained alive for ${durationMs / 1000}s`);
   } finally { cleanup(); fs.rmSync(path.dirname(marker), { recursive: true, force: true }); }
 }

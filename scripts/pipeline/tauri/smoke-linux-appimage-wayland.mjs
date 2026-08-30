@@ -6,6 +6,8 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
+import { observeTauriStartup } from './linux-appimage-smoke-process.mjs';
+
 function fail(message) { throw new Error(`[linux-appimage-wayland-smoke] ${message}`); }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -38,13 +40,9 @@ async function main() {
       env: { ...process.env, XDG_RUNTIME_DIR: runtimeDir, WAYLAND_DISPLAY: socket, XDG_SESSION_TYPE: 'wayland', GDK_BACKEND: 'wayland', LIBGL_ALWAYS_SOFTWARE: '1', MESA_LOADER_DRIVER_OVERRIDE: 'llvmpipe', HAPPIER_TAURI_STARTUP_MARKER: marker },
       stdio: 'inherit',
     });
-    if (!fs.existsSync(marker) || JSON.parse(fs.readFileSync(marker, 'utf8')).phase !== 'ready') fail('Tauri startup-ready event was not observed');
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(resolve, Math.max(3, Number(values.duration)) * 1000);
-      app.once('error', reject);
-      app.once('exit', (code, signal) => { clearTimeout(timer); reject(new Error(`AppImage exited during native Wayland startup with code=${code} signal=${signal}`)); });
-    });
-    console.log(`[linux-appimage-wayland-smoke] passed: remained alive for ${Math.max(3, Number(values.duration))}s`);
+    const durationMs = Math.max(3, Number(values.duration)) * 1000;
+    await observeTauriStartup({ app, marker, durationMs, exitDescription: 'AppImage exited during native Wayland startup' });
+    console.log(`[linux-appimage-wayland-smoke] passed: remained alive for ${durationMs / 1000}s`);
   } finally {
     if (app && app.exitCode === null) app.kill('SIGTERM');
     if (weston && weston.exitCode === null) weston.kill('SIGTERM');
