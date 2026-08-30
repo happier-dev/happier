@@ -462,7 +462,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
         streams.push({
           ...file,
           threadId: persisted.threadId,
-          sidechainId: persisted.sidechainId,
+          sidechainId: persisted.threadId,
         });
         restored += 1;
       }
@@ -588,7 +588,6 @@ export async function pageCodexRolloutStreams(params: Readonly<{
           fileRelPath: stream.fileRelPath,
           endOffsetBytes: nextEndByStreamId.get(stream.fileRelPath) ?? 0,
           threadId: stream.threadId,
-          sidechainId: stream.sidechainId,
           ...(discoveryByStreamId.get(stream.fileRelPath)
             ? { discoveredFrom: discoveryByStreamId.get(stream.fileRelPath)! }
             : {}),

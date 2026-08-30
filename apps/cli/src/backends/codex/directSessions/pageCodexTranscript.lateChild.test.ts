@@ -77,6 +77,26 @@ async function page(params: Readonly<{
   });
 }
 
+function decodeOpaqueCursor(cursor: string): Readonly<{
+  v: number;
+  kind: string;
+  streams: ReadonlyArray<Record<string, unknown>>;
+}> {
+  return JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Readonly<{
+    v: number;
+    kind: string;
+    streams: ReadonlyArray<Record<string, unknown>>;
+  }>;
+}
+
+function encodeOpaqueCursor(cursor: Readonly<{
+  v: number;
+  kind: string;
+  streams: ReadonlyArray<Record<string, unknown>>;
+}>): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
 describe('pageCodexTranscript late child rollout discovery', () => {
   it('includes a child whose spawn event is beyond the bounded discovery window', async () => {
     const sessionId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -130,6 +150,58 @@ describe('pageCodexTranscript late child rollout discovery', () => {
 
     expect(JSON.stringify((await page({ root, codexHome, sessionId, cursor: forgedCursor })).items))
       .not.toContain('must stay unrelated');
+  });
+
+  it('derives a restored child sidechain from its validated thread identity', async () => {
+    const sessionId = '14141414-1414-1414-1414-141414141414';
+    const childThreadId = '15151515-1515-1515-1515-151515151515';
+    const fixture = await createLateChildFixture({
+      sessionId,
+      childThreadId,
+      childText: 'validated child identity',
+      childTimestamp: '2025-12-31T23:59:58.000Z',
+    });
+    const first = await page({ ...fixture, sessionId, maxItems: 1 });
+    if (!first.nextCursor) throw new Error('Expected another page');
+    const decoded = decodeOpaqueCursor(first.nextCursor);
+    const forgedCursor = encodeOpaqueCursor({
+      ...decoded,
+      streams: decoded.streams.map((stream) => (
+        stream.threadId === childThreadId
+          ? { ...stream, sidechainId: 'forged-sidechain' }
+          : stream
+      )),
+    });
+
+    const restored = await page({ ...fixture, sessionId, cursor: forgedCursor, maxItems: 1 });
+    const childItem = restored.items.find((item) => JSON.stringify(item).includes('validated child identity'));
+    expect(childItem).toMatchObject({
+      raw: { content: { data: { sidechainId: childThreadId } } },
+    });
+  });
+
+  it('rejects an opaque cursor that repeats the same rollout stream', async () => {
+    const sessionId = '16161616-1616-1616-1616-161616161616';
+    const childThreadId = '17171717-1717-1717-1717-171717171717';
+    const fixture = await createLateChildFixture({
+      sessionId,
+      childThreadId,
+      childText: 'unique child history',
+      childTimestamp: '2025-12-31T23:59:58.000Z',
+    });
+    const first = await page({ ...fixture, sessionId, maxItems: 1 });
+    if (!first.nextCursor) throw new Error('Expected another page');
+    const decoded = decodeOpaqueCursor(first.nextCursor);
+    const childStream = decoded.streams.find((stream) => stream.threadId === childThreadId);
+    if (!childStream) throw new Error('Expected child stream in cursor');
+    const duplicateCursor = encodeOpaqueCursor({
+      ...decoded,
+      streams: [...decoded.streams, childStream],
+    });
+
+    const restored = await page({ ...fixture, sessionId, cursor: duplicateCursor, maxItems: 10 });
+    expect(restored.truncated).toBe(true);
+    expect(restored.items.filter((item) => JSON.stringify(item).includes('unique child history'))).toHaveLength(1);
   });
 
   it('restores nested children independent of cursor entry ordering', async () => {

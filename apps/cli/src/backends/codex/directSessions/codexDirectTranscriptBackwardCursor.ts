@@ -14,7 +14,6 @@ type CodexBackwardStreamCursorV4 = Readonly<{
     fileRelPath: string;
     endOffsetBytes: number;
     threadId: string;
-    sidechainId: string | null;
     discoveredFrom?: Readonly<{
       fileRelPath: string;
       lineStartOffsetBytes: number;
@@ -47,12 +46,7 @@ export function decodeCodexDirectBackwardCursor(raw: string | undefined): CodexD
         if (!fileRelPath || !Number.isFinite(endOffsetBytes) || endOffsetBytes < 0) return null;
         if (record.v === 3) return { fileRelPath, endOffsetBytes };
         const threadId = typeof streamRecord.threadId === 'string' ? streamRecord.threadId.trim() : '';
-        const sidechainId = streamRecord.sidechainId === null
-          ? null
-          : typeof streamRecord.sidechainId === 'string' && streamRecord.sidechainId.trim().length > 0
-            ? streamRecord.sidechainId.trim()
-            : undefined;
-        if (!threadId || sidechainId === undefined) return null;
+        if (!threadId) return null;
         const discoveredFrom = (() => {
           if (!streamRecord.discoveredFrom || typeof streamRecord.discoveredFrom !== 'object'
               || Array.isArray(streamRecord.discoveredFrom)) return undefined;
@@ -66,10 +60,11 @@ export function decodeCodexDirectBackwardCursor(raw: string | undefined): CodexD
           return { fileRelPath: parentFileRelPath, lineStartOffsetBytes };
         })();
         if (streamRecord.discoveredFrom !== undefined && !discoveredFrom) return null;
-        return { fileRelPath, endOffsetBytes, threadId, sidechainId, ...(discoveredFrom ? { discoveredFrom } : {}) };
+        return { fileRelPath, endOffsetBytes, threadId, ...(discoveredFrom ? { discoveredFrom } : {}) };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
     if (streams.length !== rawStreams.length) return null;
+    if (new Set(streams.map((entry) => entry.fileRelPath)).size !== streams.length) return null;
     if (record.v === 3) {
       const legacyStreams = streams.map((entry) => ({
         fileRelPath: entry.fileRelPath,
