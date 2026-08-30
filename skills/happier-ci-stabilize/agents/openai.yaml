@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier CI Stabilization"
+  short_description: "Collect, simplify, fix, and safely resume Happier CI"
+  default_prompt: "Use $happier-ci-stabilize to collect every failure from this exact CI or nightly run, cluster and correct the root causes efficiently, simplify stale coverage without weakening ship evidence, and choose the cheapest safe rerun or resume path."
