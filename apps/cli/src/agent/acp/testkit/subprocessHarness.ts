@@ -144,6 +144,7 @@ export async function readFileEventually(
   opts: {
     timeoutMs: number
     intervalMs?: number
+    isReady?: (content: string) => boolean
   },
 ): Promise<string> {
   let content = ''
@@ -153,9 +154,9 @@ export async function readFileEventually(
       try {
         content = readFileSync(filePath, 'utf8')
         // A producer may create/truncate a file before writing its complete
-        // payload. Treat an empty read as "not ready" so callers never parse
-        // a partially-written response (for example, a JSON-RPC error).
-        return content.length > 0
+        // payload. Treat an empty or parser-rejected read as "not ready" so
+        // callers never parse a partially-written response.
+        return content.length > 0 && (opts.isReady?.(content) ?? true)
       } catch (error: unknown) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return false
@@ -171,6 +172,28 @@ export async function readFileEventually(
   )
 
   return content
+}
+
+
+export async function readJsonEventually<T = unknown>(
+  filePath: string,
+  opts: {
+    timeoutMs: number
+    intervalMs?: number
+  },
+): Promise<T> {
+  const content = await readFileEventually(filePath, {
+    ...opts,
+    isReady: (value) => {
+      try {
+        JSON.parse(value)
+        return true
+      } catch {
+        return false
+      }
+    },
+  })
+  return JSON.parse(content) as T
 }
 
 export async function waitForFileToContain(

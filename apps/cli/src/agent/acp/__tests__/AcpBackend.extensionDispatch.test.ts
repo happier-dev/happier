@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { writeAcpTestAgentScript, readFileEventually } from '../testkit/subprocessHarness';
+import { writeAcpTestAgentScript, readJsonEventually } from '../testkit/subprocessHarness';
 import { AcpBackend, buildInitializeRequest } from '../AcpBackend';
 import {
   defineAcpExtensionNotification,
@@ -14,13 +14,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseJsonRecord(text: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(text);
-  if (!isRecord(parsed)) {
-    throw new Error('Expected JSON record');
-  }
-  return parsed;
-}
 
 function readNestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> {
   const value = record[key];
@@ -229,7 +222,7 @@ describe('AcpBackend ACP extension dispatch', () => {
         await backend.sendPrompt(started.sessionId, 'trigger extension request');
         await backend.waitForResponseComplete(1_000);
 
-        const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
+        const response = await readJsonEventually<Record<string, unknown>>(resultFile, { timeoutMs: 1_000 });
         const result = readNestedRecord(response, 'result');
         expect(result).toMatchObject({
           ok: true,
@@ -319,7 +312,7 @@ describe('AcpBackend ACP extension dispatch', () => {
         }>('example/client_request', { value: 'request' }, { timeoutMs: 500 });
 
         expect(response).toEqual({ ok: true, echoed: { value: 'request' } });
-        expect(parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 })))
+        expect(await readJsonEventually<Record<string, unknown>>(resultFile, { timeoutMs: 1_000 }))
           .toEqual({ value: 'request' });
       } finally {
         await backend.dispose().catch(() => {});
@@ -402,7 +395,7 @@ describe('AcpBackend ACP extension dispatch', () => {
         await backend.sendPrompt(started.sessionId, 'trigger extension error');
         await backend.waitForResponseComplete(1_000);
 
-        const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
+        const response = await readJsonEventually<Record<string, unknown>>(resultFile, { timeoutMs: 1_000 });
         const error = readNestedRecord(response, 'error');
         expect(error).toMatchObject({ code: -32603 });
       } finally {
@@ -438,7 +431,7 @@ describe('AcpBackend ACP extension dispatch', () => {
         await backend.sendPrompt(started.sessionId, 'trigger missing extension handler');
         await backend.waitForResponseComplete(1_000);
 
-        const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
+        const response = await readJsonEventually<Record<string, unknown>>(resultFile, { timeoutMs: 1_000 });
         const error = readNestedRecord(response, 'error');
         expect(error).toMatchObject({
           code: -32601,
@@ -536,7 +529,7 @@ describe('AcpBackend ACP extension dispatch', () => {
           new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500)),
         ]);
         expect(abortOutcome).toBe('aborted');
-        const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
+        const response = await readJsonEventually<Record<string, unknown>>(resultFile, { timeoutMs: 1_000 });
         const error = readNestedRecord(response, 'error');
         expect(error).toMatchObject({ code: -32603 });
       } finally {
@@ -613,7 +606,7 @@ describe('AcpBackend ACP extension dispatch', () => {
         expect(abortOutcome).toBe('aborted');
         await prompt.catch(() => {});
 
-        const response = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
+        const response = await readJsonEventually<Record<string, unknown>>(resultFile, { timeoutMs: 1_000 });
         const error = readNestedRecord(response, 'error');
         expect(error).toMatchObject({ code: -32603 });
       } finally {

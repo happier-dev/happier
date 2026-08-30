@@ -8,6 +8,7 @@ import {
   createAcpSubprocessEnvScope,
   createAcpTestTransportHandler,
   readFileEventually,
+  readJsonEventually,
   waitForFileToContain,
   writeAcpTestAgentScript,
 } from './subprocessHarness'
@@ -93,4 +94,18 @@ describe('ACP subprocess harness', () => {
       )
     })
   })
+
+  it('waits for parseable JSON instead of accepting a non-empty partial write', async () => {
+    await withTempDir('happier-acp-subprocess-partial-json-', async (dir) => {
+      const outputPath = join(dir, 'partial.json')
+      writeFileSync(outputPath, '{"ok":', 'utf8')
+
+      setTimeout(() => {
+        writeFileSync(outputPath, '{"ok":true}\n', 'utf8')
+      }, 25)
+
+      await expect(readJsonEventually<Record<string, boolean>>(outputPath, { timeoutMs: 2_000, intervalMs: 10 })).resolves.toEqual({ ok: true })
+    })
+  })
+
 })
