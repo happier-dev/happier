@@ -355,6 +355,38 @@ describe('createStopSession', () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
+  it('logs a failed exact runner-exit probe before continuing through the normal stop path', async () => {
+    const { createStopSession } = await import('./stopSession');
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    const probeError = new Error('process-state reader unavailable');
+    const logWarning = vi.fn();
+    const waitForTrackedRunnersExit = vi.fn(async () => true);
+    const stop = createStopSession({
+      pidToTrackedSession: new Map<number, any>([[
+        223,
+        {
+          startedBy: 'terminal',
+          pid: 223,
+          happySessionId: 'sess-probe-failure',
+          processCommandHash: 'expected-command',
+        },
+      ]]),
+      areTrackedRunnersExited: vi.fn(async () => {
+        throw probeError;
+      }),
+      waitForTrackedRunnersExit,
+      logWarning,
+    });
+
+    await expect(stop('sess-probe-failure')).resolves.toEqual({ status: 'stopped' });
+    expect(killSpy).toHaveBeenCalledWith(223, 'SIGTERM');
+    expect(waitForTrackedRunnersExit).toHaveBeenCalledTimes(1);
+    expect(logWarning).toHaveBeenCalledWith(
+      '[DAEMON RUN] Failed to check tracked runner exit for session sess-probe-failure',
+      probeError,
+    );
+  });
+
   it('keeps tracked in-flight attaches until exit is observed', async () => {
     const { createStopSession } = await import('./stopSession');
 
