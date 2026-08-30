@@ -87,6 +87,7 @@ test('authoritative remote server retires the prior target owner and becomes run
     ssh: 'mac-ssh',
     repoDir: '/Users/test/happier',
     cliHomeDir: '/Users/test/.happier/mac',
+    remoteServerPort: 43005,
   };
   const calls = [];
   const states = [];
@@ -175,7 +176,11 @@ test('authoritative remote server retires the prior target owner and becomes run
     controller = await controllerPromise;
     await runningState;
     assert.equal(states.at(-1)?.status, 'running');
+    assert.equal(states.at(-1)?.phase, null);
+    assert.equal(states.at(-1)?.error, null);
     assert.equal(states.at(-1)?.serviceStatus?.server, 'running');
+    assert.equal(states.at(-1)?.repoDir, '/Users/test/happier');
+    assert.deepEqual(states.at(-1)?.servicePorts, { server: 43005 });
   } finally {
     await controller?.close();
     await rm(root, { recursive: true, force: true });

@@ -220,8 +220,9 @@ export async function startStackDevTargets(
   };
   await mkdir(mutagenDataDir, { recursive: true });
 
-  const workersByTarget = new Map();
-  const tunnelsByTarget = new Map();
+    const workersByTarget = new Map();
+    const tunnelsByTarget = new Map();
+    const servicePortsByTarget = new Map();
   const provisionedTargets = new Set();
   const deferredCompanionPreparationsByTarget = new Map();
   const targetFailuresByTarget = new Map();
@@ -306,6 +307,7 @@ export async function startStackDevTargets(
     });
 
     const publishTargetState = (plan, status, detail = {}) => {
+      const servicePorts = servicePortsByTarget.get(plan.target.name);
       const serviceStatus = Object.fromEntries(
         Object.entries(plan.services)
           .filter(([, enabled]) => enabled)
@@ -315,7 +317,11 @@ export async function startStackDevTargets(
         name: plan.target.name,
         status,
         services: plan.services,
+        ...(servicePorts && Object.keys(servicePorts).length > 0
+          ? { repoDir: plan.target.repoDir, servicePorts }
+          : {}),
         serviceStatus,
+        ...(status === 'running' ? { phase: null, error: null } : {}),
         ...detail,
       });
     };
@@ -454,6 +460,10 @@ export async function startStackDevTargets(
               instanceId,
             })
           : null;
+        servicePortsByTarget.set(target.name, {
+          ...(services.server ? { server: remoteServerPort } : {}),
+          ...(services.expo ? { expo: remoteExpoPort } : {}),
+        });
         if (services.expo && (!Number.isInteger(Number(localExpoPort)) || Number(localExpoPort) < 1024)) {
           throw new Error('[dev-targets] remote Expo placement requires a guest Metro port');
         }
