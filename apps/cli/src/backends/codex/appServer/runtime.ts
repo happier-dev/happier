@@ -354,6 +354,7 @@ type CodexAppServerPromptOptions = Readonly<{
     trustedLocalImagePaths?: ReadonlySet<string>;
     userMessageSeq?: number | null;
     appliedModelId?: string | null;
+    onProviderPromptAccepted?: () => void;
 }>;
 
 type CodexAppServerPromptAcceptedCallback = (input: Readonly<{
@@ -4652,6 +4653,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 threadId: activeTurn.threadId,
                 ...(clientUserMessageId ? { clientUserMessageId } : {}),
             };
+            const finishAcceptedSteer = async (): Promise<void> => {
+                await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
+                if (!clientUserMessageId) {
+                    markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
+                }
+                options?.onProviderPromptAccepted?.();
+            };
             const requestSteer = async (
                 input: CodexAppServerTurnInputItem[],
                 turnIdKey: 'expectedTurnId' | 'turnId',
@@ -4692,10 +4700,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         clearPendingProviderPrompt(pendingProviderPrompt);
                         throw fallbackError;
                     }
-                    await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
-                    if (!clientUserMessageId) {
-                        markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
-                    }
+                    await finishAcceptedSteer();
                     return;
                 }
                 // Backward compatibility: older experimental app-server builds used `turnId` instead
@@ -4719,20 +4724,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             clearPendingProviderPrompt(pendingProviderPrompt);
                             throw fallbackError;
                         }
-                        await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
-                        if (!clientUserMessageId) {
-                            markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
-                        }
+                        await finishAcceptedSteer();
                         return;
                     }
                     clearPendingProviderPrompt(pendingProviderPrompt);
                     throw legacyError;
                 }
             }
-            await turnBoundaryTracker.appendSteerMessage({ localId: options?.localId ?? null });
-            if (!clientUserMessageId) {
-                markPendingProviderPromptAccepted(pendingProviderPrompt, expectedTurnId);
-            }
+            await finishAcceptedSteer();
         },
         compactContext: async (_command: string) => {
             const activeThreadId = threadId;

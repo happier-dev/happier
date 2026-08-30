@@ -3223,6 +3223,14 @@ export class AcpBackend implements AgentBackend {
     prompt: string,
     deliveryIdentity?: AcpSteerDeliveryIdentity,
   ): Promise<void> {
+    await this.sendSteerPromptWithEvidence(sessionId, prompt, deliveryIdentity);
+  }
+
+  async sendSteerPromptWithEvidence(
+    sessionId: SessionId,
+    prompt: string,
+    deliveryIdentity?: AcpSteerDeliveryIdentity,
+  ): Promise<AcpPromptSubmissionEvidence> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
     }
@@ -3250,7 +3258,7 @@ export class AcpBackend implements AgentBackend {
       if (!this.options.inFlightSteer.isAccepted(response)) {
         throw new Error(`${this.options.agentName} in-flight steer extension did not accept input`);
       }
-      return;
+      return { kind: 'accepted_without_exact_final_response' };
     }
 
     const contentBlock: ContentBlock = { type: 'text', text: prompt };
@@ -3265,10 +3273,26 @@ export class AcpBackend implements AgentBackend {
     const transportWriteReceipt = this.createAcpPromptTransportWriteReceipt(this.acpSessionId);
     const transportWriteSentinel = Symbol('acp-steer-transport-write');
     const promptPromise = this.connection.peer.prompt(promptRequest);
-    let outcome: PromptResponse | typeof transportWriteSentinel;
+    const finalResponseEvidence: Promise<AcpPromptExactFinalResponseEvidence> = promptPromise
+      .then((response): AcpPromptExactFinalResponseEvidence => {
+        this.handlePromptResponseForTurn(response, turnGeneration, () => {});
+        return { kind: 'exact_final_response', response };
+      })
+      .catch((error: unknown) => {
+        if (!this.disposed && this.waitingForResponse) {
+          const normalizedError = error instanceof Error ? error : new Error(String(error));
+          this.failPendingResponseWait(normalizedError);
+          this.emit({ type: 'status', status: 'error', detail: normalizedError.message });
+        }
+        throw toAcpPromptSubmissionPhaseError('effect_may_have_occurred', error);
+      });
+    // The compatibility method intentionally returns after transport custody. Keep the exact
+    // response evidence safe until an evidence-aware runtime elects to observe it.
+    void finalResponseEvidence.catch(() => {});
+    let outcome: AcpPromptExactFinalResponseEvidence | typeof transportWriteSentinel;
     try {
       outcome = await Promise.race([
-        promptPromise,
+        finalResponseEvidence,
         transportWriteReceipt.written.then(
           (): typeof transportWriteSentinel => transportWriteSentinel,
         ),
@@ -3279,24 +3303,9 @@ export class AcpBackend implements AgentBackend {
     }
     if (outcome !== transportWriteSentinel) {
       transportWriteReceipt.cancel();
-      this.handlePromptResponseForTurn(
-        outcome as PromptResponse,
-        turnGeneration,
-        () => {},
-      );
-      return;
+      return outcome;
     }
-    void promptPromise.then(
-      (response) => {
-        this.handlePromptResponseForTurn(response, turnGeneration, () => {});
-      },
-      (error: unknown) => {
-        if (this.disposed || !this.waitingForResponse) return;
-        const normalizedError = error instanceof Error ? error : new Error(String(error));
-        this.failPendingResponseWait(normalizedError);
-        this.emit({ type: 'status', status: 'error', detail: normalizedError.message });
-      },
-    );
+    return { kind: 'effect_may_have_occurred', finalResponseEvidence };
   }
 
   async setSessionMode(sessionId: SessionId, modeId: string): Promise<void> {

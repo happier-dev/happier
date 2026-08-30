@@ -307,6 +307,7 @@ export type AcpRuntimeSteerPromptOptions = Readonly<{
   localIds?: readonly string[];
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
+  onProviderPromptAccepted?: () => void;
 }>;
 
 export type AcpRuntimeBackend = Omit<AgentBackend, 'waitForResponseComplete'> & {
@@ -343,6 +344,11 @@ export type AcpRuntimeBackend = Omit<AgentBackend, 'waitForResponseComplete'> & 
    * Optional: send additional user input into an already running turn.
    */
   sendSteerPrompt?: (sessionId: string, prompt: string, options?: AcpRuntimeSteerPromptOptions) => Promise<void>;
+  sendSteerPromptWithEvidence?: (
+    sessionId: string,
+    prompt: string,
+    options?: AcpRuntimeSteerPromptOptions,
+  ) => Promise<AcpPromptSubmissionEvidence>;
   setPlanStatePublisher?: (
     publisher: (snapshot: NormalizedAcpPlanSnapshot) => Promise<void>,
   ) => void;
@@ -2387,14 +2393,29 @@ export function createAcpRuntime(params: {
       }
 
       const b = await ensureBackend();
-      if (b.sendSteerPrompt) {
-        if (options === undefined) {
-          await b.sendSteerPrompt(sessionId, prompt);
-        } else {
-          await b.sendSteerPrompt(sessionId, prompt, options);
-        }
-      } else {
+      if (!b.sendSteerPrompt && !b.sendSteerPromptWithEvidence) {
         throw new Error(`${params.provider} ACP backend does not support in-flight steer`);
+      }
+      const { onProviderPromptAccepted, ...deliveryIdentity } = options ?? {};
+      let submissionEvidence: AcpPromptSubmissionEvidence | null = null;
+      if (b.sendSteerPromptWithEvidence) {
+        submissionEvidence = await b.sendSteerPromptWithEvidence(
+          sessionId,
+          prompt,
+          options === undefined ? undefined : deliveryIdentity,
+        );
+      } else if (options === undefined) {
+        await b.sendSteerPrompt!(sessionId, prompt);
+      } else {
+        await b.sendSteerPrompt!(sessionId, prompt, deliveryIdentity);
+      }
+      if (submissionEvidence?.kind === 'effect_may_have_occurred') {
+        void submissionEvidence.finalResponseEvidence.then(
+          () => onProviderPromptAccepted?.(),
+          () => undefined,
+        );
+      } else {
+        onProviderPromptAccepted?.();
       }
     },
 

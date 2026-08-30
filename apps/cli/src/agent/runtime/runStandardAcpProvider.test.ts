@@ -708,7 +708,9 @@ describe('runStandardAcpProvider', () => {
 
     await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
 
-    expect(runtime.steerPrompt).toHaveBeenCalledWith('hello');
+    expect(runtime.steerPrompt).toHaveBeenCalledWith('hello', {
+      onProviderPromptAccepted: expect.any(Function),
+    });
   });
 
   it('in-flight action controller cancels the active runtime with the correct receiver', async () => {
@@ -830,6 +832,7 @@ describe('runStandardAcpProvider', () => {
     expect(runtime.steerPrompt).toHaveBeenCalledWith('hello', {
       localId: 'local-1',
       localIds: ['local-1'],
+      onProviderPromptAccepted: expect.any(Function),
       userMessageSeq: 1,
       userMessageSeqs: [1],
     });

@@ -133,10 +133,23 @@ describe('AcpBackend prompt submission evidence', () => {
     });
 
     try {
-      await expect(Promise.race([
-        backend.sendSteerPrompt('test-session', 'follow up').then(() => 'written' as const),
+      const evidence = await Promise.race([
+        backend.sendSteerPromptWithEvidence('test-session', 'follow up'),
         new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 25)),
-      ])).resolves.toBe('written');
+      ]);
+
+      expect(evidence).not.toBe('timeout');
+      expect(evidence).toMatchObject({ kind: 'effect_may_have_occurred' });
+      if (evidence === 'timeout' || evidence.kind !== 'effect_may_have_occurred') {
+        throw new Error('expected pending exact steer acceptance evidence');
+      }
+      expect(await readPromiseState(evidence.finalResponseEvidence)).toBe('pending');
+
+      resolvePrompt({ stopReason: 'end_turn' });
+      await expect(evidence.finalResponseEvidence).resolves.toEqual({
+        kind: 'exact_final_response',
+        response: { stopReason: 'end_turn' },
+      });
     } finally {
       resolvePrompt({ stopReason: 'end_turn' });
       await backend.dispose();

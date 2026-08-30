@@ -72,6 +72,48 @@ describe('createAcpRuntime (in-flight steer)', () => {
     });
   });
 
+  it('reports steer acceptance only after the exact ACP prompt response', async () => {
+    let resolveFinalResponse!: (evidence: {
+      kind: 'exact_final_response';
+      response: { stopReason: 'end_turn' };
+    }) => void;
+    const finalResponseEvidence = new Promise<{
+      kind: 'exact_final_response';
+      response: { stopReason: 'end_turn' };
+    }>((resolve) => {
+      resolveFinalResponse = resolve;
+    });
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_1' }) as any;
+    backend.sendSteerPromptWithEvidence = vi.fn(async () => ({
+      kind: 'effect_may_have_occurred' as const,
+      finalResponseEvidence,
+    }));
+    const onProviderPromptAccepted = vi.fn();
+    const runtime = createAcpRuntime({
+      provider: 'codex',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      inFlightSteer: { enabled: true },
+    } as any);
+
+    await runtime.startOrLoad({});
+    await runtime.steerPrompt('steer text', { onProviderPromptAccepted });
+
+    expect(onProviderPromptAccepted).not.toHaveBeenCalled();
+    resolveFinalResponse({
+      kind: 'exact_final_response',
+      response: { stopReason: 'end_turn' },
+    });
+    await vi.waitFor(() => {
+      expect(onProviderPromptAccepted).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('owns one shared Pending pump and cancels it at the turn boundary', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_1' }) as any;
     backend.sendSteerPrompt = vi.fn(async () => {});

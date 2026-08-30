@@ -76,7 +76,7 @@ import { prepareClaudeUnifiedStartupLifecycle } from './startupLifecycle';
 import { applyClaudeUnifiedTerminalLaunchIntent } from './launchIntent';
 import { createClaudeUnifiedProviderInputOutcomeBridge } from './claudeUnifiedProviderInputOutcome';
 import { createClaudeUnifiedTerminalSharedCallbacks } from './createClaudeUnifiedTerminalSharedCallbacks';
-import { createClaudeReplaySeedRetirement } from '../runtime/createClaudeReplaySeedRetirement';
+import { createProviderPromptAcceptanceSettlement } from '@/agent/runtime/prompt/createProviderPromptAcceptanceSettlement';
 import { resolveClaudeQueuedPromptForDispatch } from '../runtime/resolveClaudeQueuedPromptForDispatch';
 
 function shouldForegroundAttachTerminal(): boolean {
@@ -636,7 +636,7 @@ export async function claudeUnifiedTerminalLauncher(
   let parkedMessage: ParkedUnifiedTerminalMessage | null = null;
   let inFlightStartupMessage: InFlightStartupMessage | null = null;
   let didReplaySeedBootstrap = false;
-  const replaySeedRetirement = createClaudeReplaySeedRetirement();
+  const replaySeedRetirement = createProviderPromptAcceptanceSettlement();
   const resolveQueuedPromptForProvider = async (
     batch: ParkedUnifiedTerminalMessage,
   ): Promise<ParkedUnifiedTerminalMessage> => {

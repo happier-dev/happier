@@ -74,7 +74,7 @@ import { createClaudePendingAwareInputConsumer } from './createClaudePendingAwar
 import type { MessageBatch } from '@/agent/runtime/sessionInput/types';
 import { readDaemonInitialGoalFromEnv } from '@/agent/runtime/sessionInitialGoal';
 import { resolveClaudeQueuedPromptForDispatch } from '@/backends/claude/runtime/resolveClaudeQueuedPromptForDispatch';
-import { createClaudeReplaySeedRetirement } from '@/backends/claude/runtime/createClaudeReplaySeedRetirement';
+import { createProviderPromptAcceptanceSettlement } from '@/agent/runtime/prompt/createProviderPromptAcceptanceSettlement';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
@@ -1336,7 +1336,7 @@ export async function claudeRemoteLauncher(
             let didReplaySeedBootstrap = false;
             // Retiring the replay seed is scoped to Claude accepting the prompt it was prefixed
             // to, so the seed survives a prompt the provider never received.
-            const replaySeedRetirement = createClaudeReplaySeedRetirement();
+            const replaySeedRetirement = createProviderPromptAcceptanceSettlement();
             let unifiedTerminalLaunchOptionsHash: string | null = null;
             let lastUnifiedTerminalRestartOnlyNoticeHash: string | null = null;
             let readyTurnContext: ReadyNotificationTurnContext | undefined;

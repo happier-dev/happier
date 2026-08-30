@@ -3,6 +3,7 @@ import type { AgentState, Metadata, PermissionMode, UserMessage } from '@/api/ty
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permission/appendSystemPromptField';
 import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
+import { createProviderPromptAcceptanceSettlement } from '@/agent/runtime/prompt/createProviderPromptAcceptanceSettlement';
 import { isNonSteerablePromptPayload } from '@/cli/parsers/specialCommands';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './permissionModeCanonical';
@@ -55,6 +56,7 @@ export type InFlightSteerController = Readonly<{
   steerText: (
     text: string,
     identity?: InFlightSteerDeliveryIdentity,
+    callbacks?: Readonly<{ onProviderPromptAccepted?: () => void }>,
   ) => Promise<void>;
   /** Cancel the active provider turn before executing an `interrupt_and_send` Pending action. */
   cancelActiveTurn?: (() => Promise<void>) | undefined;
@@ -81,6 +83,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   inFlightSteer?: InFlightSteerController | null;
 }): { bindSession: (session: PermissionModeQueueSessionBinding) => void } {
   let steerSequence: Promise<void> = Promise.resolve();
+  const steerReplaySeedRetirement = createProviderPromptAcceptanceSettlement();
   let didReplaySeedBootstrapForSteer = false;
   let currentSession = opts.session;
   let bindingGeneration = 0;
@@ -226,6 +229,8 @@ export function registerPermissionModeMessageQueueBinding(opts: {
         }
         try {
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
+          await steerReplaySeedRetirement.drain();
+          if (!isCurrentBinding(session, messageBindingGeneration)) return;
           let providerText = text;
           let settleReplaySeedOnProviderAcceptance: (() => Promise<unknown>) | null = null;
           if (typeof session.getMetadataSnapshot === 'function') {
@@ -279,14 +284,33 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
 
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
+          const onProviderPromptAccepted = settleReplaySeedOnProviderAcceptance
+            ? steerReplaySeedRetirement.createAcceptanceCallback(
+                settleReplaySeedOnProviderAcceptance,
+              )
+            : null;
           if (deliveryIdentity.steerOptions === undefined) {
-            await steer.steerText(providerText);
+            if (onProviderPromptAccepted) {
+              await steer.steerText(providerText, undefined, { onProviderPromptAccepted });
+            } else {
+              await steer.steerText(providerText);
+            }
+          } else if (onProviderPromptAccepted) {
+            await steer.steerText(
+              providerText,
+              deliveryIdentity.steerOptions,
+              { onProviderPromptAccepted },
+            );
           } else {
             await steer.steerText(providerText, deliveryIdentity.steerOptions);
           }
-          // The steered text — seed included — is with the provider only now. A steer that
-          // threw above bounces to the queue, and the seed must survive for that retry.
-          if (settleReplaySeedOnProviderAcceptance) await settleReplaySeedOnProviderAcceptance();
+          // Exact runtimes confirm before returning and are drained here. A runtime that returns
+          // at transport custody confirms later. Each callback closes over its own settler so a
+          // late ACK cannot retire context for a newer steer; the next serialized steer drains any
+          // settlement that has begun before it reads replaySeedV1 again.
+          if (onProviderPromptAccepted) {
+            await steerReplaySeedRetirement.drain();
+          }
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           return;
         } catch {

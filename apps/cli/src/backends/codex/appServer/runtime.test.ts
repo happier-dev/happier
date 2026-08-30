@@ -3736,7 +3736,12 @@ describe('createCodexAppServerRuntime', () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
 
         expect(runtime.isTurnInFlight()).toBe(true);
-        await runtime.steerPrompt('nudge', { localId: ' local-steer-42\n', userMessageSeq: 42 });
+        const onProviderPromptAccepted = vi.fn();
+        await runtime.steerPrompt('nudge', {
+            localId: ' local-steer-42\n',
+            userMessageSeq: 42,
+            onProviderPromptAccepted,
+        });
         await sendPromptPromise;
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
@@ -3755,6 +3760,7 @@ describe('createCodexAppServerRuntime', () => {
             userMessageSeq: 42,
             providerTurnId: 'turn-overlap-start',
         });
+        expect(onProviderPromptAccepted).toHaveBeenCalledTimes(1);
     });
 
     it('places a correlated steer at the provider user-message boundary before accepting Pending custody', async () => {

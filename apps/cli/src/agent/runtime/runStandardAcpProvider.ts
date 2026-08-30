@@ -70,7 +70,12 @@ type RuntimeForLoop = {
   listSkills?: () => Promise<unknown>;
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
-  steerPrompt?: (message: string, identity?: InFlightSteerDeliveryIdentity) => Promise<void>;
+  steerPrompt?: (
+    message: string,
+    identity?: InFlightSteerDeliveryIdentity & Readonly<{
+      onProviderPromptAccepted?: () => void;
+    }>,
+  ) => Promise<void>;
   flushTurn: () => void | Promise<void>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
@@ -338,7 +343,11 @@ export async function runStandardAcpProvider(
   const inFlightSteerController: InFlightSteerController = {
     supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
     isTurnInFlight: () => runtimeForInFlightSteer?.isTurnInFlight?.() === true,
-    steerText: async (text: string, identity?: InFlightSteerDeliveryIdentity) => {
+    steerText: async (
+      text: string,
+      identity?: InFlightSteerDeliveryIdentity,
+      callbacks?: Readonly<{ onProviderPromptAccepted?: () => void }>,
+    ) => {
       const runtime = runtimeForInFlightSteer;
       if (!runtime?.steerPrompt) {
         throw new Error('in-flight steer is not available');
@@ -346,18 +355,20 @@ export async function runStandardAcpProvider(
       const outcome = await providerInputConsumer.runProviderInputDispatch({
         abortSignal: abortController.signal,
         dispatch: async () => {
-          if (identity === undefined) {
-            await runtime.steerPrompt!(text);
-            return;
-          }
-          await runtime.steerPrompt!(text, identity);
           const localIds = [...new Set([
-            ...(identity.localId === undefined ? [] : [identity.localId]),
-            ...(identity.localIds ?? []),
+            ...(identity?.localId === undefined ? [] : [identity.localId]),
+            ...(identity?.localIds ?? []),
           ].map(readPendingLocalId).filter((value): value is string => value !== null))];
-          if (localIds.length === 1) {
-            providerInputOutcomeObserver?.({ kind: 'accepted', localId: localIds[0] });
-          }
+          const onProviderPromptAccepted = (): void => {
+            callbacks?.onProviderPromptAccepted?.();
+            if (localIds.length === 1) {
+              providerInputOutcomeObserver?.({ kind: 'accepted', localId: localIds[0] });
+            }
+          };
+          await runtime.steerPrompt!(text, {
+            ...(identity ?? {}),
+            onProviderPromptAccepted,
+          });
         },
       });
       if (outcome.status === 'cancelled') {

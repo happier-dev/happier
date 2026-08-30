@@ -689,6 +689,100 @@ async function runTwoCodexAppServerPromptsWithFirstTurnAborted(params: Readonly<
   return { providerPrompts, seedAtEachSend };
 }
 
+async function runCodexAcpLiveSteersWithDelayedFirstAcceptance(): Promise<{
+  providerPrompts: string[];
+  seedAtEachSteer: any[];
+}> {
+  sessionMetadataStore.current = {
+    connectedServiceMaterializationIdentityV1: {
+      v: 1,
+      id: 'csm_codex_integration',
+      createdAtMs: 1,
+    },
+    replaySeedV1: {
+      v: 1,
+      seedText: SEED_TEXT,
+      sourceSessionId: 'source-session',
+      sourceCutoffSeqInclusive: 12,
+      createdAtMs: 1,
+    },
+  };
+  resolveRunnerMcpServersSpy.mockImplementation(async () => ({
+    happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+    mcpServers: {},
+  }));
+
+  const providerPrompts: string[] = [];
+  const seedAtEachSteer: any[] = [];
+  const acceptanceCallbacks: Array<(() => void) | undefined> = [];
+  const steerPrompt = vi.fn(async (prompt: string, options?: {
+    onProviderPromptAccepted?: () => void;
+  }) => {
+    providerPrompts.push(prompt);
+    seedAtEachSteer.push({ ...(sessionMetadataStore.current.replaySeedV1 ?? {}) });
+    acceptanceCallbacks.push(options?.onProviderPromptAccepted);
+  });
+
+  createCodexAcpRuntimeSpy.mockImplementation(() => ({
+    getSessionId: () => 'thread-acp',
+    supportsInFlightSteer: () => true,
+    isTurnInFlight: () => true,
+    hasActiveProviderTurn: () => true,
+    canSteerPrompt: () => true,
+    beginTurn: vi.fn(),
+    cancel: vi.fn(async () => {}),
+    reset: vi.fn(async () => {}),
+    startOrLoad: vi.fn(async () => 'thread-acp'),
+    setSessionMode: vi.fn(async () => {}),
+    setSessionModel: vi.fn(async () => {}),
+    setSessionConfigOption: vi.fn(async () => {}),
+    steerPrompt,
+    sendPrompt: vi.fn(async () => {}),
+    sendPromptWithMeta: vi.fn(async () => {}),
+    compactContext: vi.fn(async () => {}),
+    flushTurn: vi.fn(async () => {}),
+    rollbackConversation: vi.fn(async () => ({
+      ok: false,
+      errorCode: 'unsupported_action',
+      errorMessage: 'unsupported',
+    })),
+  }));
+
+  let droveSteers = false;
+  sessionInputConsumerWaitForNextInputImpl = async () => {
+    if (droveSteers) return null;
+    droveSteers = true;
+    if (!lastOnUserMessageHandler) throw new Error('missing-onUserMessage-handler');
+
+    await lastOnUserMessageHandler(
+      { content: { text: 'first' }, localId: 'local-steer-1', meta: {} },
+      { seq: 101, pendingProviderAction: 'steer' },
+    );
+    await lastOnUserMessageHandler(
+      { content: { text: 'second' }, localId: 'local-steer-2', meta: {} },
+      { seq: 102, pendingProviderAction: 'steer' },
+    );
+    acceptanceCallbacks[0]?.();
+    await lastOnUserMessageHandler(
+      { content: { text: 'third' }, localId: 'local-steer-3', meta: {} },
+      { seq: 103, pendingProviderAction: 'steer' },
+    );
+    return null;
+  };
+
+  const { runCodex } = await import('./runCodex');
+  await runCodex({
+    credentials: { token: 'test' } as Credentials,
+    startedBy: 'terminal',
+    startingMode: 'remote',
+    codexBackendMode: 'acp',
+    permissionMode: 'default',
+    permissionModeUpdatedAt: 1,
+  } as any);
+
+  return { providerPrompts, seedAtEachSteer };
+}
+
 describe('runCodex replay seed retirement', () => {
   beforeEach(async () => {
     providerInputOutcomeObserverMock.mockReset();
@@ -804,5 +898,20 @@ describe('runCodex replay seed retirement', () => {
     expect(providerPrompts[1]).toContain(SEED_TEXT);
     expect(seedAtEachSend[1].seedText).toBe(SEED_TEXT);
     expect(seedAtEachSend[1].appliedToLocalId).toBeUndefined();
+  });
+
+  it('retires live-steer context only after the exact ACP acceptance callback', async () => {
+    const { providerPrompts, seedAtEachSteer } = await runCodexAcpLiveSteersWithDelayedFirstAcceptance();
+
+    expect(providerPrompts).toEqual([
+      expect.stringContaining(`${SEED_TEXT}\n\nfirst`),
+      expect.stringContaining(`${SEED_TEXT}\n\nsecond`),
+      'third',
+    ]);
+    expect(seedAtEachSteer[1]?.seedText).toBe(SEED_TEXT);
+    expect(seedAtEachSteer[2]).toMatchObject({
+      seedText: '',
+      appliedToLocalId: 'local-steer-1',
+    });
   });
 });

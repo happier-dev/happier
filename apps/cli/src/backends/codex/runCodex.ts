@@ -131,6 +131,7 @@ import {
 import { createCodexRequestUserInputBridge } from './runtime/codexRequestUserInputBridge';
 import { runCodexLocalModePass } from './runtime/localModePass';
 import { resolveCodexQueuedPromptForDispatch } from './runtime/resolveCodexQueuedPromptForDispatch';
+import { createProviderPromptAcceptanceSettlement } from '@/agent/runtime/prompt/createProviderPromptAcceptanceSettlement';
 import type { StructuredInputCatalogReaders } from '@/agent/runtime/prompt/resolveStructuredInputProviderContext';
 import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
 import {
@@ -305,7 +306,7 @@ export async function runCodex(opts: {
         setSessionMode: (mode: string) => Promise<void>;
         setSessionModel: (model: string) => Promise<void>;
         setSessionConfigOption: (key: string, value: string | number | boolean | null) => Promise<void>;
-        steerPrompt: (prompt: string, options?: { metadata?: unknown; localId?: string | null; localIds?: readonly string[]; userMessageSeq?: number | null }) => Promise<void>;
+        steerPrompt: (prompt: string, options?: { metadata?: unknown; localId?: string | null; localIds?: readonly string[]; userMessageSeq?: number | null; onProviderPromptAccepted?: () => void }) => Promise<void>;
         sendPrompt: (prompt: string, options?: { metadata?: unknown; localId?: string | null; localIds?: readonly string[]; userMessageSeq?: number | null; appliedModelId?: string | null }) => Promise<void>;
         sendPromptWithMeta?: (params: {
             text: string;
@@ -1016,6 +1017,7 @@ export async function runCodex(opts: {
     const runtimeModelOverrideRef = { current: currentModelId, updatedAt: currentModelUpdatedAt };
     let runtimeOverridesSync: Awaited<ReturnType<typeof initializeRuntimeOverridesSynchronizer>> | null = null;
     let didReplaySeedBootstrap = false;
+    const liveSteerReplaySeedRetirement = createProviderPromptAcceptanceSettlement();
     const persistStartupOverridesCache = (): void => {
         try {
             writeStartupOverridesCacheForBackend({
@@ -1140,6 +1142,7 @@ export async function runCodex(opts: {
                     if (!inputConsumer) {
                         return;
                     }
+                    await liveSteerReplaySeedRetirement.drain();
                     const localIds = normalizeProviderPromptLocalIds([message.localId ?? null]);
                     const dispatchResolution = await resolveCodexQueuedPromptForDispatch({
                         sessionClient: session,
@@ -1159,16 +1162,21 @@ export async function runCodex(opts: {
                             permissionModeUpdatedAt: resolvedMode.permissionModeUpdatedAt,
                         })
                         : null;
+                    const onProviderPromptAccepted = dispatchResolution.seedApplied
+                        ? liveSteerReplaySeedRetirement.createAcceptanceCallback(
+                            dispatchResolution.settleReplaySeedOnProviderAcceptance,
+                        )
+                        : null;
                     await dispatchProviderInputOrThrow(async () => {
                         await runtime.steerPrompt(providerPromptText, {
                             ...providerPromptIdentityOption(localIds),
                             metadata: providerPromptMetadata,
                             userMessageSeq,
+                            ...(onProviderPromptAccepted ? { onProviderPromptAccepted } : {}),
                         });
                     });
-                    if (dispatchResolution.seedApplied) {
-                        // Codex has the steered prompt, seed included: only now may it be retired.
-                        await dispatchResolution.settleReplaySeedOnProviderAcceptance();
+                    if (onProviderPromptAccepted) {
+                        await liveSteerReplaySeedRetirement.drain();
                     }
                 } catch (error) {
                     const localIds = normalizeProviderPromptLocalIds([message.localId ?? null]);
@@ -2415,28 +2423,15 @@ export async function runCodex(opts: {
                 // left an accepted-then-aborted turn with a live seed that prefixed the entire
                 // carry-over context onto the next message. Declared outside the try so the
                 // `finally` can drain a retirement started by a turn that then failed.
-                let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
-                let replaySeedSettlement: Promise<unknown> | null = null;
+                const replaySeedRetirement = createProviderPromptAcceptanceSettlement();
                 // Unambiguous confirmed delivery only: a send that throws before any acceptance
                 // evidence never reaches this, so the seed stays live for the retry.
-                const retireReplaySeedOnConfirmedDelivery = (): void => {
-                    const settle = pendingReplaySeedSettlement;
-                    if (!settle) return;
-                    pendingReplaySeedSettlement = null;
-                    // The seed owner reports its own failures and never rejects; the promise is
-                    // drained below so retirement is durable before the next prompt resolves.
-                    replaySeedSettlement = settle();
-                };
+                const retireReplaySeedOnConfirmedDelivery = replaySeedRetirement.confirmProviderAccepted;
                 const confirmProviderAcceptedPromptForTurn = (appliedModelId?: string | null): void => {
                     retireReplaySeedOnConfirmedDelivery();
                     confirmProviderAcceptedPrompt(message, appliedModelId);
                 };
-                const awaitReplaySeedSettlement = async (): Promise<void> => {
-                    const settlement = replaySeedSettlement;
-                    if (!settlement) return;
-                    replaySeedSettlement = null;
-                    await settlement;
-                };
+                const awaitReplaySeedSettlement = replaySeedRetirement.drain;
             try {
                 const localId =
                     typeof message.mode.localId === 'string' && message.mode.localId
@@ -2467,9 +2462,11 @@ export async function runCodex(opts: {
                         catalogs: codexDispatchCatalogReaders(),
                     });
                     didReplaySeedBootstrap = dispatchResolution.didBootstrap;
-                    if (dispatchResolution.seedApplied) {
-                        pendingReplaySeedSettlement = dispatchResolution.settleReplaySeedOnProviderAcceptance;
-                    }
+                    replaySeedRetirement.bind(
+                        dispatchResolution.seedApplied
+                            ? dispatchResolution.settleReplaySeedOnProviderAcceptance
+                            : null,
+                    );
                     resolvedProviderDispatch = { text: dispatchResolution.text, metadata: dispatchResolution.metadata };
                     return resolvedProviderDispatch;
                 };
