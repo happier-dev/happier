@@ -403,12 +403,22 @@ export function createStopSession(params: Readonly<{
       }
     }
 
-    const runnersAlreadyExited = params.areTrackedRunnersExited
-      ? await params.areTrackedRunnersExited({
+    const haveTrackedRunnersExited = async (trackedPids: readonly number[]): Promise<boolean> => {
+      if (!params.areTrackedRunnersExited) return false;
+      try {
+        return await params.areTrackedRunnersExited({
           sessionId: normalizedSessionId,
-          trackedPids: pidsToStop,
-        }).catch(() => false)
-      : false;
+          trackedPids,
+        });
+      } catch (error) {
+        logWarning(
+          `[DAEMON RUN] Failed to check tracked runner exit for session ${normalizedSessionId}`,
+          error,
+        );
+        return false;
+      }
+    };
+    const runnersAlreadyExited = await haveTrackedRunnersExited(pidsToStop);
     let stoppedAny = false;
     const signaledPids: number[] = runnersAlreadyExited ? [...pidsToStop] : [];
     const confirmedExitedPids: number[] = runnersAlreadyExited ? [...pidsToStop] : [];
@@ -503,11 +513,7 @@ export function createStopSession(params: Readonly<{
     const unsignaledPids = pidsToStop.filter((pid) => !signaledPids.includes(pid));
     if (
       unsignaledPids.length > 0
-      && params.areTrackedRunnersExited
-      && await params.areTrackedRunnersExited({
-        sessionId: normalizedSessionId,
-        trackedPids: unsignaledPids,
-      }).catch(() => false)
+      && await haveTrackedRunnersExited(unsignaledPids)
     ) {
       confirmedExitedPids.push(...unsignaledPids);
     }
@@ -537,11 +543,7 @@ export function createStopSession(params: Readonly<{
       const exitedBeforeForcePids = new Set<number>();
       for (const pid of pidsToStop) {
         if (
-          params.areTrackedRunnersExited
-          && await params.areTrackedRunnersExited({
-            sessionId: normalizedSessionId,
-            trackedPids: [pid],
-          }).catch(() => false)
+          await haveTrackedRunnersExited([pid])
         ) {
           exitedBeforeForcePids.add(pid);
           continue;

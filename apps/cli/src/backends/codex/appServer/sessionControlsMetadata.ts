@@ -8,6 +8,10 @@ import {
     normalizeContextWindowTokens,
     readContextWindowTokensFromModelRecord,
 } from '@/backends/modelCapabilities/contextWindowTokens';
+import {
+    isCodexAppServerFastServiceTier,
+    isCodexAppServerSpeedEligible,
+} from './speedEligibility';
 
 type JsonRpcClient = Readonly<{
     request: (method: string, params?: unknown) => Promise<unknown>;
@@ -195,16 +199,20 @@ function buildReasoningEffortModelOption(params: Readonly<{
 function buildSpeedModelOption(params: Readonly<{
     authMethod?: string | null;
     modelId: string;
+    modelRecord: Record<string, unknown>;
     currentModelId: string | null;
     currentServiceTier?: string | null;
 }>): SessionConfigOption | null {
-    if (!isSpeedEligible({ authMethod: params.authMethod, currentModelId: params.modelId })) return null;
+    if (!isCodexAppServerSpeedEligible({
+        authMethod: params.authMethod,
+        modelRecord: params.modelRecord,
+    })) return null;
     return {
         id: 'service_tier',
         name: 'Speed',
         type: 'select',
         currentValue: params.modelId === params.currentModelId
-            ? (params.currentServiceTier === 'fast' ? 'fast' : 'standard')
+            ? (isCodexAppServerFastServiceTier(params.currentServiceTier) ? 'fast' : 'standard')
             : 'standard',
         options: [
             { value: 'standard', name: 'Standard' },
@@ -243,6 +251,7 @@ function normalizeSessionModelMasks(params: Readonly<{
         const speedOption = buildSpeedModelOption({
             authMethod: params.authMethod,
             modelId: id,
+            modelRecord: record,
             currentModelId: params.currentModelId,
             currentServiceTier: params.currentServiceTier,
         });
@@ -359,14 +368,6 @@ function hasGenericSessionConfigOptionsState(value: unknown, provider: string): 
     if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
     if (!Array.isArray(record.configOptions)) return false;
     return true;
-}
-
-function isSpeedEligible(params: Readonly<{
-    authMethod?: string | null;
-    currentModelId: string | null;
-}>): boolean {
-    if (params.currentModelId !== 'gpt-5.4' && params.currentModelId !== 'gpt-5.5') return false;
-    return params.authMethod === 'oauth_cli' || params.authMethod === 'credentials_file';
 }
 
 export function resolveCodexAppServerCollaborationModeSelection(params: Readonly<{

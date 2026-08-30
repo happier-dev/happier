@@ -2809,7 +2809,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('waits for a stop-requested tracked runner to be observed exited before stop returns', async () => {
+  it('observes an already-missing tracked runner before stop attempts signaling', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -2844,26 +2844,15 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         });
 
       const stopSessionModule = await import('./sessions/stopSession');
-      vi.mocked(stopSessionModule.createStopSession).mockImplementation(({
-        pidToTrackedSession,
-        waitForTrackedRunnersExit,
-        loadTerminalHostAdapters: injectedLoadTerminalHostAdapters,
-      }) => {
-        loadTerminalHostAdapters = injectedLoadTerminalHostAdapters;
-        return vi.fn(async (sessionId: string) => {
-          const trackedPids: number[] = [];
-          for (const trackedSession of pidToTrackedSession.values()) {
-            if (trackedSession.happySessionId === sessionId) {
-              trackedSession.stopRequestedAtMs = Date.now();
-              trackedPids.push(trackedSession.pid);
-            }
-          }
-          const exited = await waitForTrackedRunnersExit?.({ sessionId, trackedPids });
-          return exited
-            ? { status: 'stopped' as const }
-            : { status: 'incomplete' as const, reason: 'runner_exit_timeout' as const };
-        }) as any;
+      const actualStopSessionModule = await vi.importActual<typeof import('./sessions/stopSession')>('./sessions/stopSession');
+      vi.mocked(stopSessionModule.createStopSession).mockImplementation((params) => {
+        loadTerminalHostAdapters = params.loadTerminalHostAdapters;
+        return actualStopSessionModule.createStopSession({
+          ...params,
+          readAttachmentState: async () => ({ status: 'absent' }),
+        });
       });
+      const killSpy = vi.spyOn(process, 'kill');
 
       const { startDaemon } = await import('./startDaemon');
       run = startDaemon();
@@ -2880,14 +2869,14 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
       await expect(stopSession('sess-stop-6480')).resolves.toEqual({ status: 'stopped' });
 
-      expect(waitForExitSpy).toHaveBeenCalledWith(expect.objectContaining({
-        sessionId: 'sess-stop-6480',
-      }));
+      expect(waitForExitSpy).not.toHaveBeenCalled();
       expect(onChildExitedSpy).toHaveBeenCalledWith(6480, {
         reason: 'process-missing',
         code: null,
         signal: null,
       });
+      expect(killSpy).not.toHaveBeenCalledWith(6480, 'SIGTERM');
+      expect(killSpy).not.toHaveBeenCalledWith(-6480, 'SIGTERM');
       expect(loadTerminalHostAdapters).toEqual(expect.any(Function));
       const firstRegistry = await loadTerminalHostAdapters!();
       const secondRegistry = await loadTerminalHostAdapters!();

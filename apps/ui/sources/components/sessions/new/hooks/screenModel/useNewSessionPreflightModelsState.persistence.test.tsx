@@ -511,7 +511,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     }
   });
 
-  it('re-probes when a persisted dynamic-model cache entry predates GPT 5.5 Speed metadata', async () => {
+  it('re-probes when a persisted dynamic-model cache entry predates GPT 5.6 Speed metadata', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();
 
@@ -542,14 +542,14 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     (globalThis as Record<string, unknown>).window = { localStorage };
     (globalThis as Record<string, unknown>).document = {};
     localStorage.setItem('dynamic-model-probe-cache-v1', JSON.stringify({
-      version: 5,
+      version: 6,
       entries: {
         [cacheKey]: {
           updatedAt: Date.now(),
           value: {
             availableModels: [{
-              id: 'gpt-5.5',
-              name: 'GPT 5.5',
+              id: 'gpt-5.6-sol',
+              name: 'GPT 5.6 Sol',
             }],
             supportsFreeform: false,
           },
@@ -564,8 +564,8 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
           ok: true as const,
           result: {
             availableModels: [{
-              id: 'gpt-5.5',
-              name: 'GPT 5.5',
+              id: 'gpt-5.6-sol',
+              name: 'GPT 5.6 Sol',
               modelOptions: [{
                 id: 'service_tier',
                 name: 'Speed',
@@ -605,8 +605,8 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
       expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
       expect(latestPreflightModels).toEqual({
         availableModels: [{
-          id: 'gpt-5.5',
-          name: 'GPT 5.5',
+          id: 'gpt-5.6-sol',
+          name: 'GPT 5.6 Sol',
           modelOptions: [{
             id: 'service_tier',
             name: 'Speed',

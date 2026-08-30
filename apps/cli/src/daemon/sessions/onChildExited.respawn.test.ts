@@ -58,6 +58,51 @@ describe('createOnChildExited', () => {
     expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
   });
 
+  it('coalesces concurrent exit observations for the same tracked session', async () => {
+    const pid = 126;
+    const tracked = {
+      pid,
+      startedBy: 'daemon',
+      happySessionId: 'session-concurrent-exit',
+      activeTurnId: 'turn-concurrent-exit',
+    };
+    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    let releaseStage = (): void => {
+      throw new Error('Stage release was not installed');
+    };
+    const stageGate = new Promise<void>((resolve) => {
+      releaseStage = resolve;
+    });
+    const stageObservedExitFn = vi.fn(async () => {
+      await stageGate;
+      return { status: 'staged' as const, markerPid: pid };
+    });
+    const onUnexpectedExit = vi.fn();
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid: new Map(),
+      sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => ({
+        enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => {}),
+      }) as any,
+      stageObservedExitFn,
+      onUnexpectedExit,
+      isExitUnexpectedOverride: () => true,
+    });
+
+    const processExit = onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
+    const missingExit = onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.waitFor(() => expect(stageObservedExitFn).toHaveBeenCalled());
+    expect(pidToTrackedSession.has(pid)).toBe(true);
+    releaseStage();
+    await Promise.all([processExit, missingExit]);
+
+    expect(stageObservedExitFn).toHaveBeenCalledTimes(1);
+    expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
+    expect(pidToTrackedSession.has(pid)).toBe(false);
+  });
+
   it('retains marker and tracking after transient staging failure so the same daemon can retry', async () => {
     const pid = 124;
     const tracked = {
