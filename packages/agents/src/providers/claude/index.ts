@@ -11,6 +11,8 @@ export {
 
 export { CURRENT_FLAGSHIP_CLAUDE_MODEL_ID } from './flagshipModel.js';
 
+export { normalizeClaudeModelDisplayName } from './modelDisplayName.js';
+
 export {
   CLAUDE_1M_CONTEXT_WINDOW_TOKENS,
   CLAUDE_1M_SUFFIX,

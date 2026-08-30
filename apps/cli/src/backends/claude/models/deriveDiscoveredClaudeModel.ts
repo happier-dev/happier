@@ -66,7 +66,7 @@ export function deriveClaudeModelOptionsFromCapabilities(
  * `CLAUDE_STATIC_MODELS` later to give it a curated blurb and ordering.
  */
 export function buildDiscoveredClaudeModelDescriptor(entry: AnthropicModelEntry): AgentModelDescriptor {
-  const name = entry.displayName && entry.displayName.length > 0 ? entry.displayName : entry.id;
+  const name = providers.claude.normalizeClaudeModelDisplayName(entry.displayName, entry.id);
   const derived = deriveClaudeModelOptionsFromCapabilities(entry);
   return {
     id: entry.id,
