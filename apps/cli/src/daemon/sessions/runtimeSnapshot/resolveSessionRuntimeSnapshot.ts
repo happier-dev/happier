@@ -15,8 +15,10 @@ import {
 import {
   ConnectedServiceBindingsV1Schema,
   ConnectedServiceMaterializationIdentityV1Schema,
+  SessionMcpSelectionV1Schema,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceMaterializationIdentityV1,
+  type SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
 import {
   HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
@@ -30,6 +32,7 @@ export type SessionRuntimeSnapshot = Readonly<{
   connectedServices: ConnectedServiceBindingsV1 | null;
   connectedServicesUpdatedAt: number | null;
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1 | null;
+  mcpSelection: SessionMcpSelectionV1 | null;
   permissionMode: SnapshotValue<PermissionMode> | null;
   agentModeId: SnapshotValue<string> | null;
   modelId: SnapshotValue<string> | null;
@@ -92,6 +95,12 @@ function parseConnectedServices(value: unknown): ConnectedServiceBindingsV1 | nu
 
 function parseMaterializationIdentity(value: unknown): ConnectedServiceMaterializationIdentityV1 | null {
   const parsed = ConnectedServiceMaterializationIdentityV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseMcpSelection(value: unknown): SessionMcpSelectionV1 | null {
+  if (value === undefined || value === null) return null;
+  const parsed = SessionMcpSelectionV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -293,6 +302,10 @@ function applySnapshotToSpawnOptions(
     next.connectedServiceMaterializationIdentityV1 = snapshot.connectedServiceMaterializationIdentityV1;
   }
 
+  if (snapshot.mcpSelection) {
+    next.mcpSelection = snapshot.mcpSelection;
+  }
+
   if (snapshot.permissionMode) {
     next.permissionMode = snapshot.permissionMode.value;
     next.permissionModeUpdatedAt = snapshot.permissionMode.updatedAt;
@@ -346,6 +359,12 @@ export function resolveSessionRuntimeSnapshot(
       readMaterializationIdentityFromOptionsEnv(params.trackedSpawnOptions),
       readMaterializationIdentityCandidate(params.incomingOptions.connectedServiceMaterializationIdentityV1),
     ])?.value ?? null,
+    // Session metadata is the canonical owner after creation. Incoming/tracked
+    // options are only fallbacks for a new Session or an older snapshot.
+    mcpSelection:
+      parseMcpSelection(params.persistedMetadata?.mcpSelectionV1)
+      ?? parseMcpSelection(params.incomingOptions.mcpSelection)
+      ?? parseMcpSelection(params.trackedSpawnOptions?.mcpSelection),
     permissionMode: chooseTimestamped([
       readPermissionFromMetadata(params.persistedMetadata),
       readPermissionFromOptions(params.trackedSpawnOptions, 'tracked'),

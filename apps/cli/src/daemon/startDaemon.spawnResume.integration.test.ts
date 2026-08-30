@@ -2450,12 +2450,12 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('spawns regular linux background-service runners through a pre-exec cgroup self-migration wrapper before provider children start', async () => {
+  it.each(['background-service', 'self-restart'] as const)('spawns regular linux %s runners through a pre-exec cgroup self-migration wrapper before provider children start', async (startupSource) => {
     if (!ORIGINAL_PLATFORM_DESCRIPTOR) {
       throw new Error('Expected process.platform to be configurable for this test');
     }
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
-    process.env.HAPPIER_DAEMON_STARTUP_SOURCE = 'background-service';
+    process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource;
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
@@ -2559,12 +2559,12 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('migrates reattached linux background-service session runners out of the daemon service cgroup during startup', async () => {
+  it.each(['background-service', 'self-restart'] as const)('migrates reattached linux %s session runners out of the daemon service cgroup during startup', async (startupSource) => {
     if (!ORIGINAL_PLATFORM_DESCRIPTOR) {
       throw new Error('Expected process.platform to be configurable for this test');
     }
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
-    process.env.HAPPIER_DAEMON_STARTUP_SOURCE = 'background-service';
+    process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource;
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;

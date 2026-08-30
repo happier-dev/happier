@@ -571,7 +571,10 @@ describe('runCodex CodexACP resume behavior', () => {
 
     expect(probeCodexAcpLoadSessionSupportSpy).not.toHaveBeenCalled();
     expect(resolveRunnerMcpServersSpy.mock.calls[0]?.[0]).toMatchObject({
-      accountSettings: null,
+      accountSettings: {
+        codexBackendMode: 'acp',
+        mcpServers: { shouldNotLoadOnResume: true },
+      },
     });
     expect(createCodexPermissionHandler).toHaveBeenCalledWith(expect.objectContaining({
       getAccountSettingsSecretsReadKeys: expect.any(Function),

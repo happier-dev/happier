@@ -152,7 +152,10 @@ export async function readFileEventually(
     () => {
       try {
         content = readFileSync(filePath, 'utf8')
-        return true
+        // A producer may create/truncate a file before writing its complete
+        // payload. Treat an empty read as "not ready" so callers never parse
+        // a partially-written response (for example, a JSON-RPC error).
+        return content.length > 0
       } catch (error: unknown) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return false

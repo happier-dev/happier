@@ -286,6 +286,7 @@ export async function runCodex(opts: {
 
     type CodexRemoteRuntime = Readonly<{
         getSessionId: () => string | null;
+        getPublishedSessionId?: () => string | null;
         supportsInFlightSteer: () => boolean;
         supportsInFlightConfigApply?: () => boolean;
         isTurnInFlight: () => boolean;
@@ -382,7 +383,10 @@ export async function runCodex(opts: {
 
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
-    const accountSettings = hasResumeArg ? null : (opts.accountSettingsContext?.settings ?? null);
+    const loadedAccountSettings = opts.accountSettingsContext?.settings ?? null;
+    // Resume suppresses account defaults only for permission seeding. MCP selection is
+    // persisted session configuration and must remain available when reattaching.
+    const accountSettings = hasResumeArg ? null : loadedAccountSettings;
     const pendingQueueDrainMaxPopPerWake = resolveSessionPendingQueueMaxPopPerWake(opts.accountSettingsContext?.settings ?? null);
     const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
         agentId: 'codex',
@@ -971,6 +975,13 @@ export async function runCodex(opts: {
     const getCodexRemoteRuntime = (): CodexRemoteRuntime | null => {
         return codexAcpRuntime ?? codexAppServerRuntime;
     };
+    const getCodexRemoteResumeId = (): string | null => {
+        const runtime = getCodexRemoteRuntime();
+        if (!runtime) return null;
+        return useCodexAppServer
+            ? (runtime.getPublishedSessionId?.() ?? null)
+            : runtime.getSessionId();
+    };
     /**
      * The live session catalogs the send-time resolver reads to reconstruct provider context
      * (INV-9). They are read lazily per dispatch — the resolver calls them only when the
@@ -1403,7 +1414,7 @@ export async function runCodex(opts: {
             startOrLoadAbortController.abort();
             // Store the current session ID before aborting for potential resume
             if (useCodexAcp || useCodexAppServer) {
-                const currentRemoteSessionId = getCodexRemoteRuntime()?.getSessionId();
+                const currentRemoteSessionId = getCodexRemoteResumeId();
                 if (currentRemoteSessionId) {
                     storedSessionIdForResume = currentRemoteSessionId;
                     storedSessionIdFromLocalControl = false;
@@ -1634,7 +1645,7 @@ export async function runCodex(opts: {
     const happierBridge = await resolveRunnerMcpServers({
         session: mcpSession,
         credentials: opts.credentials,
-        accountSettings,
+        accountSettings: loadedAccountSettings,
         machineId,
         directory,
         sessionMetadata: mcpSession.getMetadataSnapshot?.() ?? null,
@@ -2913,7 +2924,7 @@ export async function runCodex(opts: {
                     }
                     // For unexpected errors, keep the ACP session id (best-effort) so a subsequent start can attempt resume.
                     if (useCodexAcp || useCodexAppServer) {
-                        const currentRemoteSessionId = getCodexRemoteRuntime()?.getSessionId();
+                        const currentRemoteSessionId = getCodexRemoteResumeId();
                         if (currentRemoteSessionId) {
                             storedSessionIdForResume = currentRemoteSessionId;
                             storedSessionIdFromLocalControl = false;

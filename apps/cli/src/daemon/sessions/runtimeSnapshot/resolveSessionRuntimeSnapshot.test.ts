@@ -41,6 +41,30 @@ function baseIncomingOptions(overrides: Partial<SpawnSessionOptions> = {}): Spaw
 }
 
 describe('resolveSessionRuntimeSnapshot', () => {
+  it('restores the persisted per-session MCP overlay into resume and respawn options', () => {
+    const mcpSelection = {
+      v: 1 as const,
+      managedServersEnabled: true,
+      forceIncludeServerIds: ['managed-1'],
+      forceExcludeServerIds: ['managed-2'],
+    };
+    const result = resolveSessionRuntimeSnapshot({
+      incomingOptions: baseIncomingOptions(),
+      persistedMetadata: { mcpSelectionV1: mcpSelection },
+      trackedSpawnOptions: baseIncomingOptions({
+        mcpSelection: {
+          v: 1,
+          managedServersEnabled: false,
+          forceIncludeServerIds: [],
+          forceExcludeServerIds: [],
+        },
+      }),
+    });
+
+    expect(result.snapshot.mcpSelection).toEqual(mcpSelection);
+    expect(result.spawnOptions.mcpSelection).toEqual(mcpSelection);
+  });
+
   it('restores persisted session runtime controls when incoming resume options omit them', () => {
     const result = resolveSessionRuntimeSnapshot({
       incomingOptions: baseIncomingOptions(),
@@ -59,6 +83,7 @@ describe('resolveSessionRuntimeSnapshot', () => {
       connectedServices: persistedConnectedServices,
       connectedServicesUpdatedAt: null,
       connectedServiceMaterializationIdentityV1: null,
+      mcpSelection: null,
       permissionMode: { value: 'yolo', updatedAt: 200 },
       agentModeId: { value: 'plan', updatedAt: 210 },
       modelId: { value: 'claude-opus-4-7', updatedAt: 220 },
