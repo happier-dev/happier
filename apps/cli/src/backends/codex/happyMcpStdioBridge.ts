@@ -18,6 +18,10 @@ import { registerHappierMcpBridgeTools } from './registerHappierMcpBridgeTools';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { withMcpTimeout } from '@/mcp/runtime/withMcpTimeout';
+import { bindMcpStdioBridgeLifecycle } from '@/mcp/runtime/bindMcpStdioBridgeLifecycle';
+
+const MCP_BRIDGE_STARTUP_TIMEOUT_MS = 60_000;
 
 function parseArgs(argv: string[]): { url: string | null } {
   let url: string | null = null;
@@ -54,9 +58,17 @@ async function main() {
     );
 
     const transport = new StreamableHTTPClientTransport(new URL(baseUrl));
-    await client.connect(transport);
-    httpClient = client;
-    return client;
+    try {
+      await withMcpTimeout(client.connect(transport), {
+        timeoutMs: MCP_BRIDGE_STARTUP_TIMEOUT_MS,
+        label: 'happier_mcp_bridge_connect_timeout',
+      });
+      httpClient = client;
+      return client;
+    } catch (error) {
+      await client.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   // Create STDIO MCP server
@@ -78,6 +90,12 @@ async function main() {
   // Start STDIO transport
   const stdio = new StdioServerTransport();
   await server.connect(stdio);
+  bindMcpStdioBridgeLifecycle({
+    stdin: process.stdin,
+    transport: stdio,
+    closeServer: async () => await server.close(),
+    closeUpstream: async () => await httpClient?.close(),
+  });
 }
 
 // Import-only candidate validation must not start the stdio runtime.

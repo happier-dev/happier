@@ -22,8 +22,11 @@ import { z } from 'zod';
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { removeConsumedMcpRuntimeConfigFile } from '@/mcp/runtime/isSafeTmpMcpConfigFilePath';
+import { bindMcpStdioBridgeLifecycle } from '@/mcp/runtime/bindMcpStdioBridgeLifecycle';
+import { withMcpTimeout } from '@/mcp/runtime/withMcpTimeout';
 
 const REMOTE_BRIDGE_CONFIG_PREFIX = 'happier-mcp-remote-bridge';
+const MCP_BRIDGE_CONNECT_TIMEOUT_MS = 60_000;
 
 const RemoteBridgeConfigSchema = z.object({
   transport: z.enum(['http', 'sse']),
@@ -56,8 +59,16 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
         eventSourceInit: { headers } as any,
       });
 
-  await client.connect(transport);
-  return client;
+  try {
+    await withMcpTimeout(client.connect(transport), {
+      timeoutMs: MCP_BRIDGE_CONNECT_TIMEOUT_MS,
+      label: 'happier_mcp_remote_bridge_connect_timeout',
+    });
+    return client;
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {
@@ -117,24 +128,16 @@ async function main(): Promise<void> {
     return result;
   });
 
-  let didCloseRemoteClient = false;
-  const closeRemoteClientOnce = async (): Promise<void> => {
-    if (didCloseRemoteClient) return;
-    didCloseRemoteClient = true;
-    await remoteClient.close().catch(() => {});
-  };
-
   const stdio = new StdioServerTransport();
   await server.connect(stdio);
-  const previousOnClose = stdio.onclose;
-  stdio.onclose = () => {
-    previousOnClose?.();
-    void closeRemoteClientOnce();
-  };
-  process.stdin.once('end', () => {
-    void server.close().catch((err) => {
-      writeStderr(`[happier-mcp-remote-bridge] Failed to close stdio server: ${err instanceof Error ? err.message : String(err)}`);
-    });
+  bindMcpStdioBridgeLifecycle({
+    stdin: process.stdin,
+    transport: stdio,
+    closeServer: async () => await server.close(),
+    closeUpstream: async () => await remoteClient.close(),
+    onCloseError: (err) => {
+      writeStderr(`[happier-mcp-remote-bridge] Failed to close bridge: ${err instanceof Error ? err.message : String(err)}`);
+    },
   });
 }
 
