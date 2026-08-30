@@ -24,6 +24,7 @@ export type GenericScrollObservationViewportState = Readonly<{
         isPinned: boolean;
         offsetY: number;
         shouldRestoreViewport: boolean;
+        shouldPersistViewport: false;
     }>;
     wantsPinned: boolean;
 }>;
@@ -93,6 +94,7 @@ export function resolveGenericScrollObservationViewportState(
         isPinned: params.followIntentIsPinned,
         offsetY: params.viewportDistanceFromLiveTailPx,
         shouldRestoreViewport: !params.followIntentWantsPinned,
+        shouldPersistViewport: false as const,
     };
     return {
         anchorCapture: {

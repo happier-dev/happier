@@ -1229,7 +1229,7 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.jumpToSeq != null) return;
         if (!deps.sessionId) return;
         if (deps.sessionOpenLatch.initialFillStatus() !== 'idle') return;
-        if (deps.listLayoutHeight <= 0 || deps.listContentHeight <= 0) return;
+        if (deps.listLayoutHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
         const entersAtBottom = deps.sessionEntryViewportRef.current?.shouldFollowBottom !== false;
         if (Platform.OS === 'web') {

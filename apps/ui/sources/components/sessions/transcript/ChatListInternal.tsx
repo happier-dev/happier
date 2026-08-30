@@ -870,12 +870,23 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const emitViewportChange = React.useCallback((state: TranscriptViewportChangeState): boolean => {
         const emit = props.onViewportChange;
         if (!emit) return false;
+        // Opening-phase virtual-list observations are not user intent. Persisting them before
+        // the initial transcript fill settles can stamp a synthetic first-row anchor (often
+        // seq:1) and make the next reopen restore the pre-materialization position. The same
+        // canonical viewport owner resumes persistence once initial fill has settled; explicit
+        // live-tail/jump writes already carry their own settled lifecycle state.
+        if (
+            state.shouldPersistViewport !== false
+            && sessionOpenLatch.initialFillStatus() !== 'done'
+        ) {
+            return false;
+        }
         emit({
             ...state,
             anchor: stampViewportAnchorForEmit(state.anchor),
         });
         return true;
-    }, [props.onViewportChange, stampViewportAnchorForEmit]);
+    }, [props.onViewportChange, sessionOpenLatch, stampViewportAnchorForEmit]);
     const { commitExplicitReturnToLiveTailState, handleRendererAtEndChange } = useTranscriptLiveTailIntentHost({
         commitBottomFollowModeState,
         commitJumpToBottomDistanceForVisibilityRef,
