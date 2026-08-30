@@ -355,6 +355,7 @@ jobs:
             --workflow tests.yml \
             --source-sha "$SOURCE_SHA" \
             --source-branch "$SOURCE_BRANCH" \
+            ${{ inputs.ci_run_id != '' && format('--run-id {0}', inputs.ci_run_id) || '' }} \
             --github-output "$GITHUB_OUTPUT"
 
   plan:

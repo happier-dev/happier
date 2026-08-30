@@ -10,6 +10,11 @@ on:
         required: true
         default: dev
         type: string
+      ci_run_id:
+        description: "Completed canonical push CI run ID for this exact source (optional; avoids waiting on a hosted runner)"
+        required: false
+        default: ""
+        type: string
       resume_run_id:
         description: "Completed NIGHTLY run ID whose verified immutable candidates should be reused"
         required: false
@@ -182,7 +187,8 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --workflow tests.yml \
             --source-sha "$SOURCE_SHA" \
-            --source-branch dev
+            --source-branch dev \
+            ${{ inputs.ci_run_id != '' && format('--run-id {0}', inputs.ci_run_id) || '' }}
 
   nightly_noop:
     name: Skip already completed nightly
