@@ -823,14 +823,18 @@ describe('server routed machine transfer', () => {
 
     try {
       const destinationPath = join(tempDir, 'payload-destination.bin');
+      const onProgress = vi.fn();
       await requestServerRoutedTransferToFile({
         transferId: 'transfer_1',
         sourceMachineId: 'machine_source',
         machineTransferChannel: target,
         destinationPath,
+        onProgress,
       });
 
       await expect(readFile(destinationPath)).resolves.toEqual(payload);
+      expect(onProgress).toHaveBeenCalled();
+      expect(onProgress.mock.calls.at(-1)?.[0]).toBe(payload.length);
       expect(
         sentEnvelopes.some(
           (entry) =>

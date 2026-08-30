@@ -59,7 +59,9 @@ export async function runSessionHandoffUiFlow(
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
         const actionRequestId = randomUUID();
-        const modalId = openSessionHandoffProgressModal();
+        const modalId = openSessionHandoffProgressModal({
+            workspaceTransferEnabled: args.workspaceTransfer?.enabled === true,
+        });
         const unsubscribeProgress = subscribeActionOperationByRequest({
             actionId: 'session.handoff',
             requestId: actionRequestId,

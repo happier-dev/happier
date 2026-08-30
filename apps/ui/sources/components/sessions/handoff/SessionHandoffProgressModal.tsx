@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import {
     SessionHandoffProgressCheckpointSchema,
     SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
@@ -25,6 +25,14 @@ type Props = CustomModalInjectedProps & Readonly<{
     message?: string;
     status?: SessionHandoffStatus;
     operation?: ActionOperationSnapshotV1;
+    workspaceTransferEnabled?: boolean;
+}>;
+
+type HandoffStepId = 'prepare-session' | 'transfer-session' | 'transfer-workspace' | 'start-target' | 'finalize';
+
+type HandoffStep = Readonly<{
+    id: HandoffStepId;
+    label: string;
 }>;
 
 type ProgressStatCounts = Readonly<{
@@ -43,9 +51,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 14,
     },
     messageRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 14,
+        paddingBottom: 2,
     },
     message: {
         fontSize: 14,
@@ -57,31 +63,38 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 10,
     },
     timeline: {
-        gap: 8,
+        gap: 4,
     },
     timelineRow: {
         flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 12,
+        minHeight: 34,
+    },
+    timelineMarker: {
+        width: 20,
+        height: 20,
         alignItems: 'center',
-        gap: 10,
+        justifyContent: 'center',
     },
     timelineDot: {
-        width: 10,
-        height: 10,
+        width: 14,
+        height: 14,
         borderRadius: 999,
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
     },
-    timelineDotDone: {
-        borderColor: theme.colors.accent.blue,
-        backgroundColor: theme.colors.accent.blue,
+    timelineContent: {
+        flex: 1,
+        gap: 8,
+        paddingBottom: 6,
     },
-    timelineDotCurrent: {
-        borderColor: theme.colors.accent.blue,
-        backgroundColor: theme.colors.surface.base,
+    timelineContentWithProgress: {
+        paddingBottom: 14,
     },
     timelineLabel: {
-        fontSize: 12,
+        fontSize: 14,
         color: theme.colors.text.secondary,
         ...Typography.default(),
         flex: 1,
@@ -129,7 +142,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'right',
     },
     progressTrack: {
-        height: 8,
+        height: 6,
         borderRadius: 999,
         backgroundColor: theme.colors.border.default,
         overflow: 'hidden',
@@ -160,6 +173,43 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+const BASE_HANDOFF_STEPS: readonly HandoffStep[] = [
+    { id: 'prepare-session', label: 'Prepare session' },
+    { id: 'transfer-session', label: 'Transfer session data' },
+    { id: 'transfer-workspace', label: 'Transfer workspace' },
+    { id: 'start-target', label: 'Start on target' },
+    { id: 'finalize', label: 'Finalize handoff' },
+];
+
+function isRedundantOperationProgressLabel(label: string, stepLabel: string): boolean {
+    const normalize = (value: string) => value.toLowerCase().replace(/\btransferring\b/g, 'transfer').replace(/\s+/g, ' ').trim();
+    return normalize(label) === normalize(stepLabel);
+}
+
+function resolveOperationStepId(operation: ActionOperationSnapshotV1 | undefined): HandoffStepId {
+    const progress = operation?.progress;
+    if (!progress) return 'prepare-session';
+    if (progress.kind === 'determinate') {
+        const label = progress.label?.toLowerCase() ?? '';
+        if (label.includes('workspace')) return 'transfer-workspace';
+        if (label.includes('session')) return 'transfer-session';
+        return 'prepare-session';
+    }
+    if (progress.kind === 'indeterminate') return 'prepare-session';
+    if (progress.phase.startsWith('workspace_')) {
+        return progress.phase === 'workspace_import_session' ? 'transfer-session' : 'transfer-workspace';
+    }
+    if (progress.phase === 'preparing_target') return 'transfer-session';
+    if (progress.phase === 'resuming_target' || progress.phase === 'confirming_target') return 'start-target';
+    if (
+        progress.phase === 'binding_target'
+        || progress.phase === 'committing_target'
+        || progress.phase === 'cleaning_source'
+        || progress.phase === 'finalizing_target'
+    ) return 'finalize';
+    return 'prepare-session';
+}
+
 function computeProgressFraction(status: SessionHandoffStatus | undefined): number | null {
     const progress = status?.progress;
     if (!progress) {
@@ -168,7 +218,9 @@ function computeProgressFraction(status: SessionHandoffStatus | undefined): numb
     // The daemon may attach preflight/planning counters on checkpoints like `import_session` so the UI
     // can show a summary, but those values do not represent active transfer progress. Only show a
     // percent bar when we're explicitly transferring blobs.
-    if (progress.checkpoint !== 'transfer_blobs') {
+    const isSessionTransfer = progress.checkpoint === 'import_session'
+        && progress.current?.phaseDetail === 'transferring_session';
+    if (progress.checkpoint !== 'transfer_blobs' && !isSessionTransfer) {
         return null;
     }
     if (
@@ -319,7 +371,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ setChrome, title, message, status, operation }: Props) {
+export function SessionHandoffProgressModal({ setChrome, title, message, status, operation, workspaceTransferEnabled = false }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -433,10 +485,14 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
                 : t('sessionHandoff.progress.message'));
     const showSpinner = !isFailureState && !isCompleted && !isReadyForCutover;
     const operationProgress = operation?.progress;
-    const operationProgressFraction = operationProgress?.kind === 'determinate'
-        ? Math.max(0, Math.min(1, operationProgress.current / operationProgress.total))
+    const determinateOperationProgress = operationProgress?.kind === 'determinate' ? operationProgress : null;
+    const operationProgressFraction = determinateOperationProgress
+        ? Math.max(0, Math.min(1, determinateOperationProgress.current / determinateOperationProgress.total))
         : null;
     const operationProgressLabel = operationProgress?.label ?? null;
+    const operationSteps = BASE_HANDOFF_STEPS.filter((step) => workspaceTransferEnabled || step.id !== 'transfer-workspace');
+    const operationStepId = resolveOperationStepId(operation);
+    const operationStepIndex = operationSteps.findIndex((step) => step.id === operationStepId);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
@@ -451,48 +507,61 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
     return (
         <View style={styles.body}>
             <View style={styles.messageRow}>
-                {showSpinner ? (
-                    <ActivitySpinner size="small" color={theme.colors.accent.blue} />
-                ) : (
-                    <Icon
-                        name={isFailureState ? 'warning' : 'check'}
-                        size={16}
-                        color={isFailureState ? theme.colors.state.danger.foreground : theme.colors.accent.blue}
-                    />
-                )}
                 <Text style={styles.message}>{resolvedMessage}</Text>
             </View>
-            {operationProgress ? (
-                <View testID="session-handoff-operation-progress" style={styles.progressSection}>
-                    {operationProgressFraction !== null ? (
-                        <View
-                            testID="session-handoff-operation-progress-bar"
-                            accessibilityRole="progressbar"
-                            accessibilityValue={{
-                                min: 0,
-                                max: 100,
-                                now: Math.round(operationProgressFraction * 100),
-                            }}
-                            style={styles.progressTrack}
-                        >
-                            <View style={[styles.progressFill, { width: `${Math.max(operationProgressFraction * 100, 4)}%` }]} />
-                        </View>
-                    ) : null}
-                    {operationProgressLabel || operationProgressFraction !== null ? (
-                        <View style={styles.progressMetaRow}>
-                            {operationProgressFraction !== null ? (
-                                <Text style={styles.progressMetaText}>
-                                    {Math.round(operationProgressFraction * 100)}%
-                                </Text>
-                            ) : null}
-                            {operationProgressLabel ? (
-                                <Text style={styles.currentPath}>{operationProgressLabel}</Text>
-                            ) : null}
-                        </View>
-                    ) : null}
+            {operation || (!effectiveStatus && showSpinner) ? (
+                <View testID="session-handoff-operation-progress" style={styles.timeline}>
+                    {operationSteps.map((step, index) => {
+                        const isCompleted = operation?.state === 'succeeded' || index < Math.max(operationStepIndex, 0);
+                        const isCurrent = operation?.state !== 'succeeded' && index === Math.max(operationStepIndex, 0);
+                        return (
+                            <View
+                                key={step.id}
+                                testID={`session-handoff-step-${step.id}`}
+                                accessibilityState={{ checked: isCompleted, selected: isCurrent }}
+                                style={styles.timelineRow}
+                            >
+                                <View style={styles.timelineMarker}>
+                                    {isCompleted ? (
+                                        <Icon name="check" size={16} color={theme.colors.accent.blue} />
+                                    ) : isCurrent ? (
+                                        <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.accent.blue} />
+                                    ) : (
+                                        <View style={styles.timelineDot} />
+                                    )}
+                                </View>
+                                <View style={[styles.timelineContent, isCurrent && operationProgressFraction !== null ? styles.timelineContentWithProgress : null]}>
+                                    <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
+                                        {step.label}
+                                    </Text>
+                                    {isCurrent && operationProgressFraction !== null ? (
+                                        <>
+                                            {operationProgressLabel && !isRedundantOperationProgressLabel(operationProgressLabel, step.label) ? (
+                                                <Text style={styles.progressMetaText}>{operationProgressLabel}</Text>
+                                            ) : null}
+                                            <View
+                                                testID="session-handoff-operation-progress-bar"
+                                                accessibilityRole="progressbar"
+                                                accessibilityValue={{ min: 0, max: 100, now: Math.round(operationProgressFraction * 100) }}
+                                                style={styles.progressTrack}
+                                            >
+                                                <View style={[styles.progressFill, { width: `${Math.max(operationProgressFraction * 100, 4)}%` }]} />
+                                            </View>
+                                            <View style={styles.progressMetaRow}>
+                                                <Text style={styles.progressMetaText}>{Math.round(operationProgressFraction * 100)}%</Text>
+                                                <Text style={styles.currentPath}>{formatByteSize(determinateOperationProgress!.current)} / {formatByteSize(determinateOperationProgress!.total)}</Text>
+                                            </View>
+                                        </>
+                                    ) : isCurrent && operationProgressLabel && operationProgress?.kind !== 'phase' ? (
+                                        <Text style={styles.progressMetaText}>{operationProgressLabel}</Text>
+                                    ) : null}
+                                </View>
+                            </View>
+                        );
+                    })}
                 </View>
             ) : null}
-            {effectiveStatus ? (
+            {effectiveStatus && !operation ? (
                 <View style={styles.progressSection}>
                     {currentCheckpoint && currentCheckpointIndex >= 0 ? (
                         <View testID="session-handoff-progress-timeline" style={styles.timeline}>
@@ -508,16 +577,32 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
                                         accessibilityState={{ selected: isCurrent }}
                                         style={styles.timelineRow}
                                     >
-                                        <View
-                                            style={[
-                                                styles.timelineDot,
-                                                isDone ? styles.timelineDotDone : null,
-                                                isCurrent ? styles.timelineDotCurrent : null,
-                                            ]}
-                                        />
-                                        <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
-                                            {translateCheckpoint(checkpoint)}
-                                        </Text>
+                                        <View style={styles.timelineMarker}>
+                                            {isDone ? (
+                                                <Icon name="check" size={16} color={theme.colors.accent.blue} />
+                                            ) : isCurrent && isFailureState ? (
+                                                <Icon name="warning" size={16} color={theme.colors.state.danger.foreground} />
+                                            ) : isCurrent ? (
+                                                <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.accent.blue} />
+                                            ) : (
+                                                <View style={styles.timelineDot} />
+                                            )}
+                                        </View>
+                                        <View style={[styles.timelineContent, isCurrent && progressFraction !== null ? styles.timelineContentWithProgress : null]}>
+                                            <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
+                                                {translateCheckpoint(checkpoint)}
+                                            </Text>
+                                            {isCurrent && progressFraction !== null ? (
+                                                <View
+                                                    testID="session-handoff-progress-bar"
+                                                    accessibilityRole="progressbar"
+                                                    accessibilityValue={{ min: 0, max: 100, now: Math.round(progressFraction * 100) }}
+                                                    style={styles.progressTrack}
+                                                >
+                                                    <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
+                                                </View>
+                                            ) : null}
+                                        </View>
                                     </View>
                                 );
                             })}
@@ -540,16 +625,6 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
                                     <Text style={styles.statValue}>{formatProgressStatValue(stat.counts)}</Text>
                                 </View>
                             ))}
-                        </View>
-                    ) : null}
-                    {progressFraction !== null ? (
-                        <View
-                            testID="session-handoff-progress-bar"
-                            accessibilityRole="progressbar"
-                            accessibilityValue={{ min: 0, max: 100, now: Math.round(progressFraction * 100) }}
-                            style={styles.progressTrack}
-                        >
-                            <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
                         </View>
                     ) : null}
                     {progressLabel || currentDetailLabel ? (

@@ -145,7 +145,16 @@ function workspaceProgressLabel(status: SessionHandoffStatus): string | null {
   if (checkpoint === 'transfer_blobs') return 'Transferring workspace';
   if (checkpoint === 'stage_target') return 'Staging target workspace';
   if (checkpoint === 'apply') return 'Applying workspace changes';
-  if (checkpoint === 'import_session') return 'Importing session state';
+  if (checkpoint === 'import_session') {
+    const totalBytes = status.progress?.planned.totalBytes;
+    const transferredBytes = status.progress?.transferred.bytes;
+    return typeof totalBytes === 'number'
+      && totalBytes > 0
+      && typeof transferredBytes === 'number'
+      && transferredBytes < totalBytes
+      ? 'Transferring session data'
+      : 'Importing session state';
+  }
   if (checkpoint === 'finalize') return 'Finalizing handoff';
   return null;
 }
@@ -160,7 +169,7 @@ function projectTargetStatusProgress(update: (value: OperationUpdate) => void, v
   const label = workspaceProgressLabel(status);
   if (!label) return;
   if (
-    progress.checkpoint === 'transfer_blobs'
+    (progress.checkpoint === 'transfer_blobs' || progress.checkpoint === 'import_session')
     && typeof progress.planned.totalBytes === 'number'
     && progress.planned.totalBytes > 0
     && typeof progress.transferred.bytes === 'number'

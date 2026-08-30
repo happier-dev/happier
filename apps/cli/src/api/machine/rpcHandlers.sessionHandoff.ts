@@ -188,6 +188,7 @@ export type SessionHandoffDirectPeerTransferHandle = Readonly<{
     destinationPath: string;
     openBody?: unknown;
     timeoutMs?: number;
+    onProgress?: (receivedBytes: number) => Promise<void> | void;
   }>) => Promise<Readonly<{ destinationPath: string }>>;
   clearPublishedTransfer: (transferId: string) => void;
 }>;
@@ -357,6 +358,7 @@ function buildPreparePendingStatus(input: Readonly<{
   transportStrategy: SessionHandoffPrepareTargetRequest['negotiatedTransportStrategy'];
   recoveryActions: SessionHandoffStatus['recoveryActions'];
   phaseDetail: string;
+  sessionTransfer?: Readonly<{ currentBytes: number; totalBytes: number }>;
 }>): SessionHandoffStatus {
   return {
     handoffId: input.handoffId,
@@ -367,9 +369,9 @@ function buildPreparePendingStatus(input: Readonly<{
     recoveryActions: [...input.recoveryActions],
     progress: {
       updatedAtMs: Date.now(),
-      checkpoint: 'stage_target',
-      planned: {},
-      transferred: {},
+      checkpoint: 'import_session',
+      planned: input.sessionTransfer ? { totalBytes: input.sessionTransfer.totalBytes } : {},
+      transferred: input.sessionTransfer ? { bytes: input.sessionTransfer.currentBytes } : {},
       applied: {},
       remaining: {},
       current: {
@@ -1003,6 +1005,7 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
   sourceMachineId: string;
   destinationPath: string;
   machineTransferChannel: NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['machineTransferChannel']>;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
 }>): Promise<SessionHandoffProviderBundle> {
   const timeoutMs =
     typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
@@ -1023,6 +1026,7 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
     destinationPath: params.destinationPath,
     ...(openBody ? { openBody } : {}),
     ...(timeoutMs ? { timeoutMs } : {}),
+    ...(params.onProgress ? { onProgress: params.onProgress } : {}),
   });
   return await readSessionHandoffProviderBundleFile(params.destinationPath);
 }
@@ -1035,6 +1039,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
   destinationPath: string;
+  onProgress?: (receivedBytes: number) => Promise<void> | void;
 }>): Promise<SessionHandoffProviderBundle | undefined> {
   const transferPublication = params.handoffMetadataV2?.providerBundleTransferPublication;
   if (!transferPublication) {
@@ -1044,6 +1049,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
         sourceMachineId: params.request.sourceMachineId,
         destinationPath: params.destinationPath,
         machineTransferChannel: params.machineTransferChannel,
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       });
     }
     return undefined;
@@ -1059,6 +1065,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
         sourceMachineId: params.request.sourceMachineId,
         destinationPath: params.destinationPath,
         machineTransferChannel: params.machineTransferChannel,
+        ...(params.onProgress ? { onProgress: params.onProgress } : {}),
       })
       : params.actualTransportStrategy === 'direct_peer' && transferEndpointCandidates && params.directPeerTransfer?.requestPayloadFile
         ? await (async (): Promise<SessionHandoffProviderBundle> => {
@@ -1070,6 +1077,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
                 sourceMachineId: params.request.sourceMachineId,
                 destinationPath: params.destinationPath,
                 machineTransferChannel: params.machineTransferChannel,
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
               });
             }
             throw new Error(directPeerTransferUnavailable().error);
@@ -1085,6 +1093,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
                 sourceMachineId: params.request.sourceMachineId,
                 destinationPath: params.destinationPath,
                 machineTransferChannel: params.machineTransferChannel,
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
               });
             }
             throw new Error(directPeerTransferUnavailable().error);
@@ -1099,6 +1108,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
                 endpointCandidates,
                 destinationPath: params.destinationPath,
                 ...(timeoutMs ? { timeoutMs } : {}),
+                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
               });
               params.transferRouteCache?.recordDirectPeerRouteViable({
                 remoteMachineId: params.request.sourceMachineId,
@@ -1122,6 +1132,7 @@ async function resolvePrepareProviderBundle(params: Readonly<{
                   sourceMachineId: params.request.sourceMachineId,
                   destinationPath: params.destinationPath,
                   machineTransferChannel: params.machineTransferChannel,
+                  ...(params.onProgress ? { onProgress: params.onProgress } : {}),
                 });
               }
               throw new Error(directPeerTransferUnavailable().error);
@@ -2686,7 +2697,15 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       jobId,
       transportStrategy: parsed.data.negotiatedTransportStrategy,
       recoveryActions: [],
-      phaseDetail: isRestartingPersistedJob ? 'resuming_after_restart' : 'importing_workspace',
+      phaseDetail: isRestartingPersistedJob ? 'resuming_after_restart' : 'transferring_session',
+      ...(parsed.data.handoffMetadataV2?.providerBundleTransferPublication
+        ? {
+          sessionTransfer: {
+            currentBytes: 0,
+            totalBytes: parsed.data.handoffMetadataV2.providerBundleTransferPublication.sizeBytes,
+          },
+        }
+        : {}),
     });
     let actualTransportStrategy = parsed.data.negotiatedTransportStrategy;
     let providerBundle: SessionHandoffProviderBundle | null = null;
@@ -2864,6 +2883,35 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           }
 
           providerBundleTransferPublication = requestResolvedHandoffMetadataV2?.providerBundleTransferPublication ?? null;
+          const providerBundlePublicationForProgress = providerBundleTransferPublication;
+          let lastProviderBundleProgressPersistedAtMs = 0;
+          const reportProviderBundleTransferProgress = providerBundlePublicationForProgress
+            ? async (receivedBytes: number): Promise<void> => {
+              const totalBytes = providerBundlePublicationForProgress.sizeBytes;
+              const nowMs = Date.now();
+              if (receivedBytes < totalBytes && nowMs - lastProviderBundleProgressPersistedAtMs < 250) {
+                return;
+              }
+              lastProviderBundleProgressPersistedAtMs = nowMs;
+              await persistJobRecord(buildPrepareJobRecord({
+                jobId,
+                handoffId: parsed.data.handoffId,
+                createdAtMs,
+                updatedAtMs: nowMs,
+                status: buildPreparePendingStatus({
+                  handoffId: parsed.data.handoffId,
+                  jobId,
+                  transportStrategy: actualTransportStrategy,
+                  recoveryActions: pendingStatus.recoveryActions,
+                  phaseDetail: receivedBytes < totalBytes ? 'transferring_session' : 'importing_session',
+                  sessionTransfer: {
+                    currentBytes: Math.min(receivedBytes, totalBytes),
+                    totalBytes,
+                  },
+                }),
+              }));
+            }
+            : undefined;
           const resolvedProviderBundle =
             localProviderBundle
             ?? await resolvePrepareProviderBundle({
@@ -2874,6 +2922,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
               directPeerTransfer: params.directPeerTransfer,
               transferRouteCache,
               destinationPath: await sourceExportStore.prepareReceivedProviderBundleFilePath(parsed.data.handoffId),
+              ...(reportProviderBundleTransferProgress ? { onProgress: reportProviderBundleTransferProgress } : {}),
             });
           if (!resolvedProviderBundle) {
             throw new Error('Invalid session handoff provider bundle');

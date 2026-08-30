@@ -225,6 +225,39 @@ describe('sessionHandoffCoordinator', () => {
     });
   });
 
+  it('projects authoritative session bundle byte transfer into the parent action operation', async () => {
+    const pendingStatus = {
+      handoffId: 'handoff-1',
+      status: 'pending' as const,
+      phase: 'staging_target' as const,
+      recoveryActions: [],
+      progress: {
+        updatedAtMs: 123,
+        checkpoint: 'import_session' as const,
+        planned: { totalBytes: 4096 },
+        transferred: { bytes: 1024 },
+        current: { phaseDetail: 'transferring_session' },
+        resumable: false,
+      },
+    };
+    const { coordinator, update } = createHarness({
+      prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: pendingStatus })),
+      getTargetStatus: vi.fn(async () => ({ handoffId: 'handoff-1', status: pendingStatus })),
+      getTargetPrepareResult: vi.fn(async () => readyTarget()),
+    });
+
+    await (await coordinator.admit(baseInput)).execute({ update });
+
+    expect(update).toHaveBeenCalledWith({
+      progress: {
+        kind: 'determinate',
+        current: 1024,
+        total: 4096,
+        label: 'Transferring session data',
+      },
+    });
+  });
+
   it('treats source cleanup trouble after target commit as success with a visible warning', async () => {
     const { coordinator } = createHarness({
       cleanupSource: vi.fn(async () => ({ ok: false, errorCode: 'source_cleanup_failed', errorMessage: 'Source is unreachable' })),

@@ -8267,13 +8267,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                             ...(onDemandScope ? { onDemandScope } : {}),
                           }).endpointCandidates;
                         },
-                        requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath, openBody, timeoutMs }) =>
+                        requestPayloadFile: async ({ transferId, endpointCandidates, destinationPath, openBody, timeoutMs, onProgress }) =>
                           await requestDirectPeerTransferToFile({
                             transferId,
                             endpointCandidates,
                             destinationPath,
                             ...(openBody !== undefined ? { openBody } : {}),
                             ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+                            ...(onProgress ? { onProgress } : {}),
                           }),
                         clearPublishedTransfer: (transferId) => directPeerRegistry!.clearPublishedTransfer(transferId),
                       },

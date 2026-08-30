@@ -60,6 +60,93 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.getTextContent()).toContain('Packaging session state');
     });
 
+    it('renders operation progress as one stateful checklist with progress nested under the active step', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                workspaceTransferEnabled={false}
+                operation={{
+                    version: 1,
+                    operationId: 'handoff-operation-1',
+                    requestId: 'request-1',
+                    revision: 3,
+                    actionId: 'session.handoff',
+                    state: 'running',
+                    scope: { accountId: 'account-1', machineId: 'source-machine', sessionId: 'session-1' },
+                    title: 'Hand off session',
+                    createdAt: 1,
+                    startedAt: 1,
+                    progress: { kind: 'determinate', current: 1024, total: 4096, label: 'Transferring session data' },
+                    cancellation: 'supported',
+                }}
+            />,
+        );
+
+        const prepare = screen.findByTestId('session-handoff-step-prepare-session');
+        const transfer = screen.findByTestId('session-handoff-step-transfer-session');
+        const workspace = screen.findByTestId('session-handoff-step-transfer-workspace');
+        const startTarget = screen.findByTestId('session-handoff-step-start-target');
+
+        expect(prepare?.props.accessibilityState?.checked).toBe(true);
+        expect(transfer?.props.accessibilityState?.selected).toBe(true);
+        expect(workspace).toBeNull();
+        expect(startTarget?.props.accessibilityState?.selected).toBe(false);
+        expect(transfer?.findByProps({ testID: 'session-handoff-operation-progress-bar' })).toBeTruthy();
+        expect(screen.getTextContent()).not.toContain('Transferring session data');
+    });
+
+    it('keeps completed session bytes anchored to the session transfer step while import begins', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                operation={{
+                    version: 1,
+                    operationId: 'handoff-operation-2',
+                    requestId: 'request-2',
+                    revision: 4,
+                    actionId: 'session.handoff',
+                    state: 'running',
+                    scope: { accountId: 'account-1', machineId: 'source-machine', sessionId: 'session-1' },
+                    title: 'Hand off session',
+                    createdAt: 1,
+                    startedAt: 1,
+                    progress: { kind: 'determinate', current: 4096, total: 4096, label: 'Importing session state' },
+                    cancellation: 'supported',
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('session-handoff-step-transfer-session')?.props.accessibilityState?.selected).toBe(true);
+    });
+
+    it('suppresses semantically duplicate workspace progress labels', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(
+            <SessionHandoffProgressModal
+                onClose={() => {}}
+                workspaceTransferEnabled
+                operation={{
+                    version: 1,
+                    operationId: 'handoff-operation-3',
+                    requestId: 'request-3',
+                    revision: 5,
+                    actionId: 'session.handoff',
+                    state: 'running',
+                    scope: { accountId: 'account-1', machineId: 'source-machine', sessionId: 'session-1' },
+                    title: 'Hand off session',
+                    createdAt: 1,
+                    startedAt: 1,
+                    progress: { kind: 'determinate', current: 1024, total: 4096, label: 'Transferring workspace' },
+                    cancellation: 'supported',
+                }}
+            />,
+        );
+
+        expect(screen.getTextContent()).not.toContain('Transferring workspace');
+    });
+
     it('renders a full checkpoint timeline that matches the protocol checkpoint enum', async () => {
         const { SessionHandoffProgressCheckpointSchema } = await import('@happier-dev/protocol');
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
