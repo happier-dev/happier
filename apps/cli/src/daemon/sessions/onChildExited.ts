@@ -79,7 +79,7 @@ export function createOnChildExited(params: Readonly<{
     stageObservedExitFn = stageObservedExit,
   } = params;
 
-  return async (pid: number, exit: ChildExit) => {
+  const observeChildExit = async (pid: number, exit: ChildExit): Promise<void> => {
     logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const tracked = pidToTrackedSession.get(pid);
     const runnerPid = tracked?.sessionRunnerPid;
@@ -220,6 +220,31 @@ export function createOnChildExited(params: Readonly<{
     pidToTrackedSession.delete(pid);
     if (!tracked) {
       void removeSessionMarkerFn(pid);
+    }
+  };
+
+  const inFlightByTrackedSession = new WeakMap<TrackedSession, Promise<void>>();
+  return async (pid: number, exit: ChildExit): Promise<void> => {
+    const trackedSession = pidToTrackedSession.get(pid);
+    if (!trackedSession) {
+      await observeChildExit(pid, exit);
+      return;
+    }
+
+    const existing = inFlightByTrackedSession.get(trackedSession);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const observation = observeChildExit(pid, exit);
+    inFlightByTrackedSession.set(trackedSession, observation);
+    try {
+      await observation;
+    } finally {
+      if (inFlightByTrackedSession.get(trackedSession) === observation) {
+        inFlightByTrackedSession.delete(trackedSession);
+      }
     }
   };
 }
