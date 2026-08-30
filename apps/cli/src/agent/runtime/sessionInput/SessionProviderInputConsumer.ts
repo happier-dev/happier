@@ -692,9 +692,20 @@ async function materializePendingMessage<Mode, Message>(
   if (result.type === 'deferred' && result.reason === 'supervisor_auth_failed') {
     throw new PendingQueueMaterializationAuthError();
   }
-  return result.type === 'retryable_transport' && result.retryAfterMs !== undefined
-    ? result.retryAfterMs
-    : null;
+  if (result.type !== 'retryable_transport') return null;
+
+  // A transport retry without a server-provided delay can otherwise consume the only
+  // eligibility wake and then wait forever for another event. Reuse the session client's
+  // authoritative reconciliation hook before one bounded local retry; connection recovery
+  // remains responsible for publishing subsequent wakes, so this is not a polling loop.
+  if (opts.session.reconcilePendingQueueState) {
+    await Promise.resolve(opts.session.reconcilePendingQueueState({ force: true })).catch((error: unknown) => {
+      logger.debug('[pendingQueue] retryable transport reconciliation failed (non-fatal)', error);
+    });
+  }
+  return result.retryAfterMs
+    ?? opts.metadataWaitRetryBackoffMs
+    ?? DEFAULT_SESSION_METADATA_WAIT_RETRY_BACKOFF_MS;
 }
 
 function withDefaultDrainOptions(

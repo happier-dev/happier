@@ -1220,6 +1220,44 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     expect(firstResult).toMatchObject({ message: 'recovered' });
   });
 
+  it('reconciles once and schedules a bounded retry when transport fails without a server delay', async () => {
+    vi.useFakeTimers();
+    try {
+      const abortController = new AbortController();
+      const messageQueue = new MessageQueue2<TestMode>(() => 'hash');
+      const reconcilePendingQueueState = vi.fn(async () => {});
+      const materializeNextPendingMessageSafely = vi
+        .fn<() => Promise<MaterializeNextPendingResult>>()
+        .mockResolvedValueOnce({ type: 'retryable_transport' } as MaterializeNextPendingResult)
+        .mockImplementationOnce(async () => {
+          messageQueue.push('recovered after reconciliation', { id: 'mode' });
+          return { type: 'materialized', localId: 'recovered-local', seq: 1, content: null };
+        });
+      const consumer = createSessionProviderInputConsumer({
+        messageQueue,
+        session: {
+          materializeNextPendingMessageSafely,
+          reconcilePendingQueueState,
+          waitForPendingEligibilityUpdate: () => new Promise<boolean>(() => {}),
+        },
+        metadataWaitRetryBackoffMs: 250,
+      } as Parameters<typeof createSessionProviderInputConsumer<TestMode, string>>[0]);
+
+      const waiting = consumer.waitForNextInput({ abortSignal: abortController.signal });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reconcilePendingQueueState).toHaveBeenCalledWith({ force: true });
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(249);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(waiting).resolves.toMatchObject({ message: 'recovered after reconciliation' });
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejoins an ambiguously acknowledged materialization after its requested backoff without a new eligibility event', async () => {
     vi.useFakeTimers();
     try {

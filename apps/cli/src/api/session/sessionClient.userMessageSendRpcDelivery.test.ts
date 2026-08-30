@@ -627,6 +627,27 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     expect(received).toHaveLength(1);
   });
 
+  it('wakes canonical pending reconciliation when durable enqueue races transport contract readiness', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    await waitForCurrentPendingInputContract(client);
+    const wakePendingMaterialization = vi.spyOn(client, 'wakePendingMaterialization').mockImplementation(() => {});
+
+    // Simulate the startup/reconnect window: durable enqueue is available, but the negotiated
+    // materialization contract has not yet become current for this session generation.
+    (client as any).sessionSyncPendingInputServerContract = null;
+    await (client as any).enqueueSessionUserMessage({
+      text: 'deliver after transport readiness',
+      localId: 'transport-race-local',
+      meta: { source: 'ui' },
+    });
+
+    expect(enqueuePendingQueueV2MessageViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(wakePendingMaterialization).toHaveBeenCalledTimes(1);
+  });
+
   it('revalidates paused recovery exactly once before accepting a fresh direct prompt', async () => {
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,

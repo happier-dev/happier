@@ -1299,6 +1299,12 @@ export class ApiSessionClient extends EventEmitter {
                         error: serializeAxiosErrorForLog(error),
                     });
                 });
+
+                // A reconnect can restore the negotiated materialization contract without
+                // changing the pending projection. Publish the canonical eligibility wake so
+                // a consumer that previously observed retryable transport re-runs against the
+                // healthy session generation instead of waiting for another queue mutation.
+                this.publishPendingEligibilityWake();
             },
             onDisconnected: async ({ event }) => {
                 logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
@@ -3853,7 +3859,14 @@ export class ApiSessionClient extends EventEmitter {
         // through the pending claim/accept path. The direct materialize attempt keeps the
         // existing immediacy while leaving the row durable if the runtime cannot accept it yet.
         if (!await this.reconcileCanonicalPendingDeliveriesBeforeMaterialization()) return;
-        await this.runMaterializeNextPendingMessageInner();
+        const materialization = await this.runMaterializeNextPendingMessageInner();
+        if (materialization.result.type === 'retryable_transport') {
+            // The durable row is now present, but startup/reconnect may have raced the
+            // negotiated contract or session socket. Reuse the canonical wake path so it
+            // performs an authoritative reconciliation and wakes the shared input consumer;
+            // do not add a second enqueue-specific retry loop here.
+            this.wakePendingMaterialization();
+        }
     }
 
     private async persistPendingQueueUserMessageBody(
