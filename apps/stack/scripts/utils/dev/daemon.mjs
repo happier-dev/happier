@@ -196,6 +196,7 @@ export async function startDevDaemon({
   runtimeStatePath = null,
   restart,
   startLastGreen = false,
+  keepServerRunningOnFailure = false,
   isShuttingDown,
   env = process.env,
   stackName = null,
@@ -222,7 +223,17 @@ export async function startDevDaemon({
     });
     return { started: true };
   } catch (error) {
-    if (!startLastGreen) throw error;
+    if (!startLastGreen && !keepServerRunningOnFailure) throw error;
+    if (keepServerRunningOnFailure && !startLastGreen) {
+      logger.warn(
+        '[local] daemon startup failed; keeping the TUI server running so daemon recovery can be retried. ' +
+          `(${error instanceof Error ? error.message : String(error)})`,
+      );
+      return {
+        started: false,
+        reason: 'daemon-start-failed',
+      };
+    }
     logger.warn(
       '[local] daemon: the last-green CLI publication could not start; ' +
         'continuing startup so the watch coordinator can repair it with a background rebuild. ' +

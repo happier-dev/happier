@@ -274,6 +274,42 @@ test('startDevDaemon preserves a failed non-watch launch as a startup error', as
   );
 });
 
+test('startDevDaemon keeps an interactive TUI server running when initial daemon startup fails', async () => {
+  const warnings = [];
+  const result = await startDevDaemon(
+    {
+      startDaemon: true,
+      cliBin: '/tmp/happy-cli/bin/happier.mjs',
+      cliHomeDir: '/tmp/happy-cli-home',
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      restart: false,
+      startLastGreen: false,
+      keepServerRunningOnFailure: true,
+      isShuttingDown: () => false,
+      stackName: 'remote-dev',
+    },
+    {
+      startLocalDaemonWithAuthImpl: async () => {
+        throw new Error('daemon credentials were rejected');
+      },
+      logger: {
+        warn(message) {
+          warnings.push(message);
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    started: false,
+    reason: 'daemon-start-failed',
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /keeping the TUI server running/i);
+  assert.match(warnings[0], /daemon credentials were rejected/i);
+});
+
 test('reload executor rejects bare dist entrypoint without build manifest', async () => {
   const cliDir = '/tmp/repo/apps/cli';
   const executor = createHappyCliReloadExecutor(
