@@ -1,5 +1,6 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
+import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
 import {
     CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
     CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -188,14 +189,6 @@ function buildReasoningEffortModelOption(params: Readonly<{
     };
 }
 
-function isLegacySpeedEligible(params: Readonly<{
-    authMethod?: string | null;
-    currentModelId: string | null;
-}>): boolean {
-    if (params.currentModelId !== 'gpt-5.4' && params.currentModelId !== 'gpt-5.5') return false;
-    return params.authMethod === 'oauth_cli' || params.authMethod === 'credentials_file';
-}
-
 function normalizeSpeedTierLabel(value: string): string {
     switch (value) {
         case 'fast':
@@ -243,13 +236,10 @@ function readProviderDeclaredSpeedTierChoice(record: MetadataRecord): SpeedTierC
     const additionalSpeedTiers = normalizeAdditionalSpeedTierValues(
         record.additionalSpeedTiers ?? record.additional_speed_tiers,
     );
-    const declaresFast = additionalSpeedTiers.includes('fast');
+    const declaresFast = additionalSpeedTiers.some(isCodexAppServerFastServiceTier);
     const serviceTierDetails = normalizeSpeedTierDetails(record.serviceTiers ?? record.service_tiers);
-    const fastDetail = serviceTierDetails.find((entry) => {
-        const value = normalizeString(entry.value);
-        const name = normalizeString(entry.name);
-        return value === 'fast' || name?.toLowerCase() === 'fast';
-    }) ?? (declaresFast && serviceTierDetails.length === 1 ? serviceTierDetails[0] : null);
+    const fastDetail = serviceTierDetails.find((entry) => isCodexAppServerFastServiceTier(entry.value))
+        ?? (declaresFast && serviceTierDetails.length === 1 ? serviceTierDetails[0] : null);
 
     if (!declaresFast && !fastDetail) return null;
     return {
@@ -260,24 +250,19 @@ function readProviderDeclaredSpeedTierChoice(record: MetadataRecord): SpeedTierC
 }
 
 function buildSpeedModelOption(params: Readonly<{
-    authMethod?: string | null;
     modelId: string;
     record: MetadataRecord;
     currentModelId: string | null;
     currentServiceTier?: string | null;
 }>): SessionConfigOption | null {
-    const providerChoice = readProviderDeclaredSpeedTierChoice(params.record);
-    const speedChoice = providerChoice
-        ?? (isLegacySpeedEligible({ authMethod: params.authMethod, currentModelId: params.modelId })
-            ? { value: 'fast', name: normalizeSpeedTierLabel('fast') }
-            : null);
+    const speedChoice = readProviderDeclaredSpeedTierChoice(params.record);
     if (!speedChoice) return null;
     return {
         id: CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
         name: 'Speed',
         type: 'select',
         currentValue: params.modelId === params.currentModelId
-            ? (params.currentServiceTier === 'fast' ? 'fast' : 'standard')
+            ? (isCodexAppServerFastServiceTier(params.currentServiceTier) ? 'fast' : 'standard')
             : 'standard',
         options: [
             { value: 'standard', name: 'Standard' },
@@ -292,7 +277,6 @@ function buildSpeedModelOption(params: Readonly<{
 
 function normalizeSessionModelMasks(params: Readonly<{
     value: unknown;
-    authMethod?: string | null;
     currentModelId: string | null;
     currentReasoningEffort?: string | null;
     currentServiceTier?: string | null;
@@ -317,7 +301,6 @@ function normalizeSessionModelMasks(params: Readonly<{
             currentReasoningEffort: params.currentReasoningEffort,
         });
         const speedOption = buildSpeedModelOption({
-            authMethod: params.authMethod,
             modelId: id,
             record,
             currentModelId: params.currentModelId,
@@ -447,7 +430,6 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
         : resolveCodexCurrentCollaborationModeId(modesResponse, availableModes);
     const availableModels = normalizeSessionModelMasks({
         value: modelsResponse,
-        authMethod: params.authMethod,
         currentModelId: params.currentModelId ?? null,
         currentReasoningEffort: params.currentReasoningEffort,
         currentServiceTier: params.currentServiceTier,

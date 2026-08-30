@@ -5,6 +5,7 @@ import {
   buildThreadServiceTierParams,
   readCodexTurnStatus,
   readProviderEventTurnId,
+  readServiceTier,
   readThreadId,
 } from './fields.js';
 
@@ -62,6 +63,12 @@ describe('Codex app-server wire fields', () => {
   it('reads nested and top-level lifecycle statuses', () => {
     expect(readCodexTurnStatus({ turn: { status: 'failed' } })).toBe('failed');
     expect(readCodexTurnStatus({ status: 'interrupted' })).toBe('interrupted');
+  });
+
+  it('normalizes Codex Fast service-tier aliases at the wire boundary', () => {
+    expect(readServiceTier({ serviceTier: 'priority' })).toBe('fast');
+    expect(readServiceTier({ service_tier: 'fast' })).toBe('fast');
+    expect(readServiceTier({ serviceTier: 'standard' })).toBe('standard');
   });
 
   it('builds Codex thread start/load override fields only when requested', () => {

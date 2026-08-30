@@ -68,16 +68,6 @@ describe('Codex app-server session controls', () => {
                                 { value: 'high', name: 'High', description: 'Deep' },
                             ],
                         },
-                        {
-                            id: 'service_tier',
-                            name: 'Speed',
-                            type: 'select',
-                            currentValue: 'fast',
-                            options: [
-                                { value: 'standard', name: 'Standard' },
-                                { value: 'fast', name: 'Fast' },
-                            ],
-                        },
                     ],
                 },
             ],
@@ -85,7 +75,7 @@ describe('Codex app-server session controls', () => {
         });
     });
 
-    it('uses provider-declared service-tier metadata instead of only auth/model hardcoding', async () => {
+    it('uses a provider-declared priority service tier instead of auth or model hardcoding', async () => {
         const client = {
             request: vi.fn(async (method: string) => {
                 if (method === 'collaborationMode/list') {
@@ -95,8 +85,8 @@ describe('Codex app-server session controls', () => {
                     return {
                         data: [
                             {
-                                id: 'gpt-5.4',
-                                displayName: 'GPT-5.4',
+                                id: 'gpt-5.6-sol',
+                                displayName: 'GPT-5.6-Sol',
                                 isDefault: true,
                                 supportedReasoningEfforts: [
                                     { reasoningEffort: 'low', description: 'Fast responses' },
@@ -105,9 +95,8 @@ describe('Codex app-server session controls', () => {
                                     { reasoningEffort: 'xhigh', description: 'Extra deep' },
                                 ],
                                 defaultReasoningEffort: 'medium',
-                                additionalSpeedTiers: ['fast'],
                                 serviceTiers: [
-                                    { id: 'priority', name: 'Fast', description: '1.5x speed, increased usage' },
+                                    { id: 'priority', name: 'Priority', description: '1.5x speed, increased usage' },
                                 ],
                             },
                         ],
@@ -120,14 +109,14 @@ describe('Codex app-server session controls', () => {
         const snapshot = await readCodexAppServerSessionControls({
             client,
             authMethod: null,
-            currentModelId: 'gpt-5.4',
-            currentServiceTier: 'fast',
+            currentModelId: 'gpt-5.6-sol',
+            currentServiceTier: 'priority',
         });
 
         expect(snapshot.availableModels).toEqual([
             {
-                id: 'gpt-5.4',
-                name: 'GPT 5.4',
+                id: 'gpt-5.6-sol',
+                name: 'GPT 5.6 Sol',
                 modelOptions: [
                     {
                         id: 'reasoning_effort',
@@ -148,7 +137,7 @@ describe('Codex app-server session controls', () => {
                         currentValue: 'fast',
                         options: [
                             { value: 'standard', name: 'Standard' },
-                            { value: 'fast', name: 'Fast', description: '1.5x speed, increased usage' },
+                            { value: 'fast', name: 'Priority', description: '1.5x speed, increased usage' },
                         ],
                     },
                 ],

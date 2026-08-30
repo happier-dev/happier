@@ -1,3 +1,5 @@
+import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
+
 type CodexAppServerThreadResponse = Readonly<{
   threadId?: unknown;
   thread_id?: unknown;
@@ -151,7 +153,9 @@ export function readModelId(value: unknown): string | null {
 
 export function readServiceTier(value: unknown): string | null {
   const record = readRecord(value);
-  return record ? trimStringValue(record.serviceTier) ?? trimStringValue(record.service_tier) : null;
+  if (!record) return null;
+  const serviceTier = trimStringValue(record.serviceTier) ?? trimStringValue(record.service_tier);
+  return isCodexAppServerFastServiceTier(serviceTier) ? 'fast' : serviceTier;
 }
 
 export function readCodexTurnStatus(value: unknown): string | null {
