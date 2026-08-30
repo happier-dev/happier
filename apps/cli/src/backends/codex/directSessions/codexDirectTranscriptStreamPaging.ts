@@ -42,13 +42,12 @@ type CodexStreamDiscovery = Readonly<{
   lineStartOffsetBytes: number;
 }>;
 
-async function validatesDiscoveredChildStream(params: Readonly<{
+async function readDiscoveredChildThreadIds(params: Readonly<{
   streams: readonly CodexDirectTranscriptRolloutStream[];
-  childThreadId: string;
   discovery: CodexStreamDiscovery;
-}>): Promise<boolean> {
+}>): Promise<readonly string[]> {
   const parent = params.streams.find((stream) => stream.fileRelPath === params.discovery.fileRelPath);
-  if (!parent) return false;
+  if (!parent) return [];
   const page = await readJsonlFileForward({
     filePath: parent.filePath,
     offsetBytes: params.discovery.lineStartOffsetBytes,
@@ -56,7 +55,7 @@ async function validatesDiscoveredChildStream(params: Readonly<{
     maxItems: 1,
   });
   const line = page.items.find((candidate) => candidate.startOffsetBytes === params.discovery.lineStartOffsetBytes);
-  if (!line) return false;
+  if (!line) return [];
   const projected = projectCodexRolloutLineToTranscriptRecords({
     stream: parent,
     lineStartOffsetBytes: line.startOffsetBytes,
@@ -64,7 +63,7 @@ async function validatesDiscoveredChildStream(params: Readonly<{
     lineValue: line.value,
     semanticTracker: createCodexRolloutSemanticTracker(),
   });
-  return projected.discoveredChildThreadIds.includes(params.childThreadId);
+  return projected.discoveredChildThreadIds;
 }
 
 function normalizeOffsetBytes(value: unknown): number {
@@ -434,6 +433,8 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   const knownStreamIds = new Set(streams.map((stream) => stream.fileRelPath));
   const discoveredThreadIds = new Set(streams.map((stream) => stream.threadId));
   const discoveryByStreamId = new Map<string, CodexStreamDiscovery>();
+  const discoveredChildThreadIdsByProvenance = new Map<string, readonly string[]>();
+  const rolloutFilesByThreadId = new Map<string, readonly CodexRolloutFile[]>();
   if (decoded?.v === 4) {
     let pending = decoded.streams.filter((persisted) => !knownStreamIds.has(persisted.fileRelPath));
     while (pending.length > 0) {
@@ -445,15 +446,27 @@ export async function pageCodexRolloutStreams(params: Readonly<{
           deferred.push(persisted);
           continue;
         }
-        if (!(await validatesDiscoveredChildStream({
-          streams,
-          childThreadId: persisted.threadId,
-          discovery: persisted.discoveredFrom,
-        }))) continue;
-        const files = await collectCodexSessionRolloutFiles({
-          codexHome: params.codexHome,
-          remoteSessionId: persisted.threadId,
-        });
+        const provenanceKey = JSON.stringify([
+          persisted.discoveredFrom.fileRelPath,
+          persisted.discoveredFrom.lineStartOffsetBytes,
+        ]);
+        let validChildThreadIds = discoveredChildThreadIdsByProvenance.get(provenanceKey);
+        if (validChildThreadIds === undefined) {
+          validChildThreadIds = await readDiscoveredChildThreadIds({
+            streams,
+            discovery: persisted.discoveredFrom,
+          });
+          discoveredChildThreadIdsByProvenance.set(provenanceKey, validChildThreadIds);
+        }
+        if (!validChildThreadIds.includes(persisted.threadId)) continue;
+        let files = rolloutFilesByThreadId.get(persisted.threadId);
+        if (files === undefined) {
+          files = await collectCodexSessionRolloutFiles({
+            codexHome: params.codexHome,
+            remoteSessionId: persisted.threadId,
+          });
+          rolloutFilesByThreadId.set(persisted.threadId, files);
+        }
         const file = files.find((candidate) => candidate.fileRelPath === persisted.fileRelPath);
         if (!file) continue;
         knownStreamIds.add(file.fileRelPath);

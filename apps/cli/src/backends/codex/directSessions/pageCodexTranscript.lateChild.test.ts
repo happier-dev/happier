@@ -1,3 +1,4 @@
+import { createHook } from 'node:async_hooks';
 import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,6 +96,24 @@ function encodeOpaqueCursor(cursor: Readonly<{
   streams: ReadonlyArray<Record<string, unknown>>;
 }>): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+async function countFsPromiseResources<T>(work: () => Promise<T>): Promise<Readonly<{
+  result: T;
+  count: number;
+}>> {
+  let count = 0;
+  const hook = createHook({
+    init: (_asyncId, type) => {
+      if (type === 'FSREQPROMISE') count += 1;
+    },
+  });
+  hook.enable();
+  try {
+    return { result: await work(), count };
+  } finally {
+    hook.disable();
+  }
 }
 
 describe('pageCodexTranscript late child rollout discovery', () => {
@@ -202,6 +221,42 @@ describe('pageCodexTranscript late child rollout discovery', () => {
     const restored = await page({ ...fixture, sessionId, cursor: duplicateCursor, maxItems: 10 });
     expect(restored.truncated).toBe(true);
     expect(restored.items.filter((item) => JSON.stringify(item).includes('unique child history'))).toHaveLength(1);
+  });
+
+  it('does not repeat filesystem discovery for forged paths sharing one validated child', async () => {
+    const sessionId = '18181818-1818-1818-1818-181818181818';
+    const childThreadId = '19191919-1919-1919-1919-191919191919';
+    const fixture = await createLateChildFixture({
+      sessionId,
+      childThreadId,
+      childText: 'bounded child restoration',
+      childTimestamp: '2025-12-31T23:59:58.000Z',
+    });
+    const first = await page({ ...fixture, sessionId, maxItems: 1 });
+    if (!first.nextCursor) throw new Error('Expected another page');
+    const decoded = decodeOpaqueCursor(first.nextCursor);
+    const childStream = decoded.streams.find((stream) => stream.threadId === childThreadId);
+    if (!childStream) throw new Error('Expected child stream in cursor');
+    const forgedCursor = encodeOpaqueCursor({
+      ...decoded,
+      streams: [
+        ...decoded.streams,
+        ...Array.from({ length: 10 }, (_, index) => ({
+          ...childStream,
+          fileRelPath: `sessions/forged-child-${index}.jsonl`,
+        })),
+      ],
+    });
+
+    const baseline = await countFsPromiseResources(
+      async () => await page({ ...fixture, sessionId, cursor: first.nextCursor ?? undefined, maxItems: 10 }),
+    );
+    const forged = await countFsPromiseResources(
+      async () => await page({ ...fixture, sessionId, cursor: forgedCursor, maxItems: 10 }),
+    );
+
+    expect(JSON.stringify(forged.result.items)).toContain('bounded child restoration');
+    expect(forged.count).toBeLessThanOrEqual(baseline.count + 2);
   });
 
   it('restores nested children independent of cursor entry ordering', async () => {
