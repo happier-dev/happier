@@ -59,6 +59,11 @@ on:
         required: true
         default: false
         type: boolean
+      ci_run_id:
+        description: "Completed canonical CI run ID for this exact source (optional; avoids broad run discovery)"
+        required: false
+        default: ""
+        type: string
       include_validation_suites:
         description: "Validation — additional suite IDs to require (comma-separated)"
         required: false
@@ -353,15 +358,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
           SOURCE_BRANCH: ${{ steps.dispatch.outputs.source_ref }}
+          CI_RUN_ID: ${{ inputs.ci_run_id }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/release/verify-existing-ci.mjs \
-            --repository "$GITHUB_REPOSITORY" \
-            --workflow tests.yml \
-            --source-sha "$SOURCE_SHA" \
-            --source-branch "$SOURCE_BRANCH" \
-            ${{ inputs.ci_run_id != '' && format('--run-id {0}', inputs.ci_run_id) || '' }} \
-            --github-output "$GITHUB_OUTPUT"
+          args=(
+            --repository "$GITHUB_REPOSITORY"
+            --workflow tests.yml
+            --source-sha "$SOURCE_SHA"
+            --source-branch "$SOURCE_BRANCH"
+          )
+          if [ -n "$CI_RUN_ID" ]; then
+            args+=(--run-id "$CI_RUN_ID")
+          fi
+          node scripts/pipeline/release/verify-existing-ci.mjs "${args[@]}" --github-output "$GITHUB_OUTPUT"
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
@@ -738,7 +747,9 @@ jobs:
                 stack: process.env.STACK_VERSION,
                 server: process.env.SERVER_VERSION,
               };
-              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify(expectedComponents)) {
+              const actualComponents = bundle.release?.components;
+              const componentsMatch = actualComponents && Object.keys(expectedComponents).length === Object.keys(actualComponents).length && Object.entries(expectedComponents).every(([key, value]) => actualComponents[key] === value);
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || !componentsMatch) {
                 throw new Error("Invalid exact-candidate release-notes projection");
               }
               for (const value of [bundle.projections?.github?.markdown, bundle.projections?.expo?.message]) {
@@ -915,7 +926,9 @@ jobs:
                 stack: process.env.STACK_VERSION,
                 server: process.env.SERVER_VERSION,
               };
-              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify(expectedComponents)) {
+              const actualComponents = bundle.release?.components;
+              const componentsMatch = actualComponents && Object.keys(expectedComponents).length === Object.keys(actualComponents).length && Object.entries(expectedComponents).every(([key, value]) => actualComponents[key] === value);
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || !componentsMatch) {
                 throw new Error("Invalid exact-candidate release-notes projection");
               }
               const values = {

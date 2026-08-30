@@ -771,12 +771,15 @@ jobs:
 
   cli:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
+    needs: [trusted_ref_guard]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         part: [1, 2]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 60
     env:
       # Some CLI tests fetch/inspect GitHub Release assets. Prefer the built-in
@@ -883,8 +886,11 @@ jobs:
 
   stack:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
+    needs: [trusted_ref_guard]
     name: Stack Tests (unit + integration)
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -2210,5 +2216,45 @@ jobs:
       - name: Collect every lane conclusion
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_SOURCE_SHA: ${{ github.sha }}
+          CI_WORKFLOW: ${{ github.workflow }}
         run: |
-          node --input-type=module -e 'const n=JSON.parse(process.env.NEEDS_JSON); const f=Object.entries(n).filter(([_,v])=>["failure","cancelled"].includes(v.result)); for(const [id,v] of Object.entries(n)) console.log(id+" => "+v.result); if(f.length){console.error("Failed or cancelled CI lanes:"); for(const [id,v] of f) console.error("- "+id+" => "+v.result); process.exit(1)}'
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const lanes = Object.entries(needs).map(([id, value]) => ({
+            id,
+            result: value?.result ?? null,
+            conclusion: value?.conclusion ?? null,
+            outputs: value?.outputs ?? {},
+          }));
+          // Only success and intentionally skipped lanes are acceptable. Treat every other or
+          // unknown result (timed_out, startup_failure, stale, action_required, null, ...) as a
+          // failure so the collector can never report a false-green release attestation.
+          const failures = lanes.filter(({ result }) => result !== 'success' && result !== 'skipped');
+          for (const lane of lanes) console.log(`${lane.id} => ${lane.result ?? 'unknown'}`);
+          const summary = {
+            schemaVersion: 1,
+            runId: process.env.CI_RUN_ID ?? null,
+            sourceSha: process.env.CI_SOURCE_SHA ?? null,
+            workflow: process.env.CI_WORKFLOW ?? null,
+            lanes,
+            failures,
+          };
+          writeFileSync('ci-summary.json', `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+          if (failures.length > 0) {
+            console.error('Non-success CI lanes:');
+            for (const lane of failures) console.error(`- ${lane.id} => ${lane.result ?? 'unknown'}`);
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Upload machine-readable CI summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-lane-summary
+          path: ci-summary.json
+          if-no-files-found: error

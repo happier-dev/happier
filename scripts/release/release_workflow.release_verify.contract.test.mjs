@@ -11,6 +11,13 @@ const repoRoot = resolve(here, '..', '..');
 test('release workflow verifies immutable candidates before promoting preview or production channels', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
 
+  const workflow = YAML.parse(raw);
+  assert.equal(workflow.on.workflow_dispatch.inputs.ci_run_id.type, 'string');
+  assert.equal(workflow.on.workflow_dispatch.inputs.ci_run_id.default, '');
+  assert.match(raw, /CI_RUN_ID:\s*\$\{\{ inputs\.ci_run_id \}\}/, 'release CI handoff must use an environment variable');
+  assert.match(raw, /args\+=\(--run-id "\$CI_RUN_ID"\)/, 'release CI run id must be shell-quoted');
+  assert.doesNotMatch(raw, /format\(\x27--run-id \{0\}\x27/, 'release CI run id must not be interpolated into an unquoted shell fragment');
+
   assert.match(
     raw,
     /publish_server_runtime:[\s\S]*?publish_rolling:\s*false/,
