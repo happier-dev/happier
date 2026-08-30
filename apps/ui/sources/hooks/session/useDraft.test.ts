@@ -14,7 +14,11 @@ let onHarnessLayoutEffect: (() => void) | null = null;
 let sessionsById: Record<string, { draft: string | null; metadata?: any }>;
 const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
+const materializeExistingSessionDraftSpy = vi.fn(async (_sessionId: string) => undefined);
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
+const activeScopeState = vi.hoisted(() => ({
+  value: null as Readonly<{ serverId: string; accountId: string }> | null,
+}));
 const draftRepositoryHarness = vi.hoisted(() => {
   const listeners = new Map<string, Set<() => void>>();
   let mutationCounter = 0;
@@ -96,7 +100,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
       },
     }),
   },
-  useActiveServerAccountScope: () => draftRepositoryHarness.scope,
+  useActiveServerAccountScope: () => activeScopeState.value,
 });
 });
 
@@ -174,6 +178,7 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', async (importOriginal
 vi.mock('@/sync/sync', () => ({
   sync: {
     patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
+    materializeExistingSessionDraft: (sessionId: string) => materializeExistingSessionDraftSpy(sessionId),
   },
 }));
 
@@ -356,7 +361,27 @@ describe('useDraft', () => {
     };
     updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
+    materializeExistingSessionDraftSpy.mockClear();
     draftRepositoryHarness.reset();
+    activeScopeState.value = draftRepositoryHarness.scope;
+  });
+
+  it('materializes the exact server draft when account scope becomes ready for an active composer', async () => {
+    activeScopeState.value = null;
+    const harness = await renderHarness({ initialSessionId: 's1', active: true });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(materializeExistingSessionDraftSpy).not.toHaveBeenCalled();
+
+    activeScopeState.value = draftRepositoryHarness.scope;
+    await act(async () => {
+      harness.getCurrent().rerender();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(materializeExistingSessionDraftSpy).toHaveBeenCalledTimes(1);
+    expect(materializeExistingSessionDraftSpy).toHaveBeenCalledWith('s1');
+    harness.unmount();
   });
 
   it('publishes a large web edit to the local canonical replica immediately while debouncing remote flush', async () => {

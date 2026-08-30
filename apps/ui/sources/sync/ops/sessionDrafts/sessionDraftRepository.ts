@@ -199,6 +199,26 @@ function areJsonValuesEqual(left: unknown, right: unknown): boolean {
     return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function isIntrinsicDraftFieldDefault(path: DraftFieldPathV1, value: StrictJsonValue): boolean {
+    if (path.kind === 'composer' && path.field === 'text') {
+        return typeof value === 'string' && value.trim().length === 0;
+    }
+    if (path.kind === 'composer') return Array.isArray(value) && value.length === 0;
+    if (path.kind === 'routing') return value === null;
+    return false;
+}
+
+function areDraftFieldsSemanticallyEqual(
+    path: DraftFieldPathV1,
+    left: Readonly<{ value: StrictJsonValue }> | null,
+    right: Readonly<{ value: StrictJsonValue }> | null,
+): boolean {
+    if (left && right) return areJsonValuesEqual(left.value, right.value);
+    if (!left && !right) return true;
+    const present = left ?? right;
+    return present !== null && isIntrinsicDraftFieldDefault(path, present.value);
+}
+
 function cloneDocument(document: SessionDraftDocumentV1): SessionDraftDocumentV1 {
     return JSON.parse(JSON.stringify(document)) as SessionDraftDocumentV1;
 }
@@ -534,6 +554,15 @@ export class SessionDraftRepository {
         if (this.recordMutation(scope, replica.address)) return;
         this.persist(scope);
         this.notify(scope, replica.address);
+    }
+
+    private writeLatestReplicaStatus(
+        scope: SessionDraftRepositoryScope,
+        address: SessionDraftAddressV1,
+        status: 'offline' | 'error',
+    ): void {
+        const latest = this.readReplica(scope, address);
+        if (latest) this.writeReplica(scope, { ...latest, status });
     }
 
     private deleteReplica(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV1): void {
@@ -906,7 +935,7 @@ export class SessionDraftRepository {
             try {
                 content = shouldTombstone ? null : await this.cipher.seal(params.address, submittedDocument!);
             } catch {
-                this.writeReplica(params.scope, { ...replica, status: 'error' });
+                this.writeLatestReplicaStatus(params.scope, params.address, 'error');
                 return { status: 'error' };
             }
             let response: SessionDraftMutateResponseV1;
@@ -917,7 +946,7 @@ export class SessionDraftRepository {
                     content,
                 });
             } catch {
-                this.writeReplica(params.scope, { ...replica, status: 'offline' });
+                this.writeLatestReplicaStatus(params.scope, params.address, 'offline');
                 return { status: 'offline' };
             }
             if (response.status === 'updated') {
@@ -1015,7 +1044,7 @@ export class SessionDraftRepository {
                 localDocument = setField(localDocument, mutation.path, remoteField);
                 continue;
             }
-            if (areJsonValuesEqual(remoteField?.value ?? null, mutation.field?.value ?? null)) {
+            if (areDraftFieldsSemanticallyEqual(mutation.path, remoteField, mutation.field)) {
                 localDocument = setField(localDocument, mutation.path, remoteField);
                 continue;
             }
@@ -1029,6 +1058,10 @@ export class SessionDraftRepository {
             });
         }
         const meaningfulContent = hasMeaningfulContent(localDocument);
+        if (remoteDocument === null && remaining.length === 0 && conflicts.length === 0 && !meaningfulContent) {
+            this.deleteReplica(scope, address);
+            return 'rebased';
+        }
         this.writeReplica(scope, {
             ...replica,
             baseRevision: remoteRecord?.revision ?? 'absent',
@@ -1105,8 +1138,7 @@ export class SessionDraftRepository {
         try {
             response = await this.transport.read(address);
         } catch (error) {
-            const replica = this.readReplica(scope, address);
-            if (replica) this.writeReplica(scope, { ...replica, status: 'offline' });
+            this.writeLatestReplicaStatus(scope, address, 'offline');
             throw error;
         }
         let remoteDocument: SessionDraftDocumentV1 | null = null;
@@ -1114,8 +1146,7 @@ export class SessionDraftRepository {
             try {
                 remoteDocument = await this.openRequiredDocument(response.record);
             } catch (error) {
-                const replica = this.readReplica(scope, address);
-                if (replica) this.writeReplica(scope, { ...replica, status: 'error' });
+                this.writeLatestReplicaStatus(scope, address, 'error');
                 throw error;
             }
         }

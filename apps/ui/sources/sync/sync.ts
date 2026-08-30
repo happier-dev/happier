@@ -2121,16 +2121,6 @@ class Sync {
 
 
         onSessionVisible = (sessionId: string) => {
-            const capturedDraftScope = getActiveServerAccountScope();
-            if (capturedDraftScope) {
-                fireAndForget(materializeVisibleExistingSessionDraft({
-                    sessionId,
-                    capturedScope: capturedDraftScope,
-                    readActiveScope: getActiveServerAccountScope,
-                    ensureRuntimeReady: () => this.ensureSessionDraftRepositoryRuntimeReady(),
-                    materializeExact: materializeExactSessionDraft,
-                }), { tag: 'Sync.onSessionVisible.sessionDraft' });
-            }
             this.ensureSessionViewportHydrated();
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
             this.sessionTranscriptRetention.scheduleSweep();
@@ -2165,6 +2155,7 @@ class Sync {
                     tag: 'Sync.onSessionVisible.deferredSessionStateHydration',
                 });
             }
+            this.replayDeferredMessagesFetch(sessionId);
             this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
 
             // C6/D3: reopening a session is a reactive, list-independent bottom arrival. Drain any
@@ -2178,6 +2169,18 @@ class Sync {
                 voiceHooks.onSessionFocus(sessionId, session.metadata || undefined);
         }
     }
+
+        materializeExistingSessionDraft = async (sessionId: string): Promise<void> => {
+            const capturedDraftScope = getActiveServerAccountScope();
+            if (!capturedDraftScope) return;
+            await materializeVisibleExistingSessionDraft({
+                sessionId,
+                capturedScope: capturedDraftScope,
+                readActiveScope: getActiveServerAccountScope,
+                ensureRuntimeReady: () => this.ensureSessionDraftRepositoryRuntimeReady(),
+                materializeExact: materializeExactSessionDraft,
+            });
+        }
 
         refreshSessionMessages = async (sessionId: string): Promise<void> => {
             const normalized = String(sessionId ?? '').trim();
@@ -2384,6 +2387,10 @@ class Sync {
 
             const result = await inFlight;
             if (result.kind === 'available') {
+                // A message invalidation may have observed the session before this route
+                // hydration committed its owner. Replay that deferred attempt now that the
+                // owner is authoritative, instead of leaving the transcript permanently empty.
+                this.replayDeferredMessagesFetch(normalized);
                 this.getOrCreateMessagesSync(normalized).invalidateCoalesced();
             }
             return result;
@@ -5248,18 +5255,25 @@ class Sync {
 
     private replayDeferredMessagesFetch(sessionId: string): void {
         if (this.deferredMessagesFetchSessionIds.delete(sessionId)) {
-            this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+            // A deferred fetch may have been discovered by the currently running
+            // invalidation cycle (for example while route hydration resolves the
+            // session's owner server). `invalidateCoalesced()` intentionally does
+            // nothing while a cycle is already active, so it can strand the deferred
+            // transcript forever. Use the normal invalidation entry point here: it
+            // schedules the required post-run cycle when the first attempt is active,
+            // while retaining coalescing when no attempt has started yet.
+            this.getOrCreateMessagesSync(sessionId).invalidate();
         }
     }
 
     private fetchMessages = async (sessionId: string) => {
         if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
             // Do not fetch messages when we cannot resolve the session to either the active server
-            // or a locally known owner server. This avoids cross-server message fetches while keeping
-            // the UI state non-destructive during server-switch races.
-            if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
-                storage.getState().applyMessagesLoaded(sessionId);
-            }
+            // or a locally known owner server. This avoids cross-server message fetches. The owner
+            // can be transiently unresolved while a deep-link session row is being applied; do not
+            // publish that race as a successful empty transcript. Route hydration / the next
+            // visibility invalidation replays this deferred fetch once ownership is known.
+            this.deferredMessagesFetchSessionIds.add(sessionId);
             return;
         }
 
@@ -5303,7 +5317,11 @@ class Sync {
               return;
           }
 
-          if (!hasLoadedMessages) {
+          const loadedTranscript = storage.getState().sessionMessages[sessionId];
+          const hasMaterializedMessages = Object.keys(loadedTranscript?.messagesById ?? {}).length > 0;
+          // A previous interrupted open can leave a non-empty session hint with a loaded,
+          // zero-row cache. Treat that as cold so catch-up does not preserve the blank projection.
+          if (!hasLoadedMessages || (!hasMaterializedMessages && sessionSeqHint > 0)) {
               this.deferredForwardLoadingSessions.delete(sessionId);
               await fetchAndApplyMessages({
                   sessionId,
@@ -5698,8 +5716,8 @@ class Sync {
                   await this.withSessionCatchUpNewer(sessionId, async () => {
                       this.resetSessionTranscriptState(sessionId);
                       await this.fetchDirectSessionMessages(sessionId, directSessionLink);
-                  });
-                  return;
+              });
+              return;
               }
 
               const normalizedMessages = normalizeDirectTranscriptMessages(tail.items);

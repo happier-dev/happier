@@ -190,6 +190,23 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         vi.clearAllMocks();
     });
 
+    it('does not publish an empty loaded transcript while the route owner is unresolved', async () => {
+        const sessionId = 'route_owner_race';
+        const { sync } = await import('./sync');
+        const syncInternals = sync as unknown as {
+            hasFetchedSessionsSnapshotForActiveServer: boolean;
+            activeServerSessionIds: Set<string>;
+            deferredMessagesFetchSessionIds: Set<string>;
+        };
+        syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
+        syncInternals.activeServerSessionIds = new Set<string>();
+        syncInternals.deferredMessagesFetchSessionIds = new Set<string>();
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).not.toBe(true);
+        expect(syncInternals.deferredMessagesFetchSessionIds.has(sessionId)).toBe(true);
+    });
+
     it('keeps storage-present sessions absent from the active-server snapshot on the normal fetch path', async () => {
         // The active-server list snapshot is partial (archived sessions and rows beyond the
         // snapshot page are absent). A storage-present session resolved to the active server
