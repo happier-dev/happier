@@ -614,6 +614,27 @@ jobs:
             --tauri-target "${TAURI_TARGET}" \
             --ui-dir "apps/ui"
 
+      - name: Audit and smoke-test Linux desktop artifacts
+        if: runner.os == 'Linux'
+        env:
+          UI_VERSION: ${{ needs.resolve_source.outputs.ui_version }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          case "${RELEASE_ENVIRONMENT}" in
+            dev) base="happier-ui-desktop-dev-linux-x86_64" ;;
+            preview) base="happier-ui-desktop-preview-linux-x86_64" ;;
+            production) base="happier-ui-desktop-linux-x86_64-v${UI_VERSION}" ;;
+            *) echo "Unsupported environment: ${RELEASE_ENVIRONMENT}" >&2; exit 1 ;;
+          esac
+          appimage="dist/tauri/updates/linux-x86_64/${base}.AppImage"
+          mapfile -t packages < <(find dist/tauri/updates/linux-x86_64 -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print)
+          package_args=()
+          for package in "${packages[@]}"; do package_args+=(--package "$package"); done
+          node scripts/pipeline/tauri/audit-linux-desktop-artifacts.mjs --appimage "$appimage" "${package_args[@]}"
+          node scripts/pipeline/tauri/smoke-linux-appimage.mjs --appimage "$appimage"
+          node scripts/pipeline/tauri/smoke-linux-appimage-wayland.mjs --appimage "$appimage"
+
       - name: Clean private signing material
         if: always()
         shell: bash

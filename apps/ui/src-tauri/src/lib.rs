@@ -13,6 +13,9 @@ mod system_tasks;
 #[cfg(desktop)]
 mod window_chrome;
 
+#[cfg(desktop)]
+mod startup;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -94,6 +97,7 @@ pub fn run() {
             #[cfg(desktop)]
             match event {
                 tauri::RunEvent::Ready => {
+                    startup::emit_ready(app_handle);
                     window_chrome::present_main_window_for_lifecycle_event(
                         app_handle,
                         window_chrome::DesktopMainWindowLifecycleEvent::AppReady,

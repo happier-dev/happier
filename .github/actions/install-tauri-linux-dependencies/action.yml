@@ -21,7 +21,10 @@ runs:
           gstreamer1.0-tools \
           gstreamer1.0-plugins-base \
           squashfs-tools \
-          patchelf
+          patchelf \
+          xvfb \
+          weston \
+          rpm
 
         # linuxdeploy is distributed as an AppImage. Some runner images need
         # FUSE libraries or utilities even when extraction mode is available.
@@ -44,3 +47,18 @@ runs:
         if [ -n "${fuse_utils}" ]; then
           sudo apt-get install -y --no-install-recommends "${fuse_utils}"
         fi
+
+        # Tauri's mirrored linuxdeploy can bundle host-coupled Wayland libraries.
+        # Install a pinned upstream build that honors LINUXDEPLOY_EXCLUDED_LIBRARIES.
+        linuxdeploy_version="1-alpha-20251107-1"
+        linuxdeploy_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/tauri"
+        mkdir -p "${linuxdeploy_dir}"
+        linuxdeploy_path="${linuxdeploy_dir}/linuxdeploy-x86_64.AppImage"
+        curl -L --fail --show-error --retry 3 \
+          "https://github.com/linuxdeploy/linuxdeploy/releases/download/${linuxdeploy_version}/linuxdeploy-x86_64.AppImage" \
+          -o "${linuxdeploy_path}"
+        printf '%s  %s\n' \
+          'c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d' \
+          "${linuxdeploy_path}" | sha256sum --check --strict
+        chmod +x "${linuxdeploy_path}"
+        APPIMAGE_EXTRACT_AND_RUN=1 "${linuxdeploy_path}" --appimage-version

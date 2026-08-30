@@ -1,9 +1,11 @@
 // @ts-check
 
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
+import { isLinuxDesktopPackage } from './linux-desktop-artifact-policy.mjs';
 
 function fail(message) {
   console.error(message);
@@ -197,6 +199,22 @@ function main() {
     fs.mkdirSync(outDir, { recursive: true });
     fs.copyFileSync(artifactPath, outArtifact);
     fs.copyFileSync(sigPath, outSig);
+
+    // Linux native packages are release downloads, not Tauri updater payloads. Keep the
+    // updater selection above AppImage-only while publishing the packages beside it.
+    if (platformKey.startsWith('linux-')) {
+      const packageCandidates = findMatching(files, (p) => {
+        const normalized = p.replaceAll(path.sep, '/');
+        return normalized.includes('/release/bundle/') && isLinuxDesktopPackage(path.basename(p));
+      });
+      for (const packagePath of packageCandidates) {
+        const packageExt = path.extname(packagePath).toLowerCase();
+        const outPackage = path.join(outDir, `${outBase}${packageExt}`);
+        fs.copyFileSync(packagePath, outPackage);
+        const digest = crypto.createHash('sha256').update(fs.readFileSync(outPackage)).digest('hex');
+        fs.writeFileSync(`${outPackage}.sha256`, `${digest}  ${path.basename(outPackage)}\n`);
+      }
+    }
   }
 
   if (platformKey.startsWith('darwin-')) {

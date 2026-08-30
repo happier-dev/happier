@@ -92,6 +92,12 @@ export function resolveLinuxTauriBundlerEnvOverrides(env = process.env) {
     // Ensure we get actionable backtraces in logs when linuxdeploy/AppImageKit fails.
     APPIMAGE_EXTRACT_AND_RUN: env.APPIMAGE_EXTRACT_AND_RUN ?? '1',
 
+    // Wayland client libraries must match the host EGL/Mesa stack. Bundling the Ubuntu
+    // build-host copies makes WebKitGTK abort with EGL_BAD_PARAMETER on newer Wayland hosts.
+    LINUXDEPLOY_EXCLUDED_LIBRARIES:
+      env.LINUXDEPLOY_EXCLUDED_LIBRARIES ??
+      'libwayland-client.so*;libwayland-cursor.so*;libwayland-egl.so*;libwayland-server.so*',
+
     // Disable stripping to avoid failures from older AppImageKit/tooling when encountering
     // newer ELF metadata/sections. Size impact is acceptable for rolling dev builds.
     NO_STRIP: env.NO_STRIP ?? '1',
