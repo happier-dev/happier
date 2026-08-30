@@ -98,10 +98,10 @@ function encodeOpaqueCursor(cursor: Readonly<{
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
-async function countFsPromiseResources<T>(work: () => Promise<T>): Promise<Readonly<{
+const countFsPromiseResources = async <T>(work: () => Promise<T>): Promise<Readonly<{
   result: T;
   count: number;
-}>> {
+}>> => {
   let count = 0;
   const hook = createHook({
     init: (_asyncId, type) => {
@@ -114,7 +114,7 @@ async function countFsPromiseResources<T>(work: () => Promise<T>): Promise<Reado
   } finally {
     hook.disable();
   }
-}
+};
 
 describe('pageCodexTranscript late child rollout discovery', () => {
   it('includes a child whose spawn event is beyond the bounded discovery window', async () => {

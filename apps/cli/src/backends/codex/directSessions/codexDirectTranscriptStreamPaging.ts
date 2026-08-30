@@ -42,10 +42,10 @@ type CodexStreamDiscovery = Readonly<{
   lineStartOffsetBytes: number;
 }>;
 
-async function readDiscoveredChildThreadIds(params: Readonly<{
+const readDiscoveredChildThreadIds = async (params: Readonly<{
   streams: readonly CodexDirectTranscriptRolloutStream[];
   discovery: CodexStreamDiscovery;
-}>): Promise<readonly string[]> {
+}>): Promise<readonly string[]> => {
   const parent = params.streams.find((stream) => stream.fileRelPath === params.discovery.fileRelPath);
   if (!parent) return [];
   const page = await readJsonlFileForward({
@@ -64,7 +64,7 @@ async function readDiscoveredChildThreadIds(params: Readonly<{
     semanticTracker: createCodexRolloutSemanticTracker(),
   });
   return projected.discoveredChildThreadIds;
-}
+};
 
 function normalizeOffsetBytes(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
