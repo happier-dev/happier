@@ -94,6 +94,65 @@ if (args[0] === 'ls-remote') process.stdout.write((process.env.GHOPS_TEST_REMOTE
   return { fakeGit, gitLog };
 }
 
+function createMacHostCredentialFixture(dir, { token = 'mac-host-keychain-token' } = {}) {
+  const storageDir = join(dir, 'stacks');
+  const stackName = 'ghops-managed-vm';
+  const stackDir = join(storageDir, stackName);
+  const sshConfigFile = join(dir, 'mac-host.ssh.config');
+  const fakeSsh = join(dir, 'ssh');
+  const sshLog = join(dir, 'ssh-log.jsonl');
+  mkdirSync(stackDir, { recursive: true });
+  writeFileSync(sshConfigFile, 'Host happier-dev-target-mac-host\n  HostName 127.0.0.1\n', 'utf8');
+  writeFileSync(join(stackDir, 'dev-targets.json'), JSON.stringify({
+    version: 2,
+    targets: [{
+      name: 'mac-host',
+      platform: 'posix',
+      ssh: 'happier-dev-target-mac-host',
+      sshConfigFile,
+      repoDir: '/Users/test/.happier-stack/workspace-mirror/0.2',
+      cliHomeDir: '/Users/test/.happier/stacks/ghops-managed-vm/cli',
+    }],
+    runtimePlacement: {},
+  }), 'utf8');
+  writeFileSync(
+    fakeSsh,
+    `#!/usr/bin/env node
+const { appendFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+appendFileSync(process.env.GHOPS_TEST_SSH_LOG, JSON.stringify({ args, input }) + '\\n');
+if (process.env.GHOPS_TEST_SSH_FAIL === '1') {
+  process.stderr.write('host credential route unavailable\\n');
+  process.exit(255);
+}
+process.stdout.write(JSON.stringify({
+  version: 1,
+  ok: true,
+  credential: { HAPPIER_GITHUB_BOT_TOKEN: process.env.GHOPS_TEST_MAC_HOST_TOKEN },
+}) + '\\n');
+});
+`,
+    'utf8',
+  );
+  chmodSync(fakeSsh, 0o755);
+  return {
+    env: {
+      PATH: `${dir}:${process.env.PATH ?? ''}`,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_STACK: stackName,
+      GHOPS_TEST_MAC_HOST_TOKEN: token,
+      GHOPS_TEST_SSH_LOG: sshLog,
+    },
+    sshConfigFile,
+    sshLog,
+    token,
+  };
+}
+
 test('prints help without requiring a token', () => {
   const res = runGhop(['--help'], {
     HAPPIER_GITHUB_BOT_TOKEN: '',
@@ -236,12 +295,86 @@ test('fails closed when token is missing', () => {
   const res = runGhop(['api', 'repos/happier-dev/happier'], {
     PATH: `${dir}:${process.env.PATH ?? ''}`,
     GHOPS_TEST_KEYCHAIN_STORE: keychainStore,
+    HAPPIER_STACK_STORAGE_DIR: join(dir, 'empty-stacks'),
+    HAPPIER_STACK_STACK: 'ghops-no-targets',
     HAPPIER_GITHUB_BOT_TOKEN: '',
     GH_TOKEN: '',
     GITHUB_TOKEN: '',
   });
   assert.notEqual(res.status, 0);
   assert.match(res.stderr, /HAPPIER_GITHUB_BOT_TOKEN/);
+});
+
+test('uses the execution-host credential broker when the VM has no environment token', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-mac-host-token-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const fixture = createMacHostCredentialFixture(dir);
+
+  const res = runGhop(['api', 'repos/happier-dev/happier'], {
+    ...fixture.env,
+    HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    GH_TOKEN: 'personal-token-should-not-be-used',
+    GITHUB_TOKEN: 'personal-token-should-not-be-used',
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(JSON.parse(res.stdout).token, fixture.token);
+  const { args: sshArgs, input } = JSON.parse(readFileSync(fixture.sshLog, 'utf8').trim());
+  assert.deepEqual(sshArgs.slice(0, 3), ['-T', '-F', fixture.sshConfigFile]);
+  assert.ok(sshArgs.includes('happier-dev-target-mac-host'));
+  assert.match(sshArgs.at(-1), /happier-ghops-brokers-/);
+  assert.match(sshArgs.at(-1), /\/usr\/bin\/nc -U/);
+  assert.deepEqual(JSON.parse(input), { version: 1, operation: 'read-ghops-credential' });
+});
+
+test('keeps bot Git pushes on the authoritative checkout when the credential comes from mac-host', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-mac-host-git-push-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const { fakeGit, gitLog } = createFakeGitPushTool(dir);
+  const fixture = createMacHostCredentialFixture(dir, { token: 'mac-host-git-push-token' });
+  const localSha = '5555555555555555555555555555555555555555';
+
+  const res = runGhop([
+    'git',
+    'push',
+    '--repo',
+    'happier-dev/happier',
+    '--source',
+    'HEAD',
+    '--target',
+    'refs/heads/pr-123',
+  ], {
+    ...fixture.env,
+    HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    HAPPIER_GHOPS_GIT_PATH: fakeGit,
+    GHOPS_TEST_GIT_LOG: gitLog,
+    GHOPS_TEST_LOCAL_SHA: localSha,
+  });
+
+  assert.equal(res.status, 0, res.stderr);
+  const gitCalls = readFileSync(gitLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.ok(gitCalls.some((call) => call.args[0] === 'push'));
+  assert.equal(readFileSync(fixture.sshLog, 'utf8').trim().split('\n').length, 1);
+});
+
+test('fails closed when the configured mac-host credential route is unavailable', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-mac-host-unavailable-test-'));
+  const { fakeGh } = createFakeBotAuthTools(dir);
+  const fixture = createMacHostCredentialFixture(dir);
+
+  const res = runGhop(['api', 'repos/happier-dev/happier'], {
+    ...fixture.env,
+    GHOPS_TEST_SSH_FAIL: '1',
+    HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_GH_PATH: fakeGh,
+    GH_TOKEN: 'personal-token-should-not-be-used',
+  });
+
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /mac-host.*credential/i);
+  assert.doesNotMatch(`${res.stdout}\n${res.stderr}`, /personal-token-should-not-be-used/);
 });
 
 test('rejects an ordinary command when the token belongs to a different GitHub identity', () => {
