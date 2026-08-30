@@ -2204,3 +2204,17 @@ jobs:
         with:
           name: stress-artifacts
           path: .project/logs/e2e
+
+  ci_summary:
+    name: CI result summary (all lanes)
+    if: always()
+    needs: [ui-e2e, ui-e2e-wsrepl-lima, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Collect every lane conclusion
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module -e 'const n=JSON.parse(process.env.NEEDS_JSON); const f=Object.entries(n).filter(([_,v])=>["failure","cancelled"].includes(v.result)); for(const [id,v] of Object.entries(n)) console.log(id+" => "+v.result); if(f.length){console.error("Failed or cancelled CI lanes:"); for(const [id,v] of f) console.error("- "+id+" => "+v.result); process.exit(1)}'
