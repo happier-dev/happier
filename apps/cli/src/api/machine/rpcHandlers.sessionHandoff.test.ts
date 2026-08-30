@@ -7300,9 +7300,11 @@ function createLoopbackMachineTransferChannels() {
       });
 
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
       expect(prepare).toBeDefined();
+      expect(statusGet).toBeDefined();
 
-      await expect(prepare!({
+      const preparePromise = prepare!({
         handoffId: 'handoff_invalid_direct_peer_payload',
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
@@ -7334,7 +7336,16 @@ function createLoopbackMachineTransferChannels() {
             }),
           },
         ],
-      })).rejects.toThrow();
+      });
+
+      // Prepare acknowledges the durable job before the background transfer/parser settles.
+      // Fail-closed behavior is observed through the persisted terminal recovery state.
+      const prepared = await preparePromise;
+      expect(prepared?.status?.status).toBe('pending');
+      await vi.waitFor(async () => {
+        const latest = await statusGet!({ handoffId: 'handoff_invalid_direct_peer_payload' });
+        expect(latest?.status?.status).toBe('awaiting_recovery');
+      }, { timeout: 2000 });
 
       expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
