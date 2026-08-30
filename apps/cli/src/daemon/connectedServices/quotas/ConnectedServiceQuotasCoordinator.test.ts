@@ -10445,6 +10445,126 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(fetcher.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('honors a refresh request for an inactive profile between discovery passes', async () => {
+    let now = 1_000_000;
+    let refreshRequestedAt: number | undefined;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'inactive',
+      kind: 'oauth',
+      expiresAt: now + 600_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'inactive@example.com',
+      },
+    });
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const listConnectedServiceProfiles = vi.fn(async () => ({
+      serviceId: 'openai-codex' as const,
+      profiles: [{ profileId: 'inactive', status: 'connected' as const }],
+    }));
+    const api = {
+      listConnectedServiceProfiles,
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async (): Promise<SealedQuotaSnapshotResponse> => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: 'sealed' },
+        metadata: {
+          fetchedAt: 1_000_000,
+          staleAfterMs: 300_000,
+          status: 'ok',
+          ...(refreshRequestedAt === undefined ? {} : { refreshRequestedAt }),
+        },
+      })),
+      getConnectedServiceCredentialSealed: vi.fn(async () => sealedCredential),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      fetch: vi.fn(async () => null),
+    };
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: true,
+      discoveryIntervalMs: 900_000,
+    });
+
+    await coordinator.tickOnce();
+    expect(listConnectedServiceProfiles).toHaveBeenCalledTimes(1);
+    expect(fetcher.fetch).not.toHaveBeenCalled();
+
+    refreshRequestedAt = 1_000_001;
+    now += 60_000;
+    await coordinator.tickOnce();
+
+    expect(listConnectedServiceProfiles).toHaveBeenCalledTimes(2);
+    expect(fetcher.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries inactive-profile discovery on the next tick after a transient list failure', async () => {
+    let now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const listConnectedServiceProfiles = vi.fn()
+      .mockRejectedValueOnce(new Error('transient'))
+      .mockResolvedValueOnce({
+        serviceId: 'openai-codex',
+        profiles: [{ profileId: 'inactive', status: 'connected' as const }],
+      });
+    const api = {
+      listConnectedServiceProfiles,
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async (): Promise<SealedQuotaSnapshotResponse> => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: 'sealed' },
+        metadata: { fetchedAt: now, staleAfterMs: 300_000, status: 'ok' },
+      })),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      fetch: vi.fn(async () => null),
+    };
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: true,
+      discoveryIntervalMs: 900_000,
+    });
+
+    await coordinator.tickOnce();
+    now += 60_000;
+    await coordinator.tickOnce();
+
+    expect(listConnectedServiceProfiles).toHaveBeenCalledTimes(2);
+  });
+
   it('aborts quota fetchers that exceed the timeout', async () => {
     vi.useFakeTimers();
     const now = 1_000_000;
