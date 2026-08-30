@@ -2,10 +2,6 @@ import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent, type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
-import {
-    TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
-    isLargeTextInputValueLength,
-} from '@/components/ui/forms/largeTextInputPolicy';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
 import {
     areActiveWordsEqual,
@@ -230,23 +226,6 @@ function updateLayoutHeight(
 ): void {
     const nextHeight = normalizeLayoutHeightPx(height);
     setHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
-}
-
-type AgentInputPendingParentTextSync = {
-    text: string;
-    hasFlushed: boolean;
-};
-
-function shouldDeferAgentInputParentTextSync(
-    parentText: string,
-    nextText: string,
-): boolean {
-    if (!isLargeTextInputValueLength(nextText.length)) {
-        return false;
-    }
-    const parentStatus = resolveLiveInputTextStatus(parentText);
-    const nextStatus = resolveLiveInputTextStatus(nextText);
-    return parentStatus.hasText === nextStatus.hasText;
 }
 
 type ProgrammaticHistoryInputState = Readonly<{
@@ -1423,9 +1402,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ));
     const [hasAutocompleteTextInteraction, setHasAutocompleteTextInteraction] = React.useState(false);
     const lastControlledValueRef = React.useRef(props.value);
-    const onChangeTextRef = React.useRef(props.onChangeText);
-    const deferredParentTextSyncRef = React.useRef<AgentInputPendingParentTextSync | null>(null);
-    const deferredParentTextSyncTimerRef = React.useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
     const inputScopeKeyRef = React.useRef<string | null>(props.sessionId ?? null);
     // Selection restore is an OPEN-time resumption: applied at most once per generation,
     // and voided as soon as the user edits (see composerSelectionRestore).
@@ -1435,56 +1411,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const structuredInputMentions = props.structuredInputMentions ?? uncontrolledStructuredInputMentions;
     const structuredInputMentionsRef = React.useRef<readonly ComposerStructuredInputMention[]>(structuredInputMentions);
     const historyAppliedInputStateRef = React.useRef<ProgrammaticHistoryInputState | null>(null);
-
-    React.useEffect(() => {
-        onChangeTextRef.current = props.onChangeText;
-    }, [props.onChangeText]);
-
-    const clearDeferredParentTextSync = React.useCallback(() => {
-        if (deferredParentTextSyncTimerRef.current !== null) {
-            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
-            deferredParentTextSyncTimerRef.current = null;
-        }
-        deferredParentTextSyncRef.current = null;
-    }, []);
-
-    const flushDeferredParentTextSync = React.useCallback(() => {
-        const pending = deferredParentTextSyncRef.current;
-        if (!pending) return null;
-        if (deferredParentTextSyncTimerRef.current !== null) {
-            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
-            deferredParentTextSyncTimerRef.current = null;
-        }
-        if (!pending.hasFlushed) {
-            pending.hasFlushed = true;
-            onChangeTextRef.current(pending.text);
-        }
-        return pending.text;
-    }, []);
-
-    const scheduleDeferredParentTextSync = React.useCallback((text: string) => {
-        deferredParentTextSyncRef.current = {
-            text,
-            hasFlushed: false,
-        };
-        if (deferredParentTextSyncTimerRef.current !== null) {
-            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
-        }
-        deferredParentTextSyncTimerRef.current = globalThis.setTimeout(() => {
-            deferredParentTextSyncTimerRef.current = null;
-            const pending = deferredParentTextSyncRef.current;
-            if (!pending || pending.hasFlushed) return;
-            pending.hasFlushed = true;
-            onChangeTextRef.current(pending.text);
-        }, TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS);
-    }, []);
-
-    React.useEffect(() => () => {
-        if (deferredParentTextSyncTimerRef.current !== null) {
-            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
-            deferredParentTextSyncTimerRef.current = null;
-        }
-    }, []);
 
     React.useEffect(() => {
         structuredInputMentionsRef.current = structuredInputMentions;
@@ -1571,7 +1497,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     React.useEffect(() => {
         if (props.value === lastControlledValueRef.current) return;
-        clearDeferredParentTextSync();
         lastControlledValueRef.current = props.value;
 
         const current = inputStateRef.current;
@@ -1602,7 +1527,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setLiveTextStatus(nextStatus);
         }
         updateInputSelectionState(nextSelection);
-    }, [clearDeferredParentTextSync, props.value, updateActiveWordState, updateInputSelectionState, updateStructuredInputMentions]);
+    }, [props.value, updateActiveWordState, updateInputSelectionState, updateStructuredInputMentions]);
 
     React.useEffect(() => {
         updateActiveWordState(inputStateRef.current);
@@ -1646,14 +1571,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         // replace it. Void the restore for this composer from here on.
         composerEditedSinceOpenRef.current = true;
         setHasAutocompleteTextInteraction(true);
-        const isProgrammaticHistoryApply = historyAppliedInputStateRef.current?.state.text === text;
-        if (isProgrammaticHistoryApply || !shouldDeferAgentInputParentTextSync(lastControlledValueRef.current, text)) {
-            clearDeferredParentTextSync();
-            props.onChangeText(text);
-            return;
-        }
-        scheduleDeferredParentTextSync(text);
-    }, [clearDeferredParentTextSync, props.onChangeText, scheduleDeferredParentTextSync]);
+        props.onChangeText(text);
+    }, [props.onChangeText]);
 
     React.useEffect(() => {
         const selection = props.inputPersistence?.initialSelection;
@@ -1687,8 +1606,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (sendActionDisabled) {
             return;
         }
-        const liveInputText = flushDeferredParentTextSync()
-            ?? inputRef.current?.flushPendingTextChange?.()
+        const liveInputText = inputRef.current?.flushPendingTextChange?.()
             ?? inputRef.current?.getText?.()
             ?? inputStateRef.current.text;
         recordLargeTextInputDiagnostic({
@@ -1733,7 +1651,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         );
     }, [
         messageHistory,
-        flushDeferredParentTextSync,
         props.onSend,
         props.sessionId,
         props.value,
@@ -1793,10 +1710,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [composerKeyboardLayoutForFocus, messageHistory, props.autocompleteKinds]);
 
     const handleComposerBlur = React.useCallback(() => {
-        flushDeferredParentTextSync();
+        inputRef.current?.flushPendingTextChange?.();
         composerKeyboardLayoutForFocus?.setComposerInputFocused?.(false);
         setIsInputFocused(false);
-    }, [composerKeyboardLayoutForFocus, flushDeferredParentTextSync]);
+    }, [composerKeyboardLayoutForFocus]);
 
     const applyHistoryInputText = React.useCallback((next: string) => {
         const nextState = { text: next, selection: { start: next.length, end: next.length } };
@@ -3008,11 +2925,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         theme.colors.overlay.scrimWizard,
         uiBackdropBlurEnabled,
     ]);
-    const deferredParentTextSync = deferredParentTextSyncRef.current;
-    const renderedComposerInputValue = deferredParentTextSync && props.value === lastControlledValueRef.current
-        ? deferredParentTextSync.text
-        : props.value;
-
     const renderComposerInput = () => (
         <View
             ref={composerAnchorRef}
@@ -3027,7 +2939,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 ref={inputRef}
                 testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
                 textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
-                value={renderedComposerInputValue}
+                value={props.value}
                 paddingTop={Platform.OS === 'web' ? 10 : 8}
                 paddingBottom={Platform.OS === 'web' ? 10 : 8}
                 paddingRight={shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : undefined}
