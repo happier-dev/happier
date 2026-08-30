@@ -1,25 +1,25 @@
 # Changelog
 
-## Release 2026-08-20.1 - 2026-08-20
+## Release 2026-08-29.1 - 2026-08-29
 
 <!-- happier-release-note-projections:v1
 {
   "expo": {
-    "message": "Happier 0.2.10 adds Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable message delivery."
+    "message": "Happier 0.2.11 adds Connected Services and account pools, cross-Agent continuation, synchronized encrypted drafts, durable Actions, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and stronger handoff and delivery."
   },
   "appStore": {
-    "whatsNew": "Happier 0.2.10 adds Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable message delivery."
+    "whatsNew": "Happier 0.2.11 adds Connected Services and account pools, cross-Agent continuation, synchronized encrypted drafts, durable Actions, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and stronger handoff and delivery."
   },
   "playStore": {
-    "whatsNew": "Happier 0.2.10 adds Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable message delivery."
+    "whatsNew": "Happier 0.2.11 adds Connected Services and account pools, cross-Agent continuation, synchronized encrypted drafts, durable Actions, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and stronger handoff and delivery."
   },
   "storyDeck": {
-    "summary": "Connected Services and account pools, cross-Agent continuation, goals and workflows, Mobile Cockpit and Swipe Teleport, expanded Agents and models, session organization, code review, and durable messaging."
+    "summary": "Connected Services and account pools, encrypted synchronized drafts, durable Actions, cross-Agent continuation, Mobile Cockpit, expanded Agents, handoff, code review, and durable messaging."
   }
 }
 -->
 
-Happier 0.2.10 brings together the public 0.2.x work completed since 0.2.1. It substantially expands how you choose Agents and models, manage accounts and quotas, work from your phone, follow goals and delegated work, organize sessions, review code, and continue work across Agents and machines.
+Happier 0.2.11 brings together the public 0.2.x work completed since 0.2.1. It substantially expands how you choose Agents and models, manage accounts and quotas, work from your phone, follow goals and delegated work, organize sessions, review code, and continue work across Agents and machines.
 
 ### Connected Services and account pools
 
@@ -74,6 +74,8 @@ Claude Agent Teams can be created and managed from Happier. You can monitor team
 
 Agents can also use Happier's action system to create additional sessions, assign work, message permitted sessions, inspect status and history, and coordinate work in the same workspace. Sensitive actions can pause for an approval in the composer, while provider prompts are suppressed when Happier already owns the approval decision.
 
+Long-running session Actions now run under daemon-owned operation custody. Progress and encrypted revisions survive reconnects, appear in Activity, and reopen with the draft and workflow context that started the operation.
+
 Automations can target existing sessions or create new ones on a schedule, and now also support an explicit **Run now** action.
 
 ### Mobile Cockpit and Swipe Teleport
@@ -100,6 +102,7 @@ A thumb-reachable new-session action also makes it faster to start related work 
 - **Cursor is now integrated as a first-class Agent choice**, with model discovery, runtime configuration, session resume, questions, todos, tasks and generated images mapped through Happier's shared surfaces.
 - **Grok Build is available as an experimental Agent integration.** It uses models advertised by the active Grok session, exposes reasoning controls only where supported, handles structured and freeform questions, and publishes generated images through Happier's session media.
 - **GitHub Copilot and Kiro join the Agent picker**, alongside continued support for Claude, Codex, OpenCode, Gemini, Qwen, Kimi, Auggie, Kilo and Pi.
+- **Pi's experimental integration now includes a bundled Happier tools bridge**, native session-Agent tools, blocking dialogs through normal permission surfaces, live context-usage reporting, Direct-session browsing and takeover, configurable prompt behavior, and recovery for rate limits reported by the active model provider.
 - **MiniMax profiles are built in** for its global and China endpoints, with compatible Claude and Codex configuration.
 - **Claude Opus 5 is available from the Claude model catalog.**
 - Happier can use live model lists where a backend exposes them and use its provider catalog where necessary.
@@ -159,8 +162,11 @@ Review comments and Git write operations remain experimental and are enabled sep
 - Sending to an inactive session can wake and resume it before delivery.
 - Browse existing Claude, Codex and OpenCode sessions on a connected machine, open them as provider-backed Direct sessions, or take over and sync them into Happier.
 - Fork a conversation from a chosen message. Happier uses native provider forks where available and bounded replay context elsewhere.
+- Fork a session directly from its session row. Forked sessions receive recognizable titles while preserving proven lineage and provider state.
 - Hand off supported sessions between machines while retaining the Happier session id. Claude and OpenCode handoff are supported; Codex handoff remains experimental. Workspace transfer is optional.
+- Choose a destination path during session handoff using the shared path picker and recent paths. Long transfers stream live progress through tracked operations and use transfer-appropriate RPC and polling budgets.
 - Per-session drafts survive navigation and restarts, while arrow-key message history can recall earlier prompts without destroying the draft you were writing.
+- Session and new-session drafts can synchronize between devices as encrypted account data when the server supports the typed draft contract. Existing local drafts migrate only after durable acknowledgement, newer edits are protected from stale asynchronous clears, and resumable drafts appear in session lists. Older servers retain local-only draft behavior.
 
 Direct sessions remain experimental and require the owning machine to be reachable until they are imported or synced into Happier.
 
@@ -173,6 +179,8 @@ The same transfer foundation supports prompt assets, attachments, workspace file
 Transcripts now use the shared LegendList-based renderer across web and native clients, giving the main conversation, sidechains and read-only views consistent navigation behavior.
 
 Streaming can follow the live tail while still letting you scroll away to read earlier work. Loading older history preserves the visible area, reopening a session can restore your previous reading position, and automatic navigation respects reduced-motion preferences.
+
+Web transcript Text Size and Content Width settings now apply consistently. Deferred history backfill avoids loading older transcript pages until they are needed.
 
 Long sessions gain a navigation rail for earlier turns and pinned messages, including jumps to history that has not loaded yet. Transcript messages can also be selected, copied or sent into another session as a draft.
 
@@ -225,7 +233,7 @@ Desktop, web and native surfaces now share a more consistent interaction languag
 - Avatar styles are deterministic across devices. Active sessions retain color, while completed and archived sessions use a quieter monochrome treatment.
 - Theme changes animate on supported desktop and web surfaces, while status motion and long-running animation honor visibility and reduced-motion policy.
 - The web app can be installed as a PWA.
-- French localization has been added.
+- French and German localization have been added.
 - Focus restoration, touch handling, responsive layouts and screen-reader announcements received broader refinement.
 
 A rich Markdown editor supports headings, emphasis, task lists, blockquotes, links, code blocks and slash commands, with a raw fallback when safe round-tripping is not possible. Tables, math, Mermaid and images are not yet supported by the rich editor itself.
@@ -267,11 +275,14 @@ Tracked sessions move to the current session runner after a CLI update or restar
 - `happier status` provides a read-only setup report covering authentication, relay health, service state, CLI installation and Connected Services.
 - `happier service start|stop|status|repair` gives explicit background-service control.
 - `happier doctor repair` can inspect and converge common installation and channel problems.
+- Fresh CLI installs can continue into guided machine setup and reachable-host provisioning. Managed provider CLI installs can be promoted through the active Happier release.
 - `happier resume`, `happier attach`, `happier session`, profiles and JSON control output expand terminal-driven workflows.
 - `/happier-diagnose`, System Status and richer bug-report diagnostics make it easier to capture actionable runtime evidence.
 - Terminal, tmux and zellij recovery, focus, pane cleanup and server switching have been strengthened.
 - Windows runtime discovery, home paths, command shims, service handling and terminal quoting received dedicated work.
-- Self-hosted deployments gain clearer readiness and database diagnostics, configurable SQLite limits, migration-only startup support, compressed UI delivery and additional database and authentication compatibility improvements.
+- Linux daemon workloads can run in systemd user slices for clearer resource and lifecycle ownership.
+- Self-hosted deployments gain clearer readiness and database diagnostics, configurable SQLite limits, migration-only startup support, compressed UI delivery and additional database and authentication compatibility improvements. Self-hosted server binaries carry their migration closure and apply packaged migrations during installation and startup unless the operator explicitly opts out.
+- The development Stack treats PostgreSQL as a first-class light-preset provider.
 
 The development Stack can rebuild and reload the UI, server and CLI without unnecessarily dropping active sessions. Planned reloads show a server-restarting state, failed rebuilds preserve the last working server, and unchanged workspaces skip repeated installation work. Remote targets, tunnels, snapshots and local workers are supervised independently so one development target does not silently replace another.
 
@@ -285,21 +296,21 @@ Large transcripts and session lists reuse more unchanged work, while inactive pa
 
 Sensitive runtime identifiers and credentials are kept out of normal diagnostics, while unsupported or ambiguous operations return visible outcomes instead of being treated as success.
 
-Some features require matching 0.2.10 server or CLI support. When that support cannot be proven, the app hides the action, reports the limitation, or uses its documented compatibility behavior rather than claiming success.
+Some features require matching 0.2.11 server or CLI support. When that support cannot be proven, the app hides the action, reports the limitation, or uses its documented compatibility behavior rather than claiming success.
 
 ### Thank you
 
 Thank you to everyone who tested development releases, reported problems, suggested improvements and contributed code.
 
 - [@jaylfc](https://github.com/jaylfc) for Grok Build as a first-class coding Agent in [#195](https://github.com/happier-dev/happier/pull/195).
-- [@octo-patch](https://github.com/octo-patch) for the built-in MiniMax global and China profiles in [#212](https://github.com/happier-dev/happier/pull/212).
+- [@octo-patch](https://github.com/octo-patch) for the built-in MiniMax global and China profiles in [#212](https://github.com/happier-dev/happier/pull/212), and for refreshing the MiniMax model identity.
 - [@danljungstrom](https://github.com/danljungstrom) for Claude command preservation, transcript filtering, server compatibility and presence fixes, custom-model input, and runtime Claude model discovery in [#202](https://github.com/happier-dev/happier/pull/202), [#206](https://github.com/happier-dev/happier/pull/206), [#222](https://github.com/happier-dev/happier/pull/222), [#223](https://github.com/happier-dev/happier/pull/223), [#236](https://github.com/happier-dev/happier/pull/236), and [#237](https://github.com/happier-dev/happier/pull/237).
 - [@richwomanbtc](https://github.com/richwomanbtc) for Claude setup-token authentication and Agent-style TeX rendering in [#242](https://github.com/happier-dev/happier/pull/242) and [#261](https://github.com/happier-dev/happier/pull/261).
-- [@hubikj](https://github.com/hubikj) for restoring web QR readability and improving disabled-signup recovery in [#241](https://github.com/happier-dev/happier/pull/241) and [#260](https://github.com/happier-dev/happier/pull/260).
+- [@hubikj](https://github.com/hubikj) for restoring web QR readability, improving disabled-signup recovery, and making web transcript text-size and content-width settings apply consistently in [#241](https://github.com/happier-dev/happier/pull/241) and [#260](https://github.com/happier-dev/happier/pull/260).
 - [@Miista](https://github.com/Miista) for reducing the relay-server Docker image in [#219](https://github.com/happier-dev/happier/pull/219).
 - [@DurdeuVlad](https://github.com/DurdeuVlad) for localizing unsupported transcript placeholders in [#209](https://github.com/happier-dev/happier/pull/209).
 - [@RobLoach](https://github.com/RobLoach) for CLI development tooling, Android keyboard sizing and native speech build fixes in [#162](https://github.com/happier-dev/happier/pull/162), [#163](https://github.com/happier-dev/happier/pull/163), [#164](https://github.com/happier-dev/happier/pull/164), and [#204](https://github.com/happier-dev/happier/pull/204).
-- [@Kunde21](https://github.com/Kunde21) for making malformed Claude assistant records fail softly in [#196](https://github.com/happier-dev/happier/pull/196).
+- [@Kunde21](https://github.com/Kunde21) for making malformed Claude assistant records fail softly in [#196](https://github.com/happier-dev/happier/pull/196), and for Pi's tools bridge, Direct sessions, context reporting and prompt controls.
 - [@HiddevH](https://github.com/HiddevH) for preventing SQLite WAL checkpoint starvation in [#190](https://github.com/happier-dev/happier/pull/190).
 - [@saketsawrav](https://github.com/saketsawrav) for serializing web terminal input in [#183](https://github.com/happier-dev/happier/pull/183).
 - [@jiuchuanll](https://github.com/jiuchuanll) for Codex title synchronization and native passthrough in [#168](https://github.com/happier-dev/happier/pull/168).
@@ -307,8 +318,11 @@ Thank you to everyone who tested development releases, reported problems, sugges
 - [@eusip](https://github.com/eusip) for resilient metadata writes and compressed mobile UI delivery in [#159](https://github.com/happier-dev/happier/pull/159) and [#158](https://github.com/happier-dev/happier/pull/158).
 - [@LightYear512](https://github.com/LightYear512) for resolving global Claude installations through the active runtime in [#153](https://github.com/happier-dev/happier/pull/153).
 - [@lucharo](https://github.com/lucharo) for the original cached-session-list idea.
+- [@karolzlot](https://github.com/karolzlot) for Codex shared-state recovery, Connected Services timestamp continuity and Claude structured dialogs.
+- [@jacobcoro](https://github.com/jacobcoro) for deferred web transcript history, fork-title preservation, worktree defaults and nested permission authority.
+- [@sergedc](https://github.com/sergedc) for synchronous stdin stream handling and chunked or bodyless POST support.
 
-Thank you as well to [@karolzlot](https://github.com/karolzlot), [@Zeninexu](https://github.com/Zeninexu), [@KolorYan](https://github.com/KolorYan), [@Cheddies1](https://github.com/Cheddies1), and [@NeskireDK](https://github.com/NeskireDK) for co-authored feature and reliability work included in this release.
+Thank you as well to [@Zeninexu](https://github.com/Zeninexu), [@KolorYan](https://github.com/KolorYan), [@Cheddies1](https://github.com/Cheddies1), and [@NeskireDK](https://github.com/NeskireDK) for co-authored feature and reliability work included in this release.
 
 ## Release 2026-08-09.1 - 2026-08-09
 

@@ -78,4 +78,19 @@ describe('ACP subprocess harness', () => {
       )
     })
   })
+
+  it('waits for a file payload instead of returning an empty partial write', async () => {
+    await withTempDir('happier-acp-subprocess-partial-write-', async (dir) => {
+      const outputPath = join(dir, 'partial.json')
+      writeFileSync(outputPath, '', 'utf8')
+
+      setTimeout(() => {
+        writeFileSync(outputPath, '{"ok":true}\n', 'utf8')
+      }, 25)
+
+      await expect(readFileEventually(outputPath, { timeoutMs: 2_000, intervalMs: 10 })).resolves.toBe(
+        '{"ok":true}\n',
+      )
+    })
+  })
 })

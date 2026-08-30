@@ -1,6 +1,6 @@
 {
   "name": "@happier-dev/cli",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "Mobile and Web client for Claude Code and Codex",
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
   "license": "MIT",

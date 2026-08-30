@@ -4319,6 +4319,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'source-sha': { type: 'string', default: '' },
               'workflow-control-sha': { type: 'string', default: '' },
               'resume-run-id': { type: 'string', default: '' },
+              'ci-run-id': { type: 'string', default: '' },
               'operation-id': { type: 'string', default: '' },
               'attempt-id': { type: 'string', default: 'attempt_1' },
               'release-notes-id': { type: 'string', default: '' },
@@ -4391,6 +4392,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const authorizedPromotionSourceSha = String(values['source-sha'] ?? '').trim().toLowerCase();
           const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
           const resumeRunId = String(values['resume-run-id'] ?? '');
+          const ciRunId = String(values['ci-run-id'] ?? '');
           const operationId = String(values['operation-id'] ?? '').trim();
           const attemptId = String(values['attempt-id'] ?? '').trim();
           const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
@@ -4423,6 +4425,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
           if (workflowControlSha && !FULL_GIT_SHA.test(workflowControlSha)) {
             fail('--workflow-control-sha must be a full 40-character lowercase Git commit SHA.');
+          }
+          if (ciRunId && !/^[1-9][0-9]*$/u.test(ciRunId)) {
+            fail('--ci-run-id must be a positive GitHub Actions run ID.');
           }
           if (resumeRunId && !/^[1-9][0-9]*$/u.test(resumeRunId)) {
             fail('--resume-run-id must be a positive GitHub Actions run ID.');
@@ -4525,6 +4530,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `qualified_v4_activation_approval=${qualifiedV4ActivationApproval}`,
               ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
               ...(resumeRunId ? ['-f', `resume_run_id=${resumeRunId}`] : []),
+              ...(ciRunId ? ['-f', `ci_run_id=${ciRunId}`] : []),
               ...(operationId ? ['-f', `hmaint_operation_id=${operationId}`] : []),
               ...(operationId ? ['-f', `hmaint_attempt_id=${attemptId}`] : []),
               '-f', `confirm=${action}`,
