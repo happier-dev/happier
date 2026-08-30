@@ -26,6 +26,22 @@ describe('agent model config', () => {
     const claudeModels = getAgentStaticModels('claude');
     const geminiModels = getAgentStaticModels('gemini');
 
+    expect(claude.staticModels?.find((model) => model.id === 'claude-sonnet-5')).toMatchObject({
+      id: 'claude-sonnet-5',
+      name: 'Sonnet 5',
+      description: expect.any(String),
+      contextWindowTokens: 1_000_000,
+      modelOptions: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'reasoning_effort',
+          currentValue: 'high',
+          options: expect.arrayContaining([
+            expect.objectContaining({ value: 'xhigh' }),
+            expect.objectContaining({ value: 'max' }),
+          ]),
+        }),
+      ]),
+    });
     expect(claude.staticModels?.find((model) => model.id === 'claude-fable-5')).toMatchObject({
       id: 'claude-fable-5',
       name: 'Fable 5',
@@ -111,7 +127,7 @@ describe('agent model config', () => {
     const optionIdsFor = (modelId: string): string[] =>
       claudeModels.find((model) => model.id === modelId)?.modelOptions?.map((option) => option.id) ?? [];
 
-    for (const modelId of ['claude-opus-5', 'claude-fable-5', 'claude-opus-4-8', 'claude-opus-4-7']) {
+    for (const modelId of ['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5', 'claude-opus-4-8', 'claude-opus-4-7']) {
       expect(optionIdsFor(modelId)).toContain('ultracode');
       const ultracode = claudeModels
         .find((model) => model.id === modelId)?.modelOptions?.find((option) => option.id === 'ultracode');
@@ -137,6 +153,7 @@ describe('agent model config', () => {
     expect(variantFor('claude-opus-4-6')).toBe('claude-opus-4-6[1m]');
     // Always-1M on the API: no opt-in toggle surfaced.
     expect(variantFor('claude-opus-5')).toBeUndefined();
+    expect(variantFor('claude-sonnet-5')).toBeUndefined();
     expect(variantFor('claude-fable-5')).toBeUndefined();
     expect(variantFor('claude-opus-4-8')).toBeUndefined();
     expect(variantFor('claude-opus-4-7')).toBeUndefined();

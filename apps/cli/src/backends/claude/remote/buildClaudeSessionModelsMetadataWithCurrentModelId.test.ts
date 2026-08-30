@@ -36,7 +36,7 @@ describe('buildClaudeSessionModelsMetadataWithCurrentModelId', () => {
     const update = buildClaudeSessionModelsMetadataWithCurrentModelId({
       currentModelId: 'claude-haiku-4-5',
       metadata: null,
-      currentModel: { name: 'Haiku 4.5', contextWindowTokens: 200_000 },
+      currentModel: { name: 'Claude Haiku 4.5', contextWindowTokens: 200_000 },
     });
 
     expect(update?.sessionModelsV1).toMatchObject({
@@ -169,6 +169,9 @@ describe('buildClaudeSessionModelsMetadataWithCurrentModelId', () => {
     });
 
     expect(update?.sessionModelsV1?.currentModelId).toBe('claude-new');
+    expect(update?.sessionModelsV1?.availableModels).toEqual([
+      { id: 'claude-new', name: 'New' },
+    ]);
     expect(update?.acpSessionModelsV1).toEqual(update?.sessionModelsV1);
   });
 });

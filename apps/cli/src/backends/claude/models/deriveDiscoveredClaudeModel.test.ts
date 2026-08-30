@@ -71,10 +71,10 @@ describe('deriveClaudeModelOptionsFromCapabilities', () => {
 });
 
 describe('buildDiscoveredClaudeModelDescriptor', () => {
-  it('uses display_name as the name and derives options', () => {
+  it('uses a provider-relative display_name and derives options', () => {
     const descriptor = buildDiscoveredClaudeModelDescriptor({
       id: 'claude-opus-9',
-      displayName: 'Opus 9',
+      displayName: 'Claude Opus 9',
       maxInputTokens: 1_000_000,
       capabilities: effort(['low', 'medium', 'high', 'xhigh', 'max']),
     });
@@ -84,6 +84,15 @@ describe('buildDiscoveredClaudeModelDescriptor', () => {
     expect(descriptor.description).toBeUndefined();
     expect(descriptor.contextWindowTokens).toBe(1_000_000);
     expect(descriptor.modelOptions?.some((o) => o.id === 'reasoning_effort')).toBe(true);
+  });
+
+  it('preserves discovered names that do not repeat the Claude provider name', () => {
+    const descriptor = buildDiscoveredClaudeModelDescriptor({
+      id: 'glm-4.6',
+      displayName: 'GLM 4.6',
+    });
+
+    expect(descriptor.name).toBe('GLM 4.6');
   });
 
   it('falls back to the id when display_name is missing', () => {
