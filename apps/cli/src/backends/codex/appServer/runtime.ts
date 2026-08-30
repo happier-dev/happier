@@ -1233,6 +1233,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     rememberUsageLimitRecoveryPreference?: (() => Promise<void>) | null;
 }>): Readonly<{
     getSessionId: () => string | null;
+    getPublishedSessionId: () => string | null;
     supportsInFlightSteer: () => boolean;
     supportsInFlightConfigApply: () => boolean;
     canSteerPrompt: () => boolean;
@@ -1333,16 +1334,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
         while (nativeTurnHandoffBarrier) {
             await nativeTurnHandoffBarrier;
         }
-    };
-    const acknowledgePendingTurnStart = (
-        candidate: PendingTurn,
-        observedTurnId: string | null,
-    ): DeferredUnacknowledgedTerminalNotification | null => {
-        if (pendingTurn?.promise !== candidate.promise) return null;
-        if (!observedTurnId) return null;
-        const deferred = deferredUnacknowledgedTerminalNotifications.get(observedTurnId) ?? null;
-        clearDeferredUnacknowledgedTerminalNotificationsForOwner(candidate.promise);
-        return deferred?.ownerPromise === candidate.promise ? deferred : null;
     };
     let clientPromise: Promise<DisposableCodexAppServerClient> | null = null;
     let connectedServiceAuthTransportInvalidationRecoveryPromise: Promise<void> | null = null;
@@ -1989,6 +1980,21 @@ export function createCodexAppServerRuntime(params: Readonly<{
             processEnv: runtimeEnv,
             lastPublished: lastPublishedThreadId,
         }).catch(() => undefined);
+    };
+
+    const acknowledgePendingTurnStart = (
+        candidate: PendingTurn,
+        observedTurnId: string | null,
+    ): DeferredUnacknowledgedTerminalNotification | null => {
+        if (pendingTurn?.promise !== candidate.promise) return null;
+        if (!observedTurnId) return null;
+        // `thread/start` can return an id before older Codex versions materialize resumable state.
+        // A provider turn acknowledgement is the first boundary that proves the fresh thread has
+        // accepted work, so only then may its id become Happier's durable resume identity.
+        publishThreadId();
+        const deferred = deferredUnacknowledgedTerminalNotifications.get(observedTurnId) ?? null;
+        clearDeferredUnacknowledgedTerminalNotificationsForOwner(candidate.promise);
+        return deferred?.ownerPromise === candidate.promise ? deferred : null;
     };
 
     // Ordinary resume/recovery retains its established optimistic publication.
@@ -3620,6 +3626,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 if (!activeTurn || !notificationMatchesPendingTurn(notificationParams)) {
                                     return;
                                 }
+                                publishThreadId();
                                 await bindActiveNativeTurnIdFromProviderActivity(activeTurn, notificationParams, {
                                     turnId: notificationTurnId,
                                 });
@@ -4049,6 +4056,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         client: DisposableCodexAppServerClient,
         nextThreadId: string,
         startOrLoadResponse: unknown,
+        options: Readonly<{ publishThreadIdImmediately?: boolean }> = {},
     ): Promise<void> => {
         const activeProviderTurn = pendingTurn;
         threadId = nextThreadId;
@@ -4065,7 +4073,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
             turnBoundaryTracker.initializeFromCurrentMetadata();
             await finishPendingTurn({ flushReason: 'abort' });
         }
-        publishThreadId();
+        if (options.publishThreadIdImmediately !== false) {
+            publishThreadId();
+        }
         await publishActivePermissionProfile(startOrLoadResponse);
         await refreshGoalForThread(client, nextThreadId).catch((error) => {
             logger.debug('[codex-app-server] Failed to refresh native goal state (non-fatal)', {
@@ -4144,7 +4154,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
             await historyBoundary.hydrateFromThreadSnapshot(response);
             return { nextThreadId: startedThreadId, response };
         })();
-        await applyStartOrLoadResponse(client, startOrLoadResult.nextThreadId, startOrLoadResult.response);
+        await applyStartOrLoadResponse(
+            client,
+            startOrLoadResult.nextThreadId,
+            startOrLoadResult.response,
+            { publishThreadIdImmediately: Boolean(resumeId || existingSessionId) },
+        );
         const initialGoal = options.initialGoal;
         if (initialGoal?.objective) {
             const response = await client.request('thread/goal/set', {
@@ -4492,6 +4507,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     return {
         getSessionId: () => threadId,
+        getPublishedSessionId: () => lastPublishedThreadId.value,
         // Codex app-server exposes `turn/steer`, which appends user input to the active in-flight
         // turn without interrupting it. This may not affect a currently-running tool until that
         // tool finishes, but it should still be handled within the same turn.

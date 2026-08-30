@@ -1721,12 +1721,14 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('starts a new app-server thread and publishes the thread id to session metadata', async () => {
+    it('keeps a new app-server thread provisional until the first provider turn is accepted', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-start-');
 
-        const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
-            updater({ machineId: 'machine_1' }),
-        );
+        let metadata: Record<string, unknown> = { machineId: 'machine_1' };
+        const updateMetadata = vi.fn((updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+            metadata = updater(metadata);
+            return metadata;
+        });
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
@@ -1737,11 +1739,11 @@ describe('createCodexAppServerRuntime', () => {
         await runtime.startOrLoad({});
 
         expect(runtime.getSessionId()).toBe('thread-started');
+        expect(runtime.getPublishedSessionId()).toBeNull();
         expect(updateMetadata).toHaveBeenCalled();
-        expect(updateMetadata.mock.results[0]?.value).toMatchObject({
-            codexSessionId: 'thread-started',
-            codexBackendMode: 'appServer',
-        });
+        expect(updateMetadata.mock.results.map((result) => result.value)).not.toContainEqual(
+            expect.objectContaining({ codexSessionId: 'thread-started' }),
+        );
         expect(updateMetadata.mock.results.map((result) => result.value)).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 [SESSION_MODELS_STATE_KEY]: expect.objectContaining({
@@ -1768,6 +1770,16 @@ describe('createCodexAppServerRuntime', () => {
                 }),
             }),
         ]));
+
+        await runtime.sendPrompt('publish-after-provider-acceptance');
+
+        expect(runtime.getPublishedSessionId()).toBe('thread-started');
+        expect(updateMetadata.mock.results.map((result) => result.value)).toContainEqual(
+            expect.objectContaining({
+                codexSessionId: 'thread-started',
+                codexBackendMode: 'appServer',
+            }),
+        );
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
         expect(requestLog).toEqual(
             expect.arrayContaining([
@@ -1916,17 +1928,20 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
+        await runtime.sendPrompt('publish-direct-session-after-provider-acceptance');
 
-        expect(updateMetadata.mock.results[0]?.value).toMatchObject({
-            directSessionV1: {
-                source: {
-                    kind: 'codexHome',
-                    home: 'connectedService',
-                    connectedServiceId: 'openai-codex',
-                    connectedServiceProfileId: 'profile',
-                },
-            },
-        });
+        expect(updateMetadata.mock.results.map((result) => result.value)).toContainEqual(
+            expect.objectContaining({
+                directSessionV1: expect.objectContaining({
+                    source: expect.objectContaining({
+                        kind: 'codexHome',
+                        home: 'connectedService',
+                        connectedServiceId: 'openai-codex',
+                        connectedServiceProfileId: 'profile',
+                    }),
+                }),
+            }),
+        );
     });
 
     it('loads an existing app-server thread with resume even when history import is disabled', async () => {
@@ -6876,9 +6891,11 @@ describe('createCodexAppServerRuntime', () => {
     it('applies session mode, model, reasoning, and Fast overrides through app-server requests and republishes metadata', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-controls-');
 
-        const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
-            updater({ machineId: 'machine_1' }),
-        );
+        let metadata: Record<string, unknown> = { machineId: 'machine_1' };
+        const updateMetadata = vi.fn((updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+            metadata = updater(metadata);
+            return metadata;
+        });
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
