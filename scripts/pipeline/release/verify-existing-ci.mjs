@@ -37,12 +37,20 @@ function fetchWorkflowRuns(repository, workflow, sourceBranch) {
   return parsed.workflow_runs;
 }
 
+function fetchWorkflowRun(repository, runId) {
+  const result = spawnSync("gh", ["api", "repos/" + repository + "/actions/runs/" + runId], { encoding: "utf8", env: process.env });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(String(result.stderr || result.stdout || "").trim());
+  return JSON.parse(String(result.stdout ?? ""));
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const { values } = parseArgs({
     args: argv,
     options: {
       repository: { type: 'string' }, workflow: { type: 'string', default: 'tests.yml' },
       'source-sha': { type: 'string' }, 'source-branch': { type: 'string' },
+      'run-id': { type: 'string', default: '' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -55,7 +63,17 @@ export async function main(argv = process.argv.slice(2)) {
   if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error('--source-sha must be a full lowercase commit ID');
   if (!['dev', 'preview', 'main'].includes(sourceBranch)) throw new Error('--source-branch must be dev, preview, or main');
   if (!/^[A-Za-z0-9_.-]+\.ya?ml$/u.test(workflow)) throw new Error('--workflow must be a workflow filename');
-  const run = selectExactSuccessfulCiRun(fetchWorkflowRuns(repository, workflow, sourceBranch), { repository, sourceSha, sourceBranch });
+  const requestedRunId = String(values["run-id"] ?? "").trim();
+  let run;
+  if (requestedRunId) {
+    if (!/[1-9][0-9]*/u.test(requestedRunId)) throw new Error("--run-id must be a positive integer");
+    run = fetchWorkflowRun(repository, requestedRunId);
+    if (run.path !== ".github/workflows/" + workflow || run.head_sha !== sourceSha || run.head_branch !== sourceBranch || run.event !== "push" || run.head_repository?.full_name !== repository || run.status !== "completed" || run.conclusion !== "success") {
+      throw new Error("CI run " + requestedRunId + " is not a successful canonical push CI for the requested source");
+    }
+  } else {
+    run = selectExactSuccessfulCiRun(fetchWorkflowRuns(repository, workflow, sourceBranch), { repository, sourceSha, sourceBranch });
+  }
   const output = { runId: Number(run.id), runUrl: String(run.html_url ?? ''), sourceSha, sourceBranch };
   const githubOutput = String(values['github-output'] ?? '').trim();
   if (githubOutput) await appendFile(githubOutput, `ci_run_id=${output.runId}\nci_run_url=${output.runUrl}\n`, 'utf8');

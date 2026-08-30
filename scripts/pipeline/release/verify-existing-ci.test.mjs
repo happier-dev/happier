@@ -1,5 +1,6 @@
 import test from 'node:test';
-import assert from 'node:assert/strict';
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { selectExactSuccessfulCiRun } from './verify-existing-ci.mjs';
 
@@ -20,4 +21,9 @@ test('fails when the exact source has no successful canonical push CI', () => {
   assert.throws(() => selectExactSuccessfulCiRun([
     { id: 5, head_sha: 'b'.repeat(40), head_branch: 'dev', event: 'push', status: 'completed', conclusion: 'success', head_repository: { full_name: 'happier-dev/happier' } },
   ], { repository: 'happier-dev/happier', sourceSha: sha, sourceBranch: 'dev' }), /No successful exact-SHA push CI/);
+});
+
+test('exposes an explicit run-id input for completed CI attestation', () => {
+  const source = readFileSync(new URL('./verify-existing-ci.mjs', import.meta.url), 'utf8');
+  assert.match(source, /['"]run-id['"]/);
 });
