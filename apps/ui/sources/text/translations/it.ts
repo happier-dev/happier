@@ -5652,6 +5652,18 @@ export const it: TranslationStructure = {
 	      errorTitle: "Riavvio runner non disponibile",
 	      errorBody: "Il daemon non è riuscito a riavviare questo runner di sessione. La sessione è ancora disponibile.",
 	    },
+	    mcpRestartRequired: {
+	        title: "Riavvia per applicare le modifiche MCP",
+	        body: "I server MCP vengono applicati all’avvio di una sessione. Riavvia questo runner per usare la selezione aggiornata.",
+	        failureBody: "Happier non ha potuto riavviare questo runner. La selezione MCP è salvata e verrà applicata al prossimo avvio.",
+	        restartAction: "Riavvia sessione",
+	        restartPendingAction: "Riavvio…",
+	        badgeLabel: "Modifiche MCP",
+	        showBannerAction: "Mostra avviso di riavvio MCP",
+	        hideBannerAction: "Nascondi avviso di riavvio MCP",
+	        errorTitle: "Riavvio sessione non disponibile",
+	        errorBody: "Il runner non è stato riavviato. La selezione MCP è salvata e verrà applicata al prossimo avvio della sessione.",
+	    },
 	    invalidLinkTitle: "Link di sessione non valido",
 	    invalidLinkDescription: "Il link della sessione è mancante o non valido. Controlla l’URL e riprova.",
 	    resumeSupportNoteChecking:

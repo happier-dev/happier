@@ -7,6 +7,7 @@
 export const SESSION_COMPOSER_BANNER_KINDS = [
     'usageLimitRecovery',
     'staleSessionRunner',
+    'mcpSelectionRestartRequired',
     'authRecovery',
     'pendingQueueResumeFailed',
     'localControl',

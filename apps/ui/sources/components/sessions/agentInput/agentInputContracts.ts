@@ -131,6 +131,12 @@ export function hasAgentInputCollapsedOptionsPopoverContent(
 
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
+    /**
+     * Data revision for render/popover closures captured by this descriptor.
+     * Presentation owners may retain a descriptor while this key is unchanged,
+     * but must replace it when the key changes.
+     */
+    stabilityKey?: string | number | boolean | null;
     controlId?: AgentInputControlId;
     /**
      * Determines whether the label should be shown in auto chip density mode.

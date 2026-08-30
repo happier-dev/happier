@@ -34,7 +34,7 @@ type ThemeLike = Readonly<{
     }>;
 }>;
 
-function buildExtraActionChipsSignature(params: Readonly<{
+export function buildExtraActionChipsSignature(params: Readonly<{
     chips: ReadonlyArray<AgentInputExtraActionChip>;
     agentType: string;
     backendTarget: unknown;
@@ -45,6 +45,7 @@ function buildExtraActionChipsSignature(params: Readonly<{
             backendTarget: params.backendTarget,
             chips: params.chips.map((chip) => ({
                 key: chip.key,
+                stabilityKey: chip.stabilityKey ?? null,
                 controlId: chip.controlId ?? null,
                 labelPolicy: chip.labelPolicy ?? null,
                 collapsedOptionsTitle: chip.collapsedOptionsPopover?.title ?? null,

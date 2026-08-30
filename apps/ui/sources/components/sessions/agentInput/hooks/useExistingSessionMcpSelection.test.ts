@@ -6,10 +6,10 @@ import {
 } from './useExistingSessionMcpSelection';
 
 describe('shouldShowExistingSessionMcpChip', () => {
-    it('allows MCP selection only for writable inactive sessions', () => {
+    it('allows MCP selection for writable active and inactive sessions', () => {
         expect(shouldShowExistingSessionMcpChip({ isReadOnly: false, sessionActive: false })).toBe(true);
         expect(shouldShowExistingSessionMcpChip({ isReadOnly: true, sessionActive: false })).toBe(false);
-        expect(shouldShowExistingSessionMcpChip({ isReadOnly: false, sessionActive: true })).toBe(false);
+        expect(shouldShowExistingSessionMcpChip({ isReadOnly: false, sessionActive: true })).toBe(true);
     });
 
     it('rolls the latest failed write back to server-confirmed selection only', () => {

@@ -3,6 +3,38 @@ import { describe, expect, it } from 'vitest';
 import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
 
 describe('mergeSessionMetadataForStartup', () => {
+    it('clears the MCP restart marker after startup applies the desired selection', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                mcpSelectionV1: {
+                    v: 1,
+                    managedServersEnabled: false,
+                    forceIncludeServerIds: ['server-new'],
+                    forceExcludeServerIds: [],
+                },
+                mcpSelectionRestartRequiredV1: {
+                    v: 1,
+                    appliedSelection: {
+                        v: 1,
+                        managedServersEnabled: true,
+                        forceIncludeServerIds: [],
+                        forceExcludeServerIds: [],
+                    },
+                },
+            } as any,
+            next: { hostPid: 1 } as any,
+            nowMs: 123,
+        });
+
+        expect((merged as any).mcpSelectionV1).toEqual({
+            v: 1,
+            managedServersEnabled: false,
+            forceIncludeServerIds: ['server-new'],
+            forceExcludeServerIds: [],
+        });
+        expect((merged as any).mcpSelectionRestartRequiredV1).toBeUndefined();
+    });
+
     it('does not seed legacy messageQueueV1 metadata', () => {
         const nowMs = 123;
         const merged = mergeSessionMetadataForStartup({

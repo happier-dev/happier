@@ -5331,6 +5331,18 @@ export const pl: TranslationStructure = {
 	      errorTitle: "Restart runnera niedostępny",
 	      errorBody: "Daemon nie mógł ponownie uruchomić tego runnera sesji. Sesja nadal jest dostępna.",
 	    },
+	    mcpRestartRequired: {
+	        title: "Uruchom ponownie, aby zastosować zmiany MCP",
+	        body: "Serwery MCP są stosowane podczas uruchamiania sesji. Uruchom ponownie ten proces, aby użyć zaktualizowanego wyboru.",
+	        failureBody: "Happier nie zdołał ponownie uruchomić procesu. Twój wybór MCP został zapisany i zostanie zastosowany przy następnym uruchomieniu.",
+	        restartAction: "Uruchom sesję ponownie",
+	        restartPendingAction: "Ponowne uruchamianie…",
+	        badgeLabel: "Zmiany MCP",
+	        showBannerAction: "Pokaż powiadomienie o ponownym uruchomieniu MCP",
+	        hideBannerAction: "Ukryj powiadomienie o ponownym uruchomieniu MCP",
+	        errorTitle: "Ponowne uruchomienie sesji jest niedostępne",
+	        errorBody: "Nie udało się ponownie uruchomić procesu. Twój wybór MCP został zapisany i zostanie zastosowany przy następnym uruchomieniu sesji.",
+	    },
 	    invalidLinkTitle: "Nieprawidłowy link do sesji",
 	    invalidLinkDescription: "Link do sesji jest brakujący lub nieprawidłowy. Sprawdź URL i spróbuj ponownie.",
 	    resumeSupportNoteChecking:

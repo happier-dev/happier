@@ -11,6 +11,7 @@ import {
     createProviderSessionInfoV1Schema,
     createSessionSystemSessionV1Schema,
     createSessionWorkspaceLocationV1Schema,
+    SessionMcpSelectionRestartRequiredV1Schema,
     SessionMcpSelectionV1Schema,
     type PendingDeliveryBlockedReason,
     type PrimaryTurnStatusV1,
@@ -248,6 +249,8 @@ const MetadataObjectSchema = z.object({
     modelOverrideV1: createModelOverrideV1Schema(z).optional(),
     /** Per-session overlay for the account-owned managed MCP catalog. */
     mcpSelectionV1: SessionMcpSelectionV1Schema.optional(),
+    /** Applied baseline retained only while an active runner needs a restart. */
+    mcpSelectionRestartRequiredV1: SessionMcpSelectionRestartRequiredV1Schema.optional(),
     /**
      * Local-only markers for committed transcript messages that should be treated as discarded
      * (e.g. when the user switches to terminal control and abandons unprocessed remote messages).

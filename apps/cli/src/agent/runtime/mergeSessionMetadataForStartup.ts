@@ -394,6 +394,10 @@ export function mergeSessionMetadataForStartup(opts: {
     } else if (mode === 'attach') {
         delete (merged as any).mcpSelectionV1;
     }
+    // The startup merge is the single point at which the desired MCP selection
+    // becomes the running configuration. Any prior applied-selection baseline
+    // is therefore obsolete, including stale markers left by older clients.
+    delete (merged as any).mcpSelectionRestartRequiredV1;
 
     return merged;
 }

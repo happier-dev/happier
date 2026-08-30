@@ -93,9 +93,11 @@ const CURRENT_RUNTIME_PROJECTION_KEYS = [
   // source Agent's provider account and its retry window, and an MCP selection
   // is a per-Agent choice the target never made. dev clears both (the recovery
   // record through its session-state field owner); the predecessor projector
-  // had simply never listed them.
+  // had simply never listed them. The restart marker describes the same
+  // departed Agent's applied MCP baseline and must travel with the selection.
   'sessionUsageLimitRecoveryV1',
   'mcpSelectionV1',
+  'mcpSelectionRestartRequiredV1',
 ] as const;
 
 /**

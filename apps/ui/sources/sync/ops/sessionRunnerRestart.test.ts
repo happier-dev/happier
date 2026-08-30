@@ -53,6 +53,43 @@ describe('sessionRunnerRestart', () => {
         });
     });
 
+    it('forces the current runner to restart after a session configuration change', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            ok: true,
+            status: 'restarted',
+            sessionId: 's1',
+        });
+
+        const { restartSessionRunnerForConfiguration } = await import('./sessionRunnerRestart');
+
+        await expect(restartSessionRunnerForConfiguration({
+            sessionId: 's1',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            expectedRunnerPid: 123,
+        })).resolves.toEqual({
+            ok: true,
+            status: 'restarted',
+            sessionId: 's1',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
+            payload: {
+                sessionId: 's1',
+                mode: 'force_current_cli',
+                reason: 'ui_stale_runner_banner',
+                expectedRunnerPid: 123,
+            },
+            authorization: {
+                kind: 'session.write',
+                sessionId: 's1',
+            },
+        });
+    });
+
     it('normalizes daemon restart statuses and fails closed on malformed results', async () => {
         const { normalizeRestartSessionRunnerResult } = await import('./sessionRunnerRestart');
 
@@ -257,6 +294,20 @@ describe('didSessionRunnerRestartLand', () => {
             expectedRunnerPid: 123,
         })).toBe(false);
         expect(didSessionRunnerRestartLand({ state: null, expectedRunnerPid: 123 })).toBe(false);
+    });
+});
+
+describe('didForcedSessionRunnerRestartLand', () => {
+    it('requires the targeted runner PID to be replaced', async () => {
+        const { didForcedSessionRunnerRestartLand } = await import('./sessionRunnerRestart');
+        expect(didForcedSessionRunnerRestartLand({
+            state: makeRuntimeState({ versionState: 'current', pid: 123 }),
+            expectedRunnerPid: 123,
+        })).toBe(false);
+        expect(didForcedSessionRunnerRestartLand({
+            state: makeRuntimeState({ versionState: 'current', pid: 456 }),
+            expectedRunnerPid: 123,
+        })).toBe(true);
     });
 });
 

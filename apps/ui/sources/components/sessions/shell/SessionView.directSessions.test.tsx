@@ -112,6 +112,11 @@ const restartStaleSessionRunnerSpy = vi.hoisted(() =>
     async (_request: unknown) => ({ ok: true, status: 'restarted', sessionId: 's1' }),
   ),
 );
+const restartSessionRunnerForConfigurationSpy = vi.hoisted(() =>
+  vi.fn<(_request: unknown) => Promise<RestartStaleSessionRunnerResult>>(
+    async (_request: unknown) => ({ ok: true, status: 'restarted', sessionId: 's1' }),
+  ),
+);
 const getSessionRunnerRuntimeStatusSpy = vi.hoisted(() =>
   vi.fn<(_request: unknown) => Promise<unknown>>(async () => null),
 );
@@ -643,6 +648,7 @@ vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
 }));
 vi.mock('@/sync/ops/sessionRunnerRestart', () => ({
   getSessionRunnerRuntimeStatus: (request: unknown) => getSessionRunnerRuntimeStatusSpy(request),
+  restartSessionRunnerForConfigurationWithObserve: (request: unknown) => restartSessionRunnerForConfigurationSpy(request),
   restartStaleSessionRunnerWithObserve: (request: unknown) => restartStaleSessionRunnerSpy(request),
 }));
 vi.mock('@/sync/ops/connectedServiceQuotaRecoveryCredits', () => ({
@@ -789,6 +795,42 @@ describe('SessionView (direct sessions)', () => {
   function findStaleRunnerStatusBadge(screen: Awaited<ReturnType<typeof renderSessionView>>) {
     return findAgentInput(screen).props.statusBadges.find((badge: { key?: string }) =>
       badge.key === 'session-stale-runner');
+  }
+
+  function findMcpSelectionRestartStatusBadge(screen: Awaited<ReturnType<typeof renderSessionView>>) {
+    return findAgentInput(screen).props.statusBadges.find((badge: { key?: string }) =>
+      badge.key === 'session-mcp-selection-restart-required');
+  }
+
+  function installMcpSelectionRestartRequired() {
+    storageState.machines['machine-1'] = {
+      id: 'machine-1',
+      active: true,
+      metadata: { host: 'happy-host', homeDir: '/tmp' },
+    } as any;
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      active: true,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        hostPid: 123,
+        mcpSelectionV1: {
+          v: 1,
+          managedServersEnabled: true,
+          forceIncludeServerIds: ['server-new'],
+          forceExcludeServerIds: [],
+        },
+        mcpSelectionRestartRequiredV1: {
+          v: 1,
+          appliedSelection: {
+            v: 1,
+            managedServersEnabled: true,
+            forceIncludeServerIds: [],
+            forceExcludeServerIds: [],
+          },
+        },
+      },
+    };
   }
 
   function buildSessionRunnerRuntimeStatus(input: Readonly<{
@@ -1032,6 +1074,8 @@ describe('SessionView (direct sessions)', () => {
     sessionUsageLimitConsumeResetCreditSpy.mockResolvedValue({ ok: true });
     restartStaleSessionRunnerSpy.mockReset();
     restartStaleSessionRunnerSpy.mockResolvedValue({ ok: true, status: 'restarted', sessionId: 's1' });
+    restartSessionRunnerForConfigurationSpy.mockReset();
+    restartSessionRunnerForConfigurationSpy.mockResolvedValue({ ok: true, status: 'restarted', sessionId: 's1' });
     getSessionRunnerRuntimeStatusSpy.mockReset();
     getSessionRunnerRuntimeStatusSpy.mockResolvedValue(null);
     connectedServiceQuotaRecoveryCreditConsumeSpy.mockReset();
@@ -1253,6 +1297,34 @@ describe('SessionView (direct sessions)', () => {
       testID: 'session-staleRunner-status-badge',
       tone: 'warning',
     }));
+  });
+
+  it('renders the MCP restart notice and badge for an active-session selection change', async () => {
+    installMcpSelectionRestartRequired();
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    expect(screen.findByTestId('session.mcpSelectionRestartRequired.banner')).toBeTruthy();
+    expect(findMcpSelectionRestartStatusBadge(screen)).toEqual(expect.objectContaining({
+      testID: 'session.mcpSelectionRestartRequired.badge',
+      tone: 'warning',
+    }));
+
+  });
+
+  it('restarts the active runner from the MCP selection banner', async () => {
+    installMcpSelectionRestartRequired();
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    await pressTestInstanceAsync(screen.findByTestId('session.mcpSelectionRestartRequired.restart'));
+    await settleDirectSessionView();
+
+    expect(restartSessionRunnerForConfigurationSpy).toHaveBeenCalledWith({
+      sessionId: 's1',
+      machineId: 'machine-1',
+      serverId: 'server-route-1',
+      expectedRunnerPid: 123,
+    });
+    expect(screen.findByTestId('session.mcpSelectionRestartRequired.banner')).toBeNull();
   });
 
   it('renders stale-runner composer notice from daemon status RPC for an inactive session when metadata is not seeded', async () => {

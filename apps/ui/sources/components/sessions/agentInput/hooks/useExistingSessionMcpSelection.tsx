@@ -24,7 +24,7 @@ export function shouldShowExistingSessionMcpChip(params: Readonly<{
     isReadOnly: boolean;
     sessionActive: boolean;
 }>): boolean {
-    return !params.isReadOnly && !params.sessionActive;
+    return !params.isReadOnly;
 }
 
 export function resolveExistingSessionMcpSelectionRollback(params: Readonly<{
@@ -83,7 +83,9 @@ export function useExistingSessionMcpSelection(params: Readonly<{
             .then(async () => {
                 await sync.patchSessionMetadataWithRetry(
                     params.sessionId,
-                    (metadata) => computeNextSessionMcpSelectionMetadata(metadata, next),
+                    (metadata) => computeNextSessionMcpSelectionMetadata(metadata, next, {
+                        sessionActive: params.sessionActive,
+                    }),
                     { serverId: params.serverId ?? null },
                 );
             })
@@ -99,10 +101,10 @@ export function useExistingSessionMcpSelection(params: Readonly<{
                 setOptimisticSelection(rollback);
                 Modal.alert(t('common.error'), t('errors.operationFailed'));
             });
-    }, [params.isReadOnly, params.serverId, params.sessionId]);
+    }, [params.isReadOnly, params.serverId, params.sessionActive, params.sessionId]);
 
     const selection = useNewSessionMcpSelection({
-        selectedMachineId: params.sessionActive ? null : params.machineId,
+        selectedMachineId: params.machineId,
         selectedPath: params.directory,
         agentType: params.agentId,
         targetServerId: params.serverId ?? null,

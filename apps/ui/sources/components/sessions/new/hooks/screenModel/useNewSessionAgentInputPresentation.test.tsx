@@ -39,6 +39,39 @@ const sessionAgentInputTheme = {
 } as const;
 
 describe('useNewSessionAgentInputPresentation', () => {
+    it('invalidates stabilized chips when their rendered content revision changes', async () => {
+        const presentationModule = await import('./useNewSessionAgentInputPresentation');
+        const buildSignature = (presentationModule as unknown as {
+            buildExtraActionChipsSignature: (params: {
+                chips: ReadonlyArray<Record<string, unknown>>;
+                agentType: string;
+                backendTarget: unknown;
+            }) => string;
+        }).buildExtraActionChipsSignature;
+        const base = {
+            agentType: 'claude',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        };
+        const createChip = (stabilityKey: string, renderContent: () => string) => ({
+            key: 'new-session-mcp',
+            controlId: 'mcp',
+            stabilityKey,
+            collapsedContentPopover: {
+                title: 'MCP',
+                label: 'MCP',
+                renderContent,
+            },
+            render: () => null,
+        });
+
+        const first = buildSignature({ ...base, chips: [createChip('selection-a', () => 'first')] });
+        const handlerOnlyChange = buildSignature({ ...base, chips: [createChip('selection-a', () => 'second')] });
+        const contentChange = buildSignature({ ...base, chips: [createChip('selection-b', () => 'second')] });
+
+        expect(handlerOnlyChange).toBe(first);
+        expect(contentChange).not.toBe(first);
+    });
+
     it('exposes automation controls via an action chip (no inline automation section)', async () => {
         const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
         const routerMock = createExpoRouterMock();

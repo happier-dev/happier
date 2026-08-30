@@ -5129,6 +5129,18 @@ export const zhHans: TranslationStructure = {
 	      errorTitle: "运行器重启不可用",
 	      errorBody: "守护进程无法重启此会话运行器。此会话仍可使用。",
 	    },
+	    mcpRestartRequired: {
+	        title: "重启以应用 MCP 服务器更改",
+	        body: "MCP 服务器会在会话启动时应用。请重启此运行器以使用更新后的选择。",
+	        failureBody: "Happier 无法重启此运行器。你的 MCP 选择已保存，并会在下次启动时应用。",
+	        restartAction: "重启会话",
+	        restartPendingAction: "正在重启…",
+	        badgeLabel: "MCP 更改",
+	        showBannerAction: "显示 MCP 重启提示",
+	        hideBannerAction: "隐藏 MCP 重启提示",
+	        errorTitle: "无法重启会话",
+	        errorBody: "无法重启运行器。你的 MCP 选择已保存，并会在下次会话启动时应用。",
+	    },
 	    invalidLinkTitle: "无效的会话链接",
 	    invalidLinkDescription: "会话链接缺失或无效。请检查 URL 并重试。",
 	    resumeSupportNoteChecking:

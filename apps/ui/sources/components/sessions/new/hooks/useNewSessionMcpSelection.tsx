@@ -207,6 +207,27 @@ export function useNewSessionMcpSelection(params: Readonly<{
         return mcpPreview?.detected.filter((entry) => entry.selected).length ?? 0;
     }, [mcpPreview, mcpServersEnabled]);
     const chipLabel = t('newSession.mcpChipLabel');
+    const chipStabilityKey = React.useMemo(() => JSON.stringify({
+        machineId: params.selectedMachineId,
+        directory: params.selectedPath.trim(),
+        agentType: params.agentType,
+        targetServerId: params.targetServerId ?? null,
+        selection: params.mcpSelection,
+        preview: mcpPreview,
+        loading: mcpPreviewLoading,
+        error: mcpPreviewError,
+        previewUnsupported: mcpPreviewUnsupported,
+    }), [
+        mcpPreview,
+        mcpPreviewError,
+        mcpPreviewLoading,
+        mcpPreviewUnsupported,
+        params.agentType,
+        params.mcpSelection,
+        params.selectedMachineId,
+        params.selectedPath,
+        params.targetServerId,
+    ]);
 
     const mcpChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!mcpServersEnabled) return null;
@@ -214,6 +235,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
         return createMcpActionChip({
             label: chipLabel,
             selectedCount,
+            stabilityKey: chipStabilityKey,
             popoverContent: ({ maxHeight }) => (
                 <NewSessionMcpSelectionContent
                     {...contentProps}
@@ -223,7 +245,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
             maxHeightCap: 760,
             maxWidthCap: 620,
         });
-    }, [chipLabel, contentProps, mcpServersEnabled, selectedCount]);
+    }, [chipLabel, chipStabilityKey, contentProps, mcpServersEnabled, selectedCount]);
 
     return { mcpChip, mcpPreview, mcpPreviewLoading };
 }

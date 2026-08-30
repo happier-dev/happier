@@ -23,6 +23,13 @@ export type RestartStaleSessionRunnerRequest = Readonly<{
     expectedRunnerEntrypointIdentity: string;
 }>;
 
+export type RestartSessionRunnerForConfigurationRequest = Readonly<{
+    sessionId: string;
+    machineId: string;
+    serverId?: string | null;
+    expectedRunnerPid: number;
+}>;
+
 export type GetSessionRunnerRuntimeStatusRequest = Readonly<{
     sessionId: string;
     machineId: string;
@@ -63,6 +70,10 @@ const INELIGIBLE_STATUSES = new Set<RestartSessionRunnerStatusV1>([
     'missing_spawn_options',
     'ineligible',
 ]);
+
+// Compatibility-stable released wire value. It now identifies the shared UI
+// composer restart-banner entry point, not only the stale-version presentation.
+const UI_COMPOSER_RESTART_BANNER_WIRE_REASON = 'ui_stale_runner_banner' as const;
 
 export function normalizeRestartSessionRunnerResult(
     value: unknown,
@@ -122,17 +133,15 @@ export function normalizeRestartSessionRunnerResult(
     };
 }
 
-export async function restartStaleSessionRunner(
-    request: RestartStaleSessionRunnerRequest,
+async function requestSessionRunnerRestart(
+    request: Readonly<{ sessionId: string; machineId: string; serverId?: string | null }>,
+    restart: Omit<RestartSessionRunnerRequestV1, 'sessionId' | 'reason'>,
 ): Promise<RestartStaleSessionRunnerResult> {
     try {
         const payload = RestartSessionRunnerRequestV1Schema.parse({
             sessionId: request.sessionId,
-            mode: 'if_stale',
-            reason: 'ui_stale_runner_banner',
-            expectedRunnerPid: request.expectedRunnerPid,
-            expectedProcessCommandHash: request.expectedProcessCommandHash,
-            expectedRunnerEntrypointIdentity: request.expectedRunnerEntrypointIdentity,
+            ...restart,
+            reason: UI_COMPOSER_RESTART_BANNER_WIRE_REASON,
         } satisfies RestartSessionRunnerRequestV1);
         const result = await machineRpcWithServerScope<unknown, RestartSessionRunnerRequestV1>({
             machineId: request.machineId,
@@ -156,6 +165,26 @@ export async function restartStaleSessionRunner(
             error: errorCode ?? (error instanceof Error ? error.message : 'session_runner_restart_failed'),
         };
     }
+}
+
+export function restartStaleSessionRunner(
+    request: RestartStaleSessionRunnerRequest,
+): Promise<RestartStaleSessionRunnerResult> {
+    return requestSessionRunnerRestart(request, {
+        mode: 'if_stale',
+        expectedRunnerPid: request.expectedRunnerPid,
+        expectedProcessCommandHash: request.expectedProcessCommandHash,
+        expectedRunnerEntrypointIdentity: request.expectedRunnerEntrypointIdentity,
+    });
+}
+
+export function restartSessionRunnerForConfiguration(
+    request: RestartSessionRunnerForConfigurationRequest,
+): Promise<RestartStaleSessionRunnerResult> {
+    return requestSessionRunnerRestart(request, {
+        mode: 'force_current_cli',
+        expectedRunnerPid: request.expectedRunnerPid,
+    });
 }
 
 /**
@@ -185,6 +214,21 @@ export function didSessionRunnerRestartLand(input: Readonly<{
     );
 }
 
+/** A forced restart is landed only when the exact targeted process was replaced. */
+export function didForcedSessionRunnerRestartLand(input: Readonly<{
+    state: SessionRunnerRuntimeStateV1 | null;
+    expectedRunnerPid: number;
+}>): boolean {
+    const pid = input.state?.runner.pid;
+    return (
+        typeof pid === 'number'
+        && pid > 0
+        && Number.isInteger(input.expectedRunnerPid)
+        && input.expectedRunnerPid > 0
+        && pid !== input.expectedRunnerPid
+    );
+}
+
 export type RestartStaleSessionRunnerWithObserveDeps = Readonly<{
     restart?: (request: RestartStaleSessionRunnerRequest) => Promise<RestartStaleSessionRunnerResult>;
     getStatus?: (request: GetSessionRunnerRuntimeStatusRequest) => Promise<SessionRunnerRuntimeStateV1 | null>;
@@ -195,6 +239,39 @@ export type RestartStaleSessionRunnerWithObserveDeps = Readonly<{
 
 const DEFAULT_RESTART_OBSERVE_ATTEMPTS = 8;
 const DEFAULT_RESTART_OBSERVE_INTERVAL_MS = 1_500;
+
+async function restartSessionRunnerWithObserve<Request extends Readonly<{
+    sessionId: string;
+    machineId: string;
+    serverId?: string | null;
+    expectedRunnerPid: number;
+}>>(input: Readonly<{
+    request: Request;
+    restart: (request: Request) => Promise<RestartStaleSessionRunnerResult>;
+    getStatus: (request: GetSessionRunnerRuntimeStatusRequest) => Promise<SessionRunnerRuntimeStateV1 | null>;
+    didLand: (input: Readonly<{ state: SessionRunnerRuntimeStateV1 | null; expectedRunnerPid: number }>) => boolean;
+    sleep: (ms: number) => Promise<void>;
+    observeAttempts?: number;
+    observeIntervalMs?: number;
+}>): Promise<RestartStaleSessionRunnerResult> {
+    const attempts = Math.max(1, Math.trunc(input.observeAttempts ?? DEFAULT_RESTART_OBSERVE_ATTEMPTS));
+    const intervalMs = Math.max(0, Math.trunc(input.observeIntervalMs ?? DEFAULT_RESTART_OBSERVE_INTERVAL_MS));
+    const result = await input.restart(input.request);
+    if (result.ok || result.status !== 'failure') return result;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const state = await input.getStatus({
+            sessionId: input.request.sessionId,
+            machineId: input.request.machineId,
+            serverId: input.request.serverId ?? null,
+        });
+        if (input.didLand({ state, expectedRunnerPid: input.request.expectedRunnerPid })) {
+            return { ok: true, status: 'restarted', sessionId: input.request.sessionId };
+        }
+        if (attempt < attempts - 1 && intervalMs > 0) await input.sleep(intervalMs);
+    }
+    return result;
+}
 
 /**
  * Restart the stale runner, then — only when the ack came back as an ambiguous `failure`
@@ -211,28 +288,41 @@ export async function restartStaleSessionRunnerWithObserve(
     const restart = deps.restart ?? restartStaleSessionRunner;
     const getStatus = deps.getStatus ?? getSessionRunnerRuntimeStatus;
     const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
-    const attempts = Math.max(1, Math.trunc(deps.observeAttempts ?? DEFAULT_RESTART_OBSERVE_ATTEMPTS));
-    const intervalMs = Math.max(0, Math.trunc(deps.observeIntervalMs ?? DEFAULT_RESTART_OBSERVE_INTERVAL_MS));
+    return restartSessionRunnerWithObserve({
+        request,
+        restart,
+        getStatus,
+        didLand: didSessionRunnerRestartLand,
+        sleep,
+        observeAttempts: deps.observeAttempts,
+        observeIntervalMs: deps.observeIntervalMs,
+    });
+}
 
-    const result = await restart(request);
-    if (result.ok) return result;
-    // Only an ambiguous `failure` is eligible for observe; every other negative is a definitive answer.
-    if (result.status !== 'failure') return result;
+export type RestartSessionRunnerForConfigurationWithObserveDeps = Readonly<{
+    restart?: (request: RestartSessionRunnerForConfigurationRequest) => Promise<RestartStaleSessionRunnerResult>;
+    getStatus?: (request: GetSessionRunnerRuntimeStatusRequest) => Promise<SessionRunnerRuntimeStateV1 | null>;
+    sleep?: (ms: number) => Promise<void>;
+    observeAttempts?: number;
+    observeIntervalMs?: number;
+}>;
 
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const state = await getStatus({
-            sessionId: request.sessionId,
-            machineId: request.machineId,
-            serverId: request.serverId ?? null,
-        });
-        if (didSessionRunnerRestartLand({ state, expectedRunnerPid: request.expectedRunnerPid })) {
-            return { ok: true, status: 'restarted', sessionId: request.sessionId };
-        }
-        if (attempt < attempts - 1 && intervalMs > 0) {
-            await sleep(intervalMs);
-        }
-    }
-    return result;
+export async function restartSessionRunnerForConfigurationWithObserve(
+    request: RestartSessionRunnerForConfigurationRequest,
+    deps: RestartSessionRunnerForConfigurationWithObserveDeps = {},
+): Promise<RestartStaleSessionRunnerResult> {
+    const restart = deps.restart ?? restartSessionRunnerForConfiguration;
+    const getStatus = deps.getStatus ?? getSessionRunnerRuntimeStatus;
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
+    return restartSessionRunnerWithObserve({
+        request,
+        restart,
+        getStatus,
+        didLand: didForcedSessionRunnerRestartLand,
+        sleep,
+        observeAttempts: deps.observeAttempts,
+        observeIntervalMs: deps.observeIntervalMs,
+    });
 }
 
 export async function getSessionRunnerRuntimeStatus(

@@ -5579,6 +5579,18 @@ localTailscale: {
 	      errorTitle: "ランナーの再起動は利用できません",
 	      errorBody: "daemon はこのセッションランナーを再起動できませんでした。セッションは引き続き利用できます。",
 	    },
+	    mcpRestartRequired: {
+	        title: "MCP サーバーの変更を適用するには再起動してください",
+	        body: "MCP サーバーはセッション開始時に適用されます。更新した選択を使うには、このランナーを再起動してください。",
+	        failureBody: "Happier はこのランナーを再起動できませんでした。MCP の選択は保存され、次回の開始時に適用されます。",
+	        restartAction: "セッションを再起動",
+	        restartPendingAction: "再起動中…",
+	        badgeLabel: "MCP の変更",
+	        showBannerAction: "MCP 再起動のお知らせを表示",
+	        hideBannerAction: "MCP 再起動のお知らせを非表示",
+	        errorTitle: "セッションを再起動できません",
+	        errorBody: "ランナーを再起動できませんでした。MCP の選択は保存され、次回のセッション開始時に適用されます。",
+	    },
 	    invalidLinkTitle: "無効なセッションリンク",
 	    invalidLinkDescription: "セッションリンクが見つからないか無効です。URL を確認してもう一度お試しください。",
 	    resumeSupportNoteChecking:

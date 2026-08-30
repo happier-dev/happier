@@ -5430,6 +5430,18 @@ export const pt: TranslationStructure = {
 	      errorTitle: "Reinício do runner indisponível",
 	      errorBody: "O daemon não conseguiu reiniciar este runner de sessão. A sessão ainda está disponível.",
 	    },
+	    mcpRestartRequired: {
+	        title: "Reinicie para aplicar as alterações de MCP",
+	        body: "Os servidores MCP são aplicados quando uma sessão inicia. Reinicie este runner para usar a seleção atualizada.",
+	        failureBody: "O Happier não conseguiu reiniciar este runner. Sua seleção de MCP foi salva e será aplicada na próxima inicialização.",
+	        restartAction: "Reiniciar sessão",
+	        restartPendingAction: "Reiniciando…",
+	        badgeLabel: "Alterações de MCP",
+	        showBannerAction: "Mostrar aviso de reinício de MCP",
+	        hideBannerAction: "Ocultar aviso de reinício de MCP",
+	        errorTitle: "Reinício da sessão indisponível",
+	        errorBody: "Não foi possível reiniciar o runner. Sua seleção de MCP foi salva e será aplicada na próxima inicialização da sessão.",
+	    },
 	    invalidLinkTitle: "Link de sessão inválido",
 	    invalidLinkDescription: "O link da sessão está ausente ou é inválido. Verifique a URL e tente novamente.",
 	    resumeSupportNoteChecking:

@@ -155,12 +155,22 @@ describe('projectCurrentAgentSessionView', () => {
       metadata: {
         ...sourceMetadata(),
         mcpSelectionV1: { v: 1, updatedAt: 5, selectedServerIds: ['playwright'] },
+        mcpSelectionRestartRequiredV1: {
+          v: 1,
+          appliedSelection: {
+            v: 1,
+            managedServersEnabled: true,
+            forceIncludeServerIds: [],
+            forceExcludeServerIds: [],
+          },
+        },
         sessionUsageLimitRecoveryV1: { v: 1, updatedAt: 5, resetAtMs: 9_000 },
       },
       target: { agentId: 'codex', updatedAtMs: UPDATED_AT },
     });
 
     expect(next.mcpSelectionV1).toBeUndefined();
+    expect(next.mcpSelectionRestartRequiredV1).toBeUndefined();
     expect(next.sessionUsageLimitRecoveryV1).toBeUndefined();
   });
 

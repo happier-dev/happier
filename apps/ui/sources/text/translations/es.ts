@@ -5310,6 +5310,18 @@ export const es: TranslationStructure = {
 	      errorTitle: "Reinicio del runner no disponible",
 	      errorBody: "El daemon no pudo reiniciar este runner de sesión. La sesión sigue disponible.",
 	    },
+	    mcpRestartRequired: {
+	        title: "Reinicia para aplicar los cambios de MCP",
+	        body: "Los servidores MCP se aplican al iniciar una sesión. Reinicia este ejecutor para usar la selección actualizada.",
+	        failureBody: "Happier no pudo reiniciar este ejecutor. Tu selección de MCP está guardada y se aplicará la próxima vez que se inicie.",
+	        restartAction: "Reiniciar sesión",
+	        restartPendingAction: "Reiniciando…",
+	        badgeLabel: "Cambios de MCP",
+	        showBannerAction: "Mostrar aviso de reinicio de MCP",
+	        hideBannerAction: "Ocultar aviso de reinicio de MCP",
+	        errorTitle: "Reinicio de sesión no disponible",
+	        errorBody: "No se pudo reiniciar el ejecutor. Tu selección de MCP está guardada y se aplicará al próximo inicio de la sesión.",
+	    },
 	    invalidLinkTitle: "Enlace de sesión no válido",
 	    invalidLinkDescription: "Falta el enlace de la sesión o no es válido. Comprueba la URL y vuelve a intentarlo.",
 	    resumeSupportNoteChecking:

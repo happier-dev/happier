@@ -11,12 +11,14 @@ import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT
 export function createMcpActionChip(params: Readonly<{
     label: string;
     selectedCount: number;
+    stabilityKey: string;
     popoverContent: AgentInputPopoverContent;
     maxHeightCap?: number;
     maxWidthCap?: number;
 }>): AgentInputExtraActionChip {
     return {
         key: 'new-session-mcp',
+        stabilityKey: params.stabilityKey,
         controlId: 'mcp',
         collapsedContentPopover: {
             title: params.label,
