@@ -11,6 +11,7 @@ import type { MarkdownEditMode } from '@/components/ui/markdown/editor/markdownE
 import type { MarkdownRichIneligibleReason } from '@/components/ui/markdown/editor/core/eligibility/markdownRichEligibility';
 import { resolveMarkdownRichDisabledReasonCopy } from '@/components/ui/markdown/editor/core/eligibility/markdownRichDisabledReasonCopy';
 import { Icon } from '@/components/ui/icons/Icon';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 
 export type FileDisplayMode = 'file' | 'diff' | 'markdown';
 export type FileDiffMode = 'included' | 'pending' | 'both';
@@ -31,6 +32,7 @@ type FileActionToolbarProps = {
     showDiffToggle?: boolean;
     showFileToggle?: boolean;
     showMarkdownToggle?: boolean;
+    showWrapLinesToggle?: boolean;
     diffMode: FileDiffMode;
     onDiffMode: (mode: FileDiffMode) => void;
     hasPendingDelta: boolean;
@@ -89,6 +91,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         showDiffToggle,
         showFileToggle,
         showMarkdownToggle,
+        showWrapLinesToggle,
         diffMode,
         onDiffMode,
         hasPendingDelta,
@@ -462,6 +465,8 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     })}
                 />
             ) : null}
+
+            {showWrapLinesToggle === true ? <WrapLinesToggleButton /> : null}
 
             {showFileEditorActions && !isEditingFile && onStartEditingFile ? (
                 <Pressable

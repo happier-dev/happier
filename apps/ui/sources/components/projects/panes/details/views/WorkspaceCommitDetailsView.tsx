@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +10,8 @@ import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/mode
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { useSetting } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
+import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
 
 export type WorkspaceCommitDetailsViewProps = Readonly<{
     scopeId: string;
@@ -92,6 +94,12 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}>
+            {files.length > 0 ? (
+                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                    <WrapLinesToggleButton />
+                </View>
+            ) : null}
             <DiffFilesListView
                 files={files}
                 expandedKeys={expandedKeys}

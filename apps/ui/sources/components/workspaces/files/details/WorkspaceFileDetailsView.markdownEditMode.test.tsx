@@ -958,6 +958,7 @@ describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
         const tree = await mountView();
         const toolbar = tree.findByType('FileActionToolbar' as any);
         expect(toolbar.props.showMarkdownEditToggle).toBe(true);
+        expect(toolbar.props.showWrapLinesToggle).toBe(true);
         expect(toolbar.props.markdownEditMode).toBe('rich');
         expect(typeof toolbar.props.onMarkdownEditMode).toBe('function');
     });

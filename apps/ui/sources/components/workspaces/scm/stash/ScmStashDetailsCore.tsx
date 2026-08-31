@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/model/diff/diffViewModel';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -558,9 +559,10 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                 ) : null}
             </View>
 
-            {Platform.OS === 'web' ? (
-                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, alignItems: 'flex-start' }}>
-                    <DiffPresentationStyleToggleButton />
+            {!diffState.loading && !diffState.error && diffFiles.length > 0 ? (
+                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                    <WrapLinesToggleButton />
                 </View>
             ) : null}
 

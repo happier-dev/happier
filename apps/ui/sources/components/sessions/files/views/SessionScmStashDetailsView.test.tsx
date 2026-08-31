@@ -155,6 +155,7 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
 vi.mock('@/components/ui/code/diff/DiffPresentationStyleToggleButton', () => ({
     DiffPresentationStyleToggleButton: 'DiffPresentationStyleToggleButton',
 }));
+vi.mock('@/components/ui/code/WrapLinesToggleButton', () => ({ WrapLinesToggleButton: 'WrapLinesToggleButton' }));
 
 describe('SessionScmStashDetailsView', () => {
     beforeEach(() => {
@@ -201,9 +202,10 @@ describe('SessionScmStashDetailsView', () => {
     }
 
     it('loads managed stashes and renders the diff for the first stash', async () => {
-        await renderStashDetailsView();
+        const screen = await renderStashDetailsView();
         expect(sessionScmStashShowSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
         expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
+        expect(screen.findAllByType('WrapLinesToggleButton' as never)).toHaveLength(1);
     });
 
     type PendingRetryTimer = Readonly<{

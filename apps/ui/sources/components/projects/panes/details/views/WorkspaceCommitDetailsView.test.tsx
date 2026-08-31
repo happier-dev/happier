@@ -53,6 +53,7 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
 vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
     DiffFilesListView: (props: any) => React.createElement('DiffFilesListView', props),
 }));
+vi.mock('@/components/ui/code/WrapLinesToggleButton', () => ({ WrapLinesToggleButton: 'WrapLinesToggleButton' }));
 
 describe('WorkspaceCommitDetailsView', () => {
     beforeEach(() => {
@@ -65,7 +66,7 @@ describe('WorkspaceCommitDetailsView', () => {
 
     it('keeps workspace server scope when loading a commit diff', async () => {
         const { WorkspaceCommitDetailsView } = await import('./WorkspaceCommitDetailsView');
-        await renderScreen(
+        const screen = await renderScreen(
             <WorkspaceCommitDetailsView
                 scopeId="project:wr_1"
                 workspaceRefId="wr_1"
@@ -87,5 +88,6 @@ describe('WorkspaceCommitDetailsView', () => {
             },
             { serverId: 'server-a' },
         );
+        expect(screen.findAllByType('WrapLinesToggleButton' as never)).toHaveLength(1);
     });
 });

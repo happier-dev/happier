@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Platform } from 'react-native';
 
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { t } from '@/text';
-import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 export type DiffPresentationStyleToggleButtonProps = Readonly<{
     disabled?: boolean;
@@ -13,7 +13,6 @@ export type DiffPresentationStyleToggleButtonProps = Readonly<{
 }>;
 
 export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyleToggleButtonProps>((props) => {
-    const { theme } = useUnistyles();
     const [styleSetting, setStyleSetting] = useSettingMutable('filesDiffPresentationStyle');
 
     const effectiveStyle = styleSetting === 'unified' || styleSetting === 'split'
@@ -34,55 +33,18 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
     }, [disabled, effectiveStyle, setStyleSetting]);
 
     return (
-        <Pressable
+        <IconButton
             onPress={toggle}
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
-            style={(state) => {
-                const { pressed } = state;
-                // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
-                const hovered = (state as { hovered?: boolean }).hovered === true;
-                return [
-                    styles.root,
-                    hovered ? styles.rootHovered : null,
-                    pressed ? styles.rootPressed : null,
-                    disabled ? styles.rootDisabled : null,
-                ];
-            }}
-        >
-            <View style={styles.icon}>
-                <Icon
-                    name={effectiveStyle === 'unified' ? 'arrows-down-up' : 'grid-four'}
-                    size={iconSize}
-                    color={theme.colors.text.secondary}
-                />
-            </View>
-        </Pressable>
+            tooltip={accessibilityLabel}
+            iconName={effectiveStyle === 'unified' ? 'arrows-down-up' : 'grid-four'}
+            iconSize={iconSize}
+            size={28}
+            variant="plain"
+            minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
+            interactiveTargetGapPx={8}
+        />
     );
 });
-
-const styles = StyleSheet.create((theme) => ({
-    root: {
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 8,
-        backgroundColor: theme.colors.surface.inset,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-    },
-    rootHovered: {
-        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.inset,
-    },
-    rootPressed: {
-        opacity: 0.9,
-    },
-    rootDisabled: {
-        opacity: 0.5,
-    },
-    icon: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: 20,
-    },
-}));

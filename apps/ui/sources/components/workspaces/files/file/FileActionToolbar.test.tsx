@@ -27,6 +27,10 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
+vi.mock('@/components/ui/code/WrapLinesToggleButton', () => ({
+    WrapLinesToggleButton: 'WrapLinesToggleButton',
+}));
+
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
@@ -100,6 +104,34 @@ describe('FileActionToolbar', () => {
             text: { primary: '#111', secondary: '#666', link: '#007AFF' },
         },
     };
+
+    it('places the wrap control beside the contextual view actions', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const screen = await renderScreen(React.createElement(FileActionToolbar as any, {
+            theme,
+            displayMode: 'diff',
+            onDisplayMode: () => {},
+            showWrapLinesToggle: true,
+            diffMode: 'pending',
+            onDiffMode: () => {},
+            hasPendingDelta: false,
+            hasIncludedDelta: false,
+            scmWriteEnabled: false,
+            includeExcludeEnabled: false,
+            virtualSelectionEnabled: false,
+            isSelectedForCommit: false,
+            lineSelectionEnabled: false,
+            selectedLineCount: 0,
+            isApplyingStage: false,
+            inFlightScmOperation: null,
+            onStageFile: () => {},
+            onUnstageFile: () => {},
+            onApplySelectedLines: () => {},
+            onClearSelection: () => {},
+        }));
+
+        expect(screen.findByTestId('file-details-view-actions')?.findAllByType('WrapLinesToggleButton' as never)).toHaveLength(1);
+    });
 
     it('shows Stage file for untracked files even when hasPendingDelta is false', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');

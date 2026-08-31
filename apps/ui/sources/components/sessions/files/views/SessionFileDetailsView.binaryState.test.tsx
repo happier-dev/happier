@@ -302,6 +302,7 @@ describe('SessionFileDetailsView (binary)', () => {
 
     expect(refreshSpy).toHaveBeenCalled();
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
+    expect(tree.findByType('FileActionToolbar' as any).props.showWrapLinesToggle).toBe(false);
     expect(tree.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
     expect(tree.findAllByType('FileBinaryState' as any).length).toBe(1);

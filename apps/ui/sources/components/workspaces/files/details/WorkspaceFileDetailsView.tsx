@@ -1053,6 +1053,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     showDiffToggle={resolveShowDiffToggle({ diffContent, hasPendingDelta, hasIncludedDelta, fileIsBinary: isBinaryFile })}
                     showFileToggle={Boolean(fileContent)}
                     showMarkdownToggle={markdownPreviewAvailable}
+                    showWrapLinesToggle={!isBinaryFile && !previewTooLarge && displayMode !== 'markdown'}
                     diffMode={diffMode}
                     onDiffMode={setDiffMode}
                     hasPendingDelta={hasPendingDelta}

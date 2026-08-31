@@ -10,6 +10,7 @@ import { installFileOpsRendererCommonModuleMocks } from './fileOpsRendererTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
+const headerActionsSpy = vi.fn();
 const upsertSessionReviewCommentDraftSpy = vi.fn();
 const deleteSessionReviewCommentDraftSpy = vi.fn();
 const upsertWorkspaceReviewCommentDraftSpy = vi.fn();
@@ -55,7 +56,11 @@ vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () 
 }));
 
 vi.mock('@/components/tools/shell/presentation/ToolHeaderActionsContext', () => ({
-    useToolHeaderActions: () => {},
+    useToolHeaderActions: (node: React.ReactNode) => headerActionsSpy(node),
+}));
+
+vi.mock('@/components/ui/code/WrapLinesToggleButton', () => ({
+    WrapLinesToggleButton: 'WrapLinesToggleButton',
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -104,7 +109,25 @@ vi.mock('@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewComm
 
 describe('DiffView (review comments)', () => {
     beforeEach(() => {
+        headerActionsSpy.mockClear();
         workspaceScopeState.current = { serverId: 'server-1', machineId: 'm1', rootPath: '/repo' };
+    });
+
+    it('offers wrapping in expanded diff headers without overloading summary headers', async () => {
+        const { DiffView } = await import('./DiffView');
+        const tool = makeToolCall({
+            name: 'Diff',
+            state: 'completed',
+            input: { unified_diff: 'diff --git a/src/a.ts b/src/a.ts' },
+            result: null,
+        });
+        const screen = await renderScreen(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
+        const fullHeader = await renderScreen(headerActionsSpy.mock.calls.at(-1)?.[0]);
+        expect(fullHeader.findAllByType('WrapLinesToggleButton' as never)).toHaveLength(1);
+
+        await screen.update(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'summary' })));
+        const summaryHeader = await renderScreen(headerActionsSpy.mock.calls.at(-1)?.[0]);
+        expect(summaryHeader.findAllByType('WrapLinesToggleButton' as never)).toHaveLength(0);
     });
 
     it('passes a renderInlineUnifiedDiff override when review comments are enabled and sessionId is available', async () => {

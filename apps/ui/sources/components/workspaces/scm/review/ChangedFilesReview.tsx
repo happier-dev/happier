@@ -28,6 +28,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 import { DiffFilesListView, type DiffFilesListViewHandle } from '@/components/ui/code/diff/DiffFilesListView';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { resolveWebScrollableElement } from '@/components/ui/scroll/resolveWebScrollableElement';
@@ -841,6 +842,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     availableModes={diffConfig.availableModes}
                     labels={diffConfig.labels}
                     onChange={setDiffArea}
+                    trailingElement={<WrapLinesToggleButton />}
                 />
 
                 {reviewFiles.length === 0 && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
