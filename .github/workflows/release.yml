@@ -382,7 +382,6 @@ jobs:
           set -euo pipefail
           args=(
             --repository "$GITHUB_REPOSITORY"
-            --workflow tests.yml
             --source-sha "$SOURCE_SHA"
             --source-branch "$SOURCE_BRANCH"
           )

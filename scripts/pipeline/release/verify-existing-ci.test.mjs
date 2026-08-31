@@ -7,7 +7,6 @@ import { DEFAULT_RELEASE_CI_LANES, validateCiLaneSummary, validateCanonicalCiRun
 const sha = 'a'.repeat(40);
 const expected = {
   repository: 'happier-dev/happier',
-  workflow: 'tests.yml',
   sourceSha: sha,
   sourceBranch: 'dev',
   runId: '42',
@@ -36,6 +35,49 @@ test('admits only the explicitly named successful canonical push CI run', () => 
   ]) {
     assert.throws(() => validateCanonicalCiRun(run, expected), /not a successful canonical push CI/);
   }
+});
+
+test('reuses canonical exact-SHA CI evidence only forward through the public promotion chain', () => {
+  const run = {
+    id: 42,
+    path: '.github/workflows/tests.yml',
+    head_sha: sha,
+    head_branch: 'dev',
+    event: 'push',
+    status: 'completed',
+    conclusion: 'success',
+    head_repository: { full_name: 'happier-dev/happier' },
+  };
+
+  assert.doesNotThrow(() => validateCanonicalCiRun(run, { ...expected, sourceBranch: 'preview' }));
+  assert.doesNotThrow(() => validateCanonicalCiRun(run, { ...expected, sourceBranch: 'main' }));
+  assert.doesNotThrow(() => validateCanonicalCiRun({ ...run, head_branch: 'preview' }, { ...expected, sourceBranch: 'main' }));
+
+  assert.throws(
+    () => validateCanonicalCiRun({ ...run, head_branch: 'preview' }, expected),
+    /not a successful canonical push CI/,
+  );
+  assert.throws(
+    () => validateCanonicalCiRun({ ...run, head_branch: 'main' }, { ...expected, sourceBranch: 'preview' }),
+    /not a successful canonical push CI/,
+  );
+  assert.throws(
+    () => validateCanonicalCiRun({ ...run, head_branch: 'feature/release' }, { ...expected, sourceBranch: 'main' }),
+    /not a successful canonical push CI/,
+  );
+});
+
+test('rejects noncanonical workflow paths', () => {
+  assert.throws(() => validateCanonicalCiRun({
+    id: 42,
+    path: '.github/workflows/tests-dispatch.yml',
+    head_sha: sha,
+    head_branch: 'dev',
+    event: 'push',
+    status: 'completed',
+    conclusion: 'success',
+    head_repository: { full_name: 'happier-dev/happier' },
+  }, expected), /not a successful canonical push CI/);
 });
 
 test('validates the CI lane attestation and required release lanes', () => {

@@ -33,7 +33,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
   release: {
     summary: 'Orchestrate a full dev/preview/production release (recommended entrypoint).',
     usage:
-      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--waive-ci <bool>] [--include-validation-suites <csv>] [--waive-validation-suites <csv>] [--override-reason <text>] [--dry-run] [--json]',
+      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--ci-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--waive-ci <bool>] [--include-validation-suites <csv>] [--waive-validation-suites <csv>] [--override-reason <text>] [--dry-run] [--json]',
     options: [
       '--confirm <action>                Required safety confirmation.',
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
@@ -50,6 +50,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--source-sha <sha>                Required for non-dry hosted dispatch; exact source commit to promote.',
       '--workflow-control-sha <sha>      Optional dispatcher-observed dev SHA for hosted workflow-control fencing.',
       '--resume-run-id <run-id>          Optional completed release run whose individually verified immutable candidates should be reused.',
+      '--ci-run-id <run-id>              Required non-waived exact-SHA canonical push CI run attestation for hosted release dispatch.',
       '--operation-id <id>               Optional conductor correlation ID; required for --dry-run --json.',
       '--attempt-id <attempt_n>           Hosted execution-attempt identity for exact resume correlation (default: attempt_1).',
       '--release-notes-id <id>           Required approved release-note entry for preview/production dispatches.',

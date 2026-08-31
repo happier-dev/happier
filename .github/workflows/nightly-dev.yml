@@ -225,7 +225,6 @@ jobs:
           set -euo pipefail
           args=(
             --repository "$GITHUB_REPOSITORY"
-            --workflow tests.yml
             --source-sha "$SOURCE_SHA"
             --source-branch dev
             --run-id "$CI_RUN_ID"

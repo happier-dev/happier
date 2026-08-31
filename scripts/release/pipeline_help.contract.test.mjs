@@ -203,5 +203,6 @@ test('release help exposes the workflow-control fence without reviving manual re
 
   assert.match(help, /--workflow-control-sha/);
   assert.match(help, /--resume-run-id/);
+  assert.match(help, /--ci-run-id/);
   assert.doesNotMatch(help, /--release-message/);
 });

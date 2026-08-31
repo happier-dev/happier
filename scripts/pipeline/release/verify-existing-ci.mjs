@@ -7,6 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { getPublicReleaseRingEntry } from './lib/public-release-rings.mjs';
+
+const CANONICAL_RELEASE_CI_WORKFLOW = 'tests.yml';
+const PUBLIC_RELEASE_PROMOTION_BRANCHES = Object.freeze(
+  ['publicdev', 'preview', 'stable'].map((ring) => getPublicReleaseRingEntry(ring).sourceBranch),
+);
 
 export const DEFAULT_RELEASE_CI_LANES = Object.freeze([
   'ci_plan', 'trusted_ref_guard',
@@ -37,16 +43,30 @@ function requireRecord(value) {
 }
 
 /**
+ * CI is source evidence, so an exact-SHA successful push stays valid as that
+ * commit moves forward through the public dev -> preview -> main promotion
+ * chain. Branch mutation and source binding remain owned by release admission.
+ *
+ * @param {unknown} runBranch
+ * @param {string} sourceBranch
+ */
+function isAllowedPromotionChainCiBranch(runBranch, sourceBranch) {
+  const runIndex = PUBLIC_RELEASE_PROMOTION_BRANCHES.indexOf(String(runBranch));
+  const sourceIndex = PUBLIC_RELEASE_PROMOTION_BRANCHES.indexOf(sourceBranch);
+  return runIndex >= 0 && sourceIndex >= 0 && runIndex <= sourceIndex;
+}
+
+/**
  * @param {unknown} runValue
- * @param {{ repository: string; workflow: string; sourceSha: string; sourceBranch: string; runId: string }} expected
+ * @param {{ repository: string; sourceSha: string; sourceBranch: string; runId: string }} expected
  */
 export function validateCanonicalCiRun(runValue, expected) {
   const run = requireRecord(runValue);
   if (
     String(run.id ?? '') !== expected.runId
-    || run.path !== `.github/workflows/${expected.workflow}`
+    || run.path !== `.github/workflows/${CANONICAL_RELEASE_CI_WORKFLOW}`
     || run.head_sha !== expected.sourceSha
-    || run.head_branch !== expected.sourceBranch
+    || !isAllowedPromotionChainCiBranch(run.head_branch, expected.sourceBranch)
     || run.event !== 'push'
     || requireRecord(run.head_repository).full_name !== expected.repository
     || run.status !== 'completed'
@@ -106,7 +126,6 @@ export async function main(argv = process.argv.slice(2)) {
     args: argv,
     options: {
       repository: { type: 'string' },
-      workflow: { type: 'string', default: 'tests.yml' },
       'source-sha': { type: 'string' },
       'source-branch': { type: 'string' },
       'run-id': { type: 'string' },
@@ -116,7 +135,6 @@ export async function main(argv = process.argv.slice(2)) {
     allowPositionals: false,
   });
   const repository = String(values.repository ?? '').trim();
-  const workflow = String(values.workflow ?? '').trim();
   const sourceSha = String(values['source-sha'] ?? '').trim();
   const sourceBranch = String(values['source-branch'] ?? '').trim();
   const runId = String(values['run-id'] ?? '').trim();
@@ -124,14 +142,13 @@ export async function main(argv = process.argv.slice(2)) {
   const requiredLanes = selectedRequiredLanes.length > 0 ? selectedRequiredLanes : [...DEFAULT_RELEASE_CI_LANES];
   if (!/^[^/\s]+\/[^/\s]+$/u.test(repository)) throw new Error('--repository must be owner/repo');
   if (!/^[0-9a-f]{40}$/u.test(sourceSha)) throw new Error('--source-sha must be a full lowercase commit ID');
-  if (!['dev', 'preview', 'main'].includes(sourceBranch)) throw new Error('--source-branch must be dev, preview, or main');
-  if (!/^[A-Za-z0-9_.-]+\.ya?ml$/u.test(workflow)) throw new Error('--workflow must be a workflow filename');
+  if (!PUBLIC_RELEASE_PROMOTION_BRANCHES.includes(sourceBranch)) throw new Error('--source-branch must be dev, preview, or main');
   if (!runId) throw new Error('--run-id is required; releases consume an explicit completed CI attestation');
   if (!/^[1-9][0-9]*$/u.test(runId)) throw new Error('--run-id must be a positive integer');
   if (new Set(requiredLanes).size !== requiredLanes.length) throw new Error('--required-lanes must not contain duplicates');
 
   const run = JSON.parse(runGh(['api', `repos/${repository}/actions/runs/${runId}`]));
-  validateCanonicalCiRun(run, { repository, workflow, sourceSha, sourceBranch, runId });
+  validateCanonicalCiRun(run, { repository, sourceSha, sourceBranch, runId });
 
   const evidenceRoot = await mkdtemp(join(tmpdir(), 'happier-ci-evidence-'));
   try {
