@@ -52,6 +52,16 @@ const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
  * roughly this much of the same space, so the card reads as rising into the layer the tab bar just
  * vacated rather than sliding in from off-screen.
  */
+/**
+ * How far the composer's frosted band reaches above the card.
+ *
+ * Taller than the shared `OVERLAY_SCRIM_RAMP_HEIGHT` default: this composer floats over the session
+ * list rather than over a single quiet surface, so it needs a longer run to settle against busy,
+ * scrolling content. Still far short of veiling the list - keeping it readable while you type is the
+ * reason this is a floating composer and not a sheet.
+ */
+const SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT = 128;
+
 const SIMPLE_NEW_SESSION_ENTER_TRAVEL_PX = 32;
 
 /** Shared modal arrival scale; the card grows into place rather than only sliding. */
@@ -398,7 +408,11 @@ export const NewSessionSimplePanel = React.memo(function NewSessionSimplePanel(p
                           */}
                         <View>
                             {isFloatingComposer ? (
-                                <OverlayScrim progress={enterProgress} testID="new-session-scrim" />
+                                <OverlayScrim
+                                    progress={enterProgress}
+                                    rampHeight={SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT}
+                                    testID="new-session-scrim"
+                                />
                             ) : null}
                             <NewSessionSimplePanelComposer
                                 panelProps={props}

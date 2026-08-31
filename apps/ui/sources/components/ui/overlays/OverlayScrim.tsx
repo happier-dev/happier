@@ -101,6 +101,15 @@ function toGradientColors(colors: readonly string[]): GradientColors {
 export type OverlayScrimProps = Readonly<{
     /** 0 = clear, 1 = settled. Read on the UI thread so the band cannot drift from the surface. */
     progress: SharedValue<number>;
+    /**
+     * How far the band reaches above the seated surface. Defaults to
+     * {@link OVERLAY_SCRIM_RAMP_HEIGHT}.
+     *
+     * A surface may want a taller separation than the shared default without changing it for every
+     * other one — the falloff is expressed in fractions of the band, so the whole ramp scales with
+     * this and no other value moves.
+     */
+    rampHeight?: number;
     testID?: string;
 }>;
 
@@ -170,6 +179,7 @@ const ScrimBlurStack = React.memo(function ScrimBlurStack(props: Readonly<{ base
 });
 
 export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrimProps) {
+    const rampHeight = props.rampHeight ?? OVERLAY_SCRIM_RAMP_HEIGHT;
     const dimColors = useDimGradientColors();
     const ramp = React.useMemo(() => scrimRamp(), []);
     const liquidGlassAvailable = useLiquidGlassAvailable();
@@ -191,7 +201,7 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
 
     return (
         // Positions itself against the surface it seats: it fills that surface and reaches exactly
-        // `OVERLAY_SCRIM_RAMP_HEIGHT` above it. Doing this here rather than at the call site is what
+        // `rampHeight` above it. Doing this here rather than at the call site is what
         // keeps the ramp a fixed height at ANY composer height — laying it out in flow would make
         // the falloff stretch with the card, and sizing it from the outside would need a
         // measurement the caller does not have.
@@ -203,7 +213,7 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
                     position: 'absolute',
                     left: 0,
                     right: 0,
-                    top: -(OVERLAY_SCRIM_RAMP_HEIGHT - RAMP_UNDERLAP),
+                    top: -(rampHeight - RAMP_UNDERLAP),
                     bottom: -SOLID_BOTTOM_EXTENSION,
                 },
                 animatedStyle,
@@ -216,12 +226,12 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
                     position: 'absolute',
                     left: 0,
                     right: 0,
-                    top: OVERLAY_SCRIM_RAMP_HEIGHT,
+                    top: rampHeight,
                     bottom: 0,
                     backgroundColor: dimColors[0],
                 }}
             />
-            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: OVERLAY_SCRIM_RAMP_HEIGHT }}>
+            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: rampHeight }}>
                 {showsBlur ? <ScrimBlurStack baseIntensity={blurIntensity} /> : null}
                 <LinearGradient
                     style={RNStyleSheet.absoluteFillObject}
