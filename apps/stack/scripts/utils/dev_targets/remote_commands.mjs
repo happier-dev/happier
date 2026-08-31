@@ -237,8 +237,6 @@ function buildRemoteDevArgs({ services, serverUrl, publicServerUrl, startMobile 
   args.push('--no-browser', '--no-dev-targets', '--watch');
   if (services.expo && startMobile) args.push('--mobile');
   if (services.server) {
-    // The target's SSH forward owns the stable endpoint, so bind the server to its configured port.
-    args.push('--no-proxy');
     if (publicServerUrl) args.push(`--server-public-url=${publicServerUrl}`);
   } else {
     args.push(`--server-url=${serverUrl}`);

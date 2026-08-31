@@ -194,7 +194,7 @@ test('remote server command pins stable public URL and exact target-local SQLite
   assert.match(command, /HAPPIER_STACK_SERVER_PORT=43005/);
   assert.match(command, /HAPPIER_SERVER_RETENTION__SESSION_SIDECHAIN_MESSAGES__DAYS=7/);
   assert.match(command, /--server-public-url=.*127\.0\.0\.1:52753/);
-  assert.match(command, /--no-proxy/);
+  assert.doesNotMatch(command, /--no-proxy/);
   assert.doesNotMatch(command, /--no-server|--no-daemon/);
   assert.doesNotMatch(command, /guest\/data-must-not-leak|DATABASE_URL/);
   assert.match(stopCommand, /stack stop .*repo-local-dev.* --yes --no-docker --preserve-daemon/);
