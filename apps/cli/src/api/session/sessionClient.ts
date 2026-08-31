@@ -586,6 +586,10 @@ export class ApiSessionClient extends EventEmitter {
     // Generic reversible provider-path blocks retain identity so exact late provider evidence can
     // still settle the row. A proven pre-provider lifecycle failure retires it after durable block.
     private readonly serverBlockedCanonicalPendingDeliveryLocalIds = new Set<string>();
+    // The provider can report a precise rejection while a terminal turn observer reports only
+    // ambiguity. Serialize those writes per exact claim so a later weaker report observes the
+    // already-settled claim instead of overwriting the durable reason.
+    private readonly canonicalPendingDeliveryBlockWritesByLocalId = new Map<string, Promise<boolean>>();
     // A source-cutover deferral has proven no Provider effect. Preserve the server's delivering
     // claim through predecessor shutdown so the successor can rejoin its ordinary first delivery.
     private readonly sourceCutoverDeferredPendingLocalIds = new Set<string>();
@@ -1704,7 +1708,29 @@ export class ApiSessionClient extends EventEmitter {
         return didBlock;
     }
 
-    private async blockPendingQueueDeliveryLocalId(
+    private blockPendingQueueDeliveryLocalId(
+        localId: string,
+        reason: PendingQueueDeliveryBlockedReason,
+        opts: Readonly<{ canonicalOnly: boolean; providerEffect?: 'none' }>,
+    ): Promise<boolean> {
+        const precedingWrite = this.canonicalPendingDeliveryBlockWritesByLocalId.get(localId);
+        const write = (async () => {
+            if (precedingWrite) {
+                await precedingWrite;
+            }
+            return await this.blockPendingQueueDeliveryLocalIdNow(localId, reason, opts);
+        })();
+        this.canonicalPendingDeliveryBlockWritesByLocalId.set(localId, write);
+        const clearWrite = () => {
+            if (this.canonicalPendingDeliveryBlockWritesByLocalId.get(localId) === write) {
+                this.canonicalPendingDeliveryBlockWritesByLocalId.delete(localId);
+            }
+        };
+        void write.then(clearWrite, clearWrite);
+        return write;
+    }
+
+    private async blockPendingQueueDeliveryLocalIdNow(
         localId: string,
         reason: PendingQueueDeliveryBlockedReason,
         opts: Readonly<{ canonicalOnly: boolean; providerEffect?: 'none' }>,
@@ -5651,6 +5677,7 @@ export class ApiSessionClient extends EventEmitter {
         this.pendingQueueMaterializedLocalIds.clear();
         this.canonicalPendingDeliveryByLocalId.clear();
         this.serverBlockedCanonicalPendingDeliveryLocalIds.clear();
+        this.canonicalPendingDeliveryBlockWritesByLocalId.clear();
         this.sourceCutoverDeferredPendingLocalIds.clear();
         this.committedUserMessageSeqTracker.clear();
         this.agentQueueEchoSuppressedLocalIds.clear();

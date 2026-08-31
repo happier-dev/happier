@@ -4082,6 +4082,56 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect(materializeNextMock).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps a proven pre-acceptance rejection when a later ambiguous terminal report races it', async () => {
+    const localId = 'proven-rejection-before-ambiguous-terminal';
+    const firstBlock = createDeferred<{
+      pendingQueueState: {
+        known: true;
+        pendingCount: number;
+        pendingBlockedCount: number;
+        pendingVersion: number;
+      };
+    }>();
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 1,
+      pendingBlockedCount: 0,
+      pendingVersion: 1,
+      metadata: { deliveredUserMessageSeqV1: 0 },
+    });
+    await waitForCurrentPendingInputContract(client);
+    materializeNextMock.mockResolvedValueOnce(createProviderDeliveryMaterializeResult(localId));
+    blockPendingDeliveryMock.mockImplementationOnce(() => firstBlock.promise);
+
+    await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).resolves.toMatchObject({
+      type: 'materialized',
+      localId,
+    });
+
+    const provenRejection = client.blockPendingMessageDelivery({
+      localIds: [localId],
+      reason: 'provider_rejected_before_acceptance',
+    });
+    await waitUntil(() => blockPendingDeliveryMock.mock.calls.length === 1);
+    const ambiguousTerminal = client.blockPendingMessageDelivery({
+      localIds: [localId],
+      reason: 'ambiguous_terminal_delivery',
+    });
+
+    firstBlock.resolve({
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 1, pendingVersion: 2 },
+    });
+
+    await expect(provenRejection).resolves.toBe(true);
+    await expect(ambiguousTerminal).resolves.toBe(false);
+    expect(blockPendingDeliveryMock).toHaveBeenCalledExactlyOnceWith({
+      token: 'tok',
+      sessionId: 's1',
+      localId,
+      reason: 'provider_rejected_before_acceptance',
+    });
+  });
+
   it.each([
     'terminal_composer_draft',
     'runtime_config_blocked',
