@@ -1,5 +1,13 @@
 const STARTUP_RPC_METHODS = new Set(['initialize', 'thread/start']);
-const LONG_RUNNING_RPC_METHODS = new Set(['thread/resume', 'thread/fork', 'conversation/fork']);
+const LONG_RUNNING_RPC_METHODS = new Set([
+    'thread/resume',
+    'thread/fork',
+    'conversation/fork',
+    // A timeout cannot establish whether Codex accepted this side effect. Keep the
+    // request lifecycle-owned so slow admission never becomes ambiguous delivery.
+    'turn/start',
+    'turn/steer',
+]);
 
 function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {
     const raw = Number.parseInt(String(rawValue ?? ''), 10);
