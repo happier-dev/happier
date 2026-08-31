@@ -98,4 +98,4 @@ Prefer existing domain folders and module owners before creating new top-level f
 
 ## Debugging
 
-Use `skills/happier-diagnose` for Happier issue diagnosis and evidence collection. Server logs are under `.logs/` when enabled, and consolidated client/server debugging can use `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=true` only when intentionally diagnosing.
+Use `.agents/skills/happier-diagnose` for Happier issue diagnosis and evidence collection. Server logs are under `.logs/` when enabled, and consolidated client/server debugging can use `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=true` only when intentionally diagnosing.

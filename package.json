@@ -96,7 +96,7 @@
     "test:server:db-contract:postgres:docker": "yarn -s test:db-contract:postgres:docker",
     "test:server:db-contract:mysql:docker": "yarn -s test:db-contract:mysql:docker",
     "test:server:db-contract:docker": "yarn -s test:db-contract:docker",
-    "test:wiring:self": "node --experimental-strip-types --test scripts/issue-triage-workflows.contract.test.mjs scripts/testing/lib/fallowLocalTooling.test.ts scripts/testing/lib/testLaneMap.test.ts scripts/testing/lib/workflowScriptParity.test.ts scripts/testing/validateTestWiring.test.ts",
+    "test:wiring:self": "node --experimental-strip-types --test scripts/issue-triage-workflows.contract.test.mjs scripts/testing/lib/agentInstructionBudget.test.ts scripts/testing/lib/fallowLocalTooling.test.ts scripts/testing/lib/testLaneMap.test.ts scripts/testing/lib/workflowScriptParity.test.ts scripts/testing/validateTestWiring.test.ts",
     "test:wiring": "node --experimental-strip-types ./scripts/testing/validateTestWiring.ts",
     "test:policy:self": "node --experimental-strip-types --test scripts/testing/lib/testPolicyRules.test.ts scripts/testing/validateTestPolicy.test.ts scripts/testing/workflowSchedulePolicy.test.ts scripts/testing/migrations/lib/*.test.ts",
     "test:policy": "node --experimental-strip-types ./scripts/testing/validateTestPolicy.ts",

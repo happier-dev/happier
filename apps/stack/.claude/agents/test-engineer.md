@@ -5,4 +5,4 @@ description: Deprecated placeholder. Do not use; follow root AGENTS.md and packa
 
 # Deprecated
 
-This custom subagent definition is disabled for this repository. Use `AGENTS.md` and `skills/happier-testing` for testing workflow.
+This custom subagent definition is disabled for this repository. Use `AGENTS.md` and `.agents/skills/happier-testing` for testing workflow.

@@ -1,6 +1,6 @@
 # Testing
 
-This document records the repository-level test lane map and placement conventions. For workflow details, use the repo skill `skills/happier-testing` and the development guide at `apps/docs/content/docs/development/testing.mdx`.
+This document records the repository-level test lane map and placement conventions. For workflow details, use the repo skill `.agents/skills/happier-testing` and the development guide at `apps/docs/content/docs/development/testing.mdx`.
 
 ## Top-level lanes
 

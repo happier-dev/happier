@@ -53,7 +53,7 @@ export const RELEASE_VALIDATION_PROFILES = Object.freeze([
     normalRelease: false,
     checksProfile: null,
     automaticSuiteIds: Object.freeze([]),
-    manualEntrypoint: 'skills/happier-release-validation/SKILL.md',
+    manualEntrypoint: '.agents/skills/happier-release-validation/SKILL.md',
   }),
 ]);
 

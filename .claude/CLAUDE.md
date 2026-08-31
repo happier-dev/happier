@@ -128,19 +128,19 @@ profile.
 - **Verify lane claims.** Reports referencing files that don't exist, "green" suites that are red
   at the lane's own commit, and inflated LOC deltas all happened. Reviewers rerun the tests
   themselves against the current source basis and attribute concurrent churn explicitly.
-- **Adversarial review at composed boundaries.** Authors run `skills/attack-conclusion` while
-  building. Independent review and `skills/verify-claims` target load-bearing delegated claims and
+- **Adversarial review at composed boundaries.** Authors run `.agents/skills/attack-conclusion` while
+  building. Independent review and `.agents/skills/verify-claims` target load-bearing delegated claims and
   the consumed vertical, corridor gate, or ship gate—not every microchange. After
   accepted fixes, review the finding delta unless the validated source, contract, scope, or risk changed
   materially. Author ≠ reviewer remains mandatory for corridor and ship gates.
 
 ## Validation doctrine
 
-Use the active root `AGENTS.md` rules ("Risk-weighted execution" and "Testing: contract value, not test volume") plus `skills/happier-testing`; do not maintain a Claude-only copy or reread the root file when it is already in context.
+Use the active root `AGENTS.md` rules ("Risk-weighted execution" and "Testing: contract value, not test volume") plus `.agents/skills/happier-testing`; do not maintain a Claude-only copy or reread the root file when it is already in context.
 
 ## Plan execution and recovery
 
-Use `skills/happier-implement-plan` for generic approved-plan execution, parallelism, dirty-worktree
+Use `.agents/skills/happier-implement-plan` for generic approved-plan execution, parallelism, dirty-worktree
 coordination, uncertainty resolution, status/evidence, QA/review boundaries, amendments, and
 completion. This file owns only the Claude/Happier execution-run mechanics above and the
 program-specific facts below; do not maintain a second copy of the cross-tool workflow here.

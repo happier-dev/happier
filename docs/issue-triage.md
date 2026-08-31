@@ -6,16 +6,16 @@ Happier separates issue evidence transport, triage routing, deep diagnosis, GitH
 
 | Concern | Canonical owner |
 | --- | --- |
-| Public issue reads, first-order relationship discovery, and explicitly authorized GitHub writes | `skills/happier-github-ops` through `yarn ghops` |
+| Public issue reads, first-order relationship discovery, and explicitly authorized GitHub writes | `.agents/skills/happier-github-ops` through `yarn ghops` |
 | Private issue/report context, diagnostic artifacts, and reproduction-stack mechanics | private `hmaint` and maintainer MCP |
 | Bug-report submission and candidate similar-issue retrieval | bug-report service and `packages/protocol/src/bugReports/*` |
-| Issue normalization, relationship analysis, clustering, and diagnosis topology | `skills/happier-issue-triage` |
-| Deep diagnosis of one coherent issue bundle and its version-aware disposition | `skills/happier-issue-diagnose` |
-| Correctness and affected-corridor assessment of a linked implementation | `skills/happier-review` in advisory/report mode |
-| Runtime/session/daemon/provider/auth evidence method | `skills/happier-diagnose` |
-| Released-version and mixed-component provenance | `skills/happier-compatibility` |
-| Independent Happier session creation and monitoring | `skills/happier-session-control` |
-| Approved source correction | `skills/happier-implement` |
+| Issue normalization, relationship analysis, clustering, and diagnosis topology | `.agents/skills/happier-issue-triage` |
+| Deep diagnosis of one coherent issue bundle and its version-aware disposition | `.agents/skills/happier-issue-diagnose` |
+| Correctness and affected-corridor assessment of a linked implementation | `.agents/skills/happier-review` in advisory/report mode |
+| Runtime/session/daemon/provider/auth evidence method | `.agents/skills/happier-diagnose` |
+| Released-version and mixed-component provenance | `.agents/skills/happier-compatibility` |
+| Independent Happier session creation and monitoring | `.agents/skills/happier-session-control` |
+| Approved source correction | `.agents/skills/happier-implement` |
 | Correction availability across source, dev, preview, and stable | release workflows through `scripts/pipeline/github/reconcile-issue-stage.mjs` |
 | Whose response or action is currently required | `.github/workflows/issue-needs-handoff.yml` through `scripts/pipeline/github/reconcile-issue-needs.mjs` |
 
@@ -34,7 +34,7 @@ The triage skill:
 5. diagnoses one coherent bundle in the main lane or routes multiple bundles to native subagents or independent Happier sessions;
 6. preserves presentation ownership: the main lane synthesizes native-subagent results, while independently spawned sessions present their own reports.
 
-Deep diagnosis records linked work during intake, establishes the issue contract and cause independently, then compares any decision-material pull request through `skills/happier-review`. A pull-request description or approval is evidence to verify, not the source of issue truth. The resulting report distinguishes implementation fitness, merge state, issue closure, and release status.
+Deep diagnosis records linked work during intake, establishes the issue contract and cause independently, then compares any decision-material pull request through `.agents/skills/happier-review`. A pull-request description or approval is evidence to verify, not the source of issue truth. The resulting report distinguishes implementation fitness, merge state, issue closure, and release status.
 
 Diagnosis and triage are read-only by default. Implementation and GitHub write-back require separate explicit authority.
 
@@ -42,7 +42,7 @@ Diagnosis and triage are read-only by default. Implementation and GitHub write-b
 
 Every issue correction implemented on the 0.2 source line must receive an evidence-backed disposition on the evolved 0.3 line. During diagnosis, inspect whether the same user-visible contract or defect mechanism is reachable in 0.3 and identify its likely current owner and any expanded sibling paths. Search by behavior and domain identifiers rather than assuming the same files or architecture still own the decision.
 
-After implementation is authorized, work on and validate 0.2 first. Once the source correction forms one coherent validated batch, invoke `skills/happier-port-0-2-to-0-3` once for that batch. Reuse valid diagnosis evidence, re-discover the current 0.3 owner, and classify every source intent as already satisfied, adapted, broadened, or not applicable. Apply every applicable correction through 0.3's current canonical owner without restoring superseded 0.2 logic, overwriting unrelated destination work, or propagating 0.3 changes backward.
+After implementation is authorized, work on and validate 0.2 first. Once the source correction forms one coherent validated batch, invoke `.agents/skills/happier-port-0-2-to-0-3` once for that batch. Reuse valid diagnosis evidence, re-discover the current 0.3 owner, and classify every source intent as already satisfied, adapted, broadened, or not applicable. Apply every applicable correction through 0.3's current canonical owner without restoring superseded 0.2 logic, overwriting unrelated destination work, or propagating 0.3 changes backward.
 
 Do not port or fully reanalyze 0.3 during every source edit. If a later source refinement changes an intent, reassess that intent and its destination disposition; repeat the broader destination analysis only when scope, ownership, or architecture materially changed. The port skill does not stage or commit. If no verified 0.3 checkout is available, complete the source-side evidence and report the port as blocked with the missing location or authority.
 
@@ -73,7 +73,7 @@ Issues labeled after a snapshot wait for the next matching release. Failed or dr
 
 This also covers a channel bypass: a preview release can move a still-`stage:source` issue directly to `stage:preview`, and an authorized direct `dev` → `main` release can move any snapshotted earlier-stage issue to `stage:stable`. Higher-channel availability subsumes the skipped lower channel; it does not require a synthetic lower-channel release.
 
-The workflow's job-scoped token is a narrow pre-authorized exception to interactive GitHub mutation authority. It covers only these forward, pre-bound stage transitions after the owning release verifier succeeds. Interactive agents still use `skills/happier-github-ops` with either exact authorization or an explicit bounded standing grant for every other mutation.
+The workflow's job-scoped token is a narrow pre-authorized exception to interactive GitHub mutation authority. It covers only these forward, pre-bound stage transitions after the owning release verifier succeeds. Interactive agents still use `.agents/skills/happier-github-ops` with either exact authorization or an explicit bounded standing grant for every other mutation.
 
 ## Issue handoff and saved replies
 
@@ -132,7 +132,7 @@ The directive form is generic:
 
 The initial allowlist is deliberately limited to `needs:*`, `type:*`, and `priority:*`. The workflow rejects malformed directives, a label requested for both addition and removal, a result containing both `needs:*` labels, labels absent from the live repository, and protected families such as `stage:*`, `source:*`, `roadmap`, `ai-triage`, milestones, assignments, and disposition labels. Add and remove operations are incremental and idempotent; the workflow never replaces the complete label set.
 
-Agent-authored comments continue to require the exact or bounded standing authority in `skills/happier-github-ops` and should keep the `needs:*` label change conceptually separate from the public text. Hidden directives are primarily a manual saved-reply affordance, and they must not be appended after an agent comment's final `cc: @<local-gh-login>` line.
+Agent-authored comments continue to require the exact or bounded standing authority in `.agents/skills/happier-github-ops` and should keep the `needs:*` label change conceptually separate from the public text. Hidden directives are primarily a manual saved-reply affordance, and they must not be appended after an agent comment's final `cc: @<local-gh-login>` line.
 
 The workflow's job-scoped token is a second narrow pre-authorized exception to the interactive authorization rule. It authorizes only the three transitions above. Editing this policy or broadening its allowlist is a production behavior change and requires the normal repository review and test gates.
 
@@ -188,7 +188,7 @@ hmaint issue reproduce stack happier-dev/happier#123 --stack-name issue-123 --re
 
 Start with context and bounded excerpts. Download larger artifacts only when needed to discriminate a material hypothesis. If the maintainer capability is unavailable, the diagnosis must say so; a diagnostic id is not evidence that its contents were inspected.
 
-Raw private diagnostics never belong in public GitHub output. Follow the privacy boundary in `skills/happier-diagnose/references/reporting.md`.
+Raw private diagnostics never belong in public GitHub output. Follow the privacy boundary in `.agents/skills/happier-diagnose/references/reporting.md`.
 
 ## Automated context workflows
 
@@ -226,6 +226,6 @@ Issue and pull-request titles, bodies, comments, reviews, patches, attachments, 
 
 ## Durable write-back
 
-GitHub is the durable store when the user authorizes triage mutations; no local ledger is created. Follow `skills/happier-github-ops` for scoped label/comment/state validation.
+GitHub is the durable store when the user authorizes triage mutations; no local ledger is created. Follow `.agents/skills/happier-github-ops` for scoped label/comment/state validation.
 
 No issue is automatically closed, reopened, or locked. Duplicate consolidation requires human confirmation and must not leave a live defect without an open canonical issue. Explicit reporter or maintainer disagreement stops automation.

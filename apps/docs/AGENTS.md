@@ -148,7 +148,7 @@ Published product pages avoid repository paths and implementation trivia unless 
 - Use a small number of current, non-sensitive screenshots only when they materially improve a UI-heavy workflow.
 - Changes to the documentation site's own UI, navigation, accessibility, responsive behavior, or meaningful loading/error states are user-facing web changes. Read `../../DESIGN.md` when the experience is materially affected and apply the relevant live-validation rules.
 
-Use `skills/happier-docs` for the complete evidence, editing, validation, and handoff workflow.
+Use `.agents/skills/happier-docs` for the complete evidence, editing, validation, and handoff workflow.
 
 ## Navigation and hubs
 

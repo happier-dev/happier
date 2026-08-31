@@ -4,7 +4,7 @@ This document encodes the working method behind the rules in `AGENTS.md`: how to
 
 Consult this when a task is hard, ambiguous, or high-stakes, or when context loss has made the working method materially unclear. The procedures matter most exactly when you feel sure — confidence and correctness come apart precisely where you cannot feel the difference from the inside.
 
-Four skills package parts of this document as invocable procedures: `skills/decompose-gates` (§2–§3), `skills/verify-claims` (§4), `skills/handoff-report` (§5, §7), `skills/attack-conclusion` (§6, §8).
+Four skills package parts of this document as invocable procedures: `.agents/skills/decompose-gates` (§2–§3), `.agents/skills/verify-claims` (§4), `.agents/skills/handoff-report` (§5, §7), `.agents/skills/attack-conclusion` (§6, §8).
 
 ---
 

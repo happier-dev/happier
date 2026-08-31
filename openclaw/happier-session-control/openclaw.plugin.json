@@ -1,6 +1,6 @@
 {
   "id": "happier-session-control",
-  "skills": ["skills/happier-session-control"],
+  "skills": [".agents/skills/happier-session-control"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
