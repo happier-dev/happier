@@ -12,8 +12,12 @@ const expected = {
   runId: '42',
 };
 
-test('default release admission trusts the canonical CI selector instead of requiring intentionally unselected lanes', () => {
-  assert.deepEqual(DEFAULT_RELEASE_CI_LANES, ['ci_plan', 'trusted_ref_guard']);
+test('default release admission requires the complete fast source CI set', () => {
+  assert.deepEqual(DEFAULT_RELEASE_CI_LANES, [
+    'ci_plan', 'trusted_ref_guard',
+    'ui-unit', 'ui-integration', 'ui', 'shared-packages-unit',
+    'server', 'cli', 'stack', 'typecheck', 'e2e-core',
+  ]);
 });
 
 test('admits only the explicitly named successful canonical push CI run', () => {
@@ -99,6 +103,38 @@ test('validates the CI lane attestation and required release lanes', () => {
   );
 });
 
+test('rejects a path-selected docs-only summary as whole-source release evidence', () => {
+  const classifierOutputs = Object.fromEntries(Object.keys({
+    run_ui: 0,
+    run_server: 0,
+    run_cli: 0,
+    run_stack: 0,
+    run_ui_e2e: 0,
+    run_server_db_contract: 0,
+    run_release_contracts: 0,
+    run_installers_smoke: 0,
+    run_binary_smoke: 0,
+    run_cli_daemon_e2e: 0,
+    run_e2e_core: 0,
+    run_typecheck: 0,
+  }).map((key) => [key, 'false']));
+  const summary = {
+    schemaVersion: 1,
+    runId: '42',
+    sourceSha: sha,
+    workflow: 'CI — Tests',
+    lanes: [
+      { id: 'ci_plan', result: 'success', conclusion: null, outputs: classifierOutputs },
+      { id: 'trusted_ref_guard', result: 'success', conclusion: null, outputs: {} },
+    ],
+    failures: [],
+  };
+  assert.throws(
+    () => validateCiLaneSummary(summary, { runId: '42', sourceSha: sha, requiredLanes: [...DEFAULT_RELEASE_CI_LANES] }),
+    /required lane ui-unit did not succeed/,
+  );
+});
+
 test('rejects CI evidence whose classifier-selected lane is not successful', () => {
   const classifierOutputs = Object.fromEntries([
     'run_ui', 'run_server', 'run_cli', 'run_stack', 'run_ui_e2e', 'run_server_db_contract',
@@ -118,7 +154,7 @@ test('rejects CI evidence whose classifier-selected lane is not successful', () 
     failures: [],
   };
   assert.throws(
-    () => validateCiLaneSummary(summary, { runId: '42', sourceSha: sha, requiredLanes: [...DEFAULT_RELEASE_CI_LANES] }),
+    () => validateCiLaneSummary(summary, { runId: '42', sourceSha: sha, requiredLanes: ['ci_plan', 'trusted_ref_guard'] }),
     /classifier-selected lane server did not succeed/,
   );
 });

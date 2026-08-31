@@ -88,6 +88,7 @@ test('release workflows bound every runner job', async () => {
     'build-ui-mobile-local.yml',
     'extended-db-tests.yml',
     'nightly-dev.yml',
+    'promote-branch.yml',
     'promote-docs.yml',
     'promote-server.yml',
     'promote-ui.yml',
@@ -95,11 +96,13 @@ test('release workflows bound every runner job', async () => {
     'publish-cli-binaries.yml',
     'publish-docker.yml',
     'publish-hstack-binaries.yml',
+    'publish-github-release.yml',
     'publish-server-runtime.yml',
     'publish-ui-web.yml',
     'release-npm.yml',
     'release.yml',
     'resolve-release-resume.yml',
+    'verify-release-resume-candidates.yml',
   ];
   const longLaneMinimums = {
     'build-tauri.yml': { build: 180, finalize: 240 },

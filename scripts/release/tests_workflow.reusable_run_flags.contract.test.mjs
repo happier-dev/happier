@@ -239,3 +239,27 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
     assert.match(output, /steps\.unmatched\.outputs\.all == 'true'/);
   }
 });
+
+test('protected release-source pushes always run the complete fast source CI set', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8'));
+  assert.deepEqual(workflow.on.push.branches, ['dev', 'preview', 'main']);
+
+  for (const outputName of ['run_ui', 'run_server', 'run_cli', 'run_stack', 'run_typecheck', 'run_e2e_core']) {
+    assert.match(
+      workflow.jobs.ci_plan.outputs[outputName],
+      /github\.event_name == 'push'/,
+      `${outputName} must cover the whole protected-branch head instead of only the latest push delta`,
+    );
+  }
+
+  for (const outputName of [
+    'run_ui_e2e', 'run_server_db_contract', 'run_release_contracts', 'run_installers_smoke',
+    'run_binary_smoke', 'run_cli_daemon_e2e',
+  ]) {
+    assert.doesNotMatch(
+      workflow.jobs.ci_plan.outputs[outputName],
+      /github\.event_name == 'push'/,
+      `${outputName} should remain path-selected rather than expanding ordinary source CI into release/deep certification`,
+    );
+  }
+});

@@ -16,6 +16,8 @@ const PUBLIC_RELEASE_PROMOTION_BRANCHES = Object.freeze(
 
 export const DEFAULT_RELEASE_CI_LANES = Object.freeze([
   'ci_plan', 'trusted_ref_guard',
+  'ui-unit', 'ui-integration', 'ui', 'shared-packages-unit',
+  'server', 'cli', 'stack', 'typecheck', 'e2e-core',
 ]);
 
 const CLASSIFIED_CI_LANE_GROUPS = Object.freeze({

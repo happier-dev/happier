@@ -42,6 +42,7 @@ jobs:
   verify:
     name: Verify each published sibling independently
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       cli_verified: ${{ steps.outputs.outputs.cli_verified }}
       stack_verified: ${{ steps.outputs.outputs.stack_verified }}

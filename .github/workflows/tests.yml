@@ -206,18 +206,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      run_ui: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' }}
-      run_server: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' }}
-      run_cli: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' }}
-      run_stack: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' }}
+      # A protected-branch push is admissible as whole-source release evidence, so its established
+      # fast source set must cover the complete head. Pull requests retain path-selected feedback,
+      # while release/deep-only lanes below remain selected by their actual changed seams.
+      run_ui: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' }}
+      run_server: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' }}
+      run_cli: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' }}
+      run_stack: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' }}
       run_ui_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' }}
       run_server_db_contract: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' }}
       run_release_contracts: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' }}
       run_installers_smoke: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' }}
       run_binary_smoke: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.binary_smoke == 'true' }}
       run_cli_daemon_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli_daemon_e2e == 'true' }}
-      run_e2e_core: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' }}
-      run_typecheck: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' }}
+      run_e2e_core: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' }}
+      run_typecheck: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' }}
     steps:
       - name: Checkout
         if: ${{ !inputs.select_jobs_explicitly }}
