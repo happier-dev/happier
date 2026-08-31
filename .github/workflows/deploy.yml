@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -84,6 +85,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -102,6 +104,7 @@ jobs:
   deploy:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: ${{ needs.release_actor_guard.result == 'success' }}
     environment: ${{ inputs.environment }}
     steps:

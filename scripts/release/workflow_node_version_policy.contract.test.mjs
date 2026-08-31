@@ -84,6 +84,8 @@ test('release and extended validation workflows use canonical Corepack and depen
 
 test('release workflows bound every runner job', async () => {
   const files = [
+    'deploy.yml',
+    'deploy-on-deploy-branch.yml',
     'build-tauri.yml',
     'build-ui-mobile-local.yml',
     'extended-db-tests.yml',
@@ -105,6 +107,16 @@ test('release workflows bound every runner job', async () => {
     'verify-release-resume-candidates.yml',
   ];
   const longLaneMinimums = {
+    'deploy.yml': {
+      trusted_ref_guard: 10,
+      release_actor_guard: 15,
+      deploy: 30,
+    },
+    'deploy-on-deploy-branch.yml': {
+      trusted_ref_guard: 10,
+      release_actor_guard: 15,
+      target: 10,
+    },
     'build-tauri.yml': { build: 180, finalize: 240 },
     'build-ui-mobile-local.yml': { build_android: 180, build_ios: 180, ota_update: 90 },
     'promote-docs.yml': { deploy_cloudflare: 60 },
