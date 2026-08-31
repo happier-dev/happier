@@ -1,13 +1,28 @@
 import { join } from 'node:path';
 
+import {
+  SessionContinuationResumePromptModeV1Schema,
+  type SessionContinuationResumePromptModeV1,
+} from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import {
   DurableBackoffRecoveryScheduler,
   type DurableBackoffRecoveryStore,
 } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import {
+  ConnectedServiceRuntimeAuthFailureKindSchema,
+  type ConnectedServiceRuntimeAuthFailureKind,
+} from './types';
 
 type TemporaryThrottleIntentStatus = 'waiting' | 'checking' | 'cancelled' | 'exhausted';
+
+export type ConnectedServiceTemporaryThrottleContinuationIntent = Readonly<{
+  interruptedOriginId: string;
+  resumePromptMode: SessionContinuationResumePromptModeV1;
+  customResumePrompt: string | null;
+  recoveryKind: ConnectedServiceRuntimeAuthFailureKind;
+}>;
 
 export type ConnectedServiceTemporaryThrottleRetryIntent = Readonly<{
   v: 1;
@@ -24,6 +39,7 @@ export type ConnectedServiceTemporaryThrottleRetryIntent = Readonly<{
   attemptCount: number;
   maxAttempts: number;
   lastError: string | null;
+  continuation: ConnectedServiceTemporaryThrottleContinuationIntent | null;
 }>;
 
 type ConnectedServiceTemporaryThrottleRetrySchedulerDeps = Readonly<{
@@ -36,7 +52,11 @@ type ConnectedServiceTemporaryThrottleRetrySchedulerDeps = Readonly<{
   resume: (
     intent: ConnectedServiceTemporaryThrottleRetryIntent,
     context: Readonly<{ sessionId: string }>,
-  ) => Promise<void> | void;
+  ) => Promise<
+    | Readonly<{ status: 'continued' }>
+    | Readonly<{ status: 'superseded'; reason: string }>
+    | Readonly<{ status: 'terminal'; lastError: string }>
+  >;
 }>;
 
 type EnableTemporaryThrottleRetryInput = Readonly<{
@@ -47,6 +67,7 @@ type EnableTemporaryThrottleRetryInput = Readonly<{
   issueFingerprint: string;
   retryAfterMs?: number | null;
   resetAtMs?: number | null;
+  continuation?: ConnectedServiceTemporaryThrottleContinuationIntent | null;
 }>;
 
 const defaultMaxAttempts = 3;
@@ -67,6 +88,34 @@ function normalizeNonNegativeInteger(value: unknown): number | null {
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeContinuationIntent(
+  value: unknown,
+): ConnectedServiceTemporaryThrottleContinuationIntent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const interruptedOriginId = normalizeString(record.interruptedOriginId);
+  const resumePromptMode = SessionContinuationResumePromptModeV1Schema.safeParse(record.resumePromptMode);
+  const recoveryKind = ConnectedServiceRuntimeAuthFailureKindSchema.safeParse(record.recoveryKind);
+  if (!interruptedOriginId || !resumePromptMode.success || !recoveryKind.success) return null;
+  return {
+    interruptedOriginId,
+    resumePromptMode: resumePromptMode.data,
+    customResumePrompt: typeof record.customResumePrompt === 'string'
+      ? record.customResumePrompt
+      : null,
+    recoveryKind: recoveryKind.data,
+  };
+}
+
+function buildOccurrenceFingerprint(
+  issueFingerprint: string,
+  continuation: ConnectedServiceTemporaryThrottleContinuationIntent | null,
+): string {
+  return continuation
+    ? `${issueFingerprint}:origin:${continuation.interruptedOriginId}`
+    : issueFingerprint;
 }
 
 function normalizeIntent(value: unknown): ConnectedServiceTemporaryThrottleRetryIntent | null {
@@ -114,6 +163,7 @@ function normalizeIntent(value: unknown): ConnectedServiceTemporaryThrottleRetry
     attemptCount,
     maxAttempts,
     lastError: normalizeString(record.lastError) || null,
+    continuation: normalizeContinuationIntent(record.continuation),
   };
 }
 
@@ -197,7 +247,27 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
         lastError: input.lastError,
       }),
       recover: async (intent, context) => {
-        await deps.resume(intent, { sessionId: context.sessionId });
+        const result = await deps.resume(intent, { sessionId: context.sessionId });
+        if (result.status === 'superseded') {
+          return {
+            status: 'superseded',
+            reason: result.reason,
+            wakeResult: { status: 'superseded' },
+          };
+        }
+        if (result.status === 'terminal') {
+          return {
+            status: 'terminal',
+            lastError: result.lastError,
+            intent: {
+              ...intent,
+              status: 'cancelled',
+              nextRetryAtMs: null,
+              lastError: result.lastError,
+            },
+            wakeResult: { status: 'terminal' },
+          };
+        }
         return { status: 'success', wakeResult: { status: 'resumed' } };
       },
       honorTimerNotBefore: true,
@@ -221,7 +291,9 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
     }
     const sessionId = normalizeString(input.sessionId);
     const serviceId = normalizeString(input.serviceId);
-    const issueFingerprint = normalizeString(input.issueFingerprint);
+    const baseIssueFingerprint = normalizeString(input.issueFingerprint);
+    const continuation = normalizeContinuationIntent(input.continuation ?? null);
+    const issueFingerprint = buildOccurrenceFingerprint(baseIssueFingerprint, continuation);
     const nowMs = this.#nowMs();
     const retryAfterMs = normalizeNonNegativeInteger(input.retryAfterMs);
     const resetAtMs = normalizeNonNegativeInteger(input.resetAtMs);
@@ -245,6 +317,7 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
       attemptCount: 0,
       maxAttempts: this.#maxAttempts,
       lastError: null,
+      continuation,
     };
     const persisted = await this.#scheduler.upsertMerged({
       sessionId,

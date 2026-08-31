@@ -441,7 +441,7 @@ const CODEX_QUALIFIED_SERVICE = {
 const connectedAccountRequestAuthServiceDependenciesCapture = vi.hoisted(() => ({
     current: null as ConnectedAccountRequestAuthServiceDependencies | null,
 }));
-const sendSessionMessageMock = vi.hoisted(() => vi.fn(async () => undefined));
+const sendSessionMessageMock = vi.hoisted(() => vi.fn(async (): Promise<unknown> => undefined));
 const createCliActionExecutorFromCredentialsMock = vi.hoisted(() => vi.fn());
 const handleConnectedServiceRuntimeAuthFailureForSessionMock = vi.hoisted(() => vi.fn<(_input: unknown) => Promise<unknown>>(async (_input) => ({
     handled: false,
@@ -19588,9 +19588,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 }),
                 metadataVersion: 3,
             };
-            fetchSessionByIdCompatMock
-                .mockResolvedValueOnce(rawSession)
-                .mockResolvedValueOnce(rawSession);
+            fetchSessionByIdCompatMock.mockResolvedValue(rawSession);
             let capturedTemporaryThrottleRecovery: null | {
                 wake: (wakeInput: { sessionId: string; reason: 'timer' | 'manual' }) => Promise<{ status: string }>;
             } = null;
@@ -19646,6 +19644,7 @@ describe('startDaemonSessionControlRuntime', () => {
                         startedBy: 'daemon',
                         happySessionId: 'sess-temporary-throttle',
                         pid: 999_999_123,
+                        activeTurnId: 'turn-temporary-throttle',
                         vendorResumeId: 'codex-thread-stale',
                         spawnOptions: {
                             directory: '/tmp/project',
@@ -19697,6 +19696,12 @@ describe('startDaemonSessionControlRuntime', () => {
             });
 
             const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
+            sendSessionMessageMock.mockResolvedValueOnce({
+                ok: true,
+                sessionId: 'sess-temporary-throttle',
+                localId: 'connected-service-continuation:test',
+                waited: false,
+            });
             await expect(controlServerInput?.handleConnectedServiceRuntimeAuthFailure?.({
                 sessionId: 'sess-temporary-throttle',
                 switchesThisTurn: 0,
@@ -19737,7 +19742,12 @@ describe('startDaemonSessionControlRuntime', () => {
                     resume: 'codex-thread-stale',
                 }),
             }));
-            expect(materializeNextPendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+            expect(sendSessionMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+                idOrPrefix: 'sess-temporary-throttle',
+                message: 'Continue where you left off',
+                pendingAdmissionMode: 'continuation_if_no_queued_user_input',
+                resumeInactiveSession: false,
+            }));
 
             await runtime.stopControlServer();
         } finally {

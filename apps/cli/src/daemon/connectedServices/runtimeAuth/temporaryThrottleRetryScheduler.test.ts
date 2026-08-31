@@ -24,7 +24,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
       nowMs: () => 1_000,
       store: null,
-      resume: async () => {},
+      resume: async () => ({ status: 'continued' }),
     });
 
     await expect(scheduler.enable({
@@ -48,7 +48,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date(1_000));
-      const resume = vi.fn(async () => {});
+      const resume = vi.fn(async () => ({ status: 'continued' as const }));
       const { store } = createMemoryStore();
       const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
         nowMs: () => Date.now(),
@@ -126,7 +126,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
       nowMs: () => nowMs,
       store,
-      resume: async () => {
+      resume: async (): Promise<{ status: 'continued' }> => {
         throw new Error('still throttled');
       },
       maxAttempts: 3,
@@ -170,7 +170,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
       nowMs: () => nowMs,
       store,
-      resume: async () => {
+      resume: async (): Promise<{ status: 'continued' }> => {
         throw new Error('still throttled');
       },
       maxAttempts: 3,
@@ -221,7 +221,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
     const first = new ConnectedServiceTemporaryThrottleRetryScheduler({
       nowMs: () => nowMs,
       store,
-      resume: async () => {},
+      resume: async () => ({ status: 'continued' }),
     });
 
     await first.enable({
@@ -239,7 +239,7 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       nextRetryAtMs: 2_000,
     });
 
-    const resume = vi.fn(async () => {});
+    const resume = vi.fn(async () => ({ status: 'continued' as const }));
     nowMs = 2_000;
     const second = new ConnectedServiceTemporaryThrottleRetryScheduler({
       nowMs: () => nowMs,
@@ -254,5 +254,73 @@ describe('ConnectedServiceTemporaryThrottleRetryScheduler', () => {
       status: 'cancelled',
       nextRetryAtMs: null,
     });
+  });
+
+  it('keeps duplicate reports for one interrupted turn deduplicated but rearms a later turn', async () => {
+    let nowMs = 1_000;
+    const { store } = createMemoryStore();
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
+      nowMs: () => nowMs,
+      store,
+      resume: async () => ({ status: 'continued' }),
+    });
+    const base = {
+      sessionId: 'sess-1',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'main',
+      issueFingerprint: 'temporary-throttle:openai-codex:main:primary',
+      retryAfterMs: 60_000,
+      resetAtMs: null,
+    } as const;
+    const firstContinuation = {
+      interruptedOriginId: 'turn-1',
+      resumePromptMode: 'standard' as const,
+      customResumePrompt: null,
+      recoveryKind: 'temporary_throttle' as const,
+    };
+    await scheduler.enable({ ...base, continuation: firstContinuation });
+    await scheduler.cancel({ sessionId: 'sess-1' });
+
+    await expect(scheduler.enable({ ...base, continuation: firstContinuation })).resolves.toMatchObject({
+      status: 'cancelled',
+    });
+
+    nowMs = 2_000;
+    await expect(scheduler.enable({
+      ...base,
+      continuation: { ...firstContinuation, interruptedOriginId: 'turn-2' },
+    })).resolves.toMatchObject({ status: 'waiting', attemptCount: 0 });
+    expect(scheduler.read('sess-1')).toMatchObject({
+      continuation: { interruptedOriginId: 'turn-2' },
+    });
+  });
+
+  it('removes a recovery superseded by newer user input', async () => {
+    const { store } = createMemoryStore();
+    const scheduler = new ConnectedServiceTemporaryThrottleRetryScheduler({
+      nowMs: () => 1_000,
+      store,
+      resume: async () => ({ status: 'superseded', reason: 'newer_user_input' }),
+    });
+    await scheduler.enable({
+      sessionId: 'sess-1',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'main',
+      issueFingerprint: 'temporary-throttle:openai-codex:main:primary',
+      retryAfterMs: 0,
+      resetAtMs: null,
+      continuation: {
+        interruptedOriginId: 'turn-1',
+        resumePromptMode: 'standard',
+        customResumePrompt: null,
+        recoveryKind: 'temporary_throttle',
+      },
+    });
+
+    await expect(scheduler.wake({ sessionId: 'sess-1', reason: 'manual' }))
+      .resolves.toEqual({ status: 'superseded' });
+    expect(scheduler.read('sess-1')).toBeNull();
   });
 });
