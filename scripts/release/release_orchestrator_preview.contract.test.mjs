@@ -58,10 +58,7 @@ test('release workflow only promotes and publishes the exact prepared candidate 
     /sync_dev:[\s\S]*?if:\s*\$\{\{\s*inputs\.dry_run != true && inputs\.environment == 'production'[\s\S]*?needs\.release_verify\.result == 'success'/,
   );
   assert.doesNotMatch(raw, /needs\.release_verify\.result == 'skipped'/, 'production sync must not accept skipped release verification');
-  assert.match(
-    raw,
-    /Compute versioned component changes \(latest release tags\.\.release head\)[\s\S]*?node scripts\/pipeline\/run\.mjs release-compute-versioned-component-changes/,
-  );
+  assert.match(raw, /Compute versioned component changes \(latest release tags\.\.release head\)[\s\S]*?compute-versioned-component-changes\.mjs/);
   assert.match(raw, /VERSIONED_APP_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_app\s*\}\}/);
   assert.match(raw, /VERSIONED_CLI_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_cli\s*\}\}/);
 });
@@ -71,7 +68,7 @@ test('release workflow publishes server runner only when explicitly requested', 
 
   // Server runner publishing must be an explicit target so server deploy remains independent.
   // The logic lives in the shared pipeline script (not inline bash).
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs release-resolve-bump-plan/);
+  assert.match(raw, /node \.\.\/scripts\/pipeline\/release\/resolve-bump-plan\.mjs/);
   assert.match(raw, /--deploy-targets "\$\{DEPLOY_TARGETS\}"/);
 
   assert.match(
@@ -119,7 +116,7 @@ test('release workflow accepts the public validation profile and routes its auto
   assert.equal(candidateVerifier?.with?.run_installers_smoke, undefined);
 });
 
-test('release workflow fans a versioned Stack target through immutable publication, staged promotion, npm, and exact signoff', async () => {
+test('release workflow fans a versioned Stack target through immutable publication, grouped verification, promotion, npm, and core signoff', async () => {
   const [raw, verifierRaw] = await Promise.all([
     loadWorkflow('release.yml'),
     loadWorkflow('release-verify.yml'),
@@ -147,14 +144,14 @@ test('release workflow fans a versioned Stack target through immutable publicati
   assert.match(String(promoter?.if ?? ''), /needs\.verify_release_candidates\.result == 'success'/);
   assert.match(String(promoter?.with?.retry_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
 
-  assert.match(String(npm?.if ?? ''), /needs\.plan\.outputs\.publish_stack == 'true'/);
-  assert.match(String(npm?.with?.publish_stack ?? ''), /needs\.plan\.outputs\.publish_stack == 'true'/);
+  assert.match(String(npm?.if ?? ''), /needs\.plan\.outputs\.publish_npm_needed == 'true'/);
+  assert.match(String(npm?.with?.publish_stack ?? ''), /needs\.plan\.outputs\.npm_publish_stack_needed == 'true'/);
 
-  assert.ok(finalVerifier?.needs?.includes('publish_hstack_binaries'));
+  assert.equal(finalVerifier?.needs?.includes('publish_hstack_binaries'), false);
+  assert.ok(finalVerifier?.needs?.includes('verify_release_candidates'));
   assert.ok(finalVerifier?.needs?.includes('promote_hstack_binaries'));
   assert.match(String(finalVerifier?.if ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
-  assert.match(String(finalVerifier?.with?.candidate_stack_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
-  assert.match(String(finalVerifier?.with?.verify_stack_release ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
+  assert.match(JSON.stringify(finalVerifier?.steps ?? []), /server-\$CHANNEL_SUFFIX stack-\$CHANNEL_SUFFIX cli-\$CHANNEL_SUFFIX ui-web-\$CHANNEL_SUFFIX/);
   assert.equal(verifierInputs?.verify_stack_release?.type, 'boolean');
   const stackIdentityGuard = parse(verifierRaw)?.jobs?.verify_candidate?.steps?.find(
     (step) => step.name === 'Require requested HStack verification identity',

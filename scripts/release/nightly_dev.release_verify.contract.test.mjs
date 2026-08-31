@@ -37,21 +37,27 @@ test('nightly-dev verifies exact immutable candidates before promoting rolling r
   );
 
   assert.match(raw, /promote_server:[\s\S]*?needs:\s*\[prepare_release_candidate, server_runtime, release_verify\]/);
-  assert.match(raw, /promote_hstack:[\s\S]*?needs:\s*\[prepare_release_candidate, hstack, promote_server\]/);
-  assert.match(raw, /promote_cli:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, promote_hstack\]/);
-  assert.match(raw, /promote_ui_web:[\s\S]*?needs:\s*\[prepare_release_candidate, ui_web, promote_cli\]/);
+  assert.match(raw, /promote_hstack:[\s\S]*?needs:\s*\[prepare_release_candidate, hstack, release_verify\]/);
+  assert.match(raw, /promote_cli:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, release_verify\]/);
+  assert.match(raw, /promote_ui_web:[\s\S]*?needs:\s*\[prepare_release_candidate, ui_web, release_verify\]/);
   assert.match(
     raw,
-    /docker:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, server_runtime, promote_ui_web\][\s\S]*?server_version:\s*\$\{\{ needs\.server_runtime\.outputs\.version \}\}[\s\S]*?cli_version:\s*\$\{\{ needs\.cli\.outputs\.version \}\}/,
-    'Docker should wait for promotion and consume the exact verified CLI and server candidate versions',
+    /docker:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, server_runtime, release_verify\][\s\S]*?server_version:\s*\$\{\{ needs\.server_runtime\.outputs\.version \}\}[\s\S]*?cli_version:\s*\$\{\{ needs\.cli\.outputs\.version \}\}/,
+    'Docker should wait for grouped verification and consume the exact verified CLI and server candidate versions',
   );
-  assert.match(raw, /verify_promoted:[\s\S]*?for tag in server-dev stack-dev cli-dev ui-web-dev/);
+  assert.match(raw, /verify_promoted:[\s\S]*?needs:\s*\[prepare_release_candidate, promote_server, promote_hstack, promote_cli, promote_ui_web\][\s\S]*?for tag in server-dev stack-dev cli-dev ui-web-dev/);
   assert.match(raw, /resolve_tag_commit\(\)/, 'rolling verification should dereference annotated as well as lightweight tags');
 
   assert.doesNotMatch(
     releaseVerifyBlock,
     /needs:\s*\[[^\]]*(?:ui_mobile|ui_desktop|docker)/,
     'candidate verification must not depend on jobs that already publish user-consumed mobile, desktop, or Docker outputs',
+  );
+  const promotedVerificationBlock = raw.slice(raw.indexOf('\n  verify_promoted:'), raw.indexOf('\n  advance_source_issues_to_dev:'));
+  assert.doesNotMatch(
+    promotedVerificationBlock,
+    /needs:\s*\[[^\]]*(?:ui_mobile|ui_desktop|docker)/,
+    'optional downstream publication must not delay or prevent core rolling-reference verification',
   );
 });
 
@@ -60,11 +66,12 @@ test('nightly-dev admits exact-SHA CI before builds and safely skips an already 
 
   assert.match(
     raw,
-    /verify_source_ci:[\s\S]*?needs:\s*\[prepare_release_candidate\][\s\S]*?actions:\s*read[\s\S]*?args=\([\s\S]*?--source-sha "\$SOURCE_SHA"[\s\S]*?--source-branch dev[\s\S]*?verify-existing-ci\.mjs "\$\{args\[@\]\}"/,
+    /verify_source_ci:[\s\S]*?needs:\s*\[prepare_release_candidate\][\s\S]*?timeout-minutes:\s*15[\s\S]*?actions:\s*read[\s\S]*?args=\([\s\S]*?--source-sha "\$SOURCE_SHA"[\s\S]*?--source-branch dev[\s\S]*?verify-existing-ci\.mjs "\$\{args\[@\]\}"/,
     'the exact candidate SHA must have successful canonical push CI before publication starts',
   );
-  assert.match(raw, /CI_RUN_ID:\s*\$\{\{ inputs\.ci_run_id \}\}/, 'explicit CI run id must be passed through an environment variable');
-  assert.match(raw, /args\+=\(--run-id "\$CI_RUN_ID"\)/, 'CI run id must be shell-quoted when forwarded to the verifier');
+  assert.match(raw, /CI_RUN_ID:\s*\$\{\{ needs\.prepare_release_candidate\.outputs\.ci_run_id \}\}/, 'the bound CI run id must be passed through an environment variable');
+  assert.match(raw, /--run-id "\$CI_RUN_ID"/, 'CI run id must be shell-quoted when forwarded to the verifier');
+  assert.match(raw, /EVENT_NAME[\s\S]*?actions\/workflows\/tests\.yml\/runs\?branch=dev&head_sha=\$\{SOURCE_SHA\}[\s\S]*?waiting_for_ci=true/);
   assert.doesNotMatch(raw, /format\(\x27--run-id \{0\}\x27/, 'CI run id must not be interpolated into an unquoted shell fragment');
   assert.match(
     raw,

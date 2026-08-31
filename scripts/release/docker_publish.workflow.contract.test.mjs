@@ -93,19 +93,15 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     /publish_server_runtime_needed:\s*\$\{\{[^\n]*inputs\.force_deploy == true[^\n]*steps\.bump_plan\.outputs\.publish_server == 'true'[^\n]*steps\.plan\.outputs\.changed_ui == 'true'[^\n]*steps\.plan\.outputs\.changed_server == 'true'[^\n]*steps\.plan\.outputs\.changed_shared == 'true'[^\n]*\}\}[\s\S]*?publish_server_runtime:[\s\S]*?needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/,
     'server runtime artifacts should publish when server code or its embedded UI changes',
   );
-  assert.match(
-    release,
-    /publish_ui_web:[\s\S]*?\(contains\(format\(',\{0\},', inputs\.deploy_targets\), ',ui,'\) \|\| inputs\.force_deploy == true \|\| needs\.plan\.outputs\.changed_ui == 'true' \|\| needs\.plan\.outputs\.changed_shared == 'true'\)/,
-    'UI web artifacts should publish when relay Docker needs a fresh embedded UI bundle',
-  );
+  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /inputs\.deploy_targets/);
+  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /steps\.plan\.outputs\.changed_ui == 'true'/);
+  assert.match(releaseWorkflow.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed == 'true'/);
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
-  assert.match(release, /publish_docker:[\s\S]*?needs:\s*\[plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web\]/);
+  assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['resolve_resume', 'plan', 'promote_preview', 'promote_main', 'prepare_release_candidate', 'verify_release_candidates', 'publish_cli_binaries', 'publish_server_runtime']);
   assert.match(release, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(release, /server_version:\s*\${{\s*needs\.publish_server_runtime\.outputs\.version\s*}}/);
   assert.match(release, /cli_version:\s*\${{\s*needs\.publish_cli_binaries\.outputs\.version\s*}}/);
-  assert.match(release, /publish_docker:[\s\S]*?needs\.promote_cli_binaries\.result == 'success' \|\| needs\.promote_cli_binaries\.result == 'skipped'/);
-  assert.match(release, /publish_docker:[\s\S]*?needs\.promote_server_runtime\.result == 'success' \|\| needs\.promote_server_runtime\.result == 'skipped'/);
-  assert.match(release, /publish_docker:[\s\S]*?needs\.promote_ui_web\.result == 'success' \|\| needs\.promote_ui_web\.result == 'skipped'/);
+  assert.match(releaseWorkflow.jobs.publish_docker.if, /needs\.verify_release_candidates\.result == 'success'/);
   assert.match(release, /build_relay:/);
   assert.match(release, /build_dev_box:/);
   assert.doesNotMatch(release, /build_dev_box:\s*\$\{\{[^\n]*changed_stack/);
@@ -120,7 +116,7 @@ test('nightly dev docker waits for the release artifacts it consumes', async () 
   const nightly = await loadWorkflow('nightly-dev.yml');
   assert.match(
     nightly,
-    /docker:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, server_runtime, promote_ui_web\][\s\S]*?uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/,
+    /docker:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, server_runtime, release_verify\][\s\S]*?uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/,
   );
   assert.match(nightly, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(nightly, /server_version:\s*\${{\s*needs\.server_runtime\.outputs\.version\s*}}/);

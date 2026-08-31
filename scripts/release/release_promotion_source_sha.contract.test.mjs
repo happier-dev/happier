@@ -144,7 +144,7 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}, \{1\}\)', inputs\.hmaint_operation_id, inputs\.hmaint_attempt_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
   assert.match(
     raw,
-    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ inputs\.authorized_promotion_source_sha \|\| needs\.ci\.outputs\.source_ref \}\}/,
+    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ needs\.release_preflight\.outputs\.source_sha \}\}/,
   );
   assert.match(raw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
   assert.match(raw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);

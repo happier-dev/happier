@@ -37,3 +37,43 @@ test('standard status keeps unrequested surfaces out of failure admission', () =
   assert.equal(status.surfaces.find((surface) => surface.id === 'docker')?.state, 'not_requested');
   assert.equal(status.terminal, 'complete');
 });
+
+test('standard status keeps a requested skipped Docker publication visible as partial', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '44',
+    RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/44',
+    RELEASE_RUN_NAME: 'RELEASE — Publish (rel_abcdefgh)',
+    HMAINT_OPERATION_ID: 'rel_abcdefgh',
+    RELEASE_CHANNEL: 'preview',
+    SOURCE_SHA: 'c'.repeat(40),
+    REQUEST_DOCKER: 'true',
+    DOCKER_RESULT: 'skipped',
+    CANDIDATE_RESULT: 'success',
+    IMMUTABLE_VERIFICATION_RESULT: 'success',
+    RELEASE_VERIFY_RESULT: 'success',
+  });
+  const docker = status.surfaces.find((surface) => surface.id === 'docker');
+  assert.equal(docker?.requested, true);
+  assert.equal(docker?.state, 'partial');
+  assert.equal(status.terminal, 'partial');
+});
+
+test('standard status reports a requested skipped optional UI delivery as partial after core signoff', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '45',
+    RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/45',
+    RELEASE_RUN_NAME: 'RELEASE — Publish (rel_abcdefgh)',
+    HMAINT_OPERATION_ID: 'rel_abcdefgh',
+    RELEASE_CHANNEL: 'preview',
+    SOURCE_SHA: 'd'.repeat(40),
+    REQUEST_DEPLOY_UI: 'true',
+    DEPLOY_UI_RESULT: 'skipped',
+    CANDIDATE_RESULT: 'success',
+    IMMUTABLE_VERIFICATION_RESULT: 'success',
+    RELEASE_VERIFY_RESULT: 'success',
+  });
+  const deployUi = status.surfaces.find((surface) => surface.id === 'deploy_ui');
+  assert.equal(deployUi?.requested, true);
+  assert.equal(deployUi?.state, 'partial');
+  assert.equal(status.terminal, 'partial');
+});

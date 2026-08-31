@@ -10,6 +10,7 @@ const SOURCE_SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
 const REPOSITORY = 'happier-dev/happier';
 const RUN_ID = 31495263783;
+const STANDARD_OPTIONAL_SURFACE_IDS = ['deploy_ui', 'deploy_server', 'deploy_website', 'deploy_docs', 'docker', 'npm'];
 
 function originRun(overrides = {}) {
   return {
@@ -78,6 +79,42 @@ function status(overrides = {}) {
   };
 }
 
+function previewCliCandidate() {
+  return {
+    ...status().surfaces[0],
+    identity: { ...status().surfaces[0].identity, version: '0.2.10-preview.73' },
+  };
+}
+
+function standardOptionalSurfaces(requested) {
+  return STANDARD_OPTIONAL_SURFACE_IDS.map((id) => ({
+    id,
+    requested,
+    required: false,
+    evidence: 'accepted',
+    state: requested ? 'failed' : 'not_requested',
+    ...(requested ? { result: 'failed' } : {}),
+    ...(requested && id === 'deploy_ui' ? {
+      identity: {
+        sourceSha: SOURCE_SHA,
+        verified: false,
+        deployWeb: true,
+        expoAction: 'none',
+        desktopMode: 'none',
+      },
+    } : {}),
+    ...(requested && id === 'npm' ? {
+      identity: {
+        sourceSha: SOURCE_SHA,
+        verified: false,
+        publishCli: true,
+        publishStack: false,
+        publishServer: false,
+      },
+    } : {}),
+  }));
+}
+
 const expected = {
   repository: REPOSITORY,
   workflowPath: '.github/workflows/nightly-dev.yml',
@@ -111,7 +148,63 @@ test('resume resolution reuses only successful verified immutable candidates', (
       server: '',
       'ui-web': '',
     },
+    requested: {
+      deployDocs: false,
+      deployServer: false,
+      deployUi: false,
+      deployWebsite: false,
+      docker: false,
+      npm: false,
+    },
   });
+});
+
+test('release resume preserves originally requested optional publication surfaces', () => {
+  const releaseExpected = {
+    repository: REPOSITORY,
+    workflowPath: '.github/workflows/release.yml',
+    channel: 'preview',
+  };
+  const releaseRun = originRun({ path: '.github/workflows/release.yml' });
+  const releaseStatus = status({
+    channel: 'preview',
+    surfaces: [
+      previewCliCandidate(),
+      ...standardOptionalSurfaces(true),
+    ],
+  });
+
+  assert.deepEqual(resolveReleaseResume({
+    originRun: releaseRun,
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: releaseStatus,
+    expected: releaseExpected,
+  }).requested, {
+    deployDocs: true,
+    deployServer: true,
+    deployUi: true,
+    deployWebsite: true,
+    docker: true,
+    npm: true,
+  });
+});
+
+test('release resume fails closed when the origin status omits optional request intent', () => {
+  assert.throws(() => resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({
+      channel: 'preview',
+      surfaces: [previewCliCandidate()],
+    }),
+    expected: {
+      repository: REPOSITORY,
+      workflowPath: '.github/workflows/release.yml',
+      channel: 'preview',
+    },
+  }), /missing requested surface/);
 });
 
 test('resume rejects a status that cannot skip any completed candidate work', () => {
@@ -191,10 +284,7 @@ test('release resume binds the conductor operation and authorized source when su
     operationId: 'rel_release_20260810',
     channel: 'preview',
     run: { ...status().run, name: 'RELEASE — Publish (rel_release_20260810)' },
-    surfaces: [{
-      ...status().surfaces[0],
-      identity: { ...status().surfaces[0].identity, version: '0.2.10-preview.73' },
-    }],
+    surfaces: [previewCliCandidate(), ...standardOptionalSurfaces(false)],
   });
 
   assert.equal(resolveReleaseResume({

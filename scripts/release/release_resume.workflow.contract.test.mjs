@@ -33,10 +33,17 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
     'stack_requested',
     'server_requested',
     'ui_web_requested',
+    'deploy_ui_requested',
+    'deploy_server_requested',
+    'deploy_website_requested',
+    'deploy_docs_requested',
+    'docker_requested',
+    'npm_requested',
   ]) {
     assert.ok(parsed.on.workflow_call.outputs[output], `missing resume output ${output}`);
   }
   const resolveJob = parsed.jobs.resolve;
+  assert.equal(resolveJob['timeout-minutes'], 15);
   assert.equal(resolveJob.permissions.actions, 'read');
   assert.equal(resolveJob.permissions.contents, 'read');
   const source = resolveJob.steps.map((step) => step.run ?? '').join('\n');
@@ -118,6 +125,28 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(statusProjection.env.CLI_VERSION, '${{ needs.publish_cli_binaries.outputs.version }}');
   assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
   assert.equal(statusProjection.env.IMMUTABLE_VERIFICATION_RESULT, '${{ needs.verify_release_candidates.result }}');
+  assert.match(String(parsed.jobs.plan.outputs.publish_docker_needed), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.if), /needs\.plan\.outputs\.publish_docker_needed == 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.with.build_relay), /needs\.plan\.outputs\.publish_docker_relay_needed == 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.with.build_dev_box), /needs\.plan\.outputs\.publish_docker_dev_box_needed == 'true'/);
+  assert.match(String(statusProjection.env.REQUEST_DOCKER), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
+  assert.ok(needs(parsed.jobs.deploy_ui).includes('resolve_resume'));
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_requested), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(parsed.jobs.deploy_ui.with.desktop_mode), /needs\.deploy_plan\.outputs\.deploy_ui_desktop_mode/);
+  assert.match(String(statusProjection.env.REQUEST_DEPLOY_UI), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(statusProjection.env.REQUEST_DEPLOY_UI), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);
+  for (const [jobName, outputName, requestEnv] of [
+    ['deploy_server', 'deploy_server_requested', 'REQUEST_DEPLOY_SERVER'],
+    ['deploy_website', 'deploy_website_requested', 'REQUEST_DEPLOY_WEBSITE'],
+    ['deploy_docs', 'deploy_docs_requested', 'REQUEST_DEPLOY_DOCS'],
+  ]) {
+    assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'));
+    assert.match(String(parsed.jobs.deploy_plan.outputs[outputName]), new RegExp(`needs\\.resolve_resume\\.outputs\\.${outputName} == 'true'`));
+    assert.match(String(parsed.jobs[jobName].if), new RegExp(`needs\\.deploy_plan\\.outputs\\.${outputName} == 'true'`));
+    assert.match(String(statusProjection.env[requestEnv]), new RegExp(`needs\\.resolve_resume\\.outputs\\.${outputName} == 'true'`));
+  }
+  assert.match(String(statusProjection.env.REQUEST_NPM), /needs\.resolve_resume\.outputs\.npm_requested == 'true'/);
 });
 
 test('failed grouped verification independently certifies each successful immutable sibling for resume', () => {

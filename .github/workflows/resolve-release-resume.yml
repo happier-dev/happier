@@ -40,6 +40,30 @@ on:
         value: ${{ jobs.resolve.outputs.server_version != '' }}
       ui_web_requested:
         value: ${{ jobs.resolve.outputs.ui_web_version != '' }}
+      deploy_ui_requested:
+        value: ${{ jobs.resolve.outputs.deploy_ui_requested }}
+      deploy_server_requested:
+        value: ${{ jobs.resolve.outputs.deploy_server_requested }}
+      deploy_website_requested:
+        value: ${{ jobs.resolve.outputs.deploy_website_requested }}
+      deploy_docs_requested:
+        value: ${{ jobs.resolve.outputs.deploy_docs_requested }}
+      docker_requested:
+        value: ${{ jobs.resolve.outputs.docker_requested }}
+      npm_requested:
+        value: ${{ jobs.resolve.outputs.npm_requested }}
+      deploy_ui_web_requested:
+        value: ${{ jobs.resolve.outputs.deploy_ui_web_requested }}
+      deploy_ui_expo_action:
+        value: ${{ jobs.resolve.outputs.deploy_ui_expo_action }}
+      deploy_ui_desktop_mode:
+        value: ${{ jobs.resolve.outputs.deploy_ui_desktop_mode }}
+      npm_publish_cli_requested:
+        value: ${{ jobs.resolve.outputs.npm_publish_cli_requested }}
+      npm_publish_stack_requested:
+        value: ${{ jobs.resolve.outputs.npm_publish_stack_requested }}
+      npm_publish_server_requested:
+        value: ${{ jobs.resolve.outputs.npm_publish_server_requested }}
 
 permissions:
   contents: read
@@ -49,6 +73,7 @@ jobs:
   resolve:
     name: Bind prior run and reusable immutable candidates
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -58,6 +83,18 @@ jobs:
       stack_version: ${{ steps.resume.outputs.stack_version || steps.empty.outputs.stack_version }}
       server_version: ${{ steps.resume.outputs.server_version || steps.empty.outputs.server_version }}
       ui_web_version: ${{ steps.resume.outputs.ui_web_version || steps.empty.outputs.ui_web_version }}
+      deploy_ui_requested: ${{ steps.resume.outputs.deploy_ui_requested || steps.empty.outputs.deploy_ui_requested }}
+      deploy_server_requested: ${{ steps.resume.outputs.deploy_server_requested || steps.empty.outputs.deploy_server_requested }}
+      deploy_website_requested: ${{ steps.resume.outputs.deploy_website_requested || steps.empty.outputs.deploy_website_requested }}
+      deploy_docs_requested: ${{ steps.resume.outputs.deploy_docs_requested || steps.empty.outputs.deploy_docs_requested }}
+      docker_requested: ${{ steps.resume.outputs.docker_requested || steps.empty.outputs.docker_requested }}
+      npm_requested: ${{ steps.resume.outputs.npm_requested || steps.empty.outputs.npm_requested }}
+      deploy_ui_web_requested: ${{ steps.resume.outputs.deploy_ui_web_requested || steps.empty.outputs.deploy_ui_web_requested }}
+      deploy_ui_expo_action: ${{ steps.resume.outputs.deploy_ui_expo_action || steps.empty.outputs.deploy_ui_expo_action }}
+      deploy_ui_desktop_mode: ${{ steps.resume.outputs.deploy_ui_desktop_mode || steps.empty.outputs.deploy_ui_desktop_mode }}
+      npm_publish_cli_requested: ${{ steps.resume.outputs.npm_publish_cli_requested || steps.empty.outputs.npm_publish_cli_requested }}
+      npm_publish_stack_requested: ${{ steps.resume.outputs.npm_publish_stack_requested || steps.empty.outputs.npm_publish_stack_requested }}
+      npm_publish_server_requested: ${{ steps.resume.outputs.npm_publish_server_requested || steps.empty.outputs.npm_publish_server_requested }}
     steps:
       - name: Checkout trusted resume control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -82,6 +119,18 @@ jobs:
             echo 'stack_version='
             echo 'server_version='
             echo 'ui_web_version='
+            echo 'deploy_ui_requested=false'
+            echo 'deploy_server_requested=false'
+            echo 'deploy_website_requested=false'
+            echo 'deploy_docs_requested=false'
+            echo 'docker_requested=false'
+            echo 'npm_requested=false'
+            echo 'deploy_ui_web_requested=false'
+            echo 'deploy_ui_expo_action=none'
+            echo 'deploy_ui_desktop_mode=none'
+            echo 'npm_publish_cli_requested=false'
+            echo 'npm_publish_stack_requested=false'
+            echo 'npm_publish_server_requested=false'
           } >> "$GITHUB_OUTPUT"
 
       - name: Inspect exact origin run and status artifact
