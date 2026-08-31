@@ -76,8 +76,11 @@ export function useSessionListScrollRetention(params: Readonly<{
      * offset (-9999055) or a plain 0 - with a valid contentSize and layoutMeasurement either way.
      * Nothing about the value distinguishes it from the reader scrolling to the top, so only the
      * surface state can, and accepting it is what loses the reader's place before the screen has
-     * even gone. The viewport does NOT collapse on this path (scrollLength stayed 716 throughout),
-     * which is why the height-based trigger alone never fired here.
+     * even gone.
+     *
+     * This gates RECORDING only. It deliberately does not arm a restore: the viewport does not
+     * collapse on this path (MEASURED: 716 throughout), so the reader was never actually moved, and
+     * restoring on the way back yanks someone who has already started scrolling.
      */
     surfaceActive?: boolean;
 }>) {
@@ -137,14 +140,18 @@ export function useSessionListScrollRetention(params: Readonly<{
     }, [retentionEntry, surfaceActive]);
 
     /**
-     * One owner for "this surface is presenting". A surface is presenting when it is the live one
-     * AND it has a real viewport; leaving that state arms the restore, entering it performs one.
-     * Both the height-based path (a retained list collapsing to zero height) and the activity-based
-     * path (a session opening on top) are the same transition, so they must not be two triggers.
+     * A restore is armed by the position actually being LOST, which means this surface stopped
+     * having a viewport at all - it collapsed to zero height, or the component unmounted (above).
+     *
+     * Deliberately NOT armed by the surface going data-inactive. Opening a session deactivates this
+     * list while it keeps its viewport (MEASURED on device: 716 throughout), so nothing moved the
+     * reader and there is nothing to put back. Arming there fires a restore exactly as the screen
+     * returns, which yanks a reader who has already started scrolling - a worse defect than the
+     * stale position it would be correcting.
      */
     const presentingRef = React.useRef(false);
-    const evaluatePresentation = React.useCallback((viewportHeight: number, active: boolean) => {
-        const presenting = active && viewportHeight > 0;
+    const evaluatePresentation = React.useCallback((viewportHeight: number) => {
+        const presenting = viewportHeight > 0;
         const wasPresenting = presentingRef.current;
         presentingRef.current = presenting;
 
@@ -167,16 +174,12 @@ export function useSessionListScrollRetention(params: Readonly<{
         scrollToOffsetRef.current({ offset: restoredOffsetY, animated: false });
     }, [retentionEntry]);
 
-    React.useEffect(() => {
-        evaluatePresentation(visibleViewportHeightRef.current, surfaceActive);
-    }, [evaluatePresentation, surfaceActive]);
-
     const handleLayout = React.useCallback((event: SessionListScrollRetentionLayoutEvent) => {
         const height = event.nativeEvent?.layout?.height;
         if (typeof height !== 'number' || !Number.isFinite(height)) return;
         visibleViewportHeightRef.current = Math.max(0, height);
-        evaluatePresentation(visibleViewportHeightRef.current, surfaceActive);
-    }, [evaluatePresentation, surfaceActive]);
+        evaluatePresentation(visibleViewportHeightRef.current);
+    }, [evaluatePresentation]);
 
     return React.useMemo(() => ({
         handleLayout,

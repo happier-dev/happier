@@ -124,36 +124,6 @@ describe('useSessionListScrollRetention', () => {
         expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
     });
 
-    it('keeps the reader in place when a deactivating surface reports a scroll to the top', async () => {
-        const scrollToOffset = vi.fn();
-        const hook = await renderHook(
-            (props: { surfaceActive: boolean }) => useSessionListScrollRetention({
-                retentionKey: 'persisted-deactivating',
-                scrollToOffset,
-                surfaceActive: props.surfaceActive,
-            }),
-            { initialProps: { surfaceActive: true } },
-        );
-
-        await act(async () => {
-            hook.getCurrent().handleLayout(layoutEvent(416));
-            hook.getCurrent().handleScroll(scrollEvent(280, 416));
-        });
-
-        // Opening a session deactivates this surface. MEASURED on device: the native stack then
-        // delivers exactly one scroll event for the list it is putting away, carrying either a
-        // parked offset (-9999055) or a plain 0 - with a valid contentSize and layoutMeasurement in
-        // both cases. It is indistinguishable by value from a real scroll to the top, so only the
-        // surface state can tell them apart. Treating it as real is what loses the reader's place.
-        await hook.rerender({ surfaceActive: false });
-        await act(async () => {
-            hook.getCurrent().handleScroll(scrollEvent(0, 416));
-        });
-
-        await hook.rerender({ surfaceActive: true });
-
-        expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
-    });
 
     it('does not restore when the reader had genuinely scrolled to the top before leaving', async () => {
         const scrollToOffset = vi.fn();
@@ -207,6 +177,33 @@ describe('useSessionListScrollRetention', () => {
             hook.getCurrent().handleScroll(scrollEvent(40, 416));
             hook.getCurrent().handleLayout(layoutEvent(416));
         });
+
+        expect(scrollToOffset).not.toHaveBeenCalled();
+    });
+
+    it('does not reposition the reader when a session opens and closes without collapsing the list', async () => {
+        const scrollToOffset = vi.fn();
+        const hook = await renderHook(
+            (props: { surfaceActive: boolean }) => useSessionListScrollRetention({
+                retentionKey: 'persisted-session-round-trip',
+                scrollToOffset,
+                surfaceActive: props.surfaceActive,
+            }),
+            { initialProps: { surfaceActive: true } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(280, 416));
+        });
+
+        // Opening a session deactivates this surface but does NOT collapse it - MEASURED on device,
+        // the viewport stayed 716 throughout. Nothing moved the reader, so there is nothing to put
+        // back, and a restore firing here lands as the screen returns and yanks a reader who has
+        // already started scrolling. Only a real loss (a zero-height collapse, or an unmount) arms a
+        // restore; those paths have their own tests above.
+        await hook.rerender({ surfaceActive: false });
+        await hook.rerender({ surfaceActive: true });
 
         expect(scrollToOffset).not.toHaveBeenCalled();
     });
