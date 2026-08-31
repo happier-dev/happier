@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
@@ -8,6 +8,25 @@ import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 function writeDaemonStateFixture(path: string, serializedState: string, encoding: 'utf-8'): void {
   void encoding;
   writeJsonAtomicSync(path, JSON.parse(serializedState));
+}
+
+function mockCurrentProcessAsDaemonLifecycleOwner(): void {
+  vi.doMock('@/daemon/doctor', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/daemon/doctor')>();
+    return {
+      ...actual,
+      classifyDaemonLifecycleProcessByPid: async (pid: number) => pid === process.pid
+        ? {
+            kind: 'daemon' as const,
+            process: {
+              pid,
+              command: `${process.execPath} ${process.cwd()}/src/index.ts daemon start-sync`,
+              type: 'dev-daemon',
+            },
+          }
+        : await actual.classifyDaemonLifecycleProcessByPid(pid),
+    };
+  });
 }
 
 describe.sequential('daemon control client PID safety', () => {
@@ -40,6 +59,7 @@ describe.sequential('daemon control client PID safety', () => {
       'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT',
       'HAPPIER_DAEMON_PING_TIMEOUT_MS',
     ]);
+    vi.doUnmock('@/daemon/doctor');
   });
 
   it('stopDaemon refuses to kill an unrelated PID when HTTP stop fails', async () => {
@@ -54,6 +74,10 @@ describe.sequential('daemon control client PID safety', () => {
       const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
       if (!child.pid) throw new Error('missing pid for child');
       spawnedChildren.push(child);
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
 
       vi.resetModules();
       const [{ configuration }, { stopDaemon }] = await Promise.all([
@@ -88,6 +112,58 @@ describe.sequential('daemon control client PID safety', () => {
       removeTempDirSync(homeDir);
     }
   }, 30_000);
+
+  it('treats daemon state whose live PID was recycled by an unrelated process as replaceable', async () => {
+    const homeDir = createTempDirSync('happier-cli-daemon-recycled-pid-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_PING_TIMEOUT_MS: '150',
+      });
+
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      if (!child.pid) throw new Error('missing pid for child');
+      spawnedChildren.push(child);
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+
+      vi.resetModules();
+      const [
+        { configuration },
+        { inspectDaemonRunningStateAndCleanupStaleState },
+        { acquireDaemonLock, releaseDaemonLock },
+      ] = await Promise.all([
+        import('@/configuration'),
+        import('./controlClient'),
+        import('@/persistence'),
+      ]);
+
+      writeDaemonStateFixture(
+        configuration.daemonStateFile,
+        JSON.stringify({
+          pid: child.pid,
+          httpPort: 1,
+          startedAt: Date.now() - 60_000,
+          lastHeartbeatAt: Date.now() - 60_000,
+          startedWithCliVersion: '0.2.10',
+          controlToken: 'stale-token',
+        }),
+        'utf-8',
+      );
+      writeFileSync(configuration.daemonLockFile, String(child.pid), 'utf-8');
+
+      await expect(inspectDaemonRunningStateAndCleanupStaleState()).resolves.toEqual({ status: 'not-running' });
+      const lockHandle = await acquireDaemonLock(2, 1);
+      expect(lockHandle).not.toBeNull();
+      if (lockHandle) await releaseDaemonLock(lockHandle);
+      expect(() => process.kill(child.pid!, 0)).not.toThrow();
+      expect(existsSync(configuration.daemonStateFile)).toBe(true);
+    } finally {
+      removeTempDirSync(homeDir);
+    }
+  }, 90_000);
 
   it('checkIfDaemonRunningAndCleanupStaleState probes /ping when controlToken is present', async () => {
     const homeDir = createTempDirSync('happier-cli-daemon-ping-');
@@ -285,6 +361,7 @@ describe.sequential('daemon control client PID safety', () => {
     });
 
     vi.resetModules();
+    mockCurrentProcessAsDaemonLifecycleOwner();
     const [{ configuration }, { checkIfDaemonRunningAndCleanupStaleState }] = await Promise.all([
       import('@/configuration'),
       import('./controlClient'),
@@ -334,6 +411,7 @@ describe.sequential('daemon control client PID safety', () => {
     });
 
     vi.resetModules();
+    mockCurrentProcessAsDaemonLifecycleOwner();
     const [{ configuration }, { inspectDaemonRunningStateAndCleanupStaleState }] = await Promise.all([
       import('@/configuration'),
       import('./controlClient'),
@@ -389,6 +467,7 @@ describe.sequential('daemon control client PID safety', () => {
     });
 
     vi.resetModules();
+    mockCurrentProcessAsDaemonLifecycleOwner();
     const [{ configuration }, { inspectDaemonRunningStateAndCleanupStaleState }] = await Promise.all([
       import('@/configuration'),
       import('./controlClient'),

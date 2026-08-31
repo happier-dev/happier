@@ -60,7 +60,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -75,7 +75,7 @@ describe('acquireDaemonLock', () => {
 
   it('treats the lock as valid when the lock PID is alive but process classification is unavailable', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -107,7 +107,7 @@ describe('acquireDaemonLock', () => {
 
   it('does not remove a successor-owned lock file when releasing an old lock handle', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -141,7 +141,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -182,7 +182,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => ({ type: 'session' }),
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'not_daemon' as const }),
     }));
 
     try {
@@ -201,7 +201,10 @@ describe('acquireDaemonLock', () => {
 
   it('preserves the first lock when the same process attempts a concurrent second acquisition', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => ({ type: 'daemon' }),
+      classifyDaemonLifecycleProcessByPid: async () => ({
+        kind: 'daemon' as const,
+        process: { pid: process.pid, command: 'happier daemon start-sync', type: 'daemon' },
+      }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -250,7 +253,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -290,7 +293,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -309,7 +312,7 @@ describe('acquireDaemonLock', () => {
       return true;
     }) as typeof process.kill);
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     try {
@@ -327,7 +330,7 @@ describe('acquireDaemonLock', () => {
 
   it('preserves a fresh empty lock during another starter publication window', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -341,7 +344,7 @@ describe('acquireDaemonLock', () => {
 
   it('exact-reclaims an old empty lock after bounded re-observation', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');

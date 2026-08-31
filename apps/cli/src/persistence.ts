@@ -1091,7 +1091,7 @@ export async function acquireDaemonLock(
   maxAttempts: number = 5,
   delayIncrementMs: number = 200
 ): Promise<FileHandle | null> {
-  const { findHappyProcessByPid } = await import('@/daemon/doctor');
+  const { classifyDaemonLifecycleProcessByPid } = await import('@/daemon/doctor');
   await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1149,14 +1149,14 @@ export async function acquireDaemonLock(
             if (processExists) {
               // PID reuse safety: only treat the lock as valid if the PID looks like a happier daemon.
               // Otherwise a recycled PID can wedge daemon startup forever.
-              const proc = await findHappyProcessByPid(pid).catch(() => null);
-              if (!proc) {
+              const ownerProcess = await classifyDaemonLifecycleProcessByPid(pid)
+                .catch(() => ({ kind: 'unknown' as const }));
+              if (ownerProcess.kind === 'unknown') {
                 // We can see the PID exists, but we can't reliably classify the process.
                 // Be conservative and treat the lock as valid to avoid starting a second daemon instance.
                 return null;
               }
-              const isDaemon = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
-              if (!isDaemon) {
+              if (ownerProcess.kind === 'not_daemon') {
                 if (await reclaimObservedOwner()) {
                   continue;
                 }
