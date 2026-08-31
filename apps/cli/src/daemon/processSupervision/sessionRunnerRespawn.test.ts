@@ -819,6 +819,54 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(spawnSession).toHaveBeenCalledTimes(2);
   });
 
+  it('waits for the staged child-exit notification before retrying a pre-webhook replacement exit', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi
+      .fn()
+      .mockResolvedValueOnce({
+        type: 'error' as const,
+        errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+        errorMessage: 'replacement exited before webhook',
+      })
+      .mockResolvedValueOnce({ type: 'success' as const, sessionId: 'sess-pre-webhook-exit' });
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 3,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked = (pid: number): TrackedSession => ({
+      startedBy: 'daemon',
+      pid,
+      happySessionId: 'sess-pre-webhook-exit',
+      spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
+    });
+
+    manager.handleUnexpectedExit(tracked(111), { reason: 'process-exited', code: 1, signal: null });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+
+    // The spawn result and durable child-exit staging describe the same process exit. The result
+    // must not independently consume another retry or launch a competing replacement.
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+
+    manager.handleUnexpectedExit(
+      tracked(222),
+      { reason: 'process-exited-before-webhook', code: 1, signal: null },
+    );
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(2);
+  });
+
   it('suppresses respawn retries when spawnSession returns not_authenticated', async () => {
     vi.useFakeTimers();
     const spawnSession = vi.fn().mockResolvedValue({

@@ -7,7 +7,10 @@
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import type { TrackedSession } from '@/daemon/types';
-import { isConnectedServiceResumeUnreachableSpawnErrorDetail } from '@happier-dev/protocol';
+import {
+  SPAWN_SESSION_ERROR_CODES,
+  isConnectedServiceResumeUnreachableSpawnErrorDetail,
+} from '@happier-dev/protocol';
 
 import { RestartController } from '@/subprocess/supervision/restartController';
 import type { StopRequest, TerminationEvent } from '@/subprocess/supervision/types';
@@ -57,6 +60,15 @@ function isNotAuthenticatedSpawnResult(result: unknown): boolean {
     value.error === 'not_authenticated' ||
     value.errorCode === 'not_authenticated' ||
     value.errorMessage === 'not_authenticated'
+  );
+}
+
+function isChildExitedBeforeWebhookSpawnResult(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const value = result as Readonly<{ type?: unknown; errorCode?: unknown }>;
+  return (
+    value.type === 'error'
+    && value.errorCode === SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK
   );
 }
 
@@ -313,6 +325,17 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (resume unreachable)`);
               endRespawnCycle(sessionId);
               params.onRespawnTerminal?.({ sessionId, previousPid, reason: 'resume_unreachable' });
+              return;
+            }
+
+            // The child-exit handler resolves this result before durable exit staging invokes
+            // handleUnexpectedExit. That staged notification is the single retry owner for the
+            // replacement process, so retrying here as well launches competing replacements.
+            if (isChildExitedBeforeWebhookSpawnResult(result)) {
+              params.logDebug(
+                `[DAEMON RUN] Respawn child exited before webhook for session ${sessionId}; awaiting staged exit notification`,
+                result,
+              );
               return;
             }
 

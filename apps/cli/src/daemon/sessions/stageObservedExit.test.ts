@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { stageObservedExit } from './stageObservedExit';
 
-function expectedMutationId(sessionId: string, turnId: string): string {
+function expectedMutationId(sessionId: string, turnId: string, observedAt: number): string {
   const digest = createHash('sha256')
-    .update(JSON.stringify({ sessionId, turnId }))
+    .update(JSON.stringify({ sessionId, turnId, observedAt }))
     .digest('hex');
   return `daemon-observed-exit:${digest}`;
 }
@@ -35,7 +35,7 @@ describe('stageObservedExit', () => {
     expect(enqueueExactTurnEnd).toHaveBeenCalledWith({
       v: 1,
       sessionId: 'session-1',
-      mutationId: expectedMutationId('session-1', 'turn-1'),
+      mutationId: expectedMutationId('session-1', 'turn-1', 1234),
       action: 'end_session',
       turnId: 'turn-1',
       observedAt: 1234,
@@ -100,5 +100,19 @@ describe('stageObservedExit', () => {
     }
 
     expect(new Set(rows.map((row) => (row as { mutationId: string }).mutationId)).size).toBe(3);
+  });
+
+  it('keeps distinct observations of the same session turn isolated', async () => {
+    const rows: Array<{ mutationId: string }> = [];
+    for (const observedAt of [99, 100]) {
+      await stageObservedExit({
+        trackedSession: { pid: observedAt, happySessionId: 'session-a', activeTurnId: 'turn-1' },
+        observedAt,
+        enqueueExactTurnEnd: async (row) => { rows.push(row); },
+        releaseMarkerEvidence: async () => {},
+      });
+    }
+
+    expect(rows[0]?.mutationId).not.toBe(rows[1]?.mutationId);
   });
 });

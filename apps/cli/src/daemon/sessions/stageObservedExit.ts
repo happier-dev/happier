@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
-
 import {
   ExactSessionTurnEndMutationV1Schema,
   type ExactSessionTurnEndMutationV1,
 } from '@happier-dev/protocol';
+
+import { resolveDaemonObservedExitMutationId } from '@/api/session/mutations/sessionMutationTypes';
 
 import type { TrackedSession } from '../types';
 import { resolveTrackedSessionActiveTurn } from './trackedSessionActiveTurn';
@@ -17,16 +17,6 @@ type MarkerEvidenceRelease = Readonly<{
 export type StageObservedExitResult =
   | Readonly<{ status: 'staged'; markerPid: number }>
   | Readonly<{ status: 'no_exact_turn'; markerPid: number }>;
-
-export function resolveDaemonObservedExitMutationId(params: Readonly<{
-  sessionId: string;
-  turnId: string;
-}>): string {
-  const digest = createHash('sha256')
-    .update(JSON.stringify({ sessionId: params.sessionId, turnId: params.turnId }))
-    .digest('hex');
-  return `daemon-observed-exit:${digest}`;
-}
 
 export async function stageObservedExit(params: Readonly<{
   trackedSession: Pick<TrackedSession, 'pid' | 'sessionRunnerPid' | 'happySessionId' | 'activeTurnId'>;
@@ -49,7 +39,10 @@ export async function stageObservedExit(params: Readonly<{
   const mutation = ExactSessionTurnEndMutationV1Schema.parse({
     v: 1,
     sessionId: exactTurn.sessionId,
-    mutationId: resolveDaemonObservedExitMutationId(exactTurn),
+    mutationId: resolveDaemonObservedExitMutationId({
+      ...exactTurn,
+      observedAt: params.observedAt,
+    }),
     action: 'end_session',
     turnId: exactTurn.turnId,
     observedAt: params.observedAt,
