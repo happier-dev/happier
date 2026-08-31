@@ -25,10 +25,9 @@ const classifiedFailure = {
 } as const;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
-  it('uses the same outer recovery budget as the generated provider bridge', () => {
-    expect(CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS).toBe(
-      CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS,
-    );
+  it('keeps the local recovery report lifecycle-owned instead of imposing a wall-clock deadline', () => {
+    expect(CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS).toBeNull();
+    expect(CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS).toBeGreaterThan(0);
   });
 
   it('does not emit a legacy launcher-daemon incarnation from the runner environment', async () => {
@@ -659,7 +658,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     );
   });
 
-  it('uses a runtime-auth-specific daemon timeout so quota probing and switch application can finish', async () => {
+  it('does not abort a healthy runtime-auth recovery because its fan-out outlasts a fixed deadline', async () => {
     const notify = vi.fn(async () => ({
       ok: true,
       result: {
