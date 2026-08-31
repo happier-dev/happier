@@ -2126,6 +2126,40 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
+    it("repairs stale blocked aggregates on an idempotent requested-action retry", async () => {
+        const owner = await createAccount("requested-action-idempotent-reconcile-owner");
+        const session = await createSession(owner.id);
+        const localId = `requested-action-idempotent-reconcile-${randomUUID()}`;
+
+        await enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: "cipher-requested-action-idempotent-reconcile",
+            requestedAction: { v: 1, kind: "send_now" },
+        });
+        await db.session.update({
+            where: { id: session.id },
+            data: { pendingBlockedCount: 1 },
+        });
+
+        await expect(updatePendingRequestedAction({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            requestedAction: { v: 1, kind: "send_now" },
+        })).resolves.toMatchObject({
+            ok: true,
+            didUpdate: false,
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+        });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { pendingCount: true, pendingBlockedCount: true },
+        })).resolves.toEqual({ pendingCount: 1, pendingBlockedCount: 0 });
+    });
+
     it("reopens proven pre-effect blocks while keeping provider-effect-possible rows fenced", async () => {
         const owner = await createAccount("requested-action-steering-unavailable-owner");
         const session = await createSession(owner.id);

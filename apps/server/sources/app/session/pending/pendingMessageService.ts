@@ -1,5 +1,7 @@
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { applyPendingSessionStateChange } from "@/app/session/pending/applyPendingSessionStateChange";
+import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
+import { reconcileSessionPendingQueueStateInTx } from "@/app/session/pending/reconcileSessionPendingQueueState";
 import { mapPendingMessageRow } from "@/app/session/pending/mapPendingMessageRow";
 import {
     resolveSessionPendingEditAccess,
@@ -785,17 +787,23 @@ export async function updatePendingRequestedAction(params: {
                 if (retained === 0) {
                     return { ok: false, error: "action-conflict" } as const;
                 }
-                const session = await tx.session.findUniqueOrThrow({
-                    where: { id: sessionId },
-                    select: { pendingVersion: true, pendingCount: true, pendingBlockedCount: true },
-                });
+                const session = await reconcileSessionPendingQueueStateInTx(tx, sessionId);
+                const participantCursors = session.didRepair
+                    ? await markPendingStateChangedParticipants({
+                        tx,
+                        sessionId,
+                        pendingCount: session.pendingCount,
+                        pendingBlockedCount: session.pendingBlockedCount,
+                        pendingVersion: session.pendingVersion,
+                    })
+                    : [];
                 return {
                     ok: true,
                     didUpdate: false,
                     pendingVersion: session.pendingVersion,
                     pendingCount: session.pendingCount,
                     pendingBlockedCount: session.pendingBlockedCount,
-                    participantCursors: [],
+                    participantCursors,
                     badgeAttentionChanged: false,
                 } as const;
             }
