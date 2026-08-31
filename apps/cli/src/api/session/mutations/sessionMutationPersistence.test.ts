@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -149,6 +150,42 @@ describe('session mutation persistence', () => {
             expect(broad.ok, mutationId).toBe(!isBroadSessionEnd);
             expect.soft(parseDaemonTerminalQueuedSessionMutation(row, 's1').ok).toBe(false);
         }
+    });
+
+    it('rekeys the legacy daemon exit identity to include its observation timestamp', async () => {
+        const { parseDaemonTerminalQueuedSessionMutation } = await import('./sessionMutationPersistence');
+        const legacyMutationId = `daemon-observed-exit:${createHash('sha256')
+            .update(JSON.stringify({ sessionId: 's1', turnId: 't1' }))
+            .digest('hex')}`;
+        const expectedMutationId = `daemon-observed-exit:${createHash('sha256')
+            .update(JSON.stringify({ sessionId: 's1', turnId: 't1', observedAt: 1234 }))
+            .digest('hex')}`;
+
+        const parsed = parseDaemonTerminalQueuedSessionMutation({
+            kind: 'session_turn',
+            mutationId: legacyMutationId,
+            payload: {
+                v: 1,
+                sessionId: 's1',
+                mutationId: legacyMutationId,
+                action: 'end_session',
+                turnId: 't1',
+                observedAt: 1234,
+            },
+            createdAt: 1234,
+            attempts: 7000,
+            nextAttemptAt: 5678,
+        }, 's1');
+
+        expect(parsed).toMatchObject({
+            ok: true,
+            mutation: {
+                mutationId: expectedMutationId,
+                payload: { mutationId: expectedMutationId, observedAt: 1234 },
+                attempts: 7000,
+                nextAttemptAt: 5678,
+            },
+        });
     });
 
     it('keeps every repeated daemon parser quarantine bounded without changing runtime dead-letter append behavior', async () => {

@@ -20,6 +20,8 @@ import type {
     RuntimeActivitySnapshotMutationV1,
 } from './sessionMutationTypes';
 import {
+    resolveDaemonObservedExitMutationId,
+    resolveLegacyDaemonObservedExitMutationId,
     resolveRuntimeActivitySnapshotMutationId,
     resolveTranscriptMessageAppendMutationId,
 } from './sessionMutationTypes';
@@ -449,6 +451,23 @@ export function parseDaemonTerminalQueuedSessionMutation(
     const exact = broad.mutation.kind === 'session_turn'
         ? ExactSessionTurnEndMutationV1Schema.safeParse(broad.mutation.payload)
         : null;
+    if (
+        broad.mutation.kind === 'session_turn'
+        && exact?.success
+        && exact.data.sessionId === expectedSessionId
+        && rawMutationId === exact.data.mutationId
+        && exact.data.mutationId === resolveLegacyDaemonObservedExitMutationId(exact.data)
+    ) {
+        const canonicalMutationId = resolveDaemonObservedExitMutationId(exact.data);
+        return {
+            ok: true,
+            mutation: {
+                ...broad.mutation,
+                mutationId: canonicalMutationId,
+                payload: { ...exact.data, mutationId: canonicalMutationId },
+            },
+        };
+    }
     if (
         !exact?.success
         || exact.data.sessionId !== expectedSessionId

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
     SessionRuntimeActivitySnapshotSchema,
@@ -19,6 +19,31 @@ export type {
     SessionTurnMutationActionV1,
     SessionTurnMutationV1,
 } from '@happier-dev/protocol';
+
+export function resolveLegacyDaemonObservedExitMutationId(params: Readonly<{
+    sessionId: string;
+    turnId: string;
+}>): string {
+    const digest = createHash('sha256')
+        .update(JSON.stringify({ sessionId: params.sessionId, turnId: params.turnId }))
+        .digest('hex');
+    return `daemon-observed-exit:${digest}`;
+}
+
+export function resolveDaemonObservedExitMutationId(params: Readonly<{
+    sessionId: string;
+    turnId: string;
+    observedAt: number;
+}>): string {
+    const digest = createHash('sha256')
+        .update(JSON.stringify({
+            sessionId: params.sessionId,
+            turnId: params.turnId,
+            observedAt: params.observedAt,
+        }))
+        .digest('hex');
+    return `daemon-observed-exit:${digest}`;
+}
 
 export type TranscriptMessageAppendMutationContentV1 =
     | string
