@@ -56,12 +56,15 @@ runs:
           exit 1
         fi
 
-        node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
-          --repository "$REPOSITORY" \
-          --channel "$RELEASE_CHANNEL" \
-          --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
-          --candidate-product "$CANDIDATE_PRODUCT" \
-          --candidate-version "$CANDIDATE_VERSION"
+        verify_candidate_tag_identity() {
+          node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
+            --repository "$REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --candidate-product "$CANDIDATE_PRODUCT" \
+            --candidate-version "$CANDIDATE_VERSION"
+        }
+        verify_candidate_tag_identity
 
         candidate_dir="$(mktemp -d "$RUNNER_TEMP/happier-verify-${CANDIDATE_PRODUCT}-XXXXXX")"
         declare -A observed_asset_names=()
@@ -87,6 +90,7 @@ runs:
           echo "Immutable release ${candidate_tag} changed while its assets were being downloaded." >&2
           exit 1
         fi
+        verify_candidate_tag_identity
         echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
         echo "candidate_tag=$candidate_tag" >> "$GITHUB_OUTPUT"
     - name: Verify downloaded signed artifacts without repository token
