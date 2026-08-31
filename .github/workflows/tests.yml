@@ -206,18 +206,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      run_ui: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' }}
-      run_server: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' }}
-      run_cli: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' }}
-      run_stack: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' }}
-      run_ui_e2e: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' }}
-      run_server_db_contract: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' }}
-      run_release_contracts: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' }}
-      run_installers_smoke: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' }}
-      run_binary_smoke: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.binary_smoke == 'true' }}
-      run_cli_daemon_e2e: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.cli_daemon_e2e == 'true' }}
-      run_e2e_core: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' }}
-      run_typecheck: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' }}
+      run_ui: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' }}
+      run_server: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' }}
+      run_cli: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' }}
+      run_stack: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' }}
+      run_ui_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' }}
+      run_server_db_contract: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' }}
+      run_release_contracts: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' }}
+      run_installers_smoke: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' }}
+      run_binary_smoke: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.binary_smoke == 'true' }}
+      run_cli_daemon_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli_daemon_e2e == 'true' }}
+      run_e2e_core: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' }}
+      run_typecheck: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' }}
     steps:
       - name: Checkout
         if: ${{ !inputs.select_jobs_explicitly }}
@@ -231,7 +231,13 @@ jobs:
         if: ${{ !inputs.select_jobs_explicitly }}
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
+          list-files: json
           filters: |
+            changed:
+              - '**'
+            documentation:
+              - '**/*.md'
+              - '**/*.mdx'
             all:
               - 'package.json'
               - 'yarn.lock'
@@ -331,6 +337,27 @@ jobs:
               - 'packages/**'
               - 'scripts/**/*.ts'
               - 'scripts/**/*.tsx'
+
+      - name: Fail closed for unclassified executable source
+        id: unmatched
+        if: ${{ !inputs.select_jobs_explicitly }}
+        env:
+          CHANGED_PATHS_JSON: ${{ steps.changes.outputs.changed_files }}
+          DOCUMENTATION_PATHS_JSON: ${{ steps.changes.outputs.documentation_files }}
+          CLASSIFIED_PATHS_ALL: ${{ steps.changes.outputs.all_files }}
+          CLASSIFIED_PATHS_UI: ${{ steps.changes.outputs.ui_files }}
+          CLASSIFIED_PATHS_SERVER: ${{ steps.changes.outputs.server_files }}
+          CLASSIFIED_PATHS_CLI: ${{ steps.changes.outputs.cli_files }}
+          CLASSIFIED_PATHS_STACK: ${{ steps.changes.outputs.stack_files }}
+          CLASSIFIED_PATHS_UI_E2E: ${{ steps.changes.outputs.ui_e2e_files }}
+          CLASSIFIED_PATHS_SERVER_DB_CONTRACT: ${{ steps.changes.outputs.server_db_contract_files }}
+          CLASSIFIED_PATHS_RELEASE_CONTRACTS: ${{ steps.changes.outputs.release_contracts_files }}
+          CLASSIFIED_PATHS_INSTALLERS_SMOKE: ${{ steps.changes.outputs.installers_smoke_files }}
+          CLASSIFIED_PATHS_BINARY_SMOKE: ${{ steps.changes.outputs.binary_smoke_files }}
+          CLASSIFIED_PATHS_CLI_DAEMON_E2E: ${{ steps.changes.outputs.cli_daemon_e2e_files }}
+          CLASSIFIED_PATHS_E2E_CORE: ${{ steps.changes.outputs.e2e_core_files }}
+          CLASSIFIED_PATHS_TYPECHECK: ${{ steps.changes.outputs.typecheck_files }}
+        run: node scripts/ci/classify-source-ci-paths.mjs --github-output "$GITHUB_OUTPUT"
 
   ui-e2e:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui_e2e == 'true') }}

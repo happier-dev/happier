@@ -175,9 +175,14 @@ test('the CI collector rejects a classifier-selected lane that GitHub skipped', 
 
 test('the source-CI classifier fail-closes shared tooling and reaches direct root-owned tests', async () => {
   const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8'));
-  const filterSource = workflow.jobs.ci_plan.steps.find((step) => step.id === 'changes')?.with?.filters;
+  const changesStep = workflow.jobs.ci_plan.steps.find((step) => step.id === 'changes');
+  const filterSource = changesStep?.with?.filters;
   assert.equal(typeof filterSource, 'string');
+  assert.equal(changesStep.with['list-files'], 'json');
   const filters = YAML.parse(filterSource);
+
+  assert.deepEqual(filters.changed, ['**']);
+  assert.deepEqual(filters.documentation, ['**/*.md', '**/*.mdx']);
 
   for (const path of [
     'package.json',
@@ -199,4 +204,13 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
   assert.match(sharedRun, /generateBuiltInPrompts\.test\.mjs/);
   const cliRun = workflow.jobs.cli.steps.map((step) => step.run ?? '').join('\n');
   assert.match(cliRun, /ensureCliCommonDistModule\.test\.mjs/);
+
+  const unmatchedStep = workflow.jobs.ci_plan.steps.find((step) => step.id === 'unmatched');
+  assert.equal(unmatchedStep.if, '${{ !inputs.select_jobs_explicitly }}');
+  assert.match(unmatchedStep.run, /classify-source-ci-paths\.mjs/);
+  assert.equal(unmatchedStep.env.CHANGED_PATHS_JSON, '${{ steps.changes.outputs.changed_files }}');
+  assert.equal(unmatchedStep.env.DOCUMENTATION_PATHS_JSON, '${{ steps.changes.outputs.documentation_files }}');
+  for (const output of Object.values(workflow.jobs.ci_plan.outputs)) {
+    assert.match(output, /steps\.unmatched\.outputs\.all == 'true'/);
+  }
 });
