@@ -1,10 +1,11 @@
 import http from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
 import { writeDaemonState, clearDaemonStateForTests } from '@/persistence';
 import * as controlClient from '@/daemon/controlClient';
 import {
   DaemonConnectedServiceRefreshError,
+  notifyDaemonConnectedServiceRuntimeAuthFailure,
   notifyDaemonConnectedServiceTurnLifecycle,
   requestDaemonSessionConnectedServiceAuthSwitch,
   resolveDaemonSpawnSessionByNonce,
@@ -68,6 +69,7 @@ describe('daemon control client (HTTP error responses)', () => {
   let tmpHomeDir: string | null = null;
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await clearDaemonStateForTests();
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -75,6 +77,38 @@ describe('daemon control client (HTTP error responses)', () => {
     if (tmpHomeDir) {
       await removeTempDir(tmpHomeDir);
       tmpHomeDir = null;
+    }
+  });
+
+  it('does not manufacture a wall-clock abort signal for lifecycle-owned local requests', async () => {
+    const server = http.createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true, result: { status: 'recovery_scheduled' } }));
+    });
+
+    try {
+      const { port } = await listen(server);
+      tmpHomeDir = await createTempDir('happier-daemon-client-lifecycle-owned-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'test-token',
+      });
+      const timeout = vi.spyOn(AbortSignal, 'timeout');
+
+      await expect(notifyDaemonConnectedServiceRuntimeAuthFailure({
+        sessionId: 'sess_1',
+        classification: { kind: 'usage_limit', serviceId: 'openai-codex' },
+      })).resolves.toMatchObject({ ok: true });
+
+      expect(timeout).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 

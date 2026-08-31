@@ -72,7 +72,8 @@ import { readProcessRunState } from './processRunState';
 import { classifyDaemonLifecycleProcessByPid } from './doctor';
 
 export type DaemonControlRequestOptions = {
-  timeoutMs?: number;
+  /** `null` leaves a local control request owned by caller/daemon lifecycle. */
+  timeoutMs?: number | null;
   signal?: AbortSignal;
 };
 
@@ -163,7 +164,8 @@ function resolvePositiveIntValue(
   return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
 }
 
-function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlRequestOptions): number {
+function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlRequestOptions): number | null {
+  if (options.timeoutMs === null) return null;
   if (options.timeoutMs !== undefined) {
     return resolvePositiveIntValue(options.timeoutMs, DEFAULT_DAEMON_HTTP_TIMEOUT_MS, { min: 100, max: 300_000 });
   }
@@ -383,14 +385,15 @@ async function daemonPost(path: string, body?: any, options: DaemonPostOptions =
     if (authToken) {
       headers['x-happier-daemon-token'] = authToken;
     }
+    const timeoutSignal = timeout === null ? null : AbortSignal.timeout(timeout);
+    const signal = options.signal
+      ? (timeoutSignal ? AbortSignal.any([options.signal, timeoutSignal]) : options.signal)
+      : timeoutSignal;
     const response = await fetch(`http://127.0.0.1:${state.httpPort}${path}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body || {}),
-      // Mostly increased for stress test
-      signal: options.signal
-        ? AbortSignal.any([options.signal, AbortSignal.timeout(timeout)])
-        : AbortSignal.timeout(timeout)
+      ...(signal ? { signal } : {}),
     });
     
     const rawBody = await response.text();
@@ -526,11 +529,10 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
 }
 
 /**
- * The group-generation apply fans out to EVERY live session bound to the group, and each
- * per-session switch may legitimately wait a full turn-boundary deferral window (60s) before it can
- * restart the session. The generic 10s daemonPost default aborted the ack while the daemon-side
- * apply kept running (observed live 2026-07-10 16:29) — the UI then reported a divergence for a
- * switch that succeeded. Bound the ack with deferral + restart margin instead.
+ * Runtime-auth recovery may fan out to every live session bound to a group. The report is staged
+ * durably and daemon-side work continues if the client stops waiting, so a default wall-clock
+ * deadline would manufacture an ambiguous failure. Callers may still supply an explicit timeout
+ * or lifecycle signal when they own a narrower cancellation contract.
  */
 export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
   body: Readonly<{
@@ -548,7 +550,13 @@ export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
     switchesThisTurn: body.switchesThisTurn ?? 0,
     classification: body.classification,
     ...(body.resumePromptMode ? { resumePromptMode: body.resumePromptMode } : {}),
-  }, options);
+  }, {
+    // The report is staged durably before delivery and the daemon coalesces
+    // retries by reportId. Aborting this acknowledgement on a wall clock only
+    // makes a still-running recovery ambiguous to the caller.
+    timeoutMs: null,
+    ...options,
+  });
 }
 
 export async function notifyDaemonConnectedServiceTurnLifecycle(
