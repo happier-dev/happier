@@ -1788,7 +1788,10 @@ export async function startLocalDaemonWithAuth({
     if (serverId) {
       const profileCommand = resolveDaemonCommandSpec({
         cliBin,
-        cliEntrypoint: explicitCommand ? cliEntrypoint : distEntrypoint,
+        cliEntrypoint:
+          explicitCommand || isCliDirectExecutableCommand(cliBin)
+            ? cliEntrypoint
+            : distEntrypoint,
         cliNodeEntrypoint,
         cliCommand,
         cliCommandArgs,
