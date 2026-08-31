@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useProjectSessions, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useProjectForSession, useProjectSessions, useSessionMessages, useSessionProjectScmCommitSelectionPatches, useSessionProjectScmCommitSelectionPaths, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -33,6 +33,9 @@ import {
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
+import { buildCommitSelectionPathHints, isFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
+import { isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 
 const REVIEW_SCROLL_TOP_PERSIST_DEBOUNCE_MS = 250;
 const REVIEW_SCROLL_TOP_PERSIST_EPSILON_PX = 1;
@@ -166,6 +169,8 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     const snapshotError = useSessionProjectScmSnapshotError(props.sessionId);
     const touchedPaths = useSessionProjectScmTouchedPaths(props.sessionId);
     const operationLog = useSessionProjectScmOperationLog(props.sessionId);
+    const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(props.sessionId);
+    const commitSelectionPatches = useSessionProjectScmCommitSelectionPatches(props.sessionId);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
@@ -285,6 +290,49 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         setDiffRefreshToken((t) => t + 1);
     }, [props.sessionId]);
 
+    const atomicSelectionPathSet = React.useMemo(() => new Set(buildCommitSelectionPathHints({
+        commitSelectionPaths,
+        commitSelectionPatches,
+    })), [commitSelectionPatches, commitSelectionPaths]);
+
+    const renderReviewFileActions = React.useMemo(() => {
+        if (!scmWriteEnabled) return undefined;
+        return (file: ScmFileStatus) => {
+            if (isDirectoryLikeScmFileStatus(file)) return null;
+            const selectedForCommit = isFileSelectedForCommit({
+                commitStrategy: scmCommitStrategy,
+                file,
+                atomicSelectionPaths: atomicSelectionPathSet,
+            });
+            const capability = selectedForCommit
+                ? effectiveSnapshot?.capabilities?.writeExclude
+                : effectiveSnapshot?.capabilities?.writeInclude;
+            const actionSupported = scmCommitStrategy === 'atomic'
+                ? effectiveSnapshot?.capabilities?.writeCommit === true
+                : capability === true;
+            if (!actionSupported) return null;
+            return (
+                <ScmCommitSelectionToggleButton
+                    sessionId={props.sessionId}
+                    sessionPath={sessionPath}
+                    snapshot={effectiveSnapshot ?? null}
+                    scmWriteEnabled={scmWriteEnabled}
+                    commitStrategy={scmCommitStrategy}
+                    file={file}
+                    selectedForCommit={selectedForCommit}
+                    surface="files"
+                />
+            );
+        };
+    }, [
+        atomicSelectionPathSet,
+        effectiveSnapshot,
+        props.sessionId,
+        scmCommitStrategy,
+        scmWriteEnabled,
+        sessionPath,
+    ]);
+
     const renderReviewFileTrailingActions = React.useMemo(() => {
         if (!scmWriteEnabled) return undefined;
         return (file: ScmFileStatus) => (
@@ -384,6 +432,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 onCollapsedPathsChange={onCollapsedPathsChange}
                 initialScrollTop={mountedInitialReviewState.scrollTop}
                 onScrollTopChange={onScrollTopChange}
+                renderFileActions={renderReviewFileActions}
                 renderFileTrailingActions={renderReviewFileTrailingActions}
                 rowDensity="compact"
                 diffRefreshToken={diffRefreshToken}

@@ -12,6 +12,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { Icon } from '@/components/ui/icons/Icon';
+import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
 
 export type ScmCommitSelectionToggleButtonProps = Readonly<{
     sessionId: string;
@@ -33,14 +34,19 @@ export const ScmCommitSelectionToggleButton = React.memo((props: ScmCommitSelect
 
     const iconName = props.selectedForCommit ? 'check' : 'plus';
     const iconColor = props.selectedForCommit ? theme.colors.state.success.foreground : theme.colors.text.secondary;
+    const accessibilityLabel = isAtomicCommitStrategy(props.commitStrategy)
+        ? props.selectedForCommit
+            ? t('files.commitSelection.removeFromCommit')
+            : t('files.commitSelection.addToCommit')
+        : props.selectedForCommit
+            ? t('files.fileActions.unstageFile')
+            : t('files.fileActions.stageFile');
 
     return (
         <IconAction
             size="sm"
             testID={`scm-commit-selection-toggle-${toTestIdSafeValue(props.file.fullPath)}`}
-            accessibilityLabel={
-                props.selectedForCommit ? t('files.commitSelection.removeFromCommit') : t('files.commitSelection.addToCommit')
-            }
+            accessibilityLabel={accessibilityLabel}
             // A file already staged is a control that is ON, which is what the resting fill means.
             active={props.selectedForCommit}
             disabled={busy || !props.scmWriteEnabled}

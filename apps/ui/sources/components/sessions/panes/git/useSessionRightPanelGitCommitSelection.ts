@@ -8,6 +8,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { ScmCommitSelectionPatch } from '@/sync/domains/state/storageTypes';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isFileSelectedForCommit as resolveFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
 
 export type UseSessionRightPanelGitCommitSelectionInput = Readonly<{
     sessionId: string;
@@ -42,8 +43,11 @@ export function useSessionRightPanelGitCommitSelection(
     }, [input.commitSelectionPatches, input.commitSelectionPaths]);
 
     const isSelectedForCommit = React.useCallback((file: ScmFileStatus) => {
-        const atomic = isAtomicCommitStrategy(input.scmCommitStrategy);
-        return atomic ? commitSelectionSet.has(file.fullPath) : file.isIncluded === true;
+        return resolveFileSelectedForCommit({
+            commitStrategy: input.scmCommitStrategy,
+            file,
+            atomicSelectionPaths: commitSelectionSet,
+        });
     }, [commitSelectionSet, input.scmCommitStrategy]);
 
     const repositorySelectedCount = React.useMemo(() => {

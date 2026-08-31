@@ -34,6 +34,43 @@ installSourceControlCommitSelectionCommonModuleMocks({
 });
 
 describe('ScmCommitSelectionToggleButton', () => {
+  it('describes real index changes as stage and unstage actions', async () => {
+    const { ScmCommitSelectionToggleButton } = await import('./ScmCommitSelectionToggleButton');
+    const filePath = 'src/api.ts';
+
+    const staged = await renderScreen(
+        <ScmCommitSelectionToggleButton
+            sessionId="s1"
+            sessionPath="/tmp/repo"
+            snapshot={null}
+            scmWriteEnabled={true}
+            commitStrategy="git_staging"
+            file={{ fullPath: filePath } as any}
+            selectedForCommit={false}
+            surface="files"
+        />,
+    );
+
+    expect(staged.findByTestId(`scm-commit-selection-toggle-${toTestIdSafeValue(filePath)}`)?.props.accessibilityLabel)
+      .toBe('files.fileActions.stageFile');
+
+    const unstaged = await renderScreen(
+        <ScmCommitSelectionToggleButton
+            sessionId="s1"
+            sessionPath="/tmp/repo"
+            snapshot={null}
+            scmWriteEnabled={true}
+            commitStrategy="git_staging"
+            file={{ fullPath: filePath } as any}
+            selectedForCommit={true}
+            surface="files"
+        />,
+    );
+
+    expect(unstaged.findByTestId(`scm-commit-selection-toggle-${toTestIdSafeValue(filePath)}`)?.props.accessibilityLabel)
+      .toBe('files.fileActions.unstageFile');
+  });
+
   it('toggles commit selection via applyFileStageAction', async () => {
     applySpy.mockResolvedValueOnce(undefined);
     const afterSpy = vi.fn();

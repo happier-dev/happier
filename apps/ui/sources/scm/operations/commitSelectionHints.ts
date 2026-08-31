@@ -1,4 +1,6 @@
 import type { ScmCommitSelectionPatch } from '@/sync/domains/state/storageTypes';
+import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { isAtomicCommitStrategy, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 
 export function buildCommitSelectionPathHints(input: Readonly<{
     commitSelectionPaths: readonly string[];
@@ -21,4 +23,14 @@ export function countCommitSelectionItems(input: Readonly<{
     commitSelectionPatches: readonly ScmCommitSelectionPatch[];
 }>): number {
     return buildCommitSelectionPathHints(input).length;
+}
+
+export function isFileSelectedForCommit(input: Readonly<{
+    commitStrategy: ScmCommitStrategy;
+    file: ScmFileStatus;
+    atomicSelectionPaths: ReadonlySet<string>;
+}>): boolean {
+    return isAtomicCommitStrategy(input.commitStrategy)
+        ? input.atomicSelectionPaths.has(input.file.fullPath)
+        : input.file.isIncluded === true;
 }
