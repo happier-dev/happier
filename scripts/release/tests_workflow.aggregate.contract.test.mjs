@@ -17,5 +17,10 @@ test('tests workflow summary covers every top-level CI lane', async () => {
   assert.match(raw, /result !== 'success' && result !== 'skipped'/, 'collector must fail closed for every non-success lane result');
   assert.doesNotMatch(raw, /\["failure","cancelled"\]\.includes\(v\.result\)/, 'collector must not ignore timeout/startup/stale conclusions');
   assert.match(raw, /ci-summary\.json/, 'collector must write a machine-readable summary artifact');
+  assert.match(
+    summary,
+    /CI_SOURCE_SHA:\s*\$\{\{ inputs\.checkout_sha != '' && inputs\.checkout_sha \|\| github\.sha \}\}/,
+    'the summary must bind the exact requested checkout rather than the reusable caller SHA',
+  );
   assert.match(raw, /name: Upload machine-readable CI summary[\s\S]*?if: always\(\)/, 'summary artifact must upload even when a lane fails');
 });

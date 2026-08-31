@@ -198,9 +198,143 @@ env:
   HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
 
 jobs:
+  ci_plan:
+    name: Resolve affected source-CI lanes
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run_ui: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' }}
+      run_server: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' }}
+      run_cli: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' }}
+      run_stack: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' }}
+      run_ui_e2e: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' }}
+      run_server_db_contract: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' }}
+      run_release_contracts: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' }}
+      run_installers_smoke: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' }}
+      run_binary_smoke: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.binary_smoke == 'true' }}
+      run_cli_daemon_e2e: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.cli_daemon_e2e == 'true' }}
+      run_e2e_core: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' }}
+      run_typecheck: ${{ steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' }}
+    steps:
+      - name: Checkout
+        if: ${{ !inputs.select_jobs_explicitly }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Classify affected source-CI lanes once
+        id: changes
+        if: ${{ !inputs.select_jobs_explicitly }}
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            all:
+              - 'package.json'
+              - 'yarn.lock'
+              - '.yarnrc*'
+              - '.node-version'
+              - 'tsconfig*.json'
+              - '.github/actions/enable-corepack-yarn/**'
+              - '.github/actions/install-yarn-dependencies/**'
+              - 'scripts/workspaces/**'
+            ui:
+              - 'apps/ui/**'
+              - 'apps/bootstrap/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig*.json'
+              - 'vitest.config.ts'
+              - 'scripts/ci/install_sapling_ubuntu22.sh'
+              - 'scripts/testing/featureTestGating*'
+              - 'scripts/generateBuiltInPrompts.mjs'
+              - 'scripts/generateBuiltInPrompts.test.mjs'
+              - 'skills/happier-diagnose/**'
+            server:
+              - 'apps/server/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig*.json'
+              - 'scripts/testing/featureTestGating*'
+            cli:
+              - 'apps/cli/**'
+              - 'packages/**'
+              - 'scripts/install/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig*.json'
+              - 'scripts/ci/install_sapling_ubuntu22.sh'
+              - 'scripts/testing/featureTestGating*'
+              - 'scripts/ensureCliCommonDistModule.mjs'
+              - 'scripts/ensureCliCommonDistModule.test.mjs'
+            stack:
+              - 'apps/stack/**'
+              - 'packages/**'
+              - 'scripts/install/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig*.json'
+            ui_e2e:
+              - 'apps/ui/**'
+              - 'apps/server/**'
+              - 'apps/cli/**'
+              - 'packages/tests/**'
+              - 'packages/protocol/**'
+              - 'package.json'
+              - 'yarn.lock'
+            server_db_contract:
+              - 'apps/server/prisma/**'
+              - 'apps/server/sources/migrations/**'
+              - 'apps/server/sources/storage/**'
+              - '**/schema.prisma'
+              - 'scripts/testing/featureTestGating*'
+            release_contracts:
+              - '.github/**'
+              - 'scripts/release/**'
+              - 'scripts/pipeline/**'
+              - 'packages/tests/src/testkit/process/**'
+            installers_smoke:
+              - '.github/actions/bootstrap-minisign/**'
+              - 'apps/ui/src-tauri/**'
+              - 'scripts/install/**'
+              - 'scripts/release/installers/**'
+              - 'scripts/pipeline/release/lib/minisign*'
+              - 'scripts/pipeline/tauri/**'
+            binary_smoke:
+              - 'apps/cli/**'
+              - 'apps/server/**'
+              - 'packages/cli-common/**'
+              - 'packages/protocol/**'
+              - 'scripts/pipeline/release/**'
+            cli_daemon_e2e:
+              - 'apps/cli/src/cli/commands/service/**'
+              - 'apps/cli/src/daemon/**'
+              - 'packages/cli-common/src/process/**'
+              - 'packages/cli-common/src/service/**'
+              - 'scripts/install/**'
+            e2e_core:
+              - 'apps/cli/**'
+              - 'apps/server/**'
+              - 'packages/protocol/**'
+              - 'packages/tests/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'scripts/ci/install_sapling_ubuntu22.sh'
+              - 'scripts/testing/featureTestGating*'
+            typecheck:
+              - 'apps/**'
+              - 'packages/**'
+              - 'scripts/**/*.ts'
+              - 'scripts/**/*.tsx'
+
   ui-e2e:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui_e2e == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: UI E2E (Playwright) / shard ${{ matrix.shard }}/18
     strategy:
       fail-fast: false
@@ -220,27 +354,8 @@ jobs:
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
-      - name: Detect UI E2E-relevant changes
-        id: changes
-        if: github.event_name != 'workflow_call'
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            ui_e2e:
-              - 'apps/ui/**'
-              - 'apps/server/**'
-              - 'apps/cli/**'
-              - 'packages/tests/**'
-              - 'package.json'
-              - 'yarn.lock'
-
-      - name: Skip UI E2E (no relevant changes)
-        if: github.event_name != 'workflow_call' && steps.changes.outputs.ui_e2e != 'true'
-        run: |
-          echo "UI E2E skipped: no relevant changes."
-
       - name: Setup Node (GitHub Actions)
-        if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && env.ACT != 'true'
+        if: env.ACT != 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
@@ -248,17 +363,15 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Setup Node (act)
-        if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && env.ACT == 'true'
+        if: env.ACT == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
       - name: Enable Corepack
-        if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
         uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
-        if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
@@ -267,11 +380,9 @@ jobs:
           args: --frozen-lockfile
 
       - name: Install Playwright browsers
-        if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Install sqlite3 (if missing)
-        if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
         run: |
           if command -v sqlite3 >/dev/null 2>&1; then
             sqlite3 --version
@@ -282,7 +393,6 @@ jobs:
           sqlite3 --version
 
       - name: Run UI E2E
-        if: github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true'
         run: |
           set -euo pipefail
           if [ -z "$UI_E2E_SPECS" ]; then
@@ -312,7 +422,7 @@ jobs:
           yarn -s test:e2e:ui -- "${specs[@]}"
 
       - name: Upload UI E2E artifacts (Playwright)
-        if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && failure()
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-18
@@ -324,7 +434,7 @@ jobs:
           if-no-files-found: ignore
 
   ui-e2e-wsrepl-lima:
-    if: ${{ github.event_name == 'workflow_call' && inputs.run_wsrepl_lima }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_wsrepl_lima }}
     name: UI E2E (WSREPL Lima matrix)
     runs-on:
       - self-hosted
@@ -378,7 +488,7 @@ jobs:
 
   mobile-e2e-android:
     # Native E2E is intentionally opt-in for now (not a PR check).
-    if: ${{ github.event_name == 'workflow_call' && inputs.run_mobile_e2e_android }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_mobile_e2e_android }}
     name: Mobile E2E (Maestro) (android) (opt-in)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -425,7 +535,7 @@ jobs:
 
   mobile-e2e-ios:
     # Native E2E is intentionally opt-in for now (not a PR check).
-    if: ${{ github.event_name == 'workflow_call' && inputs.run_mobile_e2e_ios }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_mobile_e2e_ios }}
     name: Mobile E2E (Maestro) (ios) (opt-in)
     runs-on: macos-latest
     timeout-minutes: 45
@@ -470,8 +580,8 @@ jobs:
           if-no-files-found: ignore
 
   ui-unit:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: UI Unit Tests / part ${{ matrix.part }}/4
     strategy:
       fail-fast: false
@@ -542,8 +652,8 @@ jobs:
           fi
 
   ui-integration:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: UI Integration Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 240
@@ -587,10 +697,11 @@ jobs:
         run: yarn workspace @happier-dev/app test:integration
 
   ui:
-    if: ${{ always() && (!inputs.select_jobs_explicitly || inputs.run_ui) }}
-    needs: [ui-unit, ui-integration]
+    if: ${{ always() && ((inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui == 'true')) }}
+    needs: [ci_plan, ui-unit, ui-integration]
     name: UI Tests (unit + integration)
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - name: Require all UI test lanes
         env:
@@ -603,8 +714,8 @@ jobs:
           fi
 
   shared-packages-unit:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Shared Package Unit Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 20
@@ -653,9 +764,12 @@ jobs:
           yarn workspace @happier-dev/bootstrap test
           yarn --cwd packages/relay-server test
 
+      - name: Verify generated built-in prompts
+        run: node --test scripts/generateBuiltInPrompts.test.mjs
+
   server:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_server) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_server == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Server Tests (unit + integration)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
@@ -710,8 +824,8 @@ jobs:
           fi
 
   server-db-contract:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_server_db_contract }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_server_db_contract) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_server_db_contract == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Server DB Contract (Postgres)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 25
@@ -770,8 +884,8 @@ jobs:
         run: yarn --cwd apps/server test:server:db-contract
 
   cli:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_cli) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
     permissions:
       contents: read
@@ -868,6 +982,10 @@ jobs:
         continue-on-error: true
         run: yarn workspace @happier-dev/cli test:unit
 
+      - name: Test root CLI common dist admission owner
+        if: ${{ matrix.part == 1 }}
+        run: node --test scripts/ensureCliCommonDistModule.test.mjs
+
       - name: Run integration tests
         id: integration-tests
         continue-on-error: true
@@ -885,8 +1003,8 @@ jobs:
           fi
 
   stack:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_stack) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_stack == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Stack Tests (unit + integration)
     permissions:
       contents: read
@@ -936,7 +1054,8 @@ jobs:
           fi
 
   release-contracts:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_release_contracts }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_release_contracts) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_release_contracts == 'true') }}
+    needs: [ci_plan]
     name: Release Contracts
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -969,15 +1088,16 @@ jobs:
           node scripts/pipeline/run.mjs release-sync-installers --check
 
   installers-smoke-linux:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
+    needs: [ci_plan]
     name: Installer Smoke (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
-      INSTALLERS_SOURCE: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_source || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel' || 'local-build' }}
-      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && (inputs.installers_ref != '' && inputs.installers_ref || inputs.installers_channel) || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
-      INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
+      INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
+      INSTALLERS_SOURCE: ${{ inputs.select_jobs_explicitly && inputs.installers_source || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel' || 'local-build' }}
+      INSTALLERS_REF: ${{ inputs.select_jobs_explicitly && (inputs.installers_ref != '' && inputs.installers_ref || inputs.installers_channel) || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_RELEASE_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1016,15 +1136,16 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-macos:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
+    needs: [ci_plan]
     name: Installer Smoke (macOS)
     runs-on: macos-latest
     timeout-minutes: 25
     env:
-      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
-      INSTALLERS_SOURCE: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_source || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel' || 'local-build' }}
-      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && (inputs.installers_ref != '' && inputs.installers_ref || inputs.installers_channel) || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
-      INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
+      INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
+      INSTALLERS_SOURCE: ${{ inputs.select_jobs_explicitly && inputs.installers_source || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel' || 'local-build' }}
+      INSTALLERS_REF: ${{ inputs.select_jobs_explicitly && (inputs.installers_ref != '' && inputs.installers_ref || inputs.installers_channel) || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_RELEASE_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1063,15 +1184,16 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-windows:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
+    needs: [ci_plan]
     name: Installer Smoke (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
-      INSTALLERS_SOURCE: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_source || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel' || 'local-build' }}
-      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && (inputs.installers_ref != '' && inputs.installers_ref || inputs.installers_channel) || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
-      INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
+      INSTALLERS_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
+      INSTALLERS_SOURCE: ${{ inputs.select_jobs_explicitly && inputs.installers_source || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel' || 'local-build' }}
+      INSTALLERS_REF: ${{ inputs.select_jobs_explicitly && (inputs.installers_ref != '' && inputs.installers_ref || inputs.installers_channel) || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_RELEASE_CHANNEL: ${{ inputs.select_jobs_explicitly && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'dev' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1110,14 +1232,29 @@ jobs:
             --release-channel "$env:INSTALLERS_RELEASE_CHANNEL"
 
   binary-smoke:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_binary_smoke }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_binary_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_binary_smoke == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Binary Smoke (isolated cwd)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$CHECKOUT_SHA" ]; then
+            echo "Checked out '$actual_sha', expected '$CHECKOUT_SHA'." >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1152,6 +1289,7 @@ jobs:
 
   cli-update-continuity:
     if: ${{ inputs.run_cli_update_continuity }}
+    needs: [trusted_ref_guard]
     name: Release Validation — CLI Update Continuity (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -1162,6 +1300,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$CHECKOUT_SHA" ]; then
+            echo "Checked out '$actual_sha', expected '$CHECKOUT_SHA'." >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1204,12 +1357,28 @@ jobs:
 
   daemon-continuity:
     if: ${{ inputs.run_daemon_continuity }}
+    needs: [trusted_ref_guard]
     name: Release Validation — Daemon Continuity (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$CHECKOUT_SHA" ]; then
+            echo "Checked out '$actual_sha', expected '$CHECKOUT_SHA'." >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1250,12 +1419,28 @@ jobs:
 
   session-continuity:
     if: ${{ inputs.run_session_continuity }}
+    needs: [trusted_ref_guard]
     name: Release Validation — Session Continuity (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$CHECKOUT_SHA" ]; then
+            echo "Checked out '$actual_sha', expected '$CHECKOUT_SHA'." >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1295,7 +1480,7 @@ jobs:
           if-no-files-found: ignore
 
   release-assets-docker:
-    if: ${{ github.event_name == 'workflow_call' && inputs.run_release_assets_docker }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_release_assets_docker }}
     name: Release Assets Docker (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -1355,13 +1540,26 @@ jobs:
             --to-ref "${RELAY_UPGRADE_TO_REF}"
 
   self-host-systemd-e2e:
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_systemd }}
+    needs: [trusted_ref_guard]
     name: Self-Host E2E (Linux systemd)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1392,13 +1590,26 @@ jobs:
           node --test apps/stack/scripts/self_host_systemd.real.integration.test.mjs
 
   self-host-launchd-e2e:
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_launchd }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_launchd }}
+    needs: [trusted_ref_guard]
     name: Self-Host E2E (macOS launchd)
     runs-on: macos-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1429,13 +1640,26 @@ jobs:
           node --test apps/stack/scripts/self_host_launchd.real.integration.test.mjs
 
   self-host-schtasks-e2e:
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_schtasks }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_schtasks }}
+    needs: [trusted_ref_guard]
     name: Self-Host E2E (Windows schtasks)
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1464,7 +1688,8 @@ jobs:
         run: node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs
 
   self-host-daemon-e2e:
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_daemon }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_daemon }}
+    needs: [trusted_ref_guard]
     name: Self-Host + Daemon E2E
     strategy:
       fail-fast: false
@@ -1475,6 +1700,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1503,8 +1740,8 @@ jobs:
         run: node --test apps/stack/scripts/self_host_daemon.real.integration.test.mjs
 
   typecheck:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_typecheck }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_typecheck) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_typecheck == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Typecheck
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 20
@@ -1543,7 +1780,8 @@ jobs:
         run: yarn typecheck
 
   cli-daemon-e2e:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli_daemon_e2e }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_cli_daemon_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli_daemon_e2e == 'true') }}
+    needs: [ci_plan]
     name: CLI + Server (light/sqlite) E2E
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -1778,8 +2016,8 @@ jobs:
           done
 
   e2e-core:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_core }}
-    needs: [trusted_ref_guard]
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_e2e_core) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_e2e_core == 'true') }}
+    needs: [ci_plan, trusted_ref_guard]
     name: Core E2E (fast, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
@@ -1834,7 +2072,7 @@ jobs:
           path: .project/logs/e2e
 
   e2e-core-slow:
-    if: ${{ github.event_name == 'workflow_call' && inputs.run_e2e_core_slow }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_e2e_core_slow }}
     needs: [trusted_ref_guard]
     name: Core E2E (slow, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -1922,6 +2160,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
       ubuntu_2404: ${{ steps.runner_pool.outputs.ubuntu_2404 }}
@@ -1978,11 +2217,12 @@ jobs:
 
   release_actor_guard:
     needs: [trusted_ref_guard]
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_providers }}
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1999,7 +2239,7 @@ jobs:
 
   providers:
     needs: [release_actor_guard]
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
+    if: ${{ inputs.select_jobs_explicitly && inputs.run_providers }}
     name: Providers (contract matrix)
     runs-on: ubuntu-latest
     environment: providers-ci
@@ -2208,16 +2448,44 @@ jobs:
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [ui-e2e, ui-e2e-wsrepl-lima, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    needs: [ci_plan, ui-e2e, ui-e2e-wsrepl-lima, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - name: Collect every lane conclusion
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          SELECT_JOBS_EXPLICITLY: ${{ inputs.select_jobs_explicitly }}
+          REQUEST_RUN_UI_E2E: ${{ inputs.run_ui_e2e }}
+          REQUEST_RUN_WSREPL_LIMA: ${{ inputs.run_wsrepl_lima }}
+          REQUEST_RUN_MOBILE_E2E_ANDROID: ${{ inputs.run_mobile_e2e_android }}
+          REQUEST_RUN_MOBILE_E2E_IOS: ${{ inputs.run_mobile_e2e_ios }}
+          REQUEST_RUN_UI: ${{ inputs.run_ui }}
+          REQUEST_RUN_SERVER: ${{ inputs.run_server }}
+          REQUEST_RUN_SERVER_DB_CONTRACT: ${{ inputs.run_server_db_contract }}
+          REQUEST_RUN_CLI: ${{ inputs.run_cli }}
+          REQUEST_RUN_STACK: ${{ inputs.run_stack }}
+          REQUEST_RUN_RELEASE_CONTRACTS: ${{ inputs.run_release_contracts }}
+          REQUEST_RUN_INSTALLERS_SMOKE: ${{ inputs.run_installers_smoke }}
+          REQUEST_RUN_BINARY_SMOKE: ${{ inputs.run_binary_smoke }}
+          REQUEST_RUN_CLI_UPDATE_CONTINUITY: ${{ inputs.run_cli_update_continuity }}
+          REQUEST_RUN_DAEMON_CONTINUITY: ${{ inputs.run_daemon_continuity }}
+          REQUEST_RUN_SESSION_CONTINUITY: ${{ inputs.run_session_continuity }}
+          REQUEST_RUN_RELEASE_ASSETS_DOCKER: ${{ inputs.run_release_assets_docker }}
+          REQUEST_RUN_SELF_HOST_SYSTEMD: ${{ inputs.run_self_host_systemd }}
+          REQUEST_RUN_SELF_HOST_LAUNCHD: ${{ inputs.run_self_host_launchd }}
+          REQUEST_RUN_SELF_HOST_SCHTASKS: ${{ inputs.run_self_host_schtasks }}
+          REQUEST_RUN_SELF_HOST_DAEMON: ${{ inputs.run_self_host_daemon }}
+          REQUEST_RUN_TYPECHECK: ${{ inputs.run_typecheck }}
+          REQUEST_RUN_CLI_DAEMON_E2E: ${{ inputs.run_cli_daemon_e2e }}
+          REQUEST_RUN_E2E_CORE: ${{ inputs.run_e2e_core }}
+          REQUEST_RUN_E2E_CORE_SLOW: ${{ inputs.run_e2e_core_slow }}
+          REQUEST_RUN_PROVIDERS: ${{ inputs.run_providers }}
+          REQUEST_RUN_STRESS: ${{ inputs.run_stress }}
           CI_RUN_ID: ${{ github.run_id }}
-          CI_SOURCE_SHA: ${{ github.sha }}
+          CI_SOURCE_SHA: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
           CI_WORKFLOW: ${{ github.workflow }}
         run: |
           node --input-type=module <<'NODE'
@@ -2230,10 +2498,70 @@ jobs:
             conclusion: value?.conclusion ?? null,
             outputs: value?.outputs ?? {},
           }));
+          const requestedLaneGroups = {
+            REQUEST_RUN_UI_E2E: ['ui-e2e'],
+            REQUEST_RUN_WSREPL_LIMA: ['ui-e2e-wsrepl-lima'],
+            REQUEST_RUN_MOBILE_E2E_ANDROID: ['mobile-e2e-android'],
+            REQUEST_RUN_MOBILE_E2E_IOS: ['mobile-e2e-ios'],
+            REQUEST_RUN_UI: ['ui-unit', 'ui-integration', 'ui', 'shared-packages-unit'],
+            REQUEST_RUN_SERVER: ['server'],
+            REQUEST_RUN_SERVER_DB_CONTRACT: ['server-db-contract'],
+            REQUEST_RUN_CLI: ['cli'],
+            REQUEST_RUN_STACK: ['stack'],
+            REQUEST_RUN_RELEASE_CONTRACTS: ['release-contracts'],
+            REQUEST_RUN_INSTALLERS_SMOKE: ['installers-smoke-linux', 'installers-smoke-macos', 'installers-smoke-windows'],
+            REQUEST_RUN_BINARY_SMOKE: ['binary-smoke'],
+            REQUEST_RUN_CLI_UPDATE_CONTINUITY: ['cli-update-continuity'],
+            REQUEST_RUN_DAEMON_CONTINUITY: ['daemon-continuity'],
+            REQUEST_RUN_SESSION_CONTINUITY: ['session-continuity'],
+            REQUEST_RUN_RELEASE_ASSETS_DOCKER: ['release-assets-docker'],
+            REQUEST_RUN_SELF_HOST_SYSTEMD: ['self-host-systemd-e2e'],
+            REQUEST_RUN_SELF_HOST_LAUNCHD: ['self-host-launchd-e2e'],
+            REQUEST_RUN_SELF_HOST_SCHTASKS: ['self-host-schtasks-e2e'],
+            REQUEST_RUN_SELF_HOST_DAEMON: ['self-host-daemon-e2e'],
+            REQUEST_RUN_TYPECHECK: ['typecheck'],
+            REQUEST_RUN_CLI_DAEMON_E2E: ['cli-daemon-e2e'],
+            REQUEST_RUN_E2E_CORE: ['e2e-core'],
+            REQUEST_RUN_E2E_CORE_SLOW: ['e2e-core-slow'],
+            REQUEST_RUN_PROVIDERS: ['release_actor_guard', 'providers'],
+            REQUEST_RUN_STRESS: ['stress'],
+          };
+          const classifierLaneGroups = {
+            run_ui: ['ui-unit', 'ui-integration', 'ui', 'shared-packages-unit'],
+            run_server: ['server'],
+            run_cli: ['cli'],
+            run_stack: ['stack'],
+            run_ui_e2e: ['ui-e2e'],
+            run_server_db_contract: ['server-db-contract'],
+            run_release_contracts: ['release-contracts'],
+            run_installers_smoke: ['installers-smoke-linux', 'installers-smoke-macos', 'installers-smoke-windows'],
+            run_binary_smoke: ['binary-smoke'],
+            run_cli_daemon_e2e: ['cli-daemon-e2e'],
+            run_e2e_core: ['e2e-core'],
+            run_typecheck: ['typecheck'],
+          };
+          const explicitSelection = process.env.SELECT_JOBS_EXPLICITLY === 'true';
+          const requestedLaneIds = explicitSelection
+            ? Object.entries(requestedLaneGroups)
+              .filter(([input]) => process.env[input] === 'true')
+              .flatMap(([, ids]) => ids)
+            : Object.entries(classifierLaneGroups)
+              .filter(([output]) => needs.ci_plan?.outputs?.[output] === 'true')
+              .flatMap(([, ids]) => ids);
+          const laneById = new Map(lanes.map((lane) => [lane.id, lane]));
+          const requestedSkips = requestedLaneIds
+            .filter((id) => !laneById.has(id) || laneById.get(id)?.result === 'skipped')
+            .map((id) => ({
+              ...(laneById.get(id) ?? { id, result: null, conclusion: null, outputs: {} }),
+              reason: 'requested lane was skipped',
+            }));
           // Only success and intentionally skipped lanes are acceptable. Treat every other or
           // unknown result (timed_out, startup_failure, stale, action_required, null, ...) as a
           // failure so the collector can never report a false-green release attestation.
-          const failures = lanes.filter(({ result }) => result !== 'success' && result !== 'skipped');
+          const failures = [
+            ...lanes.filter(({ result }) => result !== 'success' && result !== 'skipped'),
+            ...requestedSkips,
+          ];
           for (const lane of lanes) console.log(`${lane.id} => ${lane.result ?? 'unknown'}`);
           const summary = {
             schemaVersion: 1,
@@ -2246,7 +2574,9 @@ jobs:
           writeFileSync('ci-summary.json', `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
           if (failures.length > 0) {
             console.error('Non-success CI lanes:');
-            for (const lane of failures) console.error(`- ${lane.id} => ${lane.result ?? 'unknown'}`);
+            for (const lane of failures) {
+              console.error(`- ${lane.id} => ${lane.result ?? 'unknown'}${lane.reason ? ` (${lane.reason})` : ''}`);
+            }
             process.exitCode = 1;
           }
           NODE

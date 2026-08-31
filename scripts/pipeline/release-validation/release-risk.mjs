@@ -32,6 +32,7 @@ const RISK_PATTERNS = Object.freeze({
     /^apps\/cli\/src\/daemon\/(?:platform|processSupervision|service|startup)(?:\/|$)/u,
     /^packages\/cli-common\/src\/(?:happierRuntime\/services|process|service|systemTasks\/setupServiceGuidance)(?:\/|$)/u,
     /^apps\/ui\/src-tauri\//u,
+    /^apps\/stack\/scripts\/(?:self_host_runtime(?:\.|\/|$)|self_host\/)/u,
     /^scripts\/(?:install|release\/installers|pipeline\/tauri)(?:\/|$)/u,
   ]),
   trustRoots: Object.freeze([

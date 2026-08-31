@@ -22,6 +22,10 @@ export const components = Object.freeze({
     id: 'ui',
     changedPrefixes: ['apps/ui/'],
   },
+  bootstrap: {
+    id: 'bootstrap',
+    changedPrefixes: ['apps/bootstrap/'],
+  },
   cli: {
     id: 'cli',
     changedPrefixes: ['apps/cli/'],
@@ -72,28 +76,32 @@ export const components = Object.freeze({
     id: 'shared',
     changedPrefixes: ['packages/agents/', 'packages/protocol/'],
   },
+  workspaceGraph: {
+    id: 'workspaceGraph',
+    changedFiles: ['package.json', 'yarn.lock'],
+  },
 });
 
 export const versionedComponents = Object.freeze({
   app: {
     id: 'app',
     baselineTagPrefix: 'ui-web-v',
-    changedWhen: ['ui', 'shared', 'cliCommon', 'connectionSupervisor', 'transfers', 'releaseRuntime', 'audioStreamNative', 'sherpaNative'],
+    changedWhen: ['ui', 'bootstrap', 'shared', 'workspaceGraph', 'cliCommon', 'connectionSupervisor', 'transfers', 'releaseRuntime', 'audioStreamNative', 'sherpaNative'],
   },
   cli: {
     id: 'cli',
     baselineTagPrefix: 'cli-v',
-    changedWhen: ['cli', 'shared', 'cliCommon', 'connectionSupervisor', 'transfers', 'releaseRuntime'],
+    changedWhen: ['cli', 'shared', 'workspaceGraph', 'cliCommon', 'connectionSupervisor', 'transfers', 'releaseRuntime'],
   },
   stack: {
     id: 'stack',
     baselineTagPrefix: 'stack-v',
-    changedWhen: ['stack', 'shared', 'cliCommon', 'connectionSupervisor', 'releaseRuntime'],
+    changedWhen: ['stack', 'shared', 'workspaceGraph', 'cliCommon', 'connectionSupervisor', 'releaseRuntime'],
   },
   server: {
     id: 'server',
     baselineTagPrefix: 'server-v',
-    changedWhen: ['server', 'shared', 'cliCommon', 'releaseRuntime'],
+    changedWhen: ['server', 'shared', 'workspaceGraph', 'cliCommon', 'releaseRuntime'],
   },
 });
 

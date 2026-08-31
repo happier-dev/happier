@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: "Profile — full runs everything; fast skips slow lanes; custom uses toggles below"
+        description: "Profile — fast feedback, release ship-path evidence, deep source certification, or custom"
         required: true
-        default: full
+        default: fast
         type: choice
         options:
-          - full
           - fast
+          - release
+          - deep
           - custom
       runner_pool:
         description: "Runner pool — GitHub is the default; Blacksmith accelerates approved non-secret Linux test lanes"
@@ -103,120 +104,121 @@ jobs:
           custom="${CUSTOM}"
           ui_e2e_specs="${UI_E2E_SPECS}"
 
-          has() {
-            local key="$1"
-            echo ",${custom}," | grep -qi ",${key},"
+          declare -A selected=()
+          errors=()
+          unknown=()
+          saw_empty=false
+
+          trim() {
+            local value="$1"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
           }
 
-          if [ "${profile}" = "custom" ] && [ -z "${custom}" ]; then
-            echo "::error::profile=custom requires custom_checks" >&2
-            exit 1
-          fi
-          if [ -n "${ui_e2e_specs}" ] && [ "${profile}" != "custom" ]; then
-            echo "::error::profile=custom is required when ui_e2e_specs is set" >&2
-            exit 1
-          fi
-          if [ -n "${ui_e2e_specs}" ] && ! has ui_e2e; then
-            echo "::error::custom_checks must include ui_e2e when ui_e2e_specs is set" >&2
-            exit 1
-          fi
-          case "${ui_e2e_specs}" in
-            *$'\n'*|*$'\r'*) echo "::error::ui_e2e_specs must be a single comma-separated line" >&2; exit 1 ;;
+          has() {
+            local key="$1"
+            [[ -n "${selected[$key]+selected}" ]]
+          }
+
+          case "${profile}" in
+            fast) selection='ui,server,cli,stack,typecheck,e2e_core' ;;
+            release) selection='ui,ui_e2e,server,cli,stack,typecheck,daemon_e2e,e2e_core,server_db_contract,release_contracts,installers_smoke,binary_smoke' ;;
+            deep) selection='ui,ui_e2e,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,release_contracts,installers_smoke,binary_smoke' ;;
+            custom) selection="${custom}" ;;
+            *) errors+=("unsupported profile: ${profile}"); selection='' ;;
           esac
 
-          if [ "${profile}" = "full" ]; then
-            run_ui_e2e=true
-            run_wsrepl_lima=false
-            run_mobile_e2e_android=false
-            run_mobile_e2e_ios=false
-            run_ui=true
-            run_server=true
-            run_cli=true
-            run_stack=true
-            run_typecheck=true
-            run_cli_daemon_e2e=true
-            run_e2e_core=true
-            run_e2e_core_slow=true
-            run_server_db_contract=true
-            run_providers=false
-            run_stress=false
-            run_release_contracts=true
-            run_installers_smoke=true
-            run_binary_smoke=true
-            run_self_host_systemd=false
-            run_self_host_launchd=false
-            run_self_host_schtasks=false
-            run_self_host_daemon=false
-          elif [ "${profile}" = "fast" ]; then
-            run_ui_e2e=true
-            run_wsrepl_lima=false
-            run_mobile_e2e_android=false
-            run_mobile_e2e_ios=false
-            run_ui=true
-            run_server=true
-            run_cli=true
-            run_stack=true
-            run_typecheck=true
-            run_cli_daemon_e2e=false
-            run_e2e_core=true
-            run_e2e_core_slow=false
-            run_server_db_contract=false
-            run_providers=false
-            run_stress=false
-            run_release_contracts=true
-            run_installers_smoke=true
-            run_binary_smoke=true
-            run_self_host_systemd=false
-            run_self_host_launchd=false
-            run_self_host_schtasks=false
-            run_self_host_daemon=false
-          else
-            run_ui_e2e=false
-            run_wsrepl_lima=false
-            run_mobile_e2e_android=false
-            run_mobile_e2e_ios=false
-            run_ui=false
-            run_server=false
-            run_cli=false
-            run_stack=false
-            run_typecheck=false
-            run_cli_daemon_e2e=false
-            run_e2e_core=false
-            run_e2e_core_slow=false
-            run_server_db_contract=false
-            run_providers=false
-            run_stress=false
-            run_release_contracts=false
-            run_installers_smoke=false
-            run_binary_smoke=false
-            run_self_host_systemd=false
-            run_self_host_launchd=false
-            run_self_host_schtasks=false
-            run_self_host_daemon=false
-
-            if has ui; then run_ui=true; fi
-            if has ui_e2e; then run_ui_e2e=true; fi
-            if has wsrepl_lima; then run_wsrepl_lima=true; fi
-            if has mobile_e2e_android; then run_mobile_e2e_android=true; fi
-            if has mobile_e2e_ios; then run_mobile_e2e_ios=true; fi
-            if has server; then run_server=true; fi
-            if has cli; then run_cli=true; fi
-            if has stack; then run_stack=true; fi
-            if has typecheck; then run_typecheck=true; fi
-            if has daemon_e2e; then run_cli_daemon_e2e=true; fi
-            if has e2e_core; then run_e2e_core=true; fi
-            if has e2e_core_slow; then run_e2e_core=true; run_e2e_core_slow=true; fi
-            if has server_db_contract; then run_server_db_contract=true; fi
-            if has providers; then run_providers=true; fi
-            if has stress; then run_stress=true; fi
-            if has release_contracts; then run_release_contracts=true; fi
-            if has installers_smoke; then run_installers_smoke=true; fi
-            if has binary_smoke; then run_binary_smoke=true; fi
-            if has self_host_systemd; then run_self_host_systemd=true; fi
-            if has self_host_launchd; then run_self_host_launchd=true; fi
-            if has self_host_schtasks; then run_self_host_schtasks=true; fi
-            if has self_host_daemon; then run_self_host_daemon=true; fi
+          if [ "${profile}" = "custom" ] && [ -z "${custom}" ]; then
+            errors+=("profile=custom requires custom_checks")
+          elif [ -n "${selection}" ]; then
+            remaining="${selection},"
+            while [[ "$remaining" == *,* ]]; do
+              token="${remaining%%,*}"
+              remaining="${remaining#*,}"
+              token="$(trim "$token")"
+              if [ -z "$token" ]; then
+                saw_empty=true
+                continue
+              fi
+              token="$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')"
+              case "$token" in
+                ui|ui_e2e|wsrepl_lima|mobile_e2e_android|mobile_e2e_ios|server|cli|stack|typecheck|daemon_e2e|e2e_core|e2e_core_slow|server_db_contract|providers|stress|release_contracts|installers_smoke|binary_smoke|self_host_systemd|self_host_launchd|self_host_schtasks|self_host_daemon)
+                  selected[$token]=1
+                  ;;
+                *) unknown+=("$token") ;;
+              esac
+            done
           fi
+          if [ "$saw_empty" = true ]; then
+            errors+=("empty custom_checks token; remove repeated, leading, or trailing commas")
+          fi
+          if [ "${#unknown[@]}" -gt 0 ]; then
+            unknown_list=""
+            for token in "${unknown[@]}"; do
+              unknown_list="${unknown_list}${unknown_list:+, }${token}"
+            done
+            errors+=("unknown custom_checks: ${unknown_list}")
+          fi
+          if [ -n "${ui_e2e_specs}" ] && [ "${profile}" != "custom" ]; then
+            errors+=("profile=custom is required when ui_e2e_specs is set")
+          fi
+          if [ -n "${ui_e2e_specs}" ] && ! has ui_e2e; then
+            errors+=("custom_checks must include ui_e2e when ui_e2e_specs is set")
+          fi
+          case "${ui_e2e_specs}" in
+            *$'\n'*|*$'\r'*) errors+=("ui_e2e_specs must be a single comma-separated line") ;;
+          esac
+          if [ "${#errors[@]}" -gt 0 ]; then
+            for error in "${errors[@]}"; do echo "::error::${error}" >&2; done
+            exit 1
+          fi
+
+          run_ui_e2e=false
+          run_wsrepl_lima=false
+          run_mobile_e2e_android=false
+          run_mobile_e2e_ios=false
+          run_ui=false
+          run_server=false
+          run_cli=false
+          run_stack=false
+          run_typecheck=false
+          run_cli_daemon_e2e=false
+          run_e2e_core=false
+          run_e2e_core_slow=false
+          run_server_db_contract=false
+          run_providers=false
+          run_stress=false
+          run_release_contracts=false
+          run_installers_smoke=false
+          run_binary_smoke=false
+          run_self_host_systemd=false
+          run_self_host_launchd=false
+          run_self_host_schtasks=false
+          run_self_host_daemon=false
+
+          if has ui; then run_ui=true; fi
+          if has ui_e2e; then run_ui_e2e=true; fi
+          if has wsrepl_lima; then run_wsrepl_lima=true; fi
+          if has mobile_e2e_android; then run_mobile_e2e_android=true; fi
+          if has mobile_e2e_ios; then run_mobile_e2e_ios=true; fi
+          if has server; then run_server=true; fi
+          if has cli; then run_cli=true; fi
+          if has stack; then run_stack=true; fi
+          if has typecheck; then run_typecheck=true; fi
+          if has daemon_e2e; then run_cli_daemon_e2e=true; fi
+          if has e2e_core; then run_e2e_core=true; fi
+          if has e2e_core_slow; then run_e2e_core=true; run_e2e_core_slow=true; fi
+          if has server_db_contract; then run_server_db_contract=true; fi
+          if has providers; then run_providers=true; fi
+          if has stress; then run_stress=true; fi
+          if has release_contracts; then run_release_contracts=true; fi
+          if has installers_smoke; then run_installers_smoke=true; fi
+          if has binary_smoke; then run_binary_smoke=true; fi
+          if has self_host_systemd; then run_self_host_systemd=true; fi
+          if has self_host_launchd; then run_self_host_launchd=true; fi
+          if has self_host_schtasks; then run_self_host_schtasks=true; fi
+          if has self_host_daemon; then run_self_host_daemon=true; fi
 
           {
             echo "run_ui_e2e=${run_ui_e2e}"

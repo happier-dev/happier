@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
+      select_jobs_explicitly:
+        description: "Honor run_* inputs instead of running the complete direct-dispatch matrix"
+        required: false
+        default: false
+        type: boolean
       run_e2e_postgres:
         required: false
         default: true
@@ -31,7 +36,7 @@ concurrency:
 
 jobs:
   e2e-postgres:
-    if: ${{ github.event_name != 'workflow_call' || inputs.run_e2e_postgres }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_postgres }}
     name: Core E2E (Postgres)
     runs-on: ubuntu-22.04
     timeout-minutes: 120
@@ -116,7 +121,7 @@ jobs:
             .project/logs/e2e/**/*.txt
 
   e2e-mysql:
-    if: ${{ github.event_name != 'workflow_call' || inputs.run_e2e_mysql }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_mysql }}
     name: Core E2E (MySQL)
     runs-on: ubuntu-22.04
     timeout-minutes: 120
@@ -200,7 +205,7 @@ jobs:
             .project/logs/e2e/**/*.txt
 
   db-contract-postgres:
-    if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_postgres }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_db_contract_postgres }}
     name: DB Contract (Postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -254,7 +259,7 @@ jobs:
         run: yarn --cwd apps/server test:db-contract
 
   db-contract-mysql:
-    if: ${{ github.event_name != 'workflow_call' || inputs.run_db_contract_mysql }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_db_contract_mysql }}
     name: DB Contract (MySQL)
     runs-on: ubuntu-latest
     timeout-minutes: 120

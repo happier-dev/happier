@@ -276,7 +276,10 @@ test('server releases admit the focused MySQL contract and stable platform evide
     ['run_db_contract_mysql', 'db-contract-mysql'],
   ]) {
     assert.equal(extendedDb.on.workflow_call.inputs[inputName].default, true);
-    assert.match(extendedDb.jobs[jobName].if, new RegExp(`github\\.event_name != 'workflow_call' \\|\\| inputs\\.${inputName}`));
+    assert.equal(
+      extendedDb.jobs[jobName].if,
+      `\${{ !inputs.select_jobs_explicitly || inputs.${inputName} }}`,
+    );
   }
   assert.equal(extendedDb.jobs['db-contract-mysql'].services.mysql.image, 'mysql:8.0');
 });

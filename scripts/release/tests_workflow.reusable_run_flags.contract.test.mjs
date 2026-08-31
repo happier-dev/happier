@@ -1,13 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+async function runInlineCollector(env) {
+  const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const collectorSource = testsRaw.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\n\s+NODE/)?.[1];
+  assert.ok(collectorSource, 'expected the inline CI lane collector');
+
+  const scratch = mkdtempSync(join(tmpdir(), 'happier-ci-collector-'));
+  try {
+    return spawnSync(process.execPath, ['--input-type=module'], {
+      input: collectorSource,
+      encoding: 'utf8',
+      cwd: scratch,
+      env: {
+        ...process.env,
+        CI_RUN_ID: '123',
+        CI_SOURCE_SHA: 'a'.repeat(40),
+        CI_WORKFLOW: 'CI — Tests',
+        ...env,
+      },
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
 
 test('reusable tests calls make their run flags authoritative regardless of the caller event', async () => {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
@@ -48,17 +75,41 @@ test('reusable tests calls make their run flags authoritative regardless of the 
   for (const [jobName, inputName] of defaultSuiteInputs) {
     assert.equal(
       testsWorkflow.jobs[jobName].if,
-      `\${{ !inputs.select_jobs_explicitly || inputs.${inputName} }}`,
+      `\${{ (inputs.select_jobs_explicitly && inputs.${inputName}) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.${inputName} == 'true') }}`,
       `${jobName} must honor an explicit false input even when a scheduled caller invokes tests.yml`,
     );
   }
 
   assert.equal(
     testsWorkflow.jobs.ui.if,
-    '${{ always() && (!inputs.select_jobs_explicitly || inputs.run_ui) }}',
+    "${{ always() && ((inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui == 'true')) }}",
     'the stable UI aggregate must honor explicit selection and still report both child outcomes',
   );
-  assert.deepEqual(testsWorkflow.jobs.ui.needs, ['ui-unit', 'ui-integration']);
+  assert.deepEqual(testsWorkflow.jobs.ui.needs, ['ci_plan', 'ui-unit', 'ui-integration']);
+
+  for (const [jobName, inputName] of [
+    ['ui-e2e-wsrepl-lima', 'run_wsrepl_lima'],
+    ['mobile-e2e-android', 'run_mobile_e2e_android'],
+    ['mobile-e2e-ios', 'run_mobile_e2e_ios'],
+    ['release-assets-docker', 'run_release_assets_docker'],
+    ['e2e-core-slow', 'run_e2e_core_slow'],
+    ['providers', 'run_providers'],
+    ['release_actor_guard', 'run_providers'],
+  ]) {
+    assert.equal(
+      testsWorkflow.jobs[jobName].if,
+      `\${{ inputs.select_jobs_explicitly && inputs.${inputName} }}`,
+      `${jobName} must honor explicit reusable inputs even when GitHub preserves the caller event`,
+    );
+  }
+
+  for (const jobName of ['installers-smoke-linux', 'installers-smoke-macos', 'installers-smoke-windows']) {
+    const env = testsWorkflow.jobs[jobName].env;
+    for (const key of ['INSTALLERS_CHANNEL', 'INSTALLERS_SOURCE', 'INSTALLERS_REF', 'INSTALLERS_RELEASE_CHANNEL']) {
+      assert.match(env[key], /inputs\.select_jobs_explicitly/);
+      assert.doesNotMatch(env[key], /github\.event_name == 'workflow_call'/);
+    }
+  }
 
   assert.equal(
     testsWorkflow.jobs.stress.if,
@@ -74,13 +125,66 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     'providers-contracts.yml',
     'tests-dispatch.yml',
   ]) {
-    const raw = await readFile(join(repoRoot, '.github', 'workflows', workflowName), 'utf8');
-    const reusableCallCount = (raw.match(/uses:\s*\.\/\.github\/workflows\/tests\.yml/g) ?? []).length;
-    const explicitSelectionCount = (raw.match(/select_jobs_explicitly:\s*true/g) ?? []).length;
-    assert.equal(
-      explicitSelectionCount,
-      reusableCallCount,
-      `${workflowName} must opt every tests.yml call into explicit job selection`,
-    );
+    const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', workflowName), 'utf8'));
+    const reusableCalls = Object.entries(workflow.jobs ?? {})
+      .filter(([, job]) => job?.uses === './.github/workflows/tests.yml');
+    for (const [jobName, job] of reusableCalls) {
+      assert.equal(job.with?.select_jobs_explicitly, true, `${workflowName}:${jobName} must opt into explicit selection`);
+    }
   }
+});
+
+test('the CI collector rejects a requested lane that GitHub skipped', async () => {
+  const result = await runInlineCollector({
+    NEEDS_JSON: JSON.stringify({
+      ci_plan: { result: 'success', outputs: {} },
+      'release-assets-docker': { result: 'skipped', outputs: {} },
+    }),
+    SELECT_JOBS_EXPLICITLY: 'true',
+    REQUEST_RUN_RELEASE_ASSETS_DOCKER: 'true',
+  });
+  assert.equal(result.status, 1, `collector accepted a requested skip:\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /release-assets-docker.*requested.*skipped/i);
+});
+
+test('the CI collector rejects a classifier-selected lane that GitHub skipped', async () => {
+  const result = await runInlineCollector({
+    NEEDS_JSON: JSON.stringify({
+      ci_plan: { result: 'success', outputs: { run_server: 'true', run_typecheck: 'true' } },
+      server: { result: 'skipped', outputs: {} },
+      typecheck: { result: 'skipped', outputs: {} },
+    }),
+    SELECT_JOBS_EXPLICITLY: 'false',
+  });
+  assert.equal(result.status, 1, `collector accepted a classifier-selected skip:\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /server.*requested.*skipped/i);
+  assert.match(result.stderr, /typecheck.*requested.*skipped/i);
+});
+
+test('the source-CI classifier fail-closes shared tooling and reaches direct root-owned tests', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8'));
+  const filterSource = workflow.jobs.ci_plan.steps.find((step) => step.id === 'changes')?.with?.filters;
+  assert.equal(typeof filterSource, 'string');
+  const filters = YAML.parse(filterSource);
+
+  for (const path of [
+    'package.json',
+    'yarn.lock',
+    '.github/actions/enable-corepack-yarn/**',
+    '.github/actions/install-yarn-dependencies/**',
+    'scripts/workspaces/**',
+  ]) {
+    assert.ok(filters.all.includes(path), `${path} must select all source-CI lanes`);
+  }
+  assert.ok(filters.ui.includes('apps/bootstrap/**'));
+  assert.ok(filters.ui.includes('scripts/generateBuiltInPrompts.mjs'));
+  assert.ok(filters.ui.includes('scripts/generateBuiltInPrompts.test.mjs'));
+  assert.ok(filters.ui.includes('skills/happier-diagnose/**'));
+  assert.ok(filters.cli.includes('scripts/ensureCliCommonDistModule.mjs'));
+  assert.ok(filters.cli.includes('scripts/ensureCliCommonDistModule.test.mjs'));
+
+  const sharedRun = workflow.jobs['shared-packages-unit'].steps.map((step) => step.run ?? '').join('\n');
+  assert.match(sharedRun, /generateBuiltInPrompts\.test\.mjs/);
+  const cliRun = workflow.jobs.cli.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(cliRun, /ensureCliCommonDistModule\.test\.mjs/);
 });

@@ -13,8 +13,8 @@ test('tests workflow includes self-host + daemon E2E gate and runs real integrat
   assert.match(raw, /run_self_host_daemon:/, 'tests.yml should define run_self_host_daemon input');
   assert.match(
     raw,
-    /if:\s*\$\{\{\s*\(github\.event_name == 'workflow_dispatch' \|\| github\.event_name == 'workflow_call'\)\s*&&\s*inputs\.run_self_host_daemon\s*\}\}/,
-    'self-host daemon e2e job should be gated behind run_self_host_daemon input',
+    /if:\s*\$\{\{\s*inputs\.select_jobs_explicitly\s*&&\s*inputs\.run_self_host_daemon\s*\}\}/,
+    'self-host daemon E2E must honor the reusable caller flag even when GitHub preserves the schedule event name',
   );
   assert.match(
     raw,
@@ -22,4 +22,3 @@ test('tests workflow includes self-host + daemon E2E gate and runs real integrat
     'self-host daemon e2e should execute the real integration test harness',
   );
 });
-

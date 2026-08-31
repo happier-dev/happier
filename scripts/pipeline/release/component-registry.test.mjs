@@ -67,3 +67,25 @@ test('versioned component changes include internal workspace dependency changes'
   assertDependencyDirsTriggerVersionedChange({ id: 'stack', dirs: stackDirs, expected: 'stack' });
   assertDependencyDirsTriggerVersionedChange({ id: 'server', dirs: serverDirs, expected: 'server' });
 });
+
+test('root dependency graph changes select every versioned release artifact', () => {
+  for (const path of ['package.json', 'yarn.lock']) {
+    const versioned = deriveVersionedComponentChanges(classifyChangedPaths([path]));
+    assert.deepEqual({ ...versioned }, {
+      app: true,
+      cli: true,
+      stack: true,
+      server: true,
+    }, path);
+  }
+});
+
+test('bootstrap changes select the UI app artifact that embeds the hsetup sidecar', () => {
+  const versioned = deriveVersionedComponentChanges(classifyChangedPaths([
+    'apps/bootstrap/src/bin/hsetup.ts',
+  ]));
+  assert.equal(versioned.app, true);
+  assert.equal(versioned.cli, false);
+  assert.equal(versioned.stack, false);
+  assert.equal(versioned.server, false);
+});
