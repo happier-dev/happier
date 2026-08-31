@@ -11,7 +11,11 @@ type TemporaryThrottleModule = Readonly<{
       retryAfterMs?: number | null;
       lastError?: string | null;
     }>;
-    resume?: (intent: unknown) => Promise<void> | void;
+    resume?: (intent: unknown) => Promise<
+      | { status: 'continued' }
+      | { status: 'superseded'; reason: string }
+      | { status: 'terminal'; lastError: string }
+    >;
     store?: {
       read: (sessionId: string) => unknown | null;
       readAll?: () => ReadonlyArray<readonly [sessionId: string, value: unknown]>;
@@ -25,6 +29,12 @@ type TemporaryThrottleModule = Readonly<{
       retryAfterMs?: number | null;
       resetAtMs?: number | null;
       maxAttempts?: number;
+      continuation?: {
+        interruptedOriginId: string;
+        resumePromptMode: 'standard' | 'off' | 'custom';
+        customResumePrompt?: string | null;
+        recoveryKind: 'temporary_throttle';
+      } | null;
     }) => Promise<{ status: string; nextRetryAtMs: number | null; attemptCount: number }>;
     read: (sessionId: string) => { status: string; nextRetryAtMs: number | null; attemptCount: number; issueFingerprint?: string } | null;
     wake: (input: { sessionId: string; reason: 'timer' | 'retry_now' }) => Promise<{ status: string }>;
@@ -50,7 +60,7 @@ describe('TemporaryThrottleRecoveryScheduler', () => {
       const { TemporaryThrottleRecoveryScheduler } = await loadTemporaryThrottleModule();
       let nowMs = 1_000;
       const retry = vi.fn(async () => ({ status: 'ready' as const }));
-      const resume = vi.fn();
+      const resume = vi.fn(async () => ({ status: 'continued' as const }));
       const scheduler = new TemporaryThrottleRecoveryScheduler({
         nowMs: () => nowMs,
         retry,
@@ -131,7 +141,7 @@ describe('TemporaryThrottleRecoveryScheduler', () => {
       firstScheduler.dispose();
 
       const retry = vi.fn(async () => ({ status: 'ready' as const }));
-      const resume = vi.fn();
+      const resume = vi.fn(async () => ({ status: 'continued' as const }));
       const restartedScheduler = new TemporaryThrottleRecoveryScheduler({
         nowMs: () => nowMs,
         baseBackoffMs: 1_000,
@@ -174,7 +184,7 @@ describe('TemporaryThrottleRecoveryScheduler', () => {
       .fn()
       .mockResolvedValueOnce({ status: 'wait' as const, retryAfterMs: null })
       .mockResolvedValueOnce({ status: 'ready' as const });
-    const resume = vi.fn();
+    const resume = vi.fn(async () => ({ status: 'continued' as const }));
     const scheduler = new TemporaryThrottleRecoveryScheduler({
       nowMs: () => nowMs,
       baseBackoffMs: 1_000,
@@ -318,7 +328,7 @@ describe('TemporaryThrottleRecoveryScheduler', () => {
     const { TemporaryThrottleRecoveryScheduler } = await loadTemporaryThrottleModule();
     let nowMs = 1_000;
     const retry = vi.fn(async () => ({ status: 'ready' as const }));
-    const resume = vi.fn(async () => {
+    const resume = vi.fn(async (): Promise<{ status: 'continued' }> => {
       throw new Error('session respawn failed');
     });
     const scheduler = new TemporaryThrottleRecoveryScheduler({
@@ -430,6 +440,65 @@ describe('TemporaryThrottleRecoveryScheduler', () => {
       attemptCount: 0,
       nextRetryAtMs: 3_000,
     });
+  });
+
+  it('keeps duplicate reports for one interrupted turn deduplicated but rearms a later turn', async () => {
+    const { TemporaryThrottleRecoveryScheduler } = await loadTemporaryThrottleModule();
+    let nowMs = 1_000;
+    const scheduler = new TemporaryThrottleRecoveryScheduler({ nowMs: () => nowMs });
+
+    const base = {
+      sessionId: 'session-1',
+      issueFingerprint: 'temporary-throttle:codex:no-group:profile-1',
+      retryAfterMs: 60_000,
+    } as const;
+    const firstContinuation = {
+      interruptedOriginId: 'turn-1',
+      resumePromptMode: 'standard' as const,
+      recoveryKind: 'temporary_throttle' as const,
+    };
+    await scheduler.enable({ ...base, continuation: firstContinuation });
+    await scheduler.stopRetrying({ sessionId: 'session-1' });
+
+    await expect(scheduler.enable({ ...base, continuation: firstContinuation })).resolves.toMatchObject({
+      status: 'cancelled',
+    });
+
+    nowMs = 2_000;
+    await expect(scheduler.enable({
+      ...base,
+      continuation: { ...firstContinuation, interruptedOriginId: 'turn-2' },
+    })).resolves.toMatchObject({
+      status: 'waiting',
+      attemptCount: 0,
+    });
+    expect(scheduler.read('session-1')).toMatchObject({
+      status: 'waiting',
+      continuation: { interruptedOriginId: 'turn-2' },
+    });
+  });
+
+  it('removes a recovery superseded by newer user input instead of reporting a resume', async () => {
+    const { TemporaryThrottleRecoveryScheduler } = await loadTemporaryThrottleModule();
+    const scheduler = new TemporaryThrottleRecoveryScheduler({
+      nowMs: () => 1_000,
+      retry: async () => ({ status: 'ready' as const }),
+      resume: async () => ({ status: 'superseded' as const, reason: 'newer_user_input' }),
+    });
+
+    await scheduler.enable({
+      sessionId: 'session-1',
+      issueFingerprint: 'temporary-throttle:codex:no-group:profile-1',
+      retryAfterMs: 0,
+      continuation: {
+        interruptedOriginId: 'turn-1',
+        resumePromptMode: 'standard',
+        recoveryKind: 'temporary_throttle',
+      },
+    });
+
+    await expect(scheduler.retryNow({ sessionId: 'session-1' })).resolves.toEqual({ status: 'superseded' });
+    expect(scheduler.read('session-1')).toBeNull();
   });
 
 });

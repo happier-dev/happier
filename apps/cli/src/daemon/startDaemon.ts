@@ -438,7 +438,7 @@ import {
   TemporaryThrottleRecoveryScheduler,
   type TemporaryThrottleRecoveryIntent,
 } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
-import { resumeTrackedTemporaryThrottleSession } from './connectedServices/temporaryThrottle/resumeTrackedTemporaryThrottleSession';
+import { continueTrackedTemporaryThrottleSession } from './connectedServices/temporaryThrottle/continueTrackedTemporaryThrottleSession';
 import {
   resolveInactiveTemporaryThrottleResumeSource,
   type TemporaryThrottleResumeSource,
@@ -4557,31 +4557,43 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
             return { status: 'ready' };
           },
-          resume: async (_intent, { sessionId }) => {
+          resume: async (intent, { sessionId }) => {
             const tracked = await resolveTemporaryThrottleResumeSource(sessionId);
             if (!tracked) {
               temporaryThrottleResumeSnapshotsBySessionId.delete(sessionId);
               throw new Error('temporary_throttle_session_not_found');
             }
-            const result = await resumeTrackedTemporaryThrottleSession({
+            if (!intent.continuation) {
+              return {
+                status: 'terminal' as const,
+                lastError: 'temporary_throttle_continuation_identity_missing',
+              };
+            }
+            const result = await continueTrackedTemporaryThrottleSession({
               tracked,
               sessionId,
               credentials,
               readCredentials,
               spawnSession,
+              attemptId: intent.issueFingerprint,
+              continuation: intent.continuation,
             });
-            if (result.status === 'resumed') {
+            if (result.status === 'continued') {
               temporaryThrottleResumeSnapshotsBySessionId.delete(sessionId);
-              logger.debug('[DAEMON RUN] Temporary throttle recovery resumed session', {
+              logger.debug('[DAEMON RUN] Temporary throttle recovery handed continuation to Pending', {
                 sessionId,
-                resumedSessionId: result.sessionId,
               });
-              return;
+              return result;
             }
-            if (result.status === 'unavailable') {
-              throw new Error(`temporary_throttle_resume_unavailable:${result.reason}`);
+            if (result.status === 'superseded' || result.status === 'terminal') {
+              temporaryThrottleResumeSnapshotsBySessionId.delete(sessionId);
+              return result;
             }
-            throw new Error(`temporary_throttle_resume_failed:${result.errorCode ?? result.reason}`);
+            const runtimeResult = result.runtimeResult;
+            if (runtimeResult.status === 'unavailable') {
+              throw new Error(`temporary_throttle_resume_unavailable:${runtimeResult.reason}`);
+            }
+            throw new Error(`temporary_throttle_resume_failed:${runtimeResult.errorCode ?? runtimeResult.reason}`);
           },
         });
         temporaryThrottleRecoveryScheduler.hydrate();
@@ -5998,7 +6010,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
             resolveProviderQualifiedRuntimeAuthFailureSource,
             runtimeAuthApply,
-            temporaryThrottleRecovery,
+            temporaryThrottleRecovery: {
+              enable: async (temporaryThrottleInput) => await temporaryThrottleRecovery.enable({
+                ...temporaryThrottleInput,
+                continuation: interruptedContinuation,
+              }),
+            },
             credentialRefreshService: connectedServiceRefreshCoordinator,
             restartSession: async (tracked) => {
               if (pidToTrackedSession.get(tracked.pid) !== tracked) {

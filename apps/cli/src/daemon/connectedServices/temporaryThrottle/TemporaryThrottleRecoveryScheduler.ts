@@ -2,8 +2,23 @@ import {
   DurableBackoffRecoveryScheduler,
   type DurableRecoveryStore,
 } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
+import {
+  SessionContinuationResumePromptModeV1Schema,
+  type SessionContinuationResumePromptModeV1,
+} from '@happier-dev/protocol';
+import {
+  ConnectedServiceRuntimeAuthFailureKindSchema,
+  type ConnectedServiceRuntimeAuthFailureKind,
+} from '../runtimeAuth/types';
 
 type TemporaryThrottleStatus = 'waiting' | 'checking' | 'exhausted' | 'cancelled';
+
+export type TemporaryThrottleContinuationIntent = Readonly<{
+  interruptedOriginId: string;
+  resumePromptMode: SessionContinuationResumePromptModeV1;
+  customResumePrompt: string | null;
+  recoveryKind: ConnectedServiceRuntimeAuthFailureKind;
+}>;
 
 export type TemporaryThrottleRecoveryIntent = Readonly<{
   v: 1;
@@ -16,6 +31,7 @@ export type TemporaryThrottleRecoveryIntent = Readonly<{
   attemptCount: number;
   maxAttempts: number;
   lastError: string | null;
+  continuation: TemporaryThrottleContinuationIntent | null;
 }>;
 
 type TemporaryThrottleRetryResult = Readonly<{
@@ -36,7 +52,11 @@ type TemporaryThrottleRecoverySchedulerDeps = Readonly<{
   resume?: (
     intent: TemporaryThrottleRecoveryIntent,
     context: { sessionId: string },
-  ) => Promise<void> | void;
+  ) => Promise<
+    | Readonly<{ status: 'continued' }>
+    | Readonly<{ status: 'superseded'; reason: string }>
+    | Readonly<{ status: 'terminal'; lastError: string }>
+  >;
   store?: DurableRecoveryStore<TemporaryThrottleRecoveryIntent>;
 }>;
 
@@ -46,6 +66,12 @@ type EnableTemporaryThrottleRecoveryInput = Readonly<{
   retryAfterMs?: number | null;
   resetAtMs?: number | null;
   maxAttempts?: number;
+  continuation?: Readonly<{
+    interruptedOriginId: string;
+    resumePromptMode: SessionContinuationResumePromptModeV1;
+    customResumePrompt?: string | null;
+    recoveryKind: ConnectedServiceRuntimeAuthFailureKind;
+  }> | null;
 }>;
 
 const defaultMaxAttempts = 3;
@@ -56,6 +82,34 @@ function normalizeNonNegativeInteger(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   const normalized = Math.trunc(value);
   return normalized >= 0 ? normalized : null;
+}
+
+function normalizeContinuationIntent(value: unknown): TemporaryThrottleContinuationIntent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const interruptedOriginId = typeof record.interruptedOriginId === 'string'
+    ? record.interruptedOriginId.trim()
+    : '';
+  const resumePromptMode = SessionContinuationResumePromptModeV1Schema.safeParse(record.resumePromptMode);
+  const recoveryKind = ConnectedServiceRuntimeAuthFailureKindSchema.safeParse(record.recoveryKind);
+  if (!interruptedOriginId || !resumePromptMode.success || !recoveryKind.success) return null;
+  return {
+    interruptedOriginId,
+    resumePromptMode: resumePromptMode.data,
+    customResumePrompt: typeof record.customResumePrompt === 'string'
+      ? record.customResumePrompt
+      : null,
+    recoveryKind: recoveryKind.data,
+  };
+}
+
+function buildOccurrenceFingerprint(
+  issueFingerprint: string,
+  continuation: TemporaryThrottleContinuationIntent | null,
+): string {
+  return continuation
+    ? `${issueFingerprint}:origin:${continuation.interruptedOriginId}`
+    : issueFingerprint;
 }
 
 function normalizeIntent(value: unknown): TemporaryThrottleRecoveryIntent | null {
@@ -104,6 +158,7 @@ function normalizeIntent(value: unknown): TemporaryThrottleRecoveryIntent | null
     attemptCount,
     maxAttempts,
     lastError,
+    continuation: normalizeContinuationIntent(record.continuation),
   };
 }
 
@@ -161,10 +216,11 @@ export class TemporaryThrottleRecoveryScheduler {
     const retryAfterMs = normalizeNonNegativeInteger(input.retryAfterMs);
     const resetAtMs = normalizeNonNegativeInteger(input.resetAtMs);
     const nowMs = this.deps.nowMs();
+    const continuation = normalizeContinuationIntent(input.continuation ?? null);
     const nextIntent: TemporaryThrottleRecoveryIntent = {
       v: 1,
       status: 'waiting',
-      issueFingerprint: input.issueFingerprint,
+      issueFingerprint: buildOccurrenceFingerprint(input.issueFingerprint, continuation),
       armedAtMs: nowMs,
       retryAfterMs,
       resetAtMs,
@@ -176,6 +232,7 @@ export class TemporaryThrottleRecoveryScheduler {
       attemptCount: 0,
       maxAttempts: Math.max(1, Math.trunc(input.maxAttempts ?? defaultMaxAttempts)),
       lastError: null,
+      continuation,
     };
     const intent = await this.scheduler.upsertMerged({
       sessionId: input.sessionId,
@@ -239,6 +296,8 @@ export class TemporaryThrottleRecoveryScheduler {
     | Readonly<{ status: 'success'; intent: TemporaryThrottleRecoveryIntent }>
     | Readonly<{ status: 'wait'; nextRetryAtMs: number; lastError: string | null; intent: TemporaryThrottleRecoveryIntent }>
     | Readonly<{ status: 'exhausted'; lastError: string | null }>
+    | Readonly<{ status: 'terminal'; lastError: string; intent: TemporaryThrottleRecoveryIntent }>
+    | Readonly<{ status: 'superseded'; reason: string }>
   > {
     const nowMs = this.deps.nowMs();
     let result: TemporaryThrottleRetryResult;
@@ -257,8 +316,16 @@ export class TemporaryThrottleRecoveryScheduler {
       };
     }
     if (result.status === 'ready') {
+      let resumeResult:
+        | Readonly<{ status: 'continued' }>
+        | Readonly<{ status: 'superseded'; reason: string }>
+        | Readonly<{ status: 'terminal'; lastError: string }>;
       try {
-        await this.deps.resume?.(intent, { sessionId: context.sessionId });
+        resumeResult = await (this.deps.resume?.(intent, { sessionId: context.sessionId })
+          ?? Promise.resolve({
+            status: 'terminal' as const,
+            lastError: 'temporary_throttle_continuation_unavailable',
+          }));
       } catch {
         return {
           status: 'wait',
@@ -267,6 +334,21 @@ export class TemporaryThrottleRecoveryScheduler {
           intent: {
             ...intent,
             retryAfterMs: null,
+          },
+        };
+      }
+      if (resumeResult.status === 'superseded') {
+        return { status: 'superseded', reason: resumeResult.reason };
+      }
+      if (resumeResult.status === 'terminal') {
+        return {
+          status: 'terminal',
+          lastError: resumeResult.lastError,
+          intent: {
+            ...intent,
+            status: 'cancelled',
+            nextRetryAtMs: null,
+            lastError: resumeResult.lastError,
           },
         };
       }
