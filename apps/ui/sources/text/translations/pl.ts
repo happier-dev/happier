@@ -5034,9 +5034,9 @@ export const pl = {
     showLineNumbersInToolViews: "Pokaż numery linii w widokach narzędzi",
     showLineNumbersInToolViewsDescription:
       "Wyświetlaj numery linii w różnicach widoków narzędzi",
-    wrapLinesInDiffs: "Zawijanie linii w różnicach",
+    wrapLinesInDiffs: "Zawijanie wierszy w widokach kodu",
     wrapLinesInDiffsDescription:
-      "Zawijaj długie linie zamiast przewijania poziomego w widokach różnic",
+      "Zawijaj długie wiersze w podglądach kodu i edytorach zamiast przewijać je poziomo",
     alwaysShowContextSize: "Zawsze pokazuj rozmiar kontekstu",
     alwaysShowContextSizeDescription:
       "Wyświetlaj użycie kontekstu nawet gdy nie jest blisko limitu",

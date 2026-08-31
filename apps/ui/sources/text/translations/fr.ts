@@ -5006,7 +5006,7 @@ export const fr = {
       "Afficher les numéros de ligne dans les diffs des vues d’outils",
     wrapLinesInDiffs: "Retour à la ligne dans les vues de code",
     wrapLinesInDiffsDescription:
-      "Renvoyer les longues lignes à la ligne au lieu du défilement horizontal dans les diffs, les aperçus de fichiers et les éditeurs",
+      "Renvoyer les longues lignes à la ligne dans les aperçus de code et les éditeurs au lieu du défilement horizontal",
     alwaysShowContextSize: "Toujours afficher la taille du contexte",
     alwaysShowContextSizeDescription:
       "Afficher l’usage du contexte même loin de la limite",

@@ -5129,9 +5129,9 @@ export const pt = {
       "Mostrar números de linha nas visualizações de ferramentas",
     showLineNumbersInToolViewsDescription:
       "Exibir números de linha nos diffs das visualizações de ferramentas",
-    wrapLinesInDiffs: "Quebrar linhas nos diffs",
+    wrapLinesInDiffs: "Quebrar linhas nas visualizações de código",
     wrapLinesInDiffsDescription:
-      "Quebrar linhas longas ao invés de rolagem horizontal nas visualizações de diffs",
+      "Quebrar linhas longas em pré-visualizações de código e editores em vez de rolar horizontalmente",
     alwaysShowContextSize: "Sempre mostrar tamanho do contexto",
     alwaysShowContextSizeDescription:
       "Exibir uso do contexto mesmo quando não estiver próximo do limite",

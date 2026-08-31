@@ -5330,7 +5330,7 @@ export const de: TranslationStructure = {
         showLineNumbersInToolViews: 'Zeilennummern in Tool-Ansichten zeigen',
         showLineNumbersInToolViewsDescription: 'Zeilennummern in Diffs von Tool-Ansichten anzeigen',
         wrapLinesInDiffs: 'Zeilen in Code-Ansichten umbrechen',
-        wrapLinesInDiffsDescription: 'Lange Zeilen umbrechen statt in Diffs, Dateivorschauen und Editoren horizontal zu scrollen',
+        wrapLinesInDiffsDescription: 'Lange Zeilen in Code-Vorschauen und Editoren umbrechen statt horizontal zu scrollen',
         alwaysShowContextSize: 'Kontextgröße immer zeigen',
         alwaysShowContextSizeDescription: 'Die Kontextnutzung auch dann anzeigen, wenn das Limit fern ist',
         visualEffects: {
