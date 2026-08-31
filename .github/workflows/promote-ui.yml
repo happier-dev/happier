@@ -516,7 +516,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+          UPDATE_MESSAGE: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform android \
@@ -528,7 +528,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+          UPDATE_MESSAGE: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform ios \

@@ -79,6 +79,23 @@ test('promote-ui passes the exact candidate release-note projection to desktop a
   );
 });
 
+test('promote-ui publishes OTA updates with release notes from its direct validation dependency', async () => {
+  const workflow = YAML.parse(await loadWorkflow('promote-ui.yml'));
+  const promote = workflow.jobs?.promote;
+  const otaPublishSteps = (promote?.steps ?? []).filter((step) =>
+    String(step?.name ?? '').startsWith('Publish ') && String(step?.name ?? '').endsWith(' OTA from validated bytes'),
+  );
+
+  assert.equal(otaPublishSteps.length, 2, 'promote-ui must publish the prepared Android and iOS OTA artifacts');
+  for (const step of otaPublishSteps) {
+    assert.equal(
+      step?.env?.UPDATE_MESSAGE,
+      '${{ needs.validate_candidate.outputs.release_notes_expo_message }}',
+      `${step.name} must read release notes from the direct validate_candidate dependency`,
+    );
+  }
+});
+
 test('production mobile APK publishing keeps an immutable version tag alongside the rolling stable tag', async () => {
   const { resolveMobileImmutableReleaseMetadata, resolveMobileReleaseMetadata } = await loadMobileReleaseEnvironmentsModule();
   const meta = resolveMobileReleaseMetadata({ environment: 'production', appVersion: '1.2.3' });
