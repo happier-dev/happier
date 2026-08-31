@@ -2,12 +2,10 @@ import { expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 import { fetchJson } from '../http';
+import { patchPlainAccountSettingsV2 } from '../accountSettings';
 import { mutateUiE2eLocalSettings } from './localSettingsStorage';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
-import {
-  mutateUiE2eScopedAccountSettings,
-  readUiE2eScopedAccountSettings,
-} from './scopedAccountSettingsStorage';
+import { readUiE2eScopedAccountSettings } from './scopedAccountSettingsStorage';
 import {
   buildSessionOrganizationImportRequestFromFolderSettings,
   fetchSessionOrganizationSnapshot,
@@ -207,8 +205,12 @@ export async function setSessionFolderDragSettings(params: Readonly<{
     }),
   });
 
-  await mutateUiE2eScopedAccountSettings({
-    page: params.page,
+  // Account-scoped settings are server-authoritative. Writing only the persisted
+  // browser envelope leaves the hydrated React store stale; the next real menu
+  // action can then persist that stale snapshot over the test's intended values.
+  await patchPlainAccountSettingsV2({
+    baseUrl: params.apiBaseUrl,
+    token: params.token,
     settingsPatch: {
       sessionListActiveGroupingV1: 'project',
       sessionListInactiveGroupingV1: 'project',

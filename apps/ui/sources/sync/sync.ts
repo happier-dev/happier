@@ -6429,7 +6429,15 @@ class Sync {
                         typeof seg.cutoffSeqInclusive !== 'number' ||
                         !Number.isFinite(seg.cutoffSeqInclusive) ||
                         seg.cutoffSeqInclusive < 0 ||
-                        (seg.messageIdsOldestFirst?.length ?? 0) > 0
+                        (
+                            (seg.messageIdsOldestFirst?.length ?? 0) > 0
+                            && this.sessionMessagesHasMoreOlderByKey.get(
+                                this.buildSessionMessagesPaginationKey({
+                                    sessionId: seg.sessionId,
+                                    scope: 'main',
+                                }),
+                            ) === false
+                        )
                     ) {
                         continue;
                     }
