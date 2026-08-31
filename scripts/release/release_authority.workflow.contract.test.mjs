@@ -336,11 +336,21 @@ test('rolling recovery remains bound to the caller-authorized source SHA across 
       encoding: 'utf8',
     });
     assert.notEqual(selfAuthorized.status, 0, `${workflowName} accepted tag-derived self-authorization`);
+    const uppercaseAuthorization = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
+      env: { ...guardEnv, AUTHORIZED_SHA: 'A'.repeat(40) },
+      encoding: 'utf8',
+    });
+    assert.notEqual(uppercaseAuthorization.status, 0, `${workflowName} accepted a noncanonical uppercase SHA`);
     const exactCallerAuthorization = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
       env: { ...guardEnv, AUTHORIZED_SHA: 'a'.repeat(40) },
       encoding: 'utf8',
     });
     assert.equal(exactCallerAuthorization.status, 0, exactCallerAuthorization.stderr);
+    const ordinaryPublish = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
+      env: { ...guardEnv, RETRY_VERSION: '', AUTHORIZED_SHA: '' },
+      encoding: 'utf8',
+    });
+    assert.equal(ordinaryPublish.status, 0, ordinaryPublish.stderr);
 
     const identitySource = parsed.jobs.release_actor_guard.steps
       .map((step) => String(step.run ?? ''))
