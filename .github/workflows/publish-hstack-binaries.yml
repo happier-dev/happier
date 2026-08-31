@@ -108,6 +108,7 @@ jobs:
           WORKFLOW_REF: ${{ job.workflow_ref }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -117,6 +118,10 @@ jobs:
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
             echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ -n "$RETRY_VERSION" || -n "$RESUME_VERSION" ]] && [[ ! "$AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "authorized_sha must be a full lowercase 40-character commit SHA for retry or resume." >&2
             exit 1
           fi
           case "$WORKFLOW_REF" in
@@ -171,6 +176,17 @@ jobs:
             --candidate-product hstack \
             --candidate-version "$RESUME_VERSION"
           echo "resume_version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify immutable HStack tag matches caller authorization
+        if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
+        env:
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "refs/tags/stack-v${RETRY_VERSION}" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --remote origin
 
   prepare:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
@@ -601,21 +617,12 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
-      - name: Bind exact immutable tag SHA
-        id: source
-        env:
-          RETRY_VERSION: ${{ inputs.retry_version }}
-        run: |
-          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
-            --source-ref "refs/tags/stack-v${RETRY_VERSION}" \
-            --remote origin \
-            --github-output "$GITHUB_OUTPUT"
       - name: Recover rolling projection from immutable bytes
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
-          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           CHANNEL: ${{ inputs.channel }}
           ALLOW_STABLE: ${{ inputs.allow_stable }}
           RELEASE_MESSAGE: ${{ inputs.release_message }}

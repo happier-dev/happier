@@ -83,6 +83,7 @@ jobs:
           WORKFLOW_REF: ${{ job.workflow_ref }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -92,6 +93,10 @@ jobs:
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
             echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ -n "$RETRY_VERSION" || -n "$RESUME_VERSION" ]] && [[ ! "$AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "authorized_sha must be a full lowercase 40-character commit SHA for retry or resume." >&2
             exit 1
           fi
           case "$WORKFLOW_REF" in
@@ -500,7 +505,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ job.workflow_repository }}
-          AUTHORIZED_SHA: ${{ needs.release_actor_guard.outputs.authorized_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           VERSION: ${{ needs.release_actor_guard.outputs.version }}
           BASE_VERSION: ${{ needs.release_actor_guard.outputs.base_version }}
           CHANNEL: ${{ inputs.channel }}
@@ -556,7 +561,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ job.workflow_repository }}
-          AUTHORIZED_SHA: ${{ needs.release_actor_guard.outputs.authorized_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           VERSION: ${{ needs.release_actor_guard.outputs.version }}
           BASE_VERSION: ${{ needs.release_actor_guard.outputs.base_version }}
           CHANNEL: ${{ inputs.channel }}

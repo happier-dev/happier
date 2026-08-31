@@ -405,6 +405,7 @@ jobs:
     with:
       channel: dev
       retry_version: ${{ needs.server_runtime.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
@@ -416,6 +417,7 @@ jobs:
     with:
       channel: dev
       retry_version: ${{ needs.hstack.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
@@ -427,6 +429,7 @@ jobs:
     with:
       channel: dev
       retry_version: ${{ needs.cli.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
@@ -438,6 +441,7 @@ jobs:
     with:
       channel: dev
       retry_version: ${{ needs.ui_web.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
