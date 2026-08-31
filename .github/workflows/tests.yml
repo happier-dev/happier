@@ -185,6 +185,9 @@ on:
         default: '{"repeat":"5","seed":""}'
         type: string
 
+permissions:
+  contents: read
+
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
   # Preserve the active collector so late lanes can report their failures. GitHub retains at most
@@ -2260,18 +2263,38 @@ jobs:
       - name: Admit trusted workflow control ref
         env:
           CALLER_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          RUNNER_POOL: ${{ inputs.runner_pool || 'github' }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
           WORKFLOW_FILE: tests.yml
         run: |
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          admitted=false
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
-            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main")
+              if [[ "$EVENT_NAME" != "pull_request" ]]; then
+                admitted=true
+              fi
+              ;;
+            *)
+              expected_pr_workflow_ref="$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@$EVENT_REF"
+              if [[ "$EVENT_NAME" == "pull_request" &&
+                    "$RUNNER_POOL" == "github" &&
+                    "$EVENT_REF" =~ ^refs/pull/[1-9][0-9]*/merge$ &&
+                    "$WORKFLOW_REF" == "$expected_pr_workflow_ref" ]]; then
+                admitted=true
+              fi
+              ;;
           esac
+          if [[ "$admitted" != "true" ]]; then
+            echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2
+            exit 1
+          fi
       - name: Validate exact checkout SHA
         if: ${{ inputs.checkout_sha != '' }}
         env:

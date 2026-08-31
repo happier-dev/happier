@@ -42,6 +42,83 @@ function resolveRunnerPool(step, runnerPool) {
   }
 }
 
+function admitWorkflowRef(step, { eventName, eventRef, runnerPool, workflowRef }) {
+  return spawnSync('bash', ['-c', step.run], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CALLER_REPOSITORY: 'happier-dev/happier',
+      WORKFLOW_REPOSITORY: 'happier-dev/happier',
+      WORKFLOW_FILE: 'tests.yml',
+      EVENT_NAME: eventName,
+      EVENT_REF: eventRef,
+      RUNNER_POOL: runnerPool,
+      WORKFLOW_REF: workflowRef,
+    },
+  });
+}
+
+test('ordinary pull requests admit only exact GitHub merge refs through the canonical trust guard', () => {
+  const tests = loadWorkflow('tests.yml');
+  const guard = tests.jobs.trusted_ref_guard;
+  const admission = guard.steps.find((step) => step.name === 'Admit trusted workflow control ref');
+  assert.ok(admission, 'trusted_ref_guard must own PR workflow-ref admission');
+
+  const mergeRef = 'refs/pull/123/merge';
+  const mergeWorkflowRef = `happier-dev/happier/.github/workflows/tests.yml@${mergeRef}`;
+  const admitted = admitWorkflowRef(admission, {
+    eventName: 'pull_request',
+    eventRef: mergeRef,
+    runnerPool: 'github',
+    workflowRef: mergeWorkflowRef,
+  });
+  assert.equal(admitted.status, 0, admitted.stderr);
+  assert.deepEqual(tests.permissions, { contents: 'read' });
+  assert.deepEqual(tests.jobs.ci_plan.permissions, { contents: 'read', 'pull-requests': 'read' });
+
+  for (const rejected of [
+    { eventName: 'workflow_dispatch', eventRef: mergeRef, runnerPool: 'github', workflowRef: mergeWorkflowRef },
+    { eventName: 'pull_request', eventRef: mergeRef, runnerPool: 'blacksmith-linux-8vcpu', workflowRef: mergeWorkflowRef },
+    {
+      eventName: 'pull_request',
+      eventRef: mergeRef,
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/heads/dev',
+    },
+    {
+      eventName: 'pull_request',
+      eventRef: 'refs/pull/123/head',
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/123/head',
+    },
+    {
+      eventName: 'pull_request',
+      eventRef: 'refs/pull/not-a-number/merge',
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/not-a-number/merge',
+    },
+    {
+      eventName: 'pull_request',
+      eventRef: mergeRef,
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/124/merge',
+    },
+  ]) {
+    const result = admitWorkflowRef(admission, rejected);
+    assert.notEqual(result.status, 0, `must reject ${JSON.stringify(rejected)}`);
+    assert.match(result.stderr, /Untrusted workflow control ref/);
+  }
+
+  const protectedWorkflowRef = 'happier-dev/happier/.github/workflows/tests.yml@refs/heads/dev';
+  const protectedDispatch = admitWorkflowRef(admission, {
+    eventName: 'workflow_dispatch',
+    eventRef: 'refs/heads/dev',
+    runnerPool: 'blacksmith-linux-8vcpu',
+    workflowRef: protectedWorkflowRef,
+  });
+  assert.equal(protectedDispatch.status, 0, protectedDispatch.stderr);
+});
+
 test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmith without changing ordinary CI', () => {
   const dispatch = loadWorkflow('tests-dispatch.yml');
   const tests = loadWorkflow('tests.yml');
