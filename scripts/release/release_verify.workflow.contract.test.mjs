@@ -133,6 +133,10 @@ test('release candidate verification runs trusted workflow control bytes under t
     /\$control_dir\/scripts\/pipeline\/release\/verify-release-candidate-identity\.mjs/,
   );
   assert.doesNotMatch(String(privileged.run ?? ''), /node\s+scripts\/pipeline\//);
+  assert.doesNotMatch(String(privileged.run ?? ''), /gh\s+release\s+download/);
+  assert.match(String(privileged.run ?? ''), /releases\/assets\/\$\{asset_id\}/);
+  assert.match(String(privileged.run ?? ''), /releases\/\$\{release_id\}/);
+  assert.match(String(privileged.run ?? ''), /current_snapshot.*release_snapshot/s);
   assert.doesNotMatch(String(privileged.run ?? ''), /\$\{\{\s*inputs\./);
 
   for (const [name, expression] of Object.entries({
@@ -152,6 +156,10 @@ test('release candidate verification runs trusted workflow control bytes under t
   assert.match(
     String(artifactVerification.run ?? ''),
     /\$control_dir\/scripts\/pipeline\/release\/verify-artifacts\.mjs/,
+  );
+  assert.match(
+    String(artifactVerification.run ?? ''),
+    /\$control_dir\/scripts\/pipeline\/release\/lib\/immutable-release-candidate\.mjs/,
   );
   assert.doesNotMatch(String(artifactVerification.run ?? ''), /\$\{\{\s*inputs\./);
 });

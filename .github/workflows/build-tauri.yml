@@ -806,12 +806,15 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           SOURCE_TAG: ui-desktop-v${{ needs.resolve_source.outputs.retry_version != '' && needs.resolve_source.outputs.retry_version || needs.resolve_source.outputs.ui_version }}
+          SOURCE_VERSION: ${{ needs.resolve_source.outputs.retry_version != '' && needs.resolve_source.outputs.retry_version || needs.resolve_source.outputs.ui_version }}
           TARGET_SHA: ${{ needs.resolve_source.outputs.source_sha }}
           RELEASE_MESSAGE: ${{ needs.resolve_source.outputs.release_notes_github_markdown }}
         run: |
           set -euo pipefail
           node scripts/pipeline/github/promote-rolling-release.mjs \
             --source-tag "$SOURCE_TAG" \
+            --expected-product ui-desktop \
+            --expected-version "$SOURCE_VERSION" \
             --rolling-tag ui-desktop-stable \
             --title "Happier UI Desktop Stable" \
             --target-sha "$TARGET_SHA" \

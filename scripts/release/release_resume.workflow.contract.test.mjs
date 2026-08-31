@@ -142,7 +142,8 @@ test('failed grouped verification independently certifies each successful immuta
   const owner = action('verify-immutable-release-candidate');
   const ownerSource = owner.runs.steps.map((step) => step.run ?? '').join('\n');
   assert.match(ownerSource, /verify-release-candidate-identity\.mjs/);
-  assert.match(ownerSource, /gh release download/);
+  assert.match(ownerSource, /releases\/assets\/\$\{asset_id\}/);
+  assert.doesNotMatch(ownerSource, /gh release download/);
   assert.match(ownerSource, /verify-artifacts\.mjs/);
   const downloadStep = owner.runs.steps.find((step) => step.id === 'download');
   const verifyStep = owner.runs.steps.find((step) => step.id === 'verify');

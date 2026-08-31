@@ -3,10 +3,15 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { closeSync, createReadStream, openSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+
+import {
+  inspectImmutableReleaseCandidate,
+  resolveImmutableCandidateIdentity,
+} from '../release/lib/immutable-release-candidate.mjs';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
 const DEFAULT_UPLOAD_ATTEMPTS = 8;
@@ -131,37 +136,6 @@ async function fileSha256(filePath) {
   return hash.digest('hex');
 }
 
-async function assertSignedBundle(directory) {
-  const names = (await readdir(directory)).sort();
-  const checksumNames = names.filter((name) => /^checksums-.+\.txt$/.test(name));
-  if (checksumNames.length !== 1) {
-    fail(`Release bundle must contain exactly one checksums file (found ${checksumNames.length}).`);
-  }
-  const checksumsName = checksumNames[0];
-  const signatureName = `${checksumsName}.minisig`;
-  const checksums = await readFile(join(directory, checksumsName), 'utf8');
-  const archiveNames = checksums
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const match = /^[a-f0-9]{64}\s{2}(.+)$/.exec(line);
-      if (!match) fail(`Invalid checksum line in ${checksumsName}: ${line}`);
-      return match[1];
-    });
-  const required = new Set([...archiveNames, checksumsName, signatureName]);
-  const missing = [...required].filter((name) => !names.includes(name));
-  const unsupportedExtras = names.filter((name) => !required.has(name) && !name.endsWith('.json'));
-  if (missing.length > 0 || unsupportedExtras.length > 0) {
-    fail(
-      `Release bundle file set does not match its signed checksums`
-      + `${missing.length > 0 ? `; missing ${missing.join(', ')}` : ''}`
-      + `${unsupportedExtras.length > 0 ? `; unsupported extras ${unsupportedExtras.join(', ')}` : ''}`,
-    );
-  }
-  return { names, checksumsName };
-}
-
 async function assertDirectoriesEqual(leftDir, rightDir) {
   const leftNames = (await readdir(leftDir)).sort();
   const rightNames = (await readdir(rightDir)).sort();
@@ -258,8 +232,41 @@ function readReleaseAssetRows({ repo, releaseId, env, dryRun }) {
   return raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
     const separator = line.indexOf('\t');
     if (separator <= 0) fail(`Invalid release asset row: ${line}`);
-    return { id: line.slice(0, separator), name: line.slice(separator + 1) };
+    const id = line.slice(0, separator);
+    const name = line.slice(separator + 1);
+    if (!/^[A-Za-z0-9._-]+$/u.test(id) || !name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+      fail(`Invalid release asset row: ${line}`);
+    }
+    return { id, name };
   });
+}
+
+function assetRowsEqual(left, right) {
+  return left.length === right.length
+    && left.every((entry, index) => entry.id === right[index]?.id && entry.name === right[index]?.name);
+}
+
+function readReleaseSnapshotByTag({ repo, tag, env, dryRun }) {
+  const release = readReleaseByTag({ repo, tag, env, dryRun });
+  if (!release) return null;
+  return { release, assets: readReleaseAssetRows({ repo, releaseId: release.id, env, dryRun }) };
+}
+
+function readReleaseSnapshotById({ repo, releaseId, env, dryRun }) {
+  const release = readReleaseById({ repo, releaseId, env, dryRun });
+  if (!release) return null;
+  return { release, assets: readReleaseAssetRows({ repo, releaseId, env, dryRun }) };
+}
+
+function assertReleaseSnapshotCurrent({ repo, snapshot, expectedTag, expectedDraft, env }) {
+  const current = readReleaseSnapshotById({ repo, releaseId: snapshot.release.id, env, dryRun: false });
+  if (!current
+    || current.release.tagName !== expectedTag
+    || current.release.draft !== expectedDraft
+    || !assetRowsEqual(current.assets, snapshot.assets)) {
+    fail(`GitHub release ${snapshot.release.id} changed while its assets were being audited.`);
+  }
+  return current;
 }
 
 function uploadReleaseAssetWithRetry({
@@ -398,18 +405,8 @@ function deleteReleaseIfPresent({ repo, releaseId, env, dryRun }) {
   });
 }
 
-async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dryRun }) {
-  const assets = run('gh', [
-    'api',
-    `repos/${repo}/releases/${releaseId}`,
-    '--jq',
-    '.assets[] | [.id, .name] | @tsv',
-  ], { env, dryRun }).trim();
-  for (const line of assets.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-    const separator = line.indexOf('\t');
-    if (separator <= 0) fail(`Invalid release asset row: ${line}`);
-    const assetId = line.slice(0, separator);
-    const name = line.slice(separator + 1);
+async function downloadReleaseAssetsById({ repo, assets, destination, env, dryRun }) {
+  for (const { id: assetId, name } of assets) {
     runToFile('gh', [
       'api',
       `repos/${repo}/releases/assets/${assetId}`,
@@ -419,19 +416,51 @@ async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dr
   }
 }
 
-async function auditReleaseByTag({ repo, tag, expectedDir, publicKey, env }) {
+async function inspectAndVerifyCandidate({ directory, sourceTag, expectedProduct, expectedVersion, publicKey }) {
+  const inspected = await inspectImmutableReleaseCandidate({
+    directory,
+    sourceTag,
+    expectedProduct,
+    expectedVersion,
+  });
+  run(process.execPath, [
+    'scripts/pipeline/release/verify-artifacts.mjs',
+    '--artifacts-dir', directory,
+    '--checksums', join(directory, inspected.checksumsName),
+    '--public-key', publicKey,
+    '--skip-smoke',
+  ]);
+  return inspected;
+}
+
+async function auditReleaseById({
+  repo,
+  releaseId,
+  expectedTag,
+  expectedDraft,
+  expectedDir,
+  sourceTag,
+  expectedProduct,
+  expectedVersion,
+  publicKey,
+  env,
+}) {
   const destination = await mkdtemp(join(tmpdir(), 'happier-visible-release-audit-'));
   try {
-    run('gh', ['release', 'download', tag, '--repo', repo, '--dir', destination], { env });
-    const { checksumsName } = await assertSignedBundle(destination);
+    const snapshot = readReleaseSnapshotById({ repo, releaseId, env, dryRun: false });
+    if (!snapshot || snapshot.release.tagName !== expectedTag || snapshot.release.draft !== expectedDraft) {
+      fail(`GitHub release ${releaseId} no longer identifies ${expectedTag}.`);
+    }
+    await downloadReleaseAssetsById({ repo, assets: snapshot.assets, destination, env, dryRun: false });
+    assertReleaseSnapshotCurrent({ repo, snapshot, expectedTag, expectedDraft, env });
+    await inspectAndVerifyCandidate({
+      directory: destination,
+      sourceTag,
+      expectedProduct,
+      expectedVersion,
+      publicKey,
+    });
     await assertDirectoriesEqual(expectedDir, destination);
-    run(process.execPath, [
-      'scripts/pipeline/release/verify-artifacts.mjs',
-      '--artifacts-dir', destination,
-      '--checksums', join(destination, checksumsName),
-      '--public-key', publicKey,
-      '--skip-smoke',
-    ]);
   } finally {
     await rm(destination, { recursive: true, force: true });
   }
@@ -441,6 +470,8 @@ async function main() {
   const { values } = parseArgs({
     options: {
       'source-tag': { type: 'string' },
+      'expected-product': { type: 'string', default: '' },
+      'expected-version': { type: 'string', default: '' },
       'rolling-tag': { type: 'string' },
       title: { type: 'string' },
       'target-sha': { type: 'string' },
@@ -454,6 +485,8 @@ async function main() {
     allowPositionals: false,
   });
   const sourceTag = String(values['source-tag'] ?? '').trim();
+  const expectedProduct = String(values['expected-product'] ?? '').trim();
+  const expectedVersion = String(values['expected-version'] ?? '').trim();
   const rollingTag = String(values['rolling-tag'] ?? '').trim();
   const title = String(values.title ?? '').trim();
   const targetSha = String(values['target-sha'] ?? '').trim().toLowerCase();
@@ -466,6 +499,15 @@ async function main() {
   const releaseMessage = String(values['release-message'] ?? '').trim();
   const dryRun = values['dry-run'] === true;
   if (!sourceTag) fail('--source-tag is required');
+  if (Boolean(expectedProduct) !== Boolean(expectedVersion)) {
+    fail('--expected-product and --expected-version must be supplied together');
+  }
+  if (expectedProduct) {
+    const expectedIdentity = resolveImmutableCandidateIdentity({ product: expectedProduct, version: expectedVersion });
+    if (expectedIdentity.sourceTag !== sourceTag) {
+      fail(`Immutable source tag ${sourceTag} does not identify expected ${expectedProduct} ${expectedVersion}.`);
+    }
+  }
   if (!rollingTag) fail('--rolling-tag is required');
   if (!title) fail('--title is required');
   if (!FULL_SHA.test(targetSha)) fail('--target-sha must be a full 40-character commit id');
@@ -483,16 +525,40 @@ async function main() {
     if (!dryRun && immutableSha !== targetSha) {
       fail(`Immutable source tag ${sourceTag} does not resolve to authorized SHA ${targetSha}.`);
     }
-    run('gh', ['release', 'download', sourceTag, '--repo', repo, '--dir', sourceDir], { env: ghEnv, dryRun });
     if (!dryRun) {
-      const { checksumsName } = await assertSignedBundle(sourceDir);
-      run(process.execPath, [
-        'scripts/pipeline/release/verify-artifacts.mjs',
-        '--artifacts-dir', sourceDir,
-        '--checksums', join(sourceDir, checksumsName),
-        '--public-key', publicKey,
-        '--skip-smoke',
-      ]);
+      const immutableSnapshot = readReleaseSnapshotByTag({ repo, tag: sourceTag, env: ghEnv, dryRun: false });
+      if (!immutableSnapshot
+        || immutableSnapshot.release.tagName !== sourceTag
+        || immutableSnapshot.release.draft !== false
+        || immutableSnapshot.assets.length === 0) {
+        fail(`Immutable source release ${sourceTag} is missing, draft, or has no assets.`);
+      }
+      await downloadReleaseAssetsById({
+        repo,
+        assets: immutableSnapshot.assets,
+        destination: sourceDir,
+        env: ghEnv,
+        dryRun: false,
+      });
+      assertReleaseSnapshotCurrent({
+        repo,
+        snapshot: immutableSnapshot,
+        expectedTag: sourceTag,
+        expectedDraft: false,
+        env: ghEnv,
+      });
+      if (readTagSha({ repo, tag: sourceTag, env: ghEnv, dryRun: false }) !== targetSha) {
+        fail(`Immutable source tag ${sourceTag} changed while release ${immutableSnapshot.release.id} was audited.`);
+      }
+      await inspectAndVerifyCandidate({
+        directory: sourceDir,
+        sourceTag,
+        expectedProduct,
+        expectedVersion,
+        publicKey,
+      });
+    } else {
+      console.log(`[dry-run] download immutable assets for ${sourceTag} by observed release and asset IDs`);
     }
 
     const body = releaseMessage && notes ? `${releaseMessage}\n\n${notes}` : releaseMessage || notes;
@@ -528,7 +594,18 @@ async function main() {
     if (!dryRun && rollingRelease && rollingSha === targetSha) {
       let alreadyExact = false;
       try {
-        await auditReleaseByTag({ repo, tag: rollingTag, expectedDir: sourceDir, publicKey, env: ghEnv });
+        await auditReleaseById({
+          repo,
+          releaseId: rollingRelease.id,
+          expectedTag: rollingTag,
+          expectedDraft: false,
+          expectedDir: sourceDir,
+          sourceTag,
+          expectedProduct,
+          expectedVersion,
+          publicKey,
+          env: ghEnv,
+        });
         alreadyExact = true;
       } catch {
         // The ref alone is not admission; replace a stale or incomplete release object below.
@@ -594,7 +671,13 @@ async function main() {
     }
 
     if (!dryRun) {
-      const { names } = await assertSignedBundle(sourceDir);
+      const { assetNames, checksumsName, signatureName } = await inspectImmutableReleaseCandidate({
+        directory: sourceDir,
+        sourceTag,
+        expectedProduct,
+        expectedVersion,
+      });
+      const names = [...assetNames, checksumsName, signatureName].sort();
       for (const name of names) {
         uploadReleaseAssetWithRetry({
           repo,
@@ -608,17 +691,35 @@ async function main() {
       console.log(`[dry-run] upload every verified asset from ${sourceTag} to staging release ${stagingTag}`);
     }
 
-    await downloadReleaseAssetsById({ repo, releaseId: draftReleaseId, destination: auditDir, env: ghEnv, dryRun });
+    const draftSnapshot = dryRun
+      ? null
+      : readReleaseSnapshotById({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false });
+    if (!dryRun && (!draftSnapshot || draftSnapshot.release.tagName !== stagingTag || draftSnapshot.release.draft !== true)) {
+      fail(`Staging release ${draftReleaseId} changed before its asset audit.`);
+    }
+    await downloadReleaseAssetsById({
+      repo,
+      assets: draftSnapshot?.assets ?? [],
+      destination: auditDir,
+      env: ghEnv,
+      dryRun,
+    });
     if (!dryRun) {
-      const { checksumsName } = await assertSignedBundle(auditDir);
+      assertReleaseSnapshotCurrent({
+        repo,
+        snapshot: draftSnapshot,
+        expectedTag: stagingTag,
+        expectedDraft: true,
+        env: ghEnv,
+      });
+      await inspectAndVerifyCandidate({
+        directory: auditDir,
+        sourceTag,
+        expectedProduct,
+        expectedVersion,
+        publicKey,
+      });
       await assertDirectoriesEqual(sourceDir, auditDir);
-      run(process.execPath, [
-        'scripts/pipeline/release/verify-artifacts.mjs',
-        '--artifacts-dir', auditDir,
-        '--checksums', join(auditDir, checksumsName),
-        '--public-key', publicKey,
-        '--skip-smoke',
-      ]);
     }
 
     const predecessor = rollingRelease;
@@ -628,6 +729,16 @@ async function main() {
     try {
       if (predecessor) {
         if (!predecessorSha) fail(`Published rolling release ${rollingTag} has no tag ref.`);
+        const predecessorById = readReleaseById({ repo, releaseId: predecessor.id, env: ghEnv, dryRun });
+        const predecessorByTag = readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun });
+        const currentPredecessorSha = readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun });
+        if (!dryRun && (
+          predecessorById?.tagName !== rollingTag
+          || predecessorByTag?.id !== predecessor.id
+          || currentPredecessorSha !== predecessorSha
+        )) {
+          fail(`Published rolling release ${rollingTag} changed before replacement.`);
+        }
         ensureRefAtSha({ repo, tag: backupTag, sha: predecessorSha, env: ghEnv, dryRun });
         patchReleaseAndConfirm({
           repo,
@@ -666,7 +777,18 @@ async function main() {
         fail(`Published rolling tag ${rollingTag} did not resolve to audited target ${targetSha}.`);
       }
       if (!dryRun) {
-        await auditReleaseByTag({ repo, tag: rollingTag, expectedDir: sourceDir, publicKey, env: ghEnv });
+        await auditReleaseById({
+          repo,
+          releaseId: draftReleaseId,
+          expectedTag: rollingTag,
+          expectedDraft: false,
+          expectedDir: sourceDir,
+          sourceTag,
+          expectedProduct,
+          expectedVersion,
+          publicKey,
+          env: ghEnv,
+        });
       }
     } catch (switchError) {
       if (!dryRun) {

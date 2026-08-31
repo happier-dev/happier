@@ -97,6 +97,8 @@ test('build-tauri publishes the immutable production desktop envelope before the
   assert.match(raw, /node scripts\/pipeline\/github\/promote-rolling-release\.mjs/);
   assert.match(raw, /SOURCE_TAG:\s*ui-desktop-v\$\{\{[^\n]+\}\}/);
   assert.match(raw, /--source-tag\s+"\$SOURCE_TAG"/);
+  assert.match(raw, /--expected-product\s+ui-desktop\b/);
+  assert.match(raw, /--expected-version\s+"\$SOURCE_VERSION"/);
   assert.match(raw, /--rolling-tag\s+ui-desktop-stable\b/);
   assert.doesNotMatch(raw, /publish_stable_feed:/);
 });
@@ -129,6 +131,7 @@ test('build-tauri can reproject an exact immutable production version without ru
   assert.match(raw, /needs\.resolve_source\.outputs\.retry_version/);
   assert.match(raw, /Build desktop candidate[\s\S]{0,220}if:\s*\$\{\{\s*needs\.resolve_source\.outputs\.retry_version\s*==\s*''\s*\}\}/);
   assert.match(raw, /SOURCE_TAG:\s*ui-desktop-v\$\{\{\s*needs\.resolve_source\.outputs\.retry_version/);
+  assert.match(raw, /SOURCE_VERSION:\s*\$\{\{\s*needs\.resolve_source\.outputs\.retry_version/);
   assert.doesNotMatch(raw, /retry_version must match apps\/ui\/package\.json version/);
   assert.match(raw, /inputs\.retry_version != ''[\s\S]*?ui-desktop-v/);
 });
