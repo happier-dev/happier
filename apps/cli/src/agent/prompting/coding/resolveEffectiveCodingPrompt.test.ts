@@ -148,7 +148,7 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).toContain('use `memory_get_window`');
   });
 
-  it('appends provider behavior blocks after the shared base and prompt library blocks', async () => {
+  it('does not append repository tool-execution policy to Codex prompts', async () => {
     const credentials = createCredentials();
 
     const out = await resolveEffectiveCodingPromptText({
@@ -162,11 +162,10 @@ describe('resolveEffectiveCodingPromptText', () => {
     });
 
     expect(out).toContain('BASE');
-    expect(out).toContain('Tool execution ordering');
-    expect(out.indexOf('BASE')).toBeLessThan(out.indexOf('Tool execution ordering'));
+    expect(out).not.toContain('Tool execution ordering');
   });
 
-  it('treats a null base override as dropping the shared base while preserving provider and shell-bridge blocks', async () => {
+  it('treats a null base override as dropping the shared base while preserving shell-bridge blocks', async () => {
     const credentials = createCredentials();
 
     const out = await resolveEffectiveCodingPromptText({
@@ -183,7 +182,7 @@ describe('resolveEffectiveCodingPromptText', () => {
     });
 
     expect(out).not.toContain('You are an AI assistant');
-    expect(out).toContain('Tool execution ordering');
+    expect(out).not.toContain('Tool execution ordering');
     expect(out).toContain('Happier tools are available through the CLI bridge');
   });
 

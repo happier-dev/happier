@@ -11,14 +11,6 @@ const CLAUDE_DISABLE_TODOS = trimIdent(`
   Do not create TODO items, TODO lists, or task lists in your output. If you would normally create TODOs, instead proceed with the work directly or ask the user for clarification.
 `);
 
-const CODEX_EXEC_SEQUENCING = trimIdent(`
-  Tool execution ordering:
-  - When you need to run multiple \`exec_command\` calls, run them sequentially.
-  - Do not enqueue multiple \`exec_command\` calls at once.
-  - If any command may require user approval (especially writes), wait for the user decision and the command result before issuing the next command.
-  - If a dependent read runs before its prerequisite write and fails, rerun the read after the write succeeds.
-`);
-
 export function resolveCodingProviderBehaviorBlocks(args: Readonly<{
   providerId: string | null | undefined;
   disableTodos?: boolean;
@@ -41,14 +33,6 @@ export function resolveCodingProviderBehaviorBlocks(args: Readonly<{
         text: CLAUDE_DISABLE_TODOS,
       });
     }
-  }
-
-  if (providerId === 'codex') {
-    blocks.push({
-      id: 'provider.codex.exec_sequencing',
-      scope: 'provider_behavior',
-      text: CODEX_EXEC_SEQUENCING,
-    });
   }
 
   return blocks;

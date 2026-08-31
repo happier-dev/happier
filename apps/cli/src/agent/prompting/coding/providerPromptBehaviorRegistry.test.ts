@@ -15,14 +15,12 @@ describe('resolveCodingProviderBehaviorBlocks', () => {
     expect(text).not.toContain('[attachments]');
   });
 
-  it('returns Codex exec sequencing guidance', () => {
+  it('does not impose repository tool-execution policy on Codex sessions', () => {
     const blocks = resolveCodingProviderBehaviorBlocks({
       providerId: 'codex',
     });
 
-    const text = renderPromptPlanV1({ modality: 'coding', blocks });
-    expect(text).toContain('Tool execution ordering');
-    expect(text).toContain('exec_command');
+    expect(blocks).toEqual([]);
   });
 
   it('can append the remote Claude TODO suppression block', () => {
