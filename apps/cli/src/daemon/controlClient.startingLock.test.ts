@@ -68,7 +68,7 @@ describe('daemon control client startup lock inspection', () => {
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: vi.fn(async () => null),
+      classifyDaemonLifecycleProcessByPid: vi.fn(async () => ({ kind: 'unknown' as const })),
     }));
 
     try {
@@ -100,7 +100,7 @@ describe('daemon control client startup lock inspection', () => {
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: vi.fn(async () => null),
+      classifyDaemonLifecycleProcessByPid: vi.fn(async () => ({ kind: 'unknown' as const })),
     }));
 
     try {
@@ -129,10 +129,13 @@ describe('daemon control client startup lock inspection', () => {
     const homeDir = createTempDirSync('happier-cli-daemon-slow-classified-lock-');
     envScope.patch({ HAPPIER_HOME_DIR: homeDir });
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
-    const findHappyProcessByPid = vi.fn()
-      .mockResolvedValueOnce({ type: 'dev-daemon' })
-      .mockResolvedValueOnce(null);
-    vi.doMock('@/daemon/doctor', () => ({ findHappyProcessByPid }));
+    const classifyDaemonLifecycleProcessByPid = vi.fn()
+      .mockResolvedValueOnce({
+        kind: 'daemon' as const,
+        process: { pid: 424245, command: 'happier daemon start-sync', type: 'dev-daemon' },
+      })
+      .mockResolvedValueOnce({ kind: 'unknown' as const });
+    vi.doMock('@/daemon/doctor', () => ({ classifyDaemonLifecycleProcessByPid }));
     vi.doMock('@/daemon/processRunState', () => ({
       readProcessRunState: vi.fn(async () => 'servable'),
     }));
@@ -175,7 +178,10 @@ describe('daemon control client startup lock inspection', () => {
       return true as any;
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: vi.fn(async () => ({ type: 'dev-daemon' })),
+      classifyDaemonLifecycleProcessByPid: vi.fn(async () => ({
+        kind: 'daemon' as const,
+        process: { pid: 424244, command: 'happier daemon start-sync', type: 'dev-daemon' },
+      })),
     }));
 
     try {

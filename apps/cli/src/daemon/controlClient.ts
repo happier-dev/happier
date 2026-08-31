@@ -69,6 +69,7 @@ import {
   type StopSessionResult,
 } from './sessions/stopSessionContract';
 import { readProcessRunState } from './processRunState';
+import { classifyDaemonLifecycleProcessByPid } from './doctor';
 
 export type DaemonControlRequestOptions = {
   timeoutMs?: number;
@@ -231,11 +232,10 @@ async function inspectDaemonLockStartupProgress(): Promise<DaemonRunningInspecti
     return null;
   }
 
-  const { findHappyProcessByPid } = await import('@/daemon/doctor');
-  const proc = await findHappyProcessByPid(lockPid).catch(() => null);
-  const safeToTreatAsStarting = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
-  if (!safeToTreatAsStarting) {
-    if (proc) {
+  const ownerProcess = await classifyDaemonLifecycleProcessByPid(lockPid)
+    .catch(() => ({ kind: 'unknown' as const }));
+  if (ownerProcess.kind !== 'daemon') {
+    if (ownerProcess.kind === 'not_daemon') {
       admittedDaemonStartupLocks.delete(lockPid);
       return null;
     }
@@ -298,6 +298,9 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
     return { status: 'starting', state };
   }
 
+  const ownerProcess = await classifyDaemonLifecycleProcessByPid(state.pid)
+    .catch(() => ({ kind: 'unknown' as const }));
+
   try {
     if (state.controlToken) {
       const liveness = await probeDaemonAuthenticatedControl({
@@ -314,14 +317,30 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
         logger.debug('[DAEMON RUN] Daemon PID stopped during authenticated liveness probe, leaving daemon-owned state for startup replacement');
         return { status: 'not-running' };
       }
+      if (liveness === 'running') {
+        return { status: 'running', state };
+      }
       if (liveness === 'unreachable') {
+        if (ownerProcess.kind === 'not_daemon') {
+          logger.debug('[DAEMON RUN] Daemon control is unreachable and its state PID belongs to an unrelated process, leaving state for startup replacement');
+          return { status: 'not-running' };
+        }
         logger.debug('[DAEMON RUN] Daemon /ping unreachable while PID is alive, treating daemon as starting or busy and keeping state');
         return { status: 'starting', state };
       }
     }
 
+    if (ownerProcess.kind === 'not_daemon') {
+      logger.debug('[DAEMON RUN] Daemon state PID belongs to an unrelated process, leaving state for startup replacement');
+      return { status: 'not-running' };
+    }
+
     return { status: 'running', state };
   } catch {
+    if (ownerProcess.kind === 'not_daemon') {
+      logger.debug('[DAEMON RUN] Daemon control probe failed and its state PID belongs to an unrelated process, leaving state for startup replacement');
+      return { status: 'not-running' };
+    }
     const ageMs = resolveDaemonStateAgeMs(state);
     if (ageMs !== null && ageMs < DAEMON_STATE_FRESHNESS_GRACE_MS) {
       logger.debug('[DAEMON RUN] Daemon PID is missing but state heartbeat is fresh, keeping state as startup in progress');
@@ -1038,10 +1057,9 @@ function readDaemonLockPid(): number | null {
 }
 
 async function forceKillKnownDaemonPid(pid: number): Promise<void> {
-  const { findHappyProcessByPid } = await import('@/daemon/doctor');
-  const proc = await findHappyProcessByPid(pid);
-  const safeToKill = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
-  if (!safeToKill) {
+  const ownerProcess = await classifyDaemonLifecycleProcessByPid(pid)
+    .catch(() => ({ kind: 'unknown' as const }));
+  if (ownerProcess.kind !== 'daemon') {
     logger.warn(`[CONTROL CLIENT] Refusing to force-kill PID ${pid} (does not look like a happier daemon process)`);
     return;
   }

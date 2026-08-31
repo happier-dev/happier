@@ -427,6 +427,11 @@ export type ProcessByPidClassification =
   | Readonly<{ kind: 'not_happy' }>
   | Readonly<{ kind: 'unknown' }>;
 
+export type DaemonLifecycleProcessByPidClassification =
+  | Readonly<{ kind: 'daemon'; process: HappyProcessInfo }>
+  | Readonly<{ kind: 'not_daemon' }>
+  | Readonly<{ kind: 'unknown' }>;
+
 function classifyRawProcessByPid(proc: RawProcessInfo): ProcessByPidClassification {
   const happy = classifyHappyProcess(proc);
   return happy ? { kind: 'happy', process: happy } : { kind: 'not_happy' };
@@ -440,6 +445,22 @@ export async function classifyProcessByPid(pid: number): Promise<ProcessByPidCla
   const all = await findAllHappyProcesses();
   const happy = all.find((p) => p.pid === pid);
   return happy ? { kind: 'happy', process: happy } : { kind: 'unknown' };
+}
+
+/**
+ * Classify whether a PID can own the daemon lifecycle without collapsing a verified unrelated
+ * process into the same result as an unreadable process. Lifecycle callers may reclaim the former
+ * but must keep the latter fail-closed unless an authenticated control probe proves ownership.
+ */
+export async function classifyDaemonLifecycleProcessByPid(
+  pid: number,
+): Promise<DaemonLifecycleProcessByPidClassification> {
+  const classified = await classifyProcessByPid(pid);
+  if (classified.kind === 'unknown') return classified;
+  if (classified.kind === 'not_happy') return { kind: 'not_daemon' };
+  return classified.process.type === 'daemon' || classified.process.type === 'dev-daemon'
+    ? { kind: 'daemon', process: classified.process }
+    : { kind: 'not_daemon' };
 }
 
 /**

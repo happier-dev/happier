@@ -5,6 +5,25 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import type { HappyProcessInfo } from '@/daemon/doctor';
 import { isDaemonProcessForCurrentRuntimeRoot } from './evaluateCurrentDaemonOwner';
 
+function mockCurrentProcessAsDaemonLifecycleOwner(): void {
+    vi.doMock('@/daemon/doctor', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/daemon/doctor')>();
+        return {
+            ...actual,
+            classifyDaemonLifecycleProcessByPid: async (pid: number) => pid === process.pid
+                ? {
+                    kind: 'daemon' as const,
+                    process: {
+                        pid,
+                        command: `${process.execPath} ${process.cwd()}/src/index.ts daemon start-sync`,
+                        type: 'dev-daemon',
+                    },
+                }
+                : await actual.classifyDaemonLifecycleProcessByPid(pid),
+        };
+    });
+}
+
 describe('isDaemonProcessForCurrentRuntimeRoot', () => {
     const runtimeRoot = '/users/test/dev/happier/apps/cli';
     const otherPid = process.pid + 1;
@@ -77,6 +96,7 @@ describe('evaluateCurrentDaemonOwner', () => {
     afterEach(() => {
         envScope.restore();
         vi.resetModules();
+        vi.doUnmock('@/daemon/doctor');
     });
 
     it('returns none when no daemon state exists', async () => {
@@ -326,6 +346,7 @@ describe('evaluateCurrentDaemonOwner', () => {
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
             });
             vi.resetModules();
+            mockCurrentProcessAsDaemonLifecycleOwner();
 
             const [{ configuration }, { writeDaemonState }, { evaluateCurrentDaemonOwner }] = await Promise.all([
                 import('@/configuration'),
@@ -361,6 +382,7 @@ describe('evaluateCurrentDaemonOwner', () => {
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
             vi.resetModules();
+            mockCurrentProcessAsDaemonLifecycleOwner();
 
             const [{ writeDaemonState }, { evaluateCurrentDaemonOwner }] = await Promise.all([
                 import('@/persistence'),
@@ -398,6 +420,7 @@ describe('evaluateCurrentDaemonOwner', () => {
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
             vi.resetModules();
+            mockCurrentProcessAsDaemonLifecycleOwner();
 
             const [{ writeDaemonState }, { evaluateCurrentDaemonOwner }] = await Promise.all([
                 import('@/persistence'),
@@ -431,6 +454,7 @@ describe('evaluateCurrentDaemonOwner', () => {
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
             vi.resetModules();
+            mockCurrentProcessAsDaemonLifecycleOwner();
 
             const [{ writeDaemonState }, { evaluateCurrentDaemonOwner }] = await Promise.all([
                 import('@/persistence'),
@@ -465,6 +489,7 @@ describe('evaluateCurrentDaemonOwner', () => {
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
             });
             vi.resetModules();
+            mockCurrentProcessAsDaemonLifecycleOwner();
 
             const [{ configuration }, { writeDaemonState }, { evaluateCurrentDaemonOwner }] = await Promise.all([
                 import('@/configuration'),
