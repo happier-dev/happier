@@ -255,13 +255,9 @@ export async function readSessionHandoffProviderBundleFile(
       } catch {
         throw new Error('Invalid session handoff transfer payload');
       }
-      try {
-        const providerBundle = SessionHandoffProviderBundleSchema.parse(payload);
-        assertCanonicalSessionHandoffProviderBundle(providerBundle);
-        return providerBundle;
-      } catch {
-        throw new Error('Invalid session handoff transfer payload');
-      }
+      const providerBundle = SessionHandoffProviderBundleSchema.parse(payload);
+      assertCanonicalSessionHandoffProviderBundle(providerBundle);
+      return providerBundle;
     }
 
     const lengthBytes = await readExactly(file, ARTIFACT_LENGTH_BYTES, ARTIFACT_MAGIC.length);

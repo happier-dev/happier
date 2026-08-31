@@ -1,4 +1,4 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
@@ -123,6 +123,34 @@ async function atomicWriteJson(filePath: string, payload: unknown): Promise<void
   await writeJsonAtomic(filePath, payload);
 }
 
+async function readPersistedSourceExportRecord(
+  activeServerDir: string,
+  handoffId: string,
+): Promise<SessionHandoffSourceExportRecord | null> {
+  const recordPath = resolveRecordPath(activeServerDir, handoffId);
+  let raw: string;
+  try {
+    raw = await readFile(recordPath, 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid session handoff source export record');
+  }
+  const parsed = SourceExportRecordSchemaV1.safeParse(parsedJson);
+  if (!parsed.success) {
+    throw new Error('Invalid session handoff source export record');
+  }
+  return parsed.data;
+}
+
 export function createSessionHandoffSourceExportStore(input: Readonly<{ activeServerDir: string }>) {
   const activeServerDir = input.activeServerDir;
 
@@ -135,30 +163,11 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
 
     async load(handoffIdRaw: string): Promise<SessionHandoffSourceExportRecord | null> {
       const handoffId = assertSafeHandoffId(handoffIdRaw);
-      const recordPath = resolveRecordPath(activeServerDir, handoffId);
-      let raw: string;
-      try {
-        raw = await readFile(recordPath, 'utf8');
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-          return null;
-        }
-        throw error;
-      }
-
-      let parsedJson: unknown;
-      try {
-        parsedJson = JSON.parse(raw);
-      } catch {
-        throw new Error('Invalid session handoff source export record');
-      }
-      const parsed = SourceExportRecordSchemaV1.safeParse(parsedJson);
-      if (!parsed.success) {
-        throw new Error('Invalid session handoff source export record');
-      }
+      const persistedRecord = await readPersistedSourceExportRecord(activeServerDir, handoffId);
+      if (!persistedRecord) return null;
 
       // Rehydrate persisted relative paths to absolute paths under activeServerDir.
-      const record = parsed.data;
+      const record = persistedRecord;
       try {
         return {
           ...record,
@@ -241,6 +250,19 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
         filePath,
         ...artifact,
       };
+    },
+
+    async releaseTransferFiles(handoffIdRaw: string): Promise<void> {
+      const handoffId = assertSafeHandoffId(handoffIdRaw);
+      const record = await readPersistedSourceExportRecord(activeServerDir, handoffId);
+      if (record?.providerBundle) {
+        const { providerBundle: _releasedProviderBundle, ...durableRecord } = record;
+        await atomicWriteJson(resolveRecordPath(activeServerDir, handoffId), durableRecord);
+      }
+      await Promise.all([
+        rm(resolveProviderBundleFilePath(activeServerDir, handoffId), { force: true }),
+        rm(resolveReceivedProviderBundleFilePath(activeServerDir, handoffId), { force: true }),
+      ]);
     },
 
     async writeWorkspaceReplicationManifestFile(params: Readonly<{

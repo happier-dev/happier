@@ -51,6 +51,45 @@ describe('sessionHandoffSourceExportStore', () => {
     }
   });
 
+  it('releases completed provider transfer payloads while preserving durable handoff metadata', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-release-'));
+    try {
+      const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const handoffId = 'handoff-release-1';
+      const providerBundle = await store.writeProviderBundleFile({
+        handoffId,
+        providerBundle: {
+          providerId: 'codex',
+          remoteSessionId: 'remote-session-release',
+          files: [],
+        },
+      });
+      const receivedBundlePath = await store.prepareReceivedProviderBundleFilePath(handoffId);
+      await writeFile(receivedBundlePath, Buffer.from('received'));
+      await store.save({
+        handoffId,
+        exportedAtMs: 1234,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        providerBundle,
+      });
+
+      await store.releaseTransferFiles(handoffId);
+
+      await expect(stat(providerBundle.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(receivedBundlePath)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(store.load(handoffId)).resolves.toEqual(expect.objectContaining({
+        handoffId,
+        exportedAtMs: 1234,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+      }));
+      expect((await store.load(handoffId))?.providerBundle).toBeUndefined();
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('writes provider bundle and workspace manifest files under the handoff directory', async () => {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-files-'));
     try {
