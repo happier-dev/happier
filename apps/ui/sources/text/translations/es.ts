@@ -4319,9 +4319,9 @@ export const es: TranslationStructure = {
       "Mostrar números de línea en vistas de herramientas",
     showLineNumbersInToolViewsDescription:
       "Mostrar números de línea en diferencias de vistas de herramientas",
-    wrapLinesInDiffs: "Ajustar líneas en diferencias",
+    wrapLinesInDiffs: "Ajustar líneas en vistas de código",
     wrapLinesInDiffsDescription:
-      "Ajustar líneas largas en lugar de desplazamiento horizontal en vistas de diferencias",
+      "Ajustar líneas largas en vistas previas de código y editores en lugar de desplazarse horizontalmente",
     alwaysShowContextSize: "Mostrar siempre tamaño del contexto",
     alwaysShowContextSizeDescription:
       "Mostrar uso del contexto incluso cuando no esté cerca del límite",

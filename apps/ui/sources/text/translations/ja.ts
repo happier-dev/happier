@@ -4602,9 +4602,9 @@ localTailscale: {
     showLineNumbersInDiffsDescription: "コード差分に行番号を表示",
     showLineNumbersInToolViews: "ツールビューに行番号を表示",
     showLineNumbersInToolViewsDescription: "ツールビューの差分に行番号を表示",
-    wrapLinesInDiffs: "差分で行を折り返し",
+    wrapLinesInDiffs: "コードビューで行を折り返す",
     wrapLinesInDiffsDescription:
-      "差分表示で水平スクロールの代わりに長い行を折り返す",
+      "コードのプレビューやエディターで、水平スクロールの代わりに長い行を折り返す",
     alwaysShowContextSize: "常にコンテキストサイズを表示",
     alwaysShowContextSizeDescription:
       "上限に近づいていなくてもコンテキスト使用量を表示",

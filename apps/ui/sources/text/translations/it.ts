@@ -4660,9 +4660,9 @@ export const it: TranslationStructure = {
     showLineNumbersInToolViews: "Mostra numeri di riga nelle viste strumenti",
     showLineNumbersInToolViewsDescription:
       "Mostra i numeri di riga nei diff delle viste strumenti",
-    wrapLinesInDiffs: "A capo nelle differenze",
+    wrapLinesInDiffs: "A capo nelle viste del codice",
     wrapLinesInDiffsDescription:
-      "A capo delle righe lunghe invece dello scorrimento orizzontale nelle viste diff",
+      "Manda a capo le righe lunghe nelle anteprime del codice e negli editor invece di scorrere orizzontalmente",
     alwaysShowContextSize: "Mostra sempre dimensione contesto",
     alwaysShowContextSizeDescription:
       "Mostra l'uso del contesto anche quando non è vicino al limite",
