@@ -278,10 +278,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Setup Corepack (Yarn 1.22.22)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6

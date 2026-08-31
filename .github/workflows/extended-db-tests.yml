@@ -66,9 +66,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install system dependencies
         run: |
@@ -150,9 +148,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install system dependencies
         run: |
@@ -235,9 +231,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -288,9 +282,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:

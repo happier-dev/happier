@@ -221,17 +221,15 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: |
-          set -euo pipefail
-          bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       # The build is unconditional now: deploy_cloudflare publishes exactly these
       # bytes, so skipping it would leave nothing to publish. `run_build` is

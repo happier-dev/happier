@@ -127,22 +127,13 @@ test('nightly dev docker waits for the release artifacts it consumes', async () 
   assert.match(nightly, /cli_version:\s*\${{\s*needs\.cli\.outputs\.version\s*}}/);
 });
 
-test('Docker publishing installs and builds its release-runtime dependency', async () => {
+test('Docker publishing runs its dependency-free trusted pipeline without a workspace install', async () => {
   const publishDocker = await loadWorkflow('publish-docker.yml');
+  assert.doesNotMatch(publishDocker, /enable-corepack-yarn|install-yarn-dependencies/);
   assert.match(
     publishDocker,
-    /Enable Corepack \(Yarn\)\s+uses:\s+\.\/\.github\/actions\/enable-corepack-yarn/,
-    'publish-docker should use the retrying owner for the pinned repository Yarn runtime',
-  );
-  assert.match(
-    publishDocker,
-    /Install trusted publisher dependencies[\s\S]*?HAPPIER_INSTALL_SCOPE:\s*["']release-runtime["'][\s\S]*?uses:\s*\.\/\.github\/actions\/install-yarn-dependencies/,
-    'publish-docker should install the trusted release-runtime workspace imported by its publisher',
-  );
-  assert.match(
-    publishDocker,
-    /Install trusted publisher dependencies[\s\S]*?Build & push images \(trusted pipeline\)/,
-    'the release-runtime dependency must be available before Docker artifact resolution starts',
+    /Download exact candidate source[\s\S]*?Materialize candidate source as inert build data[\s\S]*?Build & push images \(trusted pipeline\)/,
+    'Docker publication should consume the prepared candidate source before invoking its trusted stdlib-only pipeline',
   );
 });
 

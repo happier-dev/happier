@@ -339,6 +339,19 @@ test('Tauri build and trusted finalizer share the complete Linux bundling depend
   ]) {
     assert.match(installScript, new RegExp(`(^|\\s)${packageName.replaceAll('.', '\\.')}(\\s|\\\\|$)`), `canonical action should install ${packageName}`);
   }
+  assert.match(
+    installScript,
+    /sudo bash scripts\/ci\/apt-install-with-retry\.sh[\s\S]*--optional-first-available=libfuse2,libfuse2t64[\s\S]*--optional-first-available=fuse,fuse3[\s\S]*--[\s\S]*"\$\{tauri_packages\[@\]\}"/,
+    'the bounded apt owner should refresh metadata, choose compatible FUSE packages, and install once',
+  );
+  assert.doesNotMatch(installScript, /apt-cache\s+show/, 'the action must not probe stale apt metadata itself');
+  assert.doesNotMatch(installScript, /sudo apt-get\s+(?:update|install)/, 'the action must not bypass the bounded apt owner');
+
+  const curlCommand = installScript.match(/curl[\s\S]*?linuxdeploy-x86_64\.AppImage" \\\n\s+-o "\$\{linuxdeploy_path\}"/)?.[0] ?? '';
+  assert.match(curlCommand, /--connect-timeout\s+\d+/, 'linuxdeploy download should bound connection establishment');
+  assert.match(curlCommand, /--max-time\s+\d+/, 'linuxdeploy download should have a total transfer bound');
+  assert.match(curlCommand, /--retry-max-time\s+\d+/, 'linuxdeploy retries should have a total retry bound');
+  assert.doesNotMatch(curlCommand, /--retry-all-errors/, 'linuxdeploy must not retry permanent HTTP failures');
 });
 
 test('build-tauri workflow sets Happier Cloud as explicit default server for desktop release builds', async () => {

@@ -56,7 +56,7 @@ test('Corepack Yarn preparation retries a failed download and preserves the pinn
   }
 });
 
-test('Corepack Yarn preparation remains bounded when every attempt fails', () => {
+test('Corepack Yarn preparation does not retry a permanent configuration failure', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-corepack-bounded-'));
   try {
     const binDir = path.join(root, 'bin');
@@ -67,6 +67,40 @@ test('Corepack Yarn preparation remains bounded when every attempt fails', () =>
       'set -euo pipefail',
       `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
       'if [ "$1" = "enable" ]; then exit 0; fi',
+      'exit 1',
+      '',
+    ].join('\n'));
+    writeExecutable(path.join(binDir, 'sleep'), ['#!/usr/bin/env bash', 'exit 0', ''].join('\n'));
+
+    assert.throws(() => execFileSync('bash', [script], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        HAPPIER_COREPACK_MAX_ATTEMPTS: '3',
+        HAPPIER_COREPACK_RETRY_DELAY_SECONDS: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    }));
+    assert.equal(fs.readFileSync(logPath, 'utf8').trim().split('\n').filter((line) => line.startsWith('prepare ')).length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Corepack Yarn preparation remains bounded when transient downloads keep failing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-corepack-bounded-'));
+  try {
+    const binDir = path.join(root, 'bin');
+    const logPath = path.join(root, 'corepack.log');
+    fs.mkdirSync(binDir);
+    writeExecutable(path.join(binDir, 'corepack'), [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}`,
+      'if [ "$1" = "enable" ]; then exit 0; fi',
+      'echo "Internal Error: Error when performing the request" >&2',
       'exit 1',
       '',
     ].join('\n'));

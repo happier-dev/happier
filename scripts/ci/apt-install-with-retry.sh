@@ -1,10 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+OPTIONAL_PACKAGE_GROUPS=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --optional-first-available=*)
+            optional_group="${1#*=}"
+            if [ -z "$optional_group" ]; then
+                echo "apt-install-with-retry.sh: optional package group must not be empty" >&2
+                exit 64
+            fi
+            OPTIONAL_PACKAGE_GROUPS+=("$optional_group")
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        --*)
+            echo "apt-install-with-retry.sh: unknown option: $1" >&2
+            exit 64
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 if [ "$#" -eq 0 ]; then
-    echo "usage: apt-install-with-retry.sh <package> [<package> ...]" >&2
+    echo "usage: apt-install-with-retry.sh [--optional-first-available=<package>,<package> ...] [--] <package> [<package> ...]" >&2
     exit 64
 fi
+
+REQUIRED_PACKAGES=("$@")
 
 LOG_PATH="${APT_INSTALL_LOG_PATH:-${TMPDIR:-/tmp}/apt-install.log}"
 MAX_ATTEMPTS="${APT_INSTALL_MAX_ATTEMPTS:-4}"
@@ -35,15 +63,34 @@ clear_apt_state() {
 }
 
 run_apt_install() {
+    local install_packages=("${REQUIRED_PACKAGES[@]}")
+    local optional_group
+    local candidate
+    local optional_candidates=()
+
     apt-get "${APT_FLAGS[@]}" update >"$LOG_PATH" 2>&1 || return $?
-    apt-get "${APT_FLAGS[@]}" install -y --no-install-recommends "$@" >>"$LOG_PATH" 2>&1
+
+    # Optional package names differ between supported Ubuntu runner images.
+    # Resolve them only after this attempt has refreshed apt metadata, then
+    # install the selected names in the same bounded transaction.
+    for optional_group in "${OPTIONAL_PACKAGE_GROUPS[@]}"; do
+        IFS=',' read -r -a optional_candidates <<< "$optional_group"
+        for candidate in "${optional_candidates[@]}"; do
+            if apt-cache show -- "$candidate" >/dev/null 2>&1; then
+                install_packages+=("$candidate")
+                break
+            fi
+        done
+    done
+
+    apt-get "${APT_FLAGS[@]}" install -y --no-install-recommends "${install_packages[@]}" >>"$LOG_PATH" 2>&1
 }
 
 export DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}"
 
 attempt=1
 while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
-    if run_apt_install "$@"; then
+    if run_apt_install; then
         rm -f "$LOG_PATH" || true
         exit 0
     fi

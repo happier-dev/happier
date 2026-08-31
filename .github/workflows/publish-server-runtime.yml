@@ -71,6 +71,7 @@ jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -103,6 +104,7 @@ jobs:
   release_actor_guard:
     name: Release actor guard and bind source
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [trusted_ref_guard]
     permissions:
       contents: read
@@ -213,6 +215,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
     steps:
@@ -267,6 +270,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard, build_candidate]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
     environment: release-shared
     permissions:
       contents: read
@@ -390,6 +394,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard, build_candidate, finalize_darwin]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: release-shared
     permissions:
       contents: read
@@ -462,6 +467,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
@@ -520,6 +526,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard, promote_existing]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
