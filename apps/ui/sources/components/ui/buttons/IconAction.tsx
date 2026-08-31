@@ -1,6 +1,13 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { GestureResponderEvent, PressableProps, StyleProp, ViewStyle } from 'react-native';
+import type {
+    AccessibilityRole,
+    AccessibilityState,
+    GestureResponderEvent,
+    PressableProps,
+    StyleProp,
+    ViewStyle,
+} from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { PressableSurface } from '@/components/ui/interaction/PressableSurface';
@@ -34,6 +41,8 @@ export type IconActionProps = Readonly<{
     onPress?: (event: GestureResponderEvent) => void;
     /** Required: a glyph alone is not an accessible name, and it doubles as the web tooltip. */
     accessibilityLabel: string;
+    accessibilityRole?: AccessibilityRole;
+    accessibilityState?: AccessibilityState;
     size?: IconActionSize;
     /**
      * Extends the touch target beyond the painted box.
@@ -105,6 +114,8 @@ export const IconAction = React.memo((props: IconActionProps) => {
             disabled={props.disabled}
             active={props.active}
             accessibilityLabel={props.accessibilityLabel}
+            accessibilityRole={props.accessibilityRole}
+            accessibilityState={props.accessibilityState}
             webTooltip={props.accessibilityLabel}
             focusRingRadius={ICON_ACTION_RADIUS_PX[size]}
             style={[

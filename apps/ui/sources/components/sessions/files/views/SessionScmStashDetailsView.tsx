@@ -6,6 +6,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/model/diff/diffViewModel';
 import { useScmDiffExpandedKeys } from '@/components/sessions/files/content/review/useScmDiffExpandedKeys';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -560,9 +561,10 @@ export const SessionScmStashDetailsView = React.memo((props: SessionScmStashDeta
                 ) : null}
             </View>
 
-            {Platform.OS === 'web' ? (
-                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, alignItems: 'flex-start' }}>
-                    <DiffPresentationStyleToggleButton />
+            {!diffState.loading && !diffState.error && diffFiles.length > 0 ? (
+                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                    <WrapLinesToggleButton />
                 </View>
             ) : null}
 

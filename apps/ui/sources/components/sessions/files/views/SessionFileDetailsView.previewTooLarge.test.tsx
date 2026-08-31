@@ -272,6 +272,7 @@ describe('SessionFileDetailsView (preview too large)', () => {
     await act(async () => {});
 
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
+    expect(tree.findByType('FileActionToolbar' as any).props.showWrapLinesToggle).toBe(false);
     expect(tree.findAllByTestId('file-preview-unavailable-banner').length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(0);
   });

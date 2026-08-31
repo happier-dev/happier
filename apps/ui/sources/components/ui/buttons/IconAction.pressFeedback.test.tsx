@@ -110,6 +110,19 @@ describe('IconAction press feedback', () => {
         expect(screen.findHostByTestId('icon-action')?.props.hitSlop).toBe(8);
     });
 
+    it('forwards switch semantics for icon-only toggles', async () => {
+        const screen = await renderAction({
+            accessibilityRole: 'switch',
+            accessibilityState: { checked: true },
+        });
+
+        expect(screen.findHostByTestId('icon-action')?.props.accessibilityRole).toBe('switch');
+        expect(screen.findHostByTestId('icon-action')?.props.accessibilityState).toEqual({
+            checked: true,
+            disabled: false,
+        });
+    });
+
     it('shows the focus ring for keyboard traversal only', async () => {
         const screen = await renderAction();
 
