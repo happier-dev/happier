@@ -1,3 +1,6 @@
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import {
   createPlaywrightSpawnOptions,
@@ -5,6 +8,9 @@ import {
   runHeartbeatWrappedCommand,
   resolveSignalExitCode,
 } from './runPlaywrightWithHeartbeat.shared.mjs';
+
+const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(scriptsDir, '../../..');
 
 const { config, passThrough } = parseHeartbeatArgs(process.argv);
 if (!config) {
@@ -19,6 +25,8 @@ const invocation = resolveYarnCommandInvocation(childArgs);
 await runHeartbeatWrappedCommand({
   toolName: 'playwright',
   config,
+  diagnosticPath: process.env.HAPPIER_CI_DIAGNOSTIC_PATH
+    || resolve(repoRoot, '.project/logs/e2e/playwright-heartbeat-diagnostic.ndjson'),
   command: invocation.command,
   args: invocation.args,
   spawnOptions: {

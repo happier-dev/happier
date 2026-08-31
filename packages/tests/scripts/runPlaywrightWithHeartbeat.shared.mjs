@@ -1,4 +1,10 @@
 import { runManagedChildCommand } from './managedChildLifecycle.mjs';
+import {
+  appendHeartbeatDiagnostic,
+  initializeHeartbeatDiagnostic,
+  readCgroupMemorySnapshot,
+  resolveOomKillDelta,
+} from './heartbeatDiagnostic.mjs';
 
 export { installParentDeathCleanupWatchdog, resolveSignalExitCode } from './managedChildLifecycle.mjs';
 
@@ -48,6 +54,18 @@ function elapsedSeconds(startedAtMs) {
 
 export async function runHeartbeatWrappedCommand(params) {
   const startedAt = Date.now();
+  const initialMemory = params.diagnosticPath ? await readCgroupMemorySnapshot() : null;
+  if (params.diagnosticPath) {
+    await initializeHeartbeatDiagnostic(params.diagnosticPath, {
+      event: 'start',
+      tool: params.toolName,
+      config: params.config,
+      command: params.command,
+      args: params.args,
+      pid: process.pid,
+      cgroupMemory: initialMemory,
+    });
+  }
   // eslint-disable-next-line no-console
   console.log(`[tests] starting: ${params.command} ${params.args.join(' ')}`);
 
@@ -86,12 +104,35 @@ export async function runHeartbeatWrappedCommand(params) {
   clearHeartbeat();
 
   if (!result.ok) {
+    if (params.diagnosticPath) {
+      await appendHeartbeatDiagnostic(params.diagnosticPath, {
+        event: 'spawn-error',
+        message: result.error.message,
+      });
+    }
     // eslint-disable-next-line no-console
     console.error(`[tests] failed to start ${params.toolName}: ${result.error.message}`);
     process.exit(1);
   }
 
   const exitCode = params.resolveExitCode(result);
+  const finalMemory = params.diagnosticPath ? await readCgroupMemorySnapshot() : null;
+  const oomKillDelta = resolveOomKillDelta(initialMemory, finalMemory);
+  if (params.diagnosticPath) {
+    await appendHeartbeatDiagnostic(params.diagnosticPath, {
+      event: 'exit',
+      code: exitCode,
+      childCode: result.code,
+      signal: result.signal,
+      elapsedSeconds: elapsedSeconds(startedAt),
+      cgroupMemory: finalMemory,
+      oomKillDelta,
+    });
+  }
+  if (oomKillDelta !== null && oomKillDelta > 0) {
+    // eslint-disable-next-line no-console
+    console.error(`[tests] cgroup reported ${oomKillDelta} OOM-killed process(es) during ${params.toolName}`);
+  }
   // eslint-disable-next-line no-console
   console.log(
     `[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`
