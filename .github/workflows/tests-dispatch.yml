@@ -288,6 +288,9 @@ jobs:
   tests:
     name: Tests (reusable)
     needs: [resolve, release_actor_guard]
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:

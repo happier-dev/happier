@@ -634,6 +634,7 @@ jobs:
     if: ${{ inputs.dry_run != true && needs.plan.outputs.risk_platform_services == 'true' && (needs.plan.outputs.publish_server_runtime_needed == 'true' || needs.plan.outputs.publish_cli_binaries_needed == 'true' || needs.plan.outputs.publish_stack == 'true') }}
     permissions:
       contents: read
+      pull-requests: read
     uses: ./.github/workflows/tests.yml
     with:
       checkout_sha: ${{ needs.plan.outputs.source_sha }}

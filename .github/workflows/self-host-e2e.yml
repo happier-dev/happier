@@ -16,6 +16,9 @@ concurrency:
 jobs:
   self_host:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/tests.yml
     with:
       select_jobs_explicitly: true
