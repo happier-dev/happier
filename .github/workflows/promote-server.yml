@@ -95,6 +95,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -118,6 +119,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -135,6 +137,7 @@ jobs:
   resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
       source_ref: ${{ steps.resolve.outputs.source_ref }}
@@ -244,6 +247,7 @@ jobs:
   apply_bump:
     needs: [release_actor_guard, resolve_source, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     outputs:
       candidate_sha: ${{ steps.select.outputs.candidate_sha }}
@@ -305,6 +309,7 @@ jobs:
   validate_candidate:
     needs: [release_actor_guard, resolve_source]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -371,6 +376,7 @@ jobs:
   finalize_source:
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       authorized_sha: ${{ steps.bind.outputs.authorized_sha }}
     steps:
@@ -421,6 +427,7 @@ jobs:
     if: always() && needs.finalize_source.result == 'success' && (needs.publish_runtime_release.result == 'success' || needs.publish_runtime_release.result == 'skipped')
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate, finalize_source, publish_runtime_release]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     env:
       RUNTIME_ACTIVITY_ROLLOUT_STAGE: ${{ inputs.environment == 'production' && vars.HAPPIER_PRODUCTION_SERVER_RUNTIME_ACTIVITY_ROLLOUT_STAGE || vars.HAPPIER_PREVIEW_SERVER_RUNTIME_ACTIVITY_ROLLOUT_STAGE }}

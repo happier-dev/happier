@@ -83,6 +83,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -106,6 +107,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -124,6 +126,7 @@ jobs:
   resolve_source:
     name: Resolve source ref to SHA
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [release_actor_guard]
     permissions:
       contents: read
@@ -238,6 +241,7 @@ jobs:
     name: Build desktop candidate (${{ matrix.platform_key }})
     if: ${{ needs.resolve_source.outputs.retry_version == '' }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
     needs: [resolve_source]
     permissions:
       contents: read
@@ -410,6 +414,7 @@ jobs:
   finalize:
     name: Finalize desktop artifacts (${{ matrix.platform_key }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
     needs: [resolve_source, build]
     permissions:
       contents: read
@@ -658,6 +663,7 @@ jobs:
   prepare_assets:
     name: Prepare latest.json + publish assets
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [resolve_source, finalize]
     permissions:
       contents: read
@@ -771,6 +777,7 @@ jobs:
     if: ${{ always() && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
     needs: [resolve_source, publish_stable_release]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     environment: release-shared

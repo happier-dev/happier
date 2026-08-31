@@ -70,6 +70,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -93,6 +94,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -110,6 +112,7 @@ jobs:
   resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
       candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
@@ -202,6 +205,7 @@ jobs:
   validate_candidate:
     needs: [resolve_source]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -248,6 +252,7 @@ jobs:
   promote:
     needs: [release_actor_guard, resolve_source, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     steps:
       - name: Checkout trusted promotion control
@@ -311,6 +316,7 @@ jobs:
   deploy_cloudflare:
     needs: [promote]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: docs-deploy
     permissions:
       contents: read

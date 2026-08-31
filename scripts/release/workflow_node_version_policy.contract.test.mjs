@@ -82,14 +82,33 @@ test('release and extended validation workflows use canonical Corepack and depen
   }
 });
 
-test('long-running candidate and promotion workflows bound every runner job', async () => {
+test('release workflows bound every runner job', async () => {
   const files = [
+    'build-tauri.yml',
+    'build-ui-mobile-local.yml',
+    'extended-db-tests.yml',
+    'nightly-dev.yml',
+    'promote-docs.yml',
+    'promote-server.yml',
     'promote-ui.yml',
+    'promote-website.yml',
     'publish-cli-binaries.yml',
+    'publish-docker.yml',
     'publish-hstack-binaries.yml',
     'publish-server-runtime.yml',
     'publish-ui-web.yml',
+    'release-npm.yml',
+    'release.yml',
+    'resolve-release-resume.yml',
   ];
+  const longLaneMinimums = {
+    'build-tauri.yml': { build: 180, finalize: 240 },
+    'build-ui-mobile-local.yml': { build_android: 180, build_ios: 180, ota_update: 90 },
+    'promote-docs.yml': { deploy_cloudflare: 60 },
+    'promote-website.yml': { deploy_cloudflare: 60 },
+    'publish-docker.yml': { publish: 120 },
+    'release-npm.yml': { release: 120 },
+  };
 
   for (const file of files) {
     const workflow = YAML.parse(await readFile(join(workflowsDir, file), 'utf8'));
@@ -98,6 +117,12 @@ test('long-running candidate and promotion workflows bound every runner job', as
       assert.ok(
         Number.isInteger(job['timeout-minutes']) && job['timeout-minutes'] > 0,
         `${file}/${jobName} must declare a positive timeout-minutes bound`,
+      );
+    }
+    for (const [jobName, minimum] of Object.entries(longLaneMinimums[file] ?? {})) {
+      assert.ok(
+        workflow.jobs?.[jobName]?.['timeout-minutes'] >= minimum,
+        `${file}/${jobName} must reserve at least ${minimum} minutes for its native or external operation`,
       );
     }
   }

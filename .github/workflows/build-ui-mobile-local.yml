@@ -153,6 +153,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -176,6 +177,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -194,6 +196,7 @@ jobs:
     name: Validate EXPO_TOKEN
     if: ${{ inputs.retry_version == '' && (inputs.action == 'ota' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: release-shared
     steps:
       - name: Fail when EXPO_TOKEN is missing
@@ -209,6 +212,7 @@ jobs:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
     if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: release-shared
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
@@ -225,6 +229,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       contents: write
     environment: release-shared
@@ -306,6 +311,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: macos-26
+    timeout-minutes: 180
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
@@ -387,6 +393,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.action == 'ota' }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
@@ -434,6 +441,7 @@ jobs:
     if: ${{ inputs.retry_version != '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
