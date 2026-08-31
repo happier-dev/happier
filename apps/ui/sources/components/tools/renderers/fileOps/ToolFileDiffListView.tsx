@@ -6,6 +6,7 @@ import type { ToolViewProps } from '../core/_registry';
 import type { DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { useDiffFilesExpansionState } from '@/components/ui/code/diff/useDiffFilesExpansionState';
 import { useInlineUnifiedDiffReviewCommentsRenderer } from '@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
@@ -64,8 +65,9 @@ export const ToolFileDiffListView = React.memo<ToolFileDiffListViewProps>(({
     const headerActionsNode = React.useMemo(() => {
         if (!showFileList) return null;
         const showPresentationToggle = Platform.OS === 'web';
+        const showWrapLinesToggle = effectiveDetailLevel === 'full';
         const showExpandCollapse = files.length > 1;
-        if (!showPresentationToggle && !showExpandCollapse) return null;
+        if (!showPresentationToggle && !showWrapLinesToggle && !showExpandCollapse) return null;
 
         return (
             <View style={styles.headerControlsRow}>
@@ -82,9 +84,10 @@ export const ToolFileDiffListView = React.memo<ToolFileDiffListViewProps>(({
                 ) : null}
 
                 {showPresentationToggle ? <DiffPresentationStyleToggleButton /> : null}
+                {showWrapLinesToggle ? <WrapLinesToggleButton /> : null}
             </View>
         );
-    }, [allExpanded, files.length, setAllExpanded, showFileList]);
+    }, [allExpanded, effectiveDetailLevel, files.length, setAllExpanded, showFileList]);
 
     useToolHeaderActions(headerActionsNode);
 

@@ -30,6 +30,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/model/diff/diffViewModel';
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
 import { useInlineUnifiedDiffReviewCommentsRenderer } from '@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -396,11 +397,10 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                 )}
             </View>
 
-            {Platform.OS === 'web' ? (
-                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, alignItems: 'flex-start' }}>
-                    <DiffPresentationStyleToggleButton />
-                </View>
-            ) : null}
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {Platform.OS === 'web' ? <DiffPresentationStyleToggleButton /> : null}
+                <WrapLinesToggleButton />
+            </View>
 
             <DiffFilesListView
                 files={diffFiles}

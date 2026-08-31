@@ -257,6 +257,10 @@ vi.mock('@/components/ui/code/diff/DiffPresentationStyleToggleButton', () => ({
     DiffPresentationStyleToggleButton: 'DiffPresentationStyleToggleButton',
 }));
 
+vi.mock('@/components/ui/code/WrapLinesToggleButton', () => ({
+    WrapLinesToggleButton: 'WrapLinesToggleButton',
+}));
+
 vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () => ({
     DiffReviewCommentsViewer: 'DiffReviewCommentsViewer',
 }));
@@ -289,6 +293,7 @@ describe('SessionCommitDetailsView', () => {
         expect(sessionScmDiffCommitSpy).toHaveBeenCalled();
         expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
         expect(tree.findAllByType('DiffPresentationStyleToggleButton' as any)).toHaveLength(1);
+        expect(tree.findAllByType('WrapLinesToggleButton' as any)).toHaveLength(1);
         expect(tree.findAllByType('ScrollView' as any)).toHaveLength(0);
     });
 

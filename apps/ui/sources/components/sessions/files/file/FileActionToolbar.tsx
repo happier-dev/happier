@@ -14,6 +14,7 @@ import { StyleSheet as RNStyleSheet } from 'react-native';
 import { IconAction } from '@/components/ui/buttons/IconAction';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 
 export type FileDisplayMode = 'file' | 'diff' | 'markdown';
 export type FileDiffMode = 'included' | 'pending' | 'both';
@@ -34,6 +35,7 @@ type FileActionToolbarProps = {
     showDiffToggle?: boolean;
     showFileToggle?: boolean;
     showMarkdownToggle?: boolean;
+    showWrapLinesToggle?: boolean;
     diffMode: FileDiffMode;
     onDiffMode: (mode: FileDiffMode) => void;
     hasPendingDelta: boolean;
@@ -89,6 +91,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         showDiffToggle,
         showFileToggle,
         showMarkdownToggle,
+        showWrapLinesToggle,
         diffMode,
         onDiffMode,
         hasPendingDelta,
@@ -417,6 +420,8 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     })}
                 />
             ) : null}
+
+            {showWrapLinesToggle === true ? <WrapLinesToggleButton /> : null}
 
             {showFileEditorActions && !isEditingFile && onStartEditingFile ? (
                 <IconAction
