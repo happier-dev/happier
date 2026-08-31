@@ -5,12 +5,13 @@ import {
   ReviewStartInputSchema,
   SessionUsageLimitRecoveryOperationResultV1Schema,
 } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const mocks = vi.hoisted(() => ({
   axiosGet: vi.fn(async (): Promise<unknown> => ({ status: 200, data: { id: 'acct_1', connectedServicesV2: [] } })),
   bootstrapAccountSettingsContext: vi.fn(async (): Promise<unknown> => ({ settings: {}, settingsVersion: 1, loadedAtMs: 1 })),
   callSessionRpc: vi.fn(async () => ({ ok: true })),
+  callMachineRpc: vi.fn(async (_params: unknown): Promise<unknown> => ({ type: 'success', sessionId: 'sess_1' })),
   createSpawnedSession: vi.fn(async () => ({
     sessionId: 'spawned_1',
     created: true,
@@ -76,6 +77,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
   readSettings: mocks.readSettings,
 }));
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({ callSessionRpc: mocks.callSessionRpc }));
+vi.mock('@/session/transport/rpc/machineRpc', () => ({ callMachineRpc: mocks.callMachineRpc }));
 vi.mock('@/session/services/createSpawnedSession', () => ({ createSpawnedSession: mocks.createSpawnedSession }));
 vi.mock('@/session/services/getSessionEvents', () => ({ getSessionEvents: mocks.getSessionEvents }));
 vi.mock('@/session/services/getSessionTranscript', () => ({ getSessionTranscript: mocks.getSessionTranscript }));
@@ -118,6 +120,8 @@ describe('createCliActionDeps session controls', () => {
     mocks.bootstrapAccountSettingsContext.mockResolvedValue({ settings: {}, settingsVersion: 1, loadedAtMs: 1 });
     mocks.callSessionRpc.mockReset();
     mocks.callSessionRpc.mockResolvedValue({ ok: true });
+    mocks.callMachineRpc.mockReset();
+    mocks.callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'sess_1' });
     mocks.createSpawnedSession.mockReset();
     mocks.createSpawnedSession.mockResolvedValue({
       sessionId: 'spawned_1',
@@ -1496,6 +1500,121 @@ describe('createCliActionDeps session controls', () => {
 
     expect(retryTemporaryThrottleNow).toHaveBeenCalledWith({ sessionId: 'sess_1' });
     expect(mocks.callSessionRpc).not.toHaveBeenCalled();
+    expect(mocks.getSessionUsageLimitRecoveryControlAdapter).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['live control succeeds', {
+      ok: true,
+      status: 'ready',
+      sessionId: 'sess_stale',
+    }, false],
+    ['app-server control is unavailable', {
+      ok: false,
+      errorCode: 'codex_app_server_control_unavailable',
+      error: 'codex_app_server_control_unavailable',
+    }, true],
+    ['the stale Session RPC is unreachable', {
+      ok: false,
+      errorCode: 'session_rpc_failed',
+      error: 'session_rpc_failed',
+    }, true],
+  ])('handles a stale active Codex session when %s', async (_scenario, liveResult, shouldSpawn) => {
+    mocks.callSessionRpc.mockResolvedValueOnce(liveResult);
+    mocks.callMachineRpc.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_stale' });
+    mocks.resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true as const,
+      sessionId: 'sess_stale',
+      rawSession: {
+        id: 'sess_stale',
+        active: true,
+        latestTurnStatus: 'failed',
+        path: '/repo',
+        machineId: 'machine-local',
+        lastRuntimeIssue: {
+          v: 1,
+          scope: 'primary_session',
+          status: 'failed',
+          code: 'usage_limit',
+          source: 'usage_limit',
+          provider: 'codex',
+          providerTurnId: 'turn-usage-limited',
+          occurredAt: 1_700_000_000_000,
+          usageLimit: {
+            v: 1,
+            resetAtMs: null,
+            retryAfterMs: null,
+            quotaScope: 'account',
+            recoverability: 'wait',
+          },
+        },
+        metadata: {
+          machineId: 'machine-local',
+          path: '/repo',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            providerId: 'codex',
+            provider: {
+              backendMode: 'appServer',
+              vendorSessionId: 'codex-thread-persisted',
+            },
+          },
+          codexSessionId: 'codex-thread-persisted',
+        },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(3),
+        encryptionVariant: 'legacy' as const,
+      },
+      mode: 'plain' as const,
+    });
+    const credentials = createCredentials();
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials,
+      sessionId: 'sess_current',
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(1),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+      rawSession: { metadata: {} },
+    });
+
+    await expect(deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess_stale', provider: 'codex' })).resolves.toEqual({
+      ok: true,
+      status: shouldSpawn ? 'resumed' : 'ready',
+      sessionId: 'sess_stale',
+    });
+
+    expect(mocks.callSessionRpc).toHaveBeenCalledTimes(1);
+    if (!shouldSpawn) {
+      expect(mocks.callMachineRpc).not.toHaveBeenCalled();
+      return;
+    }
+    expect(mocks.callMachineRpc).toHaveBeenCalledTimes(1);
+    expect(mocks.callMachineRpc).toHaveBeenCalledWith({
+      credentials,
+      machineId: 'machine-local',
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      request: expect.objectContaining({
+        type: 'resume-session',
+        sessionId: 'sess_stale',
+        directory: '/repo',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'codex',
+          provider: {
+            backendMode: 'appServer',
+            vendorSessionId: 'codex-thread-persisted',
+          },
+        },
+      }),
+    });
+    const machineCall = mocks.callMachineRpc.mock.calls[0]?.[0] as { request?: unknown } | undefined;
+    const spawnRequest = machineCall?.request;
+    expect(spawnRequest).not.toHaveProperty('message');
+    expect(spawnRequest).not.toHaveProperty('prompt');
     expect(mocks.getSessionUsageLimitRecoveryControlAdapter).not.toHaveBeenCalled();
   });
 

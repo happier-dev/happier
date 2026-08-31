@@ -93,10 +93,6 @@ function buildMachineResumeRequest(
 }
 
 /**
- * Explicit CLI-user-action seam for inactive parent-session delivery.
- * Persisted queue/usage/marker reconstruction has no reference to this service.
- */
-/**
  * The only thrown failure that is a capability statement is a daemon that does
  * not carry the spawn method at all. A timeout is its own outcome; everything
  * else is transport or machine work that failed after the request went out.
@@ -110,7 +106,7 @@ function resolveThrownResumeFailureCode(
   return 'resume_failed';
 }
 
-export async function requestInactiveSessionResume(params: Readonly<{
+export type EnsureSessionRuntimeForPendingInputParams = Readonly<{
   credentials: Credentials;
   sessionId: string;
   localId: string;
@@ -118,7 +114,12 @@ export async function requestInactiveSessionResume(params: Readonly<{
   metadata: Record<string, unknown>;
   timeoutMs?: number;
   waitForReady?: boolean;
-}>): Promise<InactiveSessionResumeResult> {
+}>;
+
+/** Canonical full-runtime ensure for an existing Session and its persisted provider thread. */
+export async function ensureSessionRuntimeForPendingInput(
+  params: EnsureSessionRuntimeForPendingInputParams,
+): Promise<InactiveSessionResumeResult> {
   const archivedAt = (params.rawSession as { archivedAt?: unknown }).archivedAt;
   if (archivedAt !== null && archivedAt !== undefined) {
     return {
@@ -262,4 +263,11 @@ export async function requestInactiveSessionResume(params: Readonly<{
       message,
     };
   }
+}
+
+/** Explicit CLI-user-action seam for callers that have already proven the Session inactive. */
+export async function requestInactiveSessionResume(
+  params: EnsureSessionRuntimeForPendingInputParams,
+): Promise<InactiveSessionResumeResult> {
+  return await ensureSessionRuntimeForPendingInput(params);
 }

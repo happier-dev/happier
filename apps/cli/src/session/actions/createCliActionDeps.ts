@@ -59,7 +59,10 @@ import { getSessionStatus } from '@/session/services/getSessionStatus';
 import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
-import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
+import {
+  ensureSessionRuntimeForPendingInput,
+  requestInactiveSessionResume,
+} from '@/session/services/requestInactiveSessionResume';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { setSessionArchivedState } from '@/session/services/setSessionArchivedState';
 import { setSessionModel } from '@/session/services/setSessionModel';
@@ -986,6 +989,7 @@ export function createCliActionDeps(params: Readonly<{
         result: { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
       });
     }
+    const credentials = params.credentials;
 
     const transport = await resolveTransportForSession(sessionId);
     if (!transport.ok) {
@@ -1019,13 +1023,25 @@ export function createCliActionDeps(params: Readonly<{
       ctx: transport.ctx,
       mode: transport.mode,
       resumePromptTierSources: buildRoutedResumePromptTierSources({
-        credentials: params.credentials,
+        credentials,
         metadata,
         rawSession: transport.rawSession,
       }),
       ...(params.resumeInactiveSessionWhenUsageLimitReady
         ? { resumeInactiveSessionWhenReady: params.resumeInactiveSessionWhenUsageLimitReady }
         : {}),
+      ensureSessionRuntimeForPendingInput: async (input: Readonly<{
+        sessionId: string;
+        rawSession: RawSessionRecord;
+        metadata: Record<string, unknown>;
+        requestId: string;
+      }>) => (await ensureSessionRuntimeForPendingInput({
+        credentials,
+        sessionId: input.sessionId,
+        localId: input.requestId,
+        rawSession: input.rawSession,
+        metadata: input.metadata,
+      })).ok,
       ...(params.retryTemporaryThrottleNow
         ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
         : {}),

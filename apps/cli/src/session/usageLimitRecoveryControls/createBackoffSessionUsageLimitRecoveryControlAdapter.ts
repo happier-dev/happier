@@ -1,6 +1,5 @@
 import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SessionRuntimeIssueV1Schema,
   SessionUsageLimitRecoveryV1Schema,
   type ConnectedServiceId,
   type SessionRuntimeIssueV1,
@@ -12,6 +11,7 @@ import type {
   SessionUsageLimitRecoveryControlAdapterParams,
 } from './sessionUsageLimitRecoveryControlTypes';
 import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
+import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from './usageLimitRecoverySelectedAuth';
 
 type MetadataRecord = Record<string, unknown>;
@@ -69,18 +69,11 @@ function readLatestUsageLimitIssue(input: Readonly<{
   providerId: string;
   issueProviderFilter?: string | null;
 }>): SessionRuntimeIssueV1 | null {
-  if (input.params.rawSession.latestTurnStatus != null && input.params.rawSession.latestTurnStatus !== 'failed') {
+  const issue = readLatestUsageLimitFailureIssue(input.params.rawSession);
+  if (!issue || (input.issueProviderFilter && issue.provider !== input.issueProviderFilter)) {
     return null;
   }
-
-  const parsed = SessionRuntimeIssueV1Schema.safeParse(input.params.rawSession.lastRuntimeIssue);
-  if (!parsed.success || parsed.data.source !== 'usage_limit' || !parsed.data.usageLimit) {
-    return null;
-  }
-  if (input.issueProviderFilter && parsed.data.provider !== input.issueProviderFilter) {
-    return null;
-  }
-  return parsed.data;
+  return issue;
 }
 
 function buildUsageLimitIssueFingerprint(input: Readonly<{

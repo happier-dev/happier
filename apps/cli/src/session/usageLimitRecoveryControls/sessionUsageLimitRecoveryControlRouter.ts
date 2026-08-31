@@ -39,6 +39,7 @@ import {
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from './usageLimitRecoverySelectedAuth';
 import { persistUsageLimitRecoveryFieldDurably } from './persistUsageLimitRecoveryFieldDurably';
 import { hasSameUsageLimitRecoveryIdentity } from './mergeUsageLimitRecoveryIntent';
+import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
 
 type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   token: string;
@@ -59,6 +60,12 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
     sessionId: string;
     rawSession: RawSessionRecord;
     metadata: Record<string, unknown>;
+  }>) => Promise<boolean> | boolean;
+  ensureSessionRuntimeForPendingInput?: (input: Readonly<{
+    sessionId: string;
+    rawSession: RawSessionRecord;
+    metadata: Record<string, unknown>;
+    requestId: string;
   }>) => Promise<boolean> | boolean;
   resolveAdapter?: ResolveSessionUsageLimitRecoveryControlAdapter;
   /**
@@ -158,19 +165,32 @@ function resolveAgentId(metadata: Record<string, unknown>): AgentId | null {
   return inferAgentIdFromSessionMetadata(metadata);
 }
 
-function shouldFallbackFromLiveSessionUsageLimitRpc(result: unknown): boolean {
+function hasLiveSessionUsageLimitRpcFailureCode(
+  result: unknown,
+  failureCodes: readonly string[],
+): boolean {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
   const raw = result as Record<string, unknown>;
   const errorCode = typeof raw.errorCode === 'string' ? raw.errorCode : '';
   const error = typeof raw.error === 'string' ? raw.error : '';
-  return errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-    || errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
-    || errorCode === 'unsupported_session_runtime_method'
-    || errorCode === 'session_rpc_failed'
-    || error === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-    || error === RPC_ERROR_CODES.METHOD_NOT_FOUND
-    || error === 'unsupported_session_runtime_method'
-    || error === 'session_rpc_failed';
+  return failureCodes.includes(errorCode) || failureCodes.includes(error);
+}
+
+function shouldFallbackFromLiveSessionUsageLimitRpc(result: unknown): boolean {
+  return hasLiveSessionUsageLimitRpcFailureCode(result, [
+    RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+    RPC_ERROR_CODES.METHOD_NOT_FOUND,
+    'unsupported_session_runtime_method',
+    'session_rpc_failed',
+    'codex_app_server_control_unavailable',
+  ]);
+}
+
+function shouldEnsureSessionRuntimeAfterLiveFailure(result: unknown): boolean {
+  return hasLiveSessionUsageLimitRpcFailureCode(result, [
+    'session_rpc_failed',
+    'codex_app_server_control_unavailable',
+  ]);
 }
 
 async function buildAdapterParams(
@@ -266,30 +286,24 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
     resumePromptMode: 'standard' | 'off' | 'custom';
   }>,
 ): SessionUsageLimitRecoveryV1 | null {
-  if (params.rawSession.latestTurnStatus != null && params.rawSession.latestTurnStatus !== 'failed') {
-    return null;
-  }
-
-  const issueParsed = SessionRuntimeIssueV1Schema.safeParse(params.rawSession.lastRuntimeIssue);
-  if (!issueParsed.success || issueParsed.data.source !== 'usage_limit' || !issueParsed.data.usageLimit) {
-    return null;
-  }
+  const issue = readLatestUsageLimitFailureIssue(params.rawSession);
+  if (!issue?.usageLimit) return null;
 
   const selectedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({
-    issue: issueParsed.data,
+    issue,
   }) ?? { kind: 'native' };
 
   const timing = deriveUsageLimitRecoveryTiming({
-    occurredAtMs: issueParsed.data.occurredAt,
-    resetAtMs: issueParsed.data.usageLimit.resetAtMs,
-    retryAfterMs: issueParsed.data.usageLimit.retryAfterMs,
+    occurredAtMs: issue.occurredAt,
+    resetAtMs: issue.usageLimit.resetAtMs,
+    retryAfterMs: issue.usageLimit.retryAfterMs,
   });
 
   return {
     v: 1,
     status: 'waiting',
-    issueFingerprint: params.issueFingerprint ?? buildUsageLimitIssueFingerprint(issueParsed.data),
-    armedAtMs: issueParsed.data.occurredAt,
+    issueFingerprint: params.issueFingerprint ?? buildUsageLimitIssueFingerprint(issue),
+    armedAtMs: issue.occurredAt,
     resetAtMs: timing.resetAtMs,
     nextCheckAtMs: timing.nextCheckAtMs,
     attemptCount: 0,
@@ -495,6 +509,25 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     const liveResult = await params.callLiveSessionRpc();
     if (!shouldFallbackFromLiveSessionUsageLimitRpc(liveResult)) {
       return operationResult(params, liveResult);
+    }
+    const latestUsageLimitIssue = params.rawSession.latestTurnStatus === 'failed'
+      ? readLatestUsageLimitFailureIssue(params.rawSession)
+      : null;
+    if (
+      latestUsageLimitIssue
+      && params.metadata
+      && params.ensureSessionRuntimeForPendingInput
+      && shouldEnsureSessionRuntimeAfterLiveFailure(liveResult)
+    ) {
+      const ensured = await params.ensureSessionRuntimeForPendingInput({
+        sessionId: params.sessionId,
+        rawSession: params.rawSession,
+        metadata: params.metadata,
+        requestId: `session.usageLimit.checkNow:${latestUsageLimitIssue.providerTurnId ?? latestUsageLimitIssue.occurredAt}`,
+      });
+      return ensured
+        ? operationResult(params, { ok: true, status: 'resumed', sessionId: params.sessionId })
+        : operationResult(params, liveResult);
     }
   }
 
