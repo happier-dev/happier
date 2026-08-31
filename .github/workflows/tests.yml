@@ -2297,6 +2297,10 @@ jobs:
               ubuntu_2204=blacksmith-4vcpu-ubuntu-2204
               ubuntu_2404=blacksmith-4vcpu-ubuntu-2404
               ;;
+            blacksmith-linux-8vcpu)
+              ubuntu_2204=blacksmith-8vcpu-ubuntu-2204
+              ubuntu_2404=blacksmith-8vcpu-ubuntu-2404
+              ;;
             *)
               echo "Unsupported runner_pool: $RUNNER_POOL" >&2
               exit 1

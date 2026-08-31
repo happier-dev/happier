@@ -51,7 +51,7 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     required: true,
     default: 'github',
     type: 'choice',
-    options: ['github', 'blacksmith-linux-4vcpu'],
+    options: ['github', 'blacksmith-linux-4vcpu', 'blacksmith-linux-8vcpu'],
   });
   assert.deepEqual(tests.on.workflow_call.inputs.runner_pool, {
     description: 'Runner pool for approved non-secret Linux test lanes',
@@ -81,6 +81,13 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
   assert.deepEqual(blacksmith.outputs, {
     ubuntu_2204: 'blacksmith-4vcpu-ubuntu-2204',
     ubuntu_2404: 'blacksmith-4vcpu-ubuntu-2404',
+  });
+
+  const blacksmith8vcpu = resolveRunnerPool(resolver, 'blacksmith-linux-8vcpu');
+  assert.equal(blacksmith8vcpu.status, 0, blacksmith8vcpu.stderr);
+  assert.deepEqual(blacksmith8vcpu.outputs, {
+    ubuntu_2204: 'blacksmith-8vcpu-ubuntu-2204',
+    ubuntu_2404: 'blacksmith-8vcpu-ubuntu-2404',
   });
 
   const invalid = resolveRunnerPool(resolver, 'blacksmith-32vcpu-ubuntu-2404');
