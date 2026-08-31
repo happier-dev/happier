@@ -46,8 +46,11 @@ commands.
 2. Read `docs/compatibility.md`, map only reachable old/new directions, and
    perform the target-owned suite commands for affected automatic-capable
    surfaces. Record unrun or unavailable proof as such.
-3. Perform risk-selected installer/Docker, cross-OS, provider, mobile, and
-   integrated-evidence review for the surfaces actually affected by the release source.
+3. Use the non-mutating `deep` profile in `tests-dispatch.yml` for complete
+   in-repository source certification. Run credentialed live-provider scenarios
+   separately through their explicit provider-contract entrypoint when the
+   affected surface requires them. Native/store publication is release work,
+   not certification, and must not be invoked from this skill.
    Keep editorial judgement, release-note wording, and subjective compatibility
    assessment human-reviewed; do not encode them as prose/style tests.
 4. For every manual scenario, preserve practical evidence: source/baseline

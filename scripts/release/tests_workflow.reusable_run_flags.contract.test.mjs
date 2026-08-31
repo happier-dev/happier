@@ -57,7 +57,6 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     ['ui-e2e', 'run_ui_e2e'],
     ['ui-unit', 'run_ui'],
     ['ui-integration', 'run_ui'],
-    ['shared-packages-unit', 'run_ui'],
     ['server', 'run_server'],
     ['server-db-contract', 'run_server_db_contract'],
     ['cli', 'run_cli'],
@@ -79,6 +78,12 @@ test('reusable tests calls make their run flags authoritative regardless of the 
       `${jobName} must honor an explicit false input even when a scheduled caller invokes tests.yml`,
     );
   }
+
+  assert.equal(
+    testsWorkflow.jobs['shared-packages-unit'].if,
+    "${{ (inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_shared_packages == 'true') }}",
+    'ordinary source CI selects shared package tests independently while explicit profiles keep the existing run_ui contract',
+  );
 
   assert.equal(
     testsWorkflow.jobs.ui.if,
@@ -199,6 +204,15 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
   assert.ok(filters.ui.includes('skills/happier-diagnose/**'));
   assert.ok(filters.cli.includes('scripts/ensureCliCommonDistModule.mjs'));
   assert.ok(filters.cli.includes('scripts/ensureCliCommonDistModule.test.mjs'));
+  for (const lane of ['ui', 'server', 'cli', 'stack']) {
+    assert.ok(!filters[lane].includes('packages/**'), `${lane} must use workspace dependency closure instead of broad package fanout`);
+  }
+  assert.match(workflow.jobs.ci_plan.outputs.run_ui, /steps\.unmatched\.outputs\.ui == 'true'/);
+  assert.match(workflow.jobs.ci_plan.outputs.run_server, /steps\.unmatched\.outputs\.server == 'true'/);
+  assert.match(workflow.jobs.ci_plan.outputs.run_cli, /steps\.unmatched\.outputs\.cli == 'true'/);
+  assert.match(workflow.jobs.ci_plan.outputs.run_stack, /steps\.unmatched\.outputs\.stack == 'true'/);
+  assert.equal(workflow.jobs.ci_plan.outputs.run_shared_packages, "${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' }}");
+  assert.match(workflow.jobs['shared-packages-unit'].if, /needs\.ci_plan\.outputs\.run_shared_packages == 'true'/);
 
   const sharedSteps = workflow.jobs['shared-packages-unit'].steps;
   const requiredSharedChecks = new Map([

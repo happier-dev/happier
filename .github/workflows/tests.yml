@@ -209,10 +209,11 @@ jobs:
       # A protected-branch push is admissible as whole-source release evidence, so its established
       # fast source set must cover the complete head. Pull requests retain path-selected feedback,
       # while release/deep-only lanes below remain selected by their actual changed seams.
-      run_ui: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' }}
-      run_server: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' }}
-      run_cli: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' }}
-      run_stack: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' }}
+      run_ui: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' || steps.unmatched.outputs.ui == 'true' }}
+      run_server: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' || steps.unmatched.outputs.server == 'true' }}
+      run_cli: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' || steps.unmatched.outputs.cli == 'true' }}
+      run_stack: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' || steps.unmatched.outputs.stack == 'true' }}
+      run_shared_packages: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' }}
       run_ui_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' }}
       run_server_db_contract: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' }}
       run_release_contracts: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' }}
@@ -253,7 +254,6 @@ jobs:
             ui:
               - 'apps/ui/**'
               - 'apps/bootstrap/**'
-              - 'packages/**'
               - 'package.json'
               - 'yarn.lock'
               - 'tsconfig*.json'
@@ -265,14 +265,12 @@ jobs:
               - 'skills/happier-diagnose/**'
             server:
               - 'apps/server/**'
-              - 'packages/**'
               - 'package.json'
               - 'yarn.lock'
               - 'tsconfig*.json'
               - 'scripts/testing/featureTestGating*'
             cli:
               - 'apps/cli/**'
-              - 'packages/**'
               - 'scripts/install/**'
               - 'package.json'
               - 'yarn.lock'
@@ -283,7 +281,6 @@ jobs:
               - 'scripts/ensureCliCommonDistModule.test.mjs'
             stack:
               - 'apps/stack/**'
-              - 'packages/**'
               - 'scripts/install/**'
               - 'package.json'
               - 'yarn.lock'
@@ -744,7 +741,7 @@ jobs:
           fi
 
   shared-packages-unit:
-    if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui == 'true') }}
+    if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_shared_packages == 'true') }}
     needs: [ci_plan, trusted_ref_guard]
     name: Shared Package Unit Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -2622,7 +2619,8 @@ jobs:
             REQUEST_RUN_STRESS: ['stress'],
           };
           const classifierLaneGroups = {
-            run_ui: ['ui-unit', 'ui-integration', 'ui', 'shared-packages-unit'],
+            run_ui: ['ui-unit', 'ui-integration', 'ui'],
+            run_shared_packages: ['shared-packages-unit'],
             run_server: ['server'],
             run_cli: ['cli'],
             run_stack: ['stack'],

@@ -41,11 +41,15 @@ and three profiles:
   private release agent to review preview candidate equivalence and soak,
   breaking changes, reachable version-skew directions, persistence, and
   accidental lockstep requirements.
-- `deep` is manual comprehensive certification. It has no automatic suite
-  membership, owns risk-selected installer and Docker checks when those
-  surfaces change, and covers cross-OS, provider, mobile, and full
-  certification before it is considered complete. It is never a normal-release
-  dispatch.
+- `deep` is manual comprehensive source certification. The manual `deep`
+  profile in `tests-dispatch.yml` fans out every non-mutating in-repository
+  lane: extended databases, stress, WSREPL, mobile device E2E, cross-OS
+  service/self-host checks, local daemon/session continuity, installer/binary
+  smoke, and Docker release-asset compatibility. It does not publish, deploy,
+  promote, submit to stores, or run credentialed live-provider scenarios.
+  Those provider scenarios remain an explicit custom/provider-contract run,
+  and native/store publication remains owned by release automation. `deep` is
+  never a normal-release dispatch.
 
 The workflow derives source-check depth from the selected public profile; a
 caller cannot select a second checks profile. MySQL, cross-platform service,

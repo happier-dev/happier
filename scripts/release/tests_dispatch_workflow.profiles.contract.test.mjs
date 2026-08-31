@@ -80,9 +80,46 @@ test('manual release CI retains ship-path evidence without deep-only slow E2E', 
 
 test('manual deep CI retains the complete source certification set', () => {
   const flags = resolveProfile('deep');
-  for (const lane of ['run_ui', 'run_server', 'run_cli', 'run_stack', 'run_typecheck', 'run_cli_daemon_e2e', 'run_e2e_core', 'run_e2e_core_slow', 'run_ui_e2e', 'run_server_db_contract', 'run_release_contracts', 'run_installers_smoke', 'run_binary_smoke']) {
+  for (const lane of [
+    'run_ui',
+    'run_ui_e2e',
+    'run_wsrepl_lima',
+    'run_mobile_e2e_android',
+    'run_mobile_e2e_ios',
+    'run_server',
+    'run_cli',
+    'run_stack',
+    'run_typecheck',
+    'run_cli_daemon_e2e',
+    'run_e2e_core',
+    'run_e2e_core_slow',
+    'run_server_db_contract',
+    'run_stress',
+    'run_release_contracts',
+    'run_installers_smoke',
+    'run_binary_smoke',
+    'run_daemon_continuity',
+    'run_session_continuity',
+    'run_release_assets_docker',
+    'run_self_host_systemd',
+    'run_self_host_launchd',
+    'run_self_host_schtasks',
+    'run_self_host_daemon',
+    'run_extended_db',
+  ]) {
     assert.equal(flags[lane], 'true', `${lane} should remain available in deep certification`);
   }
+
+  assert.equal(flags.run_providers, 'false', 'live provider scenarios remain an explicit credentialed check');
+  assert.equal(flags.run_cli_update_continuity, undefined, 'published-channel CLI updates remain release-candidate validation');
+  assert.equal(workflow.jobs.tests.with.run_cli_update_continuity, undefined);
+
+  assert.equal(workflow.jobs.extended_db.uses, './.github/workflows/extended-db-tests.yml');
+  assert.equal(workflow.jobs.extended_db.if, "${{ needs.resolve.outputs.run_extended_db == 'true' }}");
+  assert.ok(
+    Object.values(workflow.jobs).every((job) => !String(job?.uses ?? '').match(/publish|deploy|promote/i)),
+    'deep certification must not invoke publication, deployment, or promotion workflows',
+  );
 });
 
 test('custom CI trims tokens before selecting lanes', () => {
