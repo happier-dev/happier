@@ -3,30 +3,12 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 
 function writeDaemonStateFixture(path: string, serializedState: string, encoding: 'utf-8'): void {
   void encoding;
   writeJsonAtomicSync(path, JSON.parse(serializedState));
-}
-
-function mockCurrentProcessAsDaemonLifecycleOwner(): void {
-  vi.doMock('@/daemon/doctor', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/daemon/doctor')>();
-    return {
-      ...actual,
-      classifyDaemonLifecycleProcessByPid: async (pid: number) => pid === process.pid
-        ? {
-            kind: 'daemon' as const,
-            process: {
-              pid,
-              command: `${process.execPath} ${process.cwd()}/src/index.ts daemon start-sync`,
-              type: 'dev-daemon',
-            },
-          }
-        : await actual.classifyDaemonLifecycleProcessByPid(pid),
-    };
-  });
 }
 
 describe.sequential('daemon control client PID safety', () => {

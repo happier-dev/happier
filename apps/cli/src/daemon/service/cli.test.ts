@@ -14,6 +14,14 @@ import { planDaemonServiceInstall, planDaemonServiceLifecycle } from './plan';
 const stopDaemonMock = vi.fn(async () => undefined);
 const restartDaemonAndWaitMock = vi.fn(async () => true);
 
+vi.mock('@/daemon/doctor', async (importOriginal) => {
+  const [{ withCurrentProcessAsDaemonLifecycleOwner }, actual] = await Promise.all([
+    import('@/testkit/process/daemonLifecycleOwner'),
+    importOriginal<typeof import('@/daemon/doctor')>(),
+  ]);
+  return withCurrentProcessAsDaemonLifecycleOwner(actual);
+});
+
 function doMockChildProcessSpawnSync(
   spawnSyncImpl: (command: string, args?: readonly string[]) => unknown,
 ): void {

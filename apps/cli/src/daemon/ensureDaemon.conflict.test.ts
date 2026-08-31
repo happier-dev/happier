@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 
 const spawnDetachedDaemonStartSyncMock = vi.fn(async () => ({ unref() {} }));
 vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
@@ -27,6 +28,10 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
         'HAPPIER_DAEMON_START_WAIT_POLL_MS',
     ]);
 
+    beforeEach(() => {
+        mockCurrentProcessAsDaemonLifecycleOwner();
+    });
+
     afterEach(() => {
         envScope.restore();
         spawnDetachedDaemonStartSyncMock.mockClear();
@@ -35,6 +40,7 @@ describe('ensureDaemonRunningForSessionCommand conflict handling', () => {
         vi.doUnmock('@/daemon/ownership/daemonServiceInventory');
         vi.unmock('@/daemon/controlClient');
         vi.unmock('@/daemon/ownership/daemonServiceInventory');
+        vi.doUnmock('@/daemon/doctor');
         vi.resetModules();
     });
 
