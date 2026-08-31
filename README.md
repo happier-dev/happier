@@ -1,4 +1,4 @@
-# This version is HEAVILY WIP and unstable
+# This version is not usable yet and HEAVILY WIP and unstable
 
 <div align="center">
   <img src="/.github/logotype-dark.png" title="Happier Dev" alt="Happier Dev" width="280" />
