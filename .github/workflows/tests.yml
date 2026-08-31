@@ -780,19 +780,84 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Run shared package unit tests
-        run: |
-          yarn workspace privacy-kit test
-          yarn workspace privacy-kit test:runtime:bun
-          yarn workspace @happier-dev/transfers test
-          yarn workspace @happier-dev/agents test
-          yarn workspace @happier-dev/cli-common test
-          yarn workspace @happier-dev/connection-supervisor test
-          yarn workspace @happier-dev/bootstrap test
-          yarn --cwd packages/relay-server test
+      - name: Test privacy-kit
+        id: privacy_kit
+        continue-on-error: true
+        run: yarn workspace privacy-kit test
+
+      - name: Test privacy-kit Bun runtime
+        id: privacy_kit_bun
+        continue-on-error: true
+        run: yarn workspace privacy-kit test:runtime:bun
+
+      - name: Test transfers
+        id: transfers
+        continue-on-error: true
+        run: yarn workspace @happier-dev/transfers test
+
+      - name: Test agents
+        id: agents
+        continue-on-error: true
+        run: yarn workspace @happier-dev/agents test
+
+      - name: Test CLI common
+        id: cli_common
+        continue-on-error: true
+        run: yarn workspace @happier-dev/cli-common test
+
+      - name: Test connection supervisor
+        id: connection_supervisor
+        continue-on-error: true
+        run: yarn workspace @happier-dev/connection-supervisor test
+
+      - name: Test bootstrap
+        id: bootstrap
+        continue-on-error: true
+        run: yarn workspace @happier-dev/bootstrap test
+
+      - name: Test relay server
+        id: relay_server
+        continue-on-error: true
+        run: yarn --cwd packages/relay-server test
 
       - name: Verify generated built-in prompts
+        id: built_in_prompts
+        continue-on-error: true
         run: node --test scripts/generateBuiltInPrompts.test.mjs
+
+      - name: Require all shared package checks
+        id: require-shared-package-checks
+        if: ${{ always() }}
+        env:
+          PRIVACY_KIT_OUTCOME: ${{ steps.privacy_kit.outcome }}
+          PRIVACY_KIT_BUN_OUTCOME: ${{ steps.privacy_kit_bun.outcome }}
+          TRANSFERS_OUTCOME: ${{ steps.transfers.outcome }}
+          AGENTS_OUTCOME: ${{ steps.agents.outcome }}
+          CLI_COMMON_OUTCOME: ${{ steps.cli_common.outcome }}
+          CONNECTION_SUPERVISOR_OUTCOME: ${{ steps.connection_supervisor.outcome }}
+          BOOTSTRAP_OUTCOME: ${{ steps.bootstrap.outcome }}
+          RELAY_SERVER_OUTCOME: ${{ steps.relay_server.outcome }}
+          BUILT_IN_PROMPTS_OUTCOME: ${{ steps.built_in_prompts.outcome }}
+        run: |
+          failed=0
+          for result in \
+            "$PRIVACY_KIT_OUTCOME" \
+            "$PRIVACY_KIT_BUN_OUTCOME" \
+            "$TRANSFERS_OUTCOME" \
+            "$AGENTS_OUTCOME" \
+            "$CLI_COMMON_OUTCOME" \
+            "$CONNECTION_SUPERVISOR_OUTCOME" \
+            "$BOOTSTRAP_OUTCOME" \
+            "$RELAY_SERVER_OUTCOME" \
+            "$BUILT_IN_PROMPTS_OUTCOME"; do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more shared package checks failed; inspect the individual steps above." >&2
+            exit 1
+          fi
 
   server:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_server) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_server == 'true') }}

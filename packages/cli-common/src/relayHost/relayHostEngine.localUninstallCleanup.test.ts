@@ -258,8 +258,10 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
 
   it('uninstalls the legacy unsuffixed scheduled task when the preview lane still owns that install root', async () => {
     const originalPlatform = process.platform;
+    const originalPath = process.env.PATH;
 
     Object.defineProperty(process, 'platform', { value: 'win32' });
+    process.env.PATH = '/tmp/windows-system32';
 
     const invoked: string[] = [];
     const installRoot = 'C:\\Users\\tester\\.happier\\self-host-preview';
@@ -306,7 +308,9 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
         const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
         return {
           ...actual,
-          existsSync: (path: string) => path.endsWith('happier-server.ps1'),
+          existsSync: (path: string) =>
+            path.endsWith('happier-server.ps1')
+            || path === '/tmp/windows-system32/powershell.exe',
         };
       });
 
@@ -352,6 +356,8 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
       )).toBe(true);
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
       vi.resetModules();
       vi.clearAllMocks();
     }

@@ -200,8 +200,33 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
   assert.ok(filters.cli.includes('scripts/ensureCliCommonDistModule.mjs'));
   assert.ok(filters.cli.includes('scripts/ensureCliCommonDistModule.test.mjs'));
 
-  const sharedRun = workflow.jobs['shared-packages-unit'].steps.map((step) => step.run ?? '').join('\n');
-  assert.match(sharedRun, /generateBuiltInPrompts\.test\.mjs/);
+  const sharedSteps = workflow.jobs['shared-packages-unit'].steps;
+  const requiredSharedChecks = new Map([
+    ['privacy_kit', 'yarn workspace privacy-kit test'],
+    ['privacy_kit_bun', 'yarn workspace privacy-kit test:runtime:bun'],
+    ['transfers', 'yarn workspace @happier-dev/transfers test'],
+    ['agents', 'yarn workspace @happier-dev/agents test'],
+    ['cli_common', 'yarn workspace @happier-dev/cli-common test'],
+    ['connection_supervisor', 'yarn workspace @happier-dev/connection-supervisor test'],
+    ['bootstrap', 'yarn workspace @happier-dev/bootstrap test'],
+    ['relay_server', 'yarn --cwd packages/relay-server test'],
+    ['built_in_prompts', 'node --test scripts/generateBuiltInPrompts.test.mjs'],
+  ]);
+  for (const [id, command] of requiredSharedChecks) {
+    const step = sharedSteps.find((candidate) => candidate.id === id);
+    assert.ok(step, `shared package check '${id}' must have its own result owner`);
+    assert.equal(step['continue-on-error'], true, `shared package check '${id}' must not hide later independent failures`);
+    assert.equal(String(step.run ?? '').trim(), command);
+  }
+
+  const sharedCollector = sharedSteps.find((step) => step.id === 'require-shared-package-checks');
+  assert.ok(sharedCollector, 'shared package checks need one final required-result owner');
+  assert.equal(sharedCollector.if, '${{ always() }}');
+  for (const id of requiredSharedChecks.keys()) {
+    const envName = `${id.toUpperCase()}_OUTCOME`;
+    assert.equal(sharedCollector.env?.[envName], `\${{ steps.${id}.outcome }}`);
+    assert.match(sharedCollector.run, new RegExp(`\\$${envName}\\b`));
+  }
   const cliRun = workflow.jobs.cli.steps.map((step) => step.run ?? '').join('\n');
   assert.match(cliRun, /ensureCliCommonDistModule\.test\.mjs/);
 
