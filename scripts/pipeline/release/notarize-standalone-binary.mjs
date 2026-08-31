@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
@@ -30,6 +31,15 @@ const PRESERVED_CODESIGN_METADATA = [
   'launch-constraints',
   'library-constraints',
 ].join(',');
+const JIT_CODESIGN_METADATA = [
+  'identifier',
+  'launch-constraints',
+  'library-constraints',
+].join(',');
+const JIT_ENTITLEMENT_REQUIREMENT = '=entitlement[com.apple.security.cs.allow-jit] = true';
+const BUN_STANDALONE_ENTITLEMENTS_PATH = fileURLToPath(
+  new URL('./bun-standalone.entitlements.plist', import.meta.url),
+);
 const DEFAULT_CODESIGN_ATTEMPTS = 4;
 const DEFAULT_CODESIGN_RETRY_DELAY_MS = 15_000;
 const DEFAULT_GATEKEEPER_ATTEMPTS = 18;
@@ -173,11 +183,13 @@ export function listDarwinPayloadMachOCode(rawPayloadPath) {
     .filter(({ fileTypes }) => fileTypes !== null)
     .map(({ entry, fileTypes }) => {
       const executable = (entry.info.mode & 0o111) !== 0;
+      const gatekeeperAssessable = executable && fileTypes.every((fileType) => fileType === 2);
       return {
         path: entry.path,
         relativePath: entry.relativePath,
         executable,
-        gatekeeperAssessable: executable && fileTypes.every((fileType) => fileType === 2),
+        gatekeeperAssessable,
+        requiresJitEntitlement: gatekeeperAssessable && !entry.relativePath.includes('/'),
       };
     })
     .sort((left, right) => {
@@ -221,6 +233,16 @@ export function snapshotDarwinPayload(rawPayloadPath) {
   };
 }
 
+function resolveCodesignVerificationArgs(entry) {
+  return [
+    '--verify',
+    '--strict=all',
+    '--verbose=2',
+    ...(entry.requiresJitEntitlement ? ['-R', JIT_ENTITLEMENT_REQUIREMENT] : []),
+    entry.path,
+  ];
+}
+
 /**
  * Standalone payload Mach-O files receive their notarization tickets from Apple
  * when Gatekeeper checks them online. There is no container to which a ticket
@@ -236,6 +258,7 @@ export function resolveDarwinPayloadNotarizationCommands({
   issuerId,
   submissionId,
   logPath,
+  entitlementsPath = BUN_STANDALONE_ENTITLEMENTS_PATH,
 }) {
   const authArgs = ['--key', keyPath, '--key-id', keyId, '--issuer', issuerId];
   return {
@@ -248,13 +271,16 @@ export function resolveDarwinPayloadNotarizationCommands({
         '--options',
         'runtime',
         '--timestamp',
-        `--preserve-metadata=${PRESERVED_CODESIGN_METADATA}`,
+        `--preserve-metadata=${entry.requiresJitEntitlement
+          ? JIT_CODESIGN_METADATA
+          : PRESERVED_CODESIGN_METADATA}`,
+        ...(entry.requiresJitEntitlement ? ['--entitlements', entitlementsPath] : []),
         entry.path,
       ],
     ]),
     verify: machOCode.map((entry) => [
       'codesign',
-      ['--verify', '--strict=all', '--verbose=2', entry.path],
+      resolveCodesignVerificationArgs(entry),
     ]),
     archive: [
       'ditto',
@@ -442,9 +468,9 @@ function assertMatchingPayloadSnapshot(evidence, snapshot) {
 export function verifyDarwinPayloadNotarizationEvidence({
   payloadPath: rawPayloadPath,
   evidencePath: rawEvidencePath,
-  verifyCode = (entryPath) => run([
+  verifyCode = (entryPath, entry) => run([
     'codesign',
-    ['--verify', '--strict=all', '--verbose=2', entryPath],
+    resolveCodesignVerificationArgs({ ...entry, path: entryPath }),
   ]),
   assessCode = (entryPath) => runGatekeeperAssessment([
     'spctl',
@@ -493,15 +519,17 @@ export function verifyDarwinPayloadNotarizationEvidence({
 
   const snapshot = snapshotDarwinPayload(payloadPath);
   assertMatchingPayloadSnapshot(evidence, snapshot);
-  const gatekeeperAssessablePaths = new Set(
-    listDarwinPayloadMachOCode(payloadPath)
-      .filter((entry) => entry.gatekeeperAssessable)
-      .map((entry) => entry.relativePath),
+  const discoveredMachO = new Map(
+    listDarwinPayloadMachOCode(payloadPath).map((entry) => [entry.relativePath, entry]),
   );
   for (const entry of snapshot.machO) {
     const entryPath = path.join(payloadPath, ...entry.path.split('/'));
-    verifyCode(entryPath);
-    if (gatekeeperAssessablePaths.has(entry.path)) {
+    const discoveredEntry = discoveredMachO.get(entry.path);
+    if (!discoveredEntry) {
+      throw new Error(`[release] staged Mach-O disappeared during verification: ${entry.path}`);
+    }
+    verifyCode(entryPath, discoveredEntry);
+    if (discoveredEntry.gatekeeperAssessable) {
       assessCode(entryPath);
     }
   }
