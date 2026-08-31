@@ -281,8 +281,12 @@ export async function claudeRemote(opts: {
         extraArgs: materializedMcpConfig.args.length > 0 ? materializedMcpConfig.args : undefined,
         strictMcpConfig: argOverrides.strictMcpConfig,
         includeHookEvents: true,
-        canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal; toolUseId?: string | null }) =>
-            opts.canCallTool(toolName, input, mode, options),
+        // The authenticated hook plugin is the canonical permission bridge. Register the legacy
+        // stdio prompt tool only as a fallback when hook installation was explicitly unavailable.
+        ...(opts.hookPluginDir ? {} : {
+            canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal; toolUseId?: string | null }) =>
+                opts.canCallTool(toolName, input, mode, options),
+        }),
         executable: runtimeExecutable,
         abort: opts.signal,
         pathToClaudeCodeExecutable: resolveCliRuntimeAssetPath('scripts', 'claude_remote_launcher.cjs'),

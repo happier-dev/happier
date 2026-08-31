@@ -31,16 +31,19 @@ describe('claudeRemoteAgentSdk (ExitPlanMode transition)', () => {
       response = {
         async *[Symbol.asyncIterator]() {
           const controller = new AbortController();
-          await capturedOptions.canUseTool(
-            'ExitPlanMode',
-            { plan: 'p1' },
-            { signal: controller.signal, toolUseID: 'toolu_exit_1', agentID: 'agent_1' },
-          );
-          await capturedOptions.canUseTool(
-            'Bash',
-            { command: 'pwd' },
-            { signal: controller.signal, toolUseID: 'toolu_bash_1', agentID: 'agent_1' },
-          );
+          const permissionHook = capturedOptions.hooks.PermissionRequest[0].hooks[0];
+          await permissionHook({
+            hook_event_name: 'PermissionRequest',
+            tool_name: 'ExitPlanMode',
+            tool_input: { plan: 'p1' },
+            agent_id: 'agent_1',
+          }, 'toolu_exit_1', { signal: controller.signal });
+          await permissionHook({
+            hook_event_name: 'PermissionRequest',
+            tool_name: 'Bash',
+            tool_input: { command: 'pwd' },
+            agent_id: 'agent_1',
+          }, 'toolu_bash_1', { signal: controller.signal });
           yield { type: 'result' } as any;
         },
         close: vi.fn(),
@@ -97,7 +100,7 @@ describe('claudeRemoteAgentSdk (ExitPlanMode transition)', () => {
     expect(response?.setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
   });
 
-  it('resolves duplicate ExitPlanMode permission waiters from canUseTool with one approval', async () => {
+  it('resolves duplicate ExitPlanMode permission hook waiters with one approval', async () => {
     const { session, client } = createPermissionHandlerSessionStubWithMetadata({
       sessionId: 's1',
       metadata: { acpSessionModeOverrideV1: { v: 1, updatedAt: 1, modeId: 'plan' } },
@@ -114,16 +117,15 @@ describe('claudeRemoteAgentSdk (ExitPlanMode transition)', () => {
           const toolUseId = 'toolu_exit_duplicate_1';
           const directController = new AbortController();
           const hookController = new AbortController();
-          const directPromise = capturedOptions.canUseTool(
-            'ExitPlanMode',
-            { plan: 'p1' },
-            { signal: directController.signal, toolUseID: toolUseId, agentID: 'agent_1' },
-          );
-          const duplicatePromise = capturedOptions.canUseTool(
-            'ExitPlanMode',
-            { plan: 'p1' },
-            { signal: hookController.signal, toolUseID: toolUseId, agentID: 'agent_1' },
-          );
+          const permissionHook = capturedOptions.hooks.PermissionRequest[0].hooks[0];
+          const hookInput = {
+            hook_event_name: 'PermissionRequest',
+            tool_name: 'ExitPlanMode',
+            tool_input: { plan: 'p1' },
+            agent_id: 'agent_1',
+          };
+          const directPromise = permissionHook(hookInput, toolUseId, { signal: directController.signal });
+          const duplicatePromise = permissionHook(hookInput, toolUseId, { signal: hookController.signal });
 
           expect(Object.keys(client.agentState.requests)).toEqual([toolUseId]);
 
@@ -134,8 +136,18 @@ describe('claudeRemoteAgentSdk (ExitPlanMode transition)', () => {
           const bothPermissionWaiters = Promise.all([directPromise, duplicatePromise]);
 
           const [directResult, duplicateResult] = await expectResolvesWithin(bothPermissionWaiters);
-          expect(directResult).toEqual({ behavior: 'allow', updatedInput: { plan: 'p1' } });
-          expect(duplicateResult).toEqual({ behavior: 'allow', updatedInput: { plan: 'p1' } });
+          expect(directResult).toMatchObject({
+            hookSpecificOutput: {
+              hookEventName: 'PermissionRequest',
+              decision: { behavior: 'allow', updatedInput: { plan: 'p1' } },
+            },
+          });
+          expect(duplicateResult).toMatchObject({
+            hookSpecificOutput: {
+              hookEventName: 'PermissionRequest',
+              decision: { behavior: 'allow', updatedInput: { plan: 'p1' } },
+            },
+          });
 
           yield { type: 'result' } as any;
         },

@@ -141,22 +141,24 @@ describe('PermissionHandler (mode parameter precedence)', () => {
     ).resolves.toMatchObject({ behavior: 'allow' });
   });
 
-  it('auto-allows edit tools when mode.permissionMode is safe-yolo (mapped to auto)', async () => {
-    const { session } = createPermissionHandlerSessionStub();
+  it('surfaces edits that Claude Auto sends to the permission callback', async () => {
+    const { session, client } = createPermissionHandlerSessionStub();
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
 
     const controller = new AbortController();
     const mode = { permissionMode: 'safe-yolo' } as EnhancedMode;
 
-    await expect(
-      handler.handleToolCall(
-        'Edit',
-        { file_path: '/tmp/file.txt', old_string: 'a', new_string: 'b' },
-        mode,
-        { signal: controller.signal },
-      ),
-    ).resolves.toMatchObject({ behavior: 'allow' });
+    const pending = handler.handleToolCall(
+      'Edit',
+      { file_path: '/tmp/file.txt', old_string: 'a', new_string: 'b' },
+      mode,
+      { signal: controller.signal, toolUseId: 'toolu_auto_edit_1' },
+    );
+
+    expect(client.agentState.requests).toHaveProperty('toolu_auto_edit_1');
+    await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_auto_edit_1', approved: false } as any);
+    await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
   });
 
   it('requests permission for tool calls when agentModeId is plan (Claude plan mode)', async () => {

@@ -3,21 +3,72 @@ import { join } from 'node:path';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import type { EnhancedMode } from '@/backends/claude/loop';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
+import { resolveClaudePermissionHookTimeoutSeconds } from '@/backends/claude/utils/permissionHookTimeout';
 
-function toAgentSdkPermissionResult(result: PermissionResult): any {
+function toPermissionRequestHookResult(result: PermissionResult): Record<string, unknown> {
   if (result.behavior === 'allow') {
     return {
-      behavior: 'allow',
-      updatedInput: result.updatedInput,
-      ...(typeof result.updatedPermissions !== 'undefined' ? { updatedPermissions: result.updatedPermissions } : {}),
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: {
+          behavior: 'allow',
+          updatedInput: result.updatedInput,
+          ...(typeof result.updatedPermissions !== 'undefined' ? { updatedPermissions: result.updatedPermissions } : {}),
+        },
+      },
     };
   }
 
   return {
-    behavior: 'deny',
-    message: result.message,
-    ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
+    continue: true,
+    suppressOutput: true,
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: {
+        behavior: 'deny',
+        message: result.message,
+        ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
+      },
+    },
+    ...(result.message ? { systemMessage: result.message } : {}),
   };
+}
+
+function toPreToolUseHookResult(result: PermissionResult): Record<string, unknown> {
+  if (result.behavior === 'allow') {
+    return {
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: result.updatedInput,
+      },
+    };
+  }
+
+  return {
+    continue: true,
+    suppressOutput: true,
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      ...(result.message ? { permissionDecisionReason: result.message } : {}),
+    },
+    ...(result.message ? { systemMessage: result.message } : {}),
+  };
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 export function buildClaudeAgentSdkHooks(params: Readonly<{
@@ -46,7 +97,6 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
   ) => Promise<PermissionResult>;
 }>): Readonly<{
   hooks: Record<string, unknown>;
-  canUseTool: (toolName: string, input: Record<string, unknown>, options: any) => Promise<any>;
 }> {
   const buildObservationHook = () => ({
     hooks: [
@@ -58,6 +108,24 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
       },
     ],
   });
+  const permissionHookTimeoutSeconds = resolveClaudePermissionHookTimeoutSeconds();
+  const buildPermissionHook = (hookEventName: 'PermissionRequest' | 'PreToolUse') =>
+    async (input: unknown, toolUseId: string | undefined, options: { signal?: AbortSignal } | undefined) => {
+      const payload = readRecord(input);
+      const toolName = readString(payload.tool_name) ?? readString(payload.toolName) ?? 'unknown_tool';
+      const toolInput = payload.tool_input ?? payload.toolInput ?? {};
+      const result = await params.canCallTool(toolName, toolInput, params.getMode(), {
+        signal: options?.signal ?? new AbortController().signal,
+        toolUseId: readString(toolUseId) ?? readString(payload.tool_use_id) ?? readString(payload.toolUseId),
+        agentId: readString(payload.agent_id) ?? readString(payload.agentId),
+        suggestions: payload.permission_suggestions ?? payload.permissionSuggestions,
+        blockedPath: readString(payload.blocked_path) ?? readString(payload.blockedPath),
+        decisionReason: readString(payload.decision_reason) ?? readString(payload.decisionReason),
+      });
+      return hookEventName === 'PreToolUse'
+        ? toPreToolUseHookResult(result)
+        : toPermissionRequestHookResult(result);
+    };
   const hooks = {
     SessionStart: [
       {
@@ -99,19 +167,17 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
     PostToolUse: [buildObservationHook()],
     SubagentStart: [buildObservationHook()],
     SubagentStop: [buildObservationHook()],
+    PermissionRequest: [{
+      matcher: '',
+      hooks: [buildPermissionHook('PermissionRequest')],
+      timeout: permissionHookTimeoutSeconds,
+    }],
+    PreToolUse: [{
+      matcher: 'AskUserQuestion',
+      hooks: [buildPermissionHook('PreToolUse')],
+      timeout: permissionHookTimeoutSeconds,
+    }],
   };
 
-  const canUseTool = async (toolName: string, input: Record<string, unknown>, options: any) => {
-    const result = await params.canCallTool(toolName, input, params.getMode(), {
-      signal: options.signal,
-      toolUseId: typeof options?.toolUseID === 'string' ? options.toolUseID : null,
-      agentId: typeof options?.agentID === 'string' ? options.agentID : null,
-      suggestions: options?.suggestions,
-      blockedPath: typeof options?.blockedPath === 'string' ? options.blockedPath : null,
-      decisionReason: typeof options?.decisionReason === 'string' ? options.decisionReason : null,
-    });
-    return toAgentSdkPermissionResult(result);
-  };
-
-  return { hooks, canUseTool };
+  return { hooks };
 }

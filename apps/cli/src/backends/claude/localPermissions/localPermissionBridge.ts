@@ -457,7 +457,9 @@ export class ClaudeLocalPermissionBridge {
         const mode = this.permissionMode;
         if (mode === 'yolo') return 'allow';
         if (mode === 'safe-yolo') {
-            return isDefaultWriteLikeToolName(toolName) ? 'prompt' : 'allow';
+            // Claude's Auto classifier owns this decision. PermissionRequest hooks only arrive
+            // after Claude leaves a tool unresolved, so reclassifying it here would bypass Auto.
+            return 'prompt';
         }
         if (mode === 'read-only') {
             return isDefaultWriteLikeToolName(toolName) ? 'deny' : 'allow';

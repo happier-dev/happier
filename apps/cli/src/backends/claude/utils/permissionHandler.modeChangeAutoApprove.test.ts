@@ -55,7 +55,7 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
     expect(client.agentState.completedRequests['toolu_mode_change_1']).toBeTruthy();
   });
 
-  it('auto-approves pending edit tools when switching to safe-yolo', async () => {
+  it('keeps an unresolved edit pending when switching to safe-yolo', async () => {
     const { session, client } = createPermissionHandlerSessionStub('mode-change-safe-yolo-auto-approve');
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
@@ -75,10 +75,9 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
 
     handler.handleModeChange('safe-yolo');
 
-    const result = await withTimeout(pending, 1_000);
-    expect(result).toMatchObject({ behavior: 'allow' });
-    expect(client.agentState.requests['toolu_mode_change_2']).toBeUndefined();
-    expect(client.agentState.completedRequests['toolu_mode_change_2']).toBeTruthy();
+    expect(client.agentState.requests['toolu_mode_change_2']).toBeDefined();
+    await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_mode_change_2', approved: false } as any);
+    await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
   });
 
   it('does not let a stale per-turn default mode beat a fresher yolo handler mode', async () => {
