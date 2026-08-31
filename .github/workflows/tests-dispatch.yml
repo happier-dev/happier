@@ -23,7 +23,7 @@ on:
           - blacksmith-linux-4vcpu
       custom_checks:
         description: "Custom — Comma-separated checks used only when profile=custom (ui,ui_e2e,wsrepl_lima,mobile_e2e_android,mobile_e2e_ios,server,cli,stack,typecheck,daemon_e2e,e2e_core,e2e_core_slow,server_db_contract,providers,stress,release_contracts,installers_smoke,binary_smoke,self_host_systemd,self_host_launchd,self_host_schtasks,self_host_daemon)"
-        required: true
+        required: false
         default: ""
         type: string
       ui_e2e_specs:

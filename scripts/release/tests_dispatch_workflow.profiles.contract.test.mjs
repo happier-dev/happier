@@ -16,6 +16,19 @@ test('manual CI exposes explicit fast, release, and deep profiles', () => {
   assert.deepEqual(input.options, ['fast', 'release', 'deep', 'custom']);
 });
 
+test('manual CI only requires custom_checks when the custom profile owns selection', () => {
+  const input = workflow.on.workflow_dispatch.inputs.custom_checks;
+  assert.equal(input.required, false, 'GitHub must allow non-custom profiles to omit custom_checks');
+  assert.equal(input.default, '');
+
+  const release = runResolver({ profile: 'release' });
+  assert.equal(release.result.status, 0, release.result.stderr);
+
+  const custom = runResolver({ profile: 'custom' });
+  assert.equal(custom.result.status, 1);
+  assert.match(custom.result.stderr, /profile=custom requires custom_checks/i);
+});
+
 function runResolver({ profile, custom = '', uiE2eSpecs = '' }) {
   const scratch = mkdtempSync(join(tmpdir(), 'happier-ci-profile-'));
   const output = join(scratch, 'output');
