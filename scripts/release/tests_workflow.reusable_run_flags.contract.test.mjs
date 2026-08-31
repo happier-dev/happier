@@ -147,6 +147,18 @@ test('the CI collector rejects a requested lane that GitHub skipped', async () =
   assert.match(result.stderr, /release-assets-docker.*requested.*skipped/i);
 });
 
+test('the CI collector rejects a skipped always-on admission lane', async () => {
+  const result = await runInlineCollector({
+    NEEDS_JSON: JSON.stringify({
+      ci_plan: { result: 'success', outputs: {} },
+      trusted_ref_guard: { result: 'skipped', outputs: {} },
+    }),
+    SELECT_JOBS_EXPLICITLY: 'false',
+  });
+  assert.equal(result.status, 1, `collector accepted a skipped admission lane:\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /trusted_ref_guard.*requested.*skipped/i);
+});
+
 test('the CI collector rejects a classifier-selected lane that GitHub skipped', async () => {
   const result = await runInlineCollector({
     NEEDS_JSON: JSON.stringify({

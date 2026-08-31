@@ -2541,13 +2541,18 @@ jobs:
             run_typecheck: ['typecheck'],
           };
           const explicitSelection = process.env.SELECT_JOBS_EXPLICITLY === 'true';
-          const requestedLaneIds = explicitSelection
+          const selectedLaneIds = explicitSelection
             ? Object.entries(requestedLaneGroups)
               .filter(([input]) => process.env[input] === 'true')
               .flatMap(([, ids]) => ids)
             : Object.entries(classifierLaneGroups)
               .filter(([output]) => needs.ci_plan?.outputs?.[output] === 'true')
               .flatMap(([, ids]) => ids);
+          const requestedLaneIds = [
+            'ci_plan',
+            'trusted_ref_guard',
+            ...selectedLaneIds,
+          ];
           const laneById = new Map(lanes.map((lane) => [lane.id, lane]));
           const requestedSkips = requestedLaneIds
             .filter((id) => !laneById.has(id) || laneById.get(id)?.result === 'skipped')
