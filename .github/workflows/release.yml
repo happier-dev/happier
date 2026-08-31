@@ -22,43 +22,10 @@ on:
         required: false
         default: false
         type: boolean
-      plugin_sdk_ready:
-        description: "Plugin SDK/UI — PEP RB-A, SDK-EU-17, and RB-B are ready"
+      public_sdk_release_approval:
+        description: 'Public SDK detail JSON — {"pluginSdk": {"ready", "apiClassification", "migrationNotes"}, "sdk": {"authReadiness", "authWaiver", "apiClassification", "migrationNotes"}}'
         required: false
-        default: false
-        type: boolean
-      plugin_sdk_api_classification:
-        description: "Plugin SDK/UI — classification of the displayed API comparison"
-        required: false
-        default: unreviewed
-        type: choice
-        options: [unreviewed, first_publication, compatible, breaking]
-      plugin_sdk_migration_notes:
-        description: "Plugin SDK/UI — not_required or the approved release notes ID"
-        required: false
-        default: not_required
-        type: string
-      sdk_auth_readiness:
-        description: "External SDK — auth readiness"
-        required: false
-        default: not_ready
-        type: choice
-        options: [not_ready, ready, waived]
-      sdk_auth_waiver:
-        description: "External SDK — named auth waiver when readiness is waived"
-        required: false
-        default: ""
-        type: string
-      sdk_api_classification:
-        description: "External SDK — classification of the displayed API comparison"
-        required: false
-        default: unreviewed
-        type: choice
-        options: [unreviewed, first_publication, compatible, breaking]
-      sdk_migration_notes:
-        description: "External SDK — not_required or the approved release notes ID"
-        required: false
-        default: not_required
+        default: "{}"
         type: string
       include_validation_suites:
         description: "Maintainer refinement — comma-separated additional validation suite IDs"
@@ -355,6 +322,13 @@ jobs:
       compare_label: ${{ steps.dispatch.outputs.compare_label }}
       ci_run_id: ${{ steps.existing_ci.outputs.ci_run_id }}
       ci_run_url: ${{ steps.existing_ci.outputs.ci_run_url }}
+      plugin_sdk_ready: ${{ steps.dispatch.outputs.plugin_sdk_ready }}
+      plugin_sdk_api_classification: ${{ steps.dispatch.outputs.plugin_sdk_api_classification }}
+      plugin_sdk_migration_notes: ${{ steps.dispatch.outputs.plugin_sdk_migration_notes }}
+      sdk_auth_readiness: ${{ steps.dispatch.outputs.sdk_auth_readiness }}
+      sdk_auth_waiver: ${{ steps.dispatch.outputs.sdk_auth_waiver }}
+      sdk_api_classification: ${{ steps.dispatch.outputs.sdk_api_classification }}
+      sdk_migration_notes: ${{ steps.dispatch.outputs.sdk_migration_notes }}
     steps:
       - name: Checkout trusted release control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -383,7 +357,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           DRY_RUN: ${{ inputs.dry_run }}
           WAIVE_CI: ${{ inputs.waive_ci }}
-          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
+          PUBLIC_SDK_RELEASE_APPROVAL: ${{ inputs.public_sdk_release_approval }}
           INCLUDE_VALIDATION_SUITES: ${{ inputs.include_validation_suites }}
           WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
           OVERRIDE_REASON: ${{ inputs.override_reason }}
@@ -861,7 +835,7 @@ jobs:
 
   release_admission:
     name: Admit release mutation and publication
-    needs: [plan, mysql_db_contract, platform_service_validation, trust_root_validation]
+    needs: [ci, plan, mysql_db_contract, platform_service_validation, trust_root_validation]
     if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -893,19 +867,19 @@ jobs:
           PLUGIN_SDK_VERSION: ${{ needs.plan.outputs.plugin_sdk_version }}
           SDK_VERSION: ${{ needs.plan.outputs.sdk_version }}
           APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
-          PLUGIN_SDK_READY: ${{ inputs.plugin_sdk_ready }}
+          PLUGIN_SDK_READY: ${{ needs.ci.outputs.plugin_sdk_ready }}
           PLUGIN_SDK_API_FIRST_PUBLICATION: ${{ needs.plan.outputs.plugin_sdk_api_first_publication }}
           PLUGIN_SDK_API_REMOVED_SYMBOLS: ${{ needs.plan.outputs.plugin_sdk_api_removed_symbols }}
           PLUGIN_SDK_API_HUMAN_REVIEW_REQUIRED: ${{ needs.plan.outputs.plugin_sdk_api_human_review_required }}
-          PLUGIN_SDK_API_CLASSIFICATION: ${{ inputs.plugin_sdk_api_classification }}
-          PLUGIN_SDK_MIGRATION_NOTES: ${{ inputs.plugin_sdk_migration_notes }}
-          SDK_AUTH_READINESS: ${{ inputs.sdk_auth_readiness }}
-          SDK_AUTH_WAIVER: ${{ inputs.sdk_auth_waiver }}
+          PLUGIN_SDK_API_CLASSIFICATION: ${{ needs.ci.outputs.plugin_sdk_api_classification }}
+          PLUGIN_SDK_MIGRATION_NOTES: ${{ needs.ci.outputs.plugin_sdk_migration_notes }}
+          SDK_AUTH_READINESS: ${{ needs.ci.outputs.sdk_auth_readiness }}
+          SDK_AUTH_WAIVER: ${{ needs.ci.outputs.sdk_auth_waiver }}
           SDK_API_FIRST_PUBLICATION: ${{ needs.plan.outputs.sdk_api_first_publication }}
           SDK_API_REMOVED_SYMBOLS: ${{ needs.plan.outputs.sdk_api_removed_symbols }}
           SDK_API_HUMAN_REVIEW_REQUIRED: ${{ needs.plan.outputs.sdk_api_human_review_required }}
-          SDK_API_CLASSIFICATION: ${{ inputs.sdk_api_classification }}
-          SDK_MIGRATION_NOTES: ${{ inputs.sdk_migration_notes }}
+          SDK_API_CLASSIFICATION: ${{ needs.ci.outputs.sdk_api_classification }}
+          SDK_MIGRATION_NOTES: ${{ needs.ci.outputs.sdk_migration_notes }}
           RELEASE_CHANNEL: ${{ inputs.environment }}
           NPM_TAG: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}

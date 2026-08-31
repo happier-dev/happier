@@ -25,8 +25,8 @@ test('npm publication workflow is reusable-only and receives its exact source id
     releaseWorkflow,
     /approve_public_sdk_release: \$\{\{ inputs\.approve_public_sdk_release \}\}/mu,
   );
-  assert.match(releaseWorkflow, /PLUGIN_SDK_API_CLASSIFICATION: \$\{\{ inputs\.plugin_sdk_api_classification \}\}/mu);
-  assert.match(releaseWorkflow, /SDK_API_CLASSIFICATION: \$\{\{ inputs\.sdk_api_classification \}\}/mu);
+  assert.match(releaseWorkflow, /PLUGIN_SDK_API_CLASSIFICATION: \$\{\{ needs\.ci\.outputs\.plugin_sdk_api_classification \}\}/mu);
+  assert.match(releaseWorkflow, /SDK_API_CLASSIFICATION: \$\{\{ needs\.ci\.outputs\.sdk_api_classification \}\}/mu);
   assert.match(
     releaseWorkflow,
     /- name: Enforce stable and risk-selected publication admission[\s\S]*?env:\n[\s\S]*?WAIVE_CI: \$\{\{ inputs\.waive_ci \}\}[\s\S]*?PUBLISH_PLUGIN_SDK:/mu,

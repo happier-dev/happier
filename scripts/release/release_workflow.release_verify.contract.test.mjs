@@ -307,17 +307,18 @@ test('publication admission requires full stable checks and risk-selected server
 
   assert.ok(admission, 'release.yml should have one canonical release admission job');
   assert.ok(admission.needs.includes('plan'));
+  assert.ok(admission.needs.includes('ci'));
   assert.ok(admission.needs.includes('trust_root_validation'));
   assert.equal(workflow.on.workflow_dispatch.inputs.approve_public_sdk_release.type, 'boolean');
-  assert.equal(workflow.on.workflow_dispatch.inputs.plugin_sdk_ready.type, 'boolean');
-  assert.equal(workflow.on.workflow_dispatch.inputs.sdk_auth_readiness.type, 'choice');
+  assert.equal(workflow.on.workflow_dispatch.inputs.public_sdk_release_approval.type, 'string');
+  assert.equal(workflow.on.workflow_dispatch.inputs.public_sdk_release_approval.default, '{}');
   assert.equal(
     workflow.jobs.publish_npm.with.approve_public_sdk_release,
     '${{ inputs.approve_public_sdk_release }}',
     'the exact packed public SDK candidate must consume the reviewed maintainer decision',
   );
   assert.equal(workflow.jobs.release_admission.steps.at(-1).env.SDK_API_CLASSIFICATION,
-    '${{ inputs.sdk_api_classification }}');
+    '${{ needs.ci.outputs.sdk_api_classification }}');
   assert.match(
     workflow.jobs.release_admission.steps.map((step) => step.run ?? '').join('\n'),
     /scripts\/pipeline\/release\/admit-release\.mjs/u,

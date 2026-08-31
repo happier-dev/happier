@@ -14,9 +14,84 @@ const RELEASE_NOTES = /^[a-z0-9][a-z0-9._-]*$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z]+)*$/u;
 const TARGETS = new Set(releaseTargets);
 const OVERRIDE_REASON_MAX = 500;
+const PUBLIC_SDK_TEXT_MAX = 500;
+const PUBLIC_API_CLASSIFICATIONS = new Set(['unreviewed', 'first_publication', 'compatible', 'breaking']);
+const SDK_AUTH_READINESS = new Set(['not_ready', 'ready', 'waived']);
 
 /** @param {unknown} value */
 const text = (value) => String(value ?? '').trim();
+
+/** @param {unknown} value */
+function record(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** @param {Record<string, unknown>} value @param {Set<string>} allowed @param {string} label */
+function rejectUnknownKeys(value, allowed, label) {
+  const unknown = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) throw new Error(`public_sdk_release_approval ${label} contains unknown field '${unknown[0]}'.`);
+}
+
+/** @param {unknown} value @param {string} fallback @param {string} label */
+function boundedSingleLine(value, fallback, label) {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || value.length > PUBLIC_SDK_TEXT_MAX || /[\r\n]/u.test(value)) {
+    throw new Error(`public_sdk_release_approval ${label} must be a single-line string of at most ${PUBLIC_SDK_TEXT_MAX} characters.`);
+  }
+  return value;
+}
+
+/**
+ * The workflow dispatch surface groups the two related public-SDK judgments so
+ * GitHub's input limit does not force removal of release capabilities. This is
+ * the only parser; downstream admission consumes its normalized fields.
+ *
+ * @param {unknown} value
+ */
+export function parsePublicSdkReleaseApproval(value) {
+  const raw = text(value) || '{}';
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { throw new Error('public_sdk_release_approval must be valid JSON.'); }
+  if (!record(parsed)) throw new Error('public_sdk_release_approval must be a JSON object.');
+  rejectUnknownKeys(parsed, new Set(['pluginSdk', 'sdk']), 'object');
+
+  const pluginSdk = parsed.pluginSdk ?? {};
+  if (!record(pluginSdk)) throw new Error('public_sdk_release_approval pluginSdk must be a JSON object.');
+  rejectUnknownKeys(pluginSdk, new Set(['ready', 'apiClassification', 'migrationNotes']), 'pluginSdk');
+  const ready = pluginSdk.ready ?? false;
+  if (typeof ready !== 'boolean') throw new Error('public_sdk_release_approval pluginSdk.ready must be boolean.');
+  const pluginClassification = boundedSingleLine(pluginSdk.apiClassification, 'unreviewed', 'pluginSdk.apiClassification');
+  if (!PUBLIC_API_CLASSIFICATIONS.has(pluginClassification)) {
+    throw new Error('public_sdk_release_approval pluginSdk.apiClassification is invalid.');
+  }
+
+  const sdk = parsed.sdk ?? {};
+  if (!record(sdk)) throw new Error('public_sdk_release_approval sdk must be a JSON object.');
+  rejectUnknownKeys(sdk, new Set(['authReadiness', 'authWaiver', 'apiClassification', 'migrationNotes']), 'sdk');
+  const authReadiness = boundedSingleLine(sdk.authReadiness, 'not_ready', 'sdk.authReadiness');
+  if (!SDK_AUTH_READINESS.has(authReadiness)) {
+    throw new Error('public_sdk_release_approval sdk.authReadiness is invalid.');
+  }
+  const sdkClassification = boundedSingleLine(sdk.apiClassification, 'unreviewed', 'sdk.apiClassification');
+  if (!PUBLIC_API_CLASSIFICATIONS.has(sdkClassification)) {
+    throw new Error('public_sdk_release_approval sdk.apiClassification is invalid.');
+  }
+
+  return {
+    pluginSdk: {
+      ready,
+      apiClassification: pluginClassification,
+      migrationNotes: boundedSingleLine(pluginSdk.migrationNotes, 'not_required', 'pluginSdk.migrationNotes'),
+    },
+    sdk: {
+      authReadiness,
+      authWaiver: boundedSingleLine(sdk.authWaiver, '', 'sdk.authWaiver'),
+      apiClassification: sdkClassification,
+      migrationNotes: boundedSingleLine(sdk.migrationNotes, 'not_required', 'sdk.migrationNotes'),
+    },
+  };
+}
 
 function csv(value, label) {
   const raw = text(value);
@@ -35,6 +110,7 @@ function csv(value, label) {
  * releaseNotesId?: string; confirm?: string; deployTargets?: string;
  * environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
  * waiveCi?: boolean; includeValidationSuites?: string; waiveValidationSuites?: string; overrideReason?: string;
+ * publicSdkReleaseApproval?: string;
  * }} input
  */
 export function validateReleaseDispatch(input) {
@@ -57,6 +133,7 @@ export function validateReleaseDispatch(input) {
   const waiveValidationSuiteIds = refinements.waiveSuiteIds;
   const waiveCi = input.waiveCi === true;
   const overrideReason = text(input.overrideReason);
+  const publicSdkReleaseApproval = parsePublicSdkReleaseApproval(input.publicSdkReleaseApproval);
   if ((waiveCi || waiveValidationSuiteIds.length > 0) && !overrideReason) {
     throw new Error('override_reason is required when CI or validation evidence is waived.');
   }
@@ -119,6 +196,7 @@ export function validateReleaseDispatch(input) {
     compareLabel,
     deployTargets,
     overrides: { waiveCi, includeValidationSuiteIds, waiveValidationSuiteIds, reason: overrideReason },
+    publicSdkReleaseApproval,
   };
 }
 
@@ -143,13 +221,28 @@ export function validateReleaseDispatchFromEnvironment(env) {
     includeValidationSuites: env.INCLUDE_VALIDATION_SUITES,
     waiveValidationSuites: env.WAIVE_VALIDATION_SUITES,
     overrideReason: env.OVERRIDE_REASON,
+    publicSdkReleaseApproval: env.PUBLIC_SDK_RELEASE_APPROVAL,
   });
 }
 
 export async function main() {
   const result = validateReleaseDispatchFromEnvironment(process.env);
   if (process.env.GITHUB_OUTPUT) {
-    await appendFile(process.env.GITHUB_OUTPUT, `mode=${result.mode}\nsource_ref=${result.sourceRef}\nbase_ref=${result.baseRef}\ncompare_label=${result.compareLabel}\n`, 'utf8');
+    const approval = result.publicSdkReleaseApproval;
+    await appendFile(process.env.GITHUB_OUTPUT, [
+      `mode=${result.mode}`,
+      `source_ref=${result.sourceRef}`,
+      `base_ref=${result.baseRef}`,
+      `compare_label=${result.compareLabel}`,
+      `plugin_sdk_ready=${approval.pluginSdk.ready}`,
+      `plugin_sdk_api_classification=${approval.pluginSdk.apiClassification}`,
+      `plugin_sdk_migration_notes=${approval.pluginSdk.migrationNotes}`,
+      `sdk_auth_readiness=${approval.sdk.authReadiness}`,
+      `sdk_auth_waiver=${approval.sdk.authWaiver}`,
+      `sdk_api_classification=${approval.sdk.apiClassification}`,
+      `sdk_migration_notes=${approval.sdk.migrationNotes}`,
+      '',
+    ].join('\n'), 'utf8');
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }

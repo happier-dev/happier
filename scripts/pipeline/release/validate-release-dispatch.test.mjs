@@ -26,6 +26,7 @@ function valid(overrides = {}) {
     includeValidationSuites: '',
     waiveValidationSuites: '',
     overrideReason: '',
+    publicSdkReleaseApproval: '{}',
     ...overrides,
   };
 }
@@ -38,7 +39,38 @@ test('validates a materialized preview release and resolves planning facts', () 
     compareLabel: 'preview..dev',
     deployTargets: ['ui', 'server', 'cli'],
     overrides: { waiveCi: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
+    publicSdkReleaseApproval: {
+      pluginSdk: { ready: false, apiClassification: 'unreviewed', migrationNotes: 'not_required' },
+      sdk: { authReadiness: 'not_ready', authWaiver: '', apiClassification: 'unreviewed', migrationNotes: 'not_required' },
+    },
   });
+});
+
+test('normalizes the grouped public SDK approval with fail-closed structured input validation', () => {
+  const result = validateReleaseDispatch(valid({
+    publicSdkReleaseApproval: JSON.stringify({
+      pluginSdk: { ready: true, apiClassification: 'compatible', migrationNotes: 'not_required' },
+      sdk: { authReadiness: 'waived', authWaiver: 'preview-auth-review', apiClassification: 'breaking', migrationNotes: '2026.08.11-preview' },
+    }),
+  }));
+  assert.deepEqual(result.publicSdkReleaseApproval, {
+    pluginSdk: { ready: true, apiClassification: 'compatible', migrationNotes: 'not_required' },
+    sdk: { authReadiness: 'waived', authWaiver: 'preview-auth-review', apiClassification: 'breaking', migrationNotes: '2026.08.11-preview' },
+  });
+
+  for (const publicSdkReleaseApproval of [
+    '{',
+    '[]',
+    '{"pluginSdk":{"ready":"true"}}',
+    '{"pluginSdk":{"unknown":true}}',
+    '{"sdk":{"authReadiness":"maybe"}}',
+    '{"extra":true}',
+  ]) {
+    assert.throws(
+      () => validateReleaseDispatch(valid({ publicSdkReleaseApproval })),
+      /public_sdk_release_approval/u,
+    );
+  }
 });
 
 test('accepts only explicit reasoned maintainer overrides and keeps them distinct from passing evidence', () => {

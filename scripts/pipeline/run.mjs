@@ -4703,6 +4703,19 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             if (!/(^|\/)(dev|upstream-dev)$/.test(currentBranch)) {
               fail(`Local release dispatch expects branch 'dev' or '*\\/upstream-dev' (current: ${currentBranch}).`);
             }
+            const publicSdkReleaseApproval = JSON.stringify({
+              pluginSdk: {
+                ready: pluginSdkReady,
+                apiClassification: pluginSdkApiClassification || 'unreviewed',
+                migrationNotes: pluginSdkMigrationNotes,
+              },
+              sdk: {
+                authReadiness: sdkAuthReadiness,
+                authWaiver: sdkAuthWaiver,
+                apiClassification: sdkApiClassification || 'unreviewed',
+                migrationNotes: sdkMigrationNotes,
+              },
+            });
             execFileSync('gh', [
               'workflow', 'run', 'release.yml',
               '--repo', repository,
@@ -4711,13 +4724,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `validation_profile=${releaseProfile.id}`,
               '-f', `waive_ci=${waiveCi}`,
               '-f', `approve_public_sdk_release=${approvePublicSdkRelease}`,
-              '-f', `plugin_sdk_ready=${pluginSdkReady}`,
-              '-f', `plugin_sdk_api_classification=${pluginSdkApiClassification || 'unreviewed'}`,
-              '-f', `plugin_sdk_migration_notes=${pluginSdkMigrationNotes}`,
-              '-f', `sdk_auth_readiness=${sdkAuthReadiness}`,
-              '-f', `sdk_auth_waiver=${sdkAuthWaiver}`,
-              '-f', `sdk_api_classification=${sdkApiClassification || 'unreviewed'}`,
-              '-f', `sdk_migration_notes=${sdkMigrationNotes}`,
+              '-f', `public_sdk_release_approval=${publicSdkReleaseApproval}`,
               '-f', `include_validation_suites=${includeValidationSuites.join(',')}`,
               '-f', `waive_validation_suites=${waiveValidationSuites.join(',')}`,
               '-f', `override_reason=${overrideReason}`,

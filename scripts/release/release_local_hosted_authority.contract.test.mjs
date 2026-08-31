@@ -51,6 +51,13 @@ exit 0
       '--attempt-id', 'attempt_2',
       '--resume-run-id', '31506884258',
       '--release-notes-id', '2026-08-09.1',
+      '--plugin-sdk-ready', 'true',
+      '--plugin-sdk-api-classification', 'compatible',
+      '--plugin-sdk-migration-notes', 'not_required',
+      '--sdk-auth-readiness', 'waived',
+      '--sdk-auth-waiver', 'preview-auth-review',
+      '--sdk-api-classification', 'breaking',
+      '--sdk-migration-notes', '2026-08-09.1',
       '--qualified-v4-activation-approval', 'true',
       '--allow-dirty', 'true',
     ], {
@@ -78,6 +85,8 @@ exit 0
     assert.match(commands, /-f resume_run_id=31506884258/);
     assert.match(commands, /-f release_notes_id=2026-08-09\.1/);
     assert.match(commands, /-f qualified_v4_activation_approval=true/);
+    assert.match(commands, /-f public_sdk_release_approval=\{"pluginSdk":\{"ready":true,"apiClassification":"compatible","migrationNotes":"not_required"\},"sdk":\{"authReadiness":"waived","authWaiver":"preview-auth-review","apiClassification":"breaking","migrationNotes":"2026-08-09\.1"\}\}/);
+    assert.doesNotMatch(commands, /-f (?:plugin_sdk_ready|plugin_sdk_api_classification|plugin_sdk_migration_notes|sdk_auth_readiness|sdk_auth_waiver|sdk_api_classification|sdk_migration_notes)=/);
     assert.doesNotMatch(commands, /release_message=/, 'canonical changelog projection owns release notes');
     assert.match(output, /hosted release workflow/i);
     assert.doesNotMatch(commands, /publish-server-runtime|promote-deploy-branch|release upload/);

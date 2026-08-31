@@ -24,7 +24,7 @@ test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  for (const key of ['validation_profile', 'deploy_targets', 'force_deploy', 'ui_expo_action', 'desktop_mode', 'bump', 'confirm', 'authorized_promotion_source_sha', 'workflow_control_sha']) {
+  for (const key of ['validation_profile', 'deploy_targets', 'force_deploy', 'ui_expo_action', 'desktop_mode', 'confirm', 'authorized_promotion_source_sha', 'workflow_control_sha', 'public_sdk_release_approval']) {
     assert.ok(inputs[key], `expected grouped input ${key}`);
   }
 
@@ -32,6 +32,8 @@ test('release workflow uses compact grouped inputs', async () => {
   assert.deepEqual(inputs.validation_profile.options, ['integrated', 'stable']);
   assert.equal(inputs.validation_profile.default, 'integrated');
   assert.equal(inputs.release_message, undefined, 'release notes come from the exact candidate changelog projection');
+  assert.equal(inputs.public_sdk_release_approval.type, 'string');
+  assert.equal(inputs.public_sdk_release_approval.default, '{}');
 
   for (const legacyKey of [
     'custom_checks',
@@ -45,9 +47,24 @@ test('release workflow uses compact grouped inputs', async () => {
     'bump_app_override',
     'bump_cli_override',
     'bump_stack_override',
+    'plugin_sdk_ready',
+    'plugin_sdk_api_classification',
+    'plugin_sdk_migration_notes',
+    'sdk_auth_readiness',
+    'sdk_auth_waiver',
+    'sdk_api_classification',
+    'sdk_migration_notes',
   ]) {
     assert.equal(inputs[legacyKey], undefined, `workflow_dispatch input ${legacyKey} should be removed from the compact manual surface`);
   }
+
+  const dispatch = parsed.jobs.ci.steps.find((step) => step?.id === 'dispatch');
+  assert.equal(dispatch.env.PUBLIC_SDK_RELEASE_APPROVAL, '${{ inputs.public_sdk_release_approval }}');
+  assert.equal(parsed.jobs.ci.outputs.sdk_auth_readiness, '${{ steps.dispatch.outputs.sdk_auth_readiness }}');
+  assert.equal(
+    parsed.jobs.release_admission.steps.at(-1).env.SDK_AUTH_READINESS,
+    '${{ needs.ci.outputs.sdk_auth_readiness }}',
+  );
 });
 
 test('release workflow resolves the public profile internally before CI and planning', async () => {
