@@ -76,7 +76,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-website-${{ github.ref }}
+  group: deploy-ref-${{ github.repository }}-${{ inputs.environment }}-website
   cancel-in-progress: false
 
 jobs:
@@ -354,33 +354,18 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
-      - name: Resolve deploy branch SHA before promotion
-        id: before
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          ref="deploy/$DEPLOY_ENVIRONMENT/website"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Promote exact release SHA
+        id: promote_ref
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-        run: node scripts/pipeline/github/promote-deploy-branch.mjs --deploy-environment "$DEPLOY_ENVIRONMENT" --component website --sha "$RELEASE_SHA" --summary-file "$GITHUB_STEP_SUMMARY"
-      - name: Resolve deploy branch SHA after promotion
-        id: after
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          ref="deploy/$DEPLOY_ENVIRONMENT/website"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        run: node scripts/pipeline/github/promote-deploy-branch.mjs --deploy-environment "$DEPLOY_ENVIRONMENT" --component website --sha "$RELEASE_SHA" --summary-file "$GITHUB_STEP_SUMMARY" --github-output "$GITHUB_OUTPUT"
       - name: Deploy note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.after.outputs.sha }}
+          DEPLOY_SHA: ${{ steps.promote_ref.outputs.new_sha }}
         run: |
           echo "deploy/$DEPLOY_ENVIRONMENT/website records what is live; Cloudflare is published by the deploy_cloudflare job." >> "$GITHUB_STEP_SUMMARY"
           echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"

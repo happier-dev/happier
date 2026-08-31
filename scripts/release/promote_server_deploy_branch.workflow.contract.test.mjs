@@ -16,7 +16,9 @@ test('promote-server isolates deploy branch promotion and force webhook in trust
   assert.doesNotMatch(raw, /node scripts\/pipeline\/run\.mjs promote-deploy-branch/);
   assert.doesNotMatch(raw, /node scripts\/pipeline\/run\.mjs deploy/);
   assert.match(raw, /\$RUNNER_TEMP\/promote-server-deploy-ref\.mjs/);
+  assert.match(raw, /\$RUNNER_TEMP\/deploy-ref-cas\.mjs/);
   assert.match(raw, /\$RUNNER_TEMP\/trigger-server-deploy-webhooks\.mjs/);
-  assert.match(raw, /--force-with-lease|--expected-current-sha/);
+  assert.match(raw, /--expected-current-sha/);
+  assert.match(raw, /group: deploy-ref-\$\{\{ github\.repository \}\}-\$\{\{ inputs\.environment \}\}-server/);
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);
 });

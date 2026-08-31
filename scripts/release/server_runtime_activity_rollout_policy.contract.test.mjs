@@ -150,6 +150,7 @@ test('promote-server performs the write-capable deploy-ref mutation only from a 
   );
   assert.match(workflow, /Capture trusted server deploy mutation/);
   assert.match(workflow, /\$RUNNER_TEMP\/promote-server-deploy-ref\.mjs/);
+  assert.match(workflow, /\$RUNNER_TEMP\/deploy-ref-cas\.mjs/);
   assert.match(workflow, /steps\.bind\.outputs\.candidate_sha/);
   assert.match(workflow, /--expected-current-sha/);
   assert.doesNotMatch(workflow, /persist-credentials:\s+true/);

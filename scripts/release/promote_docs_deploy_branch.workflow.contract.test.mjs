@@ -14,6 +14,10 @@ async function loadWorkflow(name) {
 test('promote-docs records the deploy branch and publishes the validated artifact directly', async () => {
   const raw = await loadWorkflow('promote-docs.yml');
   assert.match(raw, /node scripts\/pipeline\/github\/promote-deploy-branch\.mjs/);
+  assert.match(raw, /--github-output "\$GITHUB_OUTPUT"/);
+  assert.match(raw, /steps\.promote_ref\.outputs\.new_sha/);
+  assert.doesNotMatch(raw, /Resolve deploy branch SHA \((?:before|after)\)/);
+  assert.match(raw, /group: deploy-ref-\$\{\{ github\.repository \}\}-\$\{\{ inputs\.environment \}\}-docs/);
   assert.match(raw, /deploy_cloudflare:/);
   assert.match(raw, /Download the exact built site/);
   assert.doesNotMatch(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);

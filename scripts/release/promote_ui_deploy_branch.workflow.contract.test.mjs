@@ -61,6 +61,11 @@ test('promote-ui delegates web deploy branch promotion to pipeline script', asyn
   const raw = await loadWorkflow('promote-ui.yml');
   assert.match(raw, /Promote exact release SHA to deploy branch/);
   assert.match(raw, /node scripts\/pipeline\/github\/promote-deploy-branch\.mjs/);
+  assert.match(raw, /--github-output "\$GITHUB_OUTPUT"/);
+  assert.match(raw, /steps\.promote_ref\.outputs\.new_sha/);
+  assert.doesNotMatch(raw, /Resolve deploy branch SHA (?:before|after) promotion/);
+  assert.match(raw, /group: deploy-ref-\$\{\{ github\.repository \}\}-\$\{\{ inputs\.environment \}\}-ui/);
+  assert.match(raw, /cancel-in-progress: false/);
   assert.match(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);
   assert.doesNotMatch(raw, /steps\.deploy_meta\.outputs\./, 'promote-ui should not reference outputs from a nonexistent deploy_meta step');
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);

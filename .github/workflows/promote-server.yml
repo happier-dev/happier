@@ -86,7 +86,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-server-${{ github.ref }}
+  group: deploy-ref-${{ github.repository }}-${{ inputs.environment }}-server
   cancel-in-progress: false
 
 jobs:
@@ -440,6 +440,8 @@ jobs:
           set -euo pipefail
           cp scripts/pipeline/github/enforce-server-runtime-activity-rollout.mjs \
             "$RUNNER_TEMP/enforce-server-runtime-activity-rollout.mjs"
+          cp scripts/pipeline/github/deploy-ref-cas.mjs \
+            "$RUNNER_TEMP/deploy-ref-cas.mjs"
           cp scripts/pipeline/github/promote-server-deploy-ref.mjs \
             "$RUNNER_TEMP/promote-server-deploy-ref.mjs"
           cp scripts/pipeline/deploy/trigger-webhooks.mjs \

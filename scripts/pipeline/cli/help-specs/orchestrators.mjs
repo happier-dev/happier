@@ -123,7 +123,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
   },
 
   'promote-deploy-branch': {
-    summary: 'Update a remote deploy branch to a source ref or SHA via GitHub API.',
+    summary: 'Atomically update a remote deploy branch to a source ref or SHA.',
     usage:
       'node scripts/pipeline/run.mjs promote-deploy-branch --deploy-environment <preview|production> --component <ui|server|website|docs> [--source-ref <ref>] [--sha <sha>] [--summary-file <path>] [--dry-run]',
     options: [
@@ -138,7 +138,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--keychain-service <name>         (default: happier/pipeline).',
       '--keychain-account <name>',
     ],
-    bullets: ['Requires GitHub CLI auth (`gh auth status`).'],
+    bullets: ['Uses an exact-ref compare-and-swap; ambiguous writes are observed, never blindly retried.'],
     examples: [
       'node scripts/pipeline/run.mjs promote-deploy-branch --deploy-environment production --component website --source-ref main',
     ],
