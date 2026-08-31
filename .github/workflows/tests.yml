@@ -1078,22 +1078,27 @@ jobs:
         run: yarn workspace @happier-dev/cli test:unit
 
       - name: Test root CLI common dist admission owner
-        if: ${{ matrix.part == 1 }}
+        id: cli-common-dist
+        if: ${{ matrix.part == 1 && !cancelled() }}
+        continue-on-error: true
         run: node --test scripts/ensureCliCommonDistModule.test.mjs
 
       - name: Run integration tests
         id: integration-tests
+        if: ${{ !cancelled() }}
         continue-on-error: true
         run: yarn workspace @happier-dev/cli test:integration
 
       - name: Require all cli test lanes
         if: always()
         env:
+          CLI_PART: ${{ matrix.part }}
           UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
+          CLI_COMMON_DIST_OUTCOME: ${{ steps.cli-common-dist.outcome }}
           INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
         run: |
-          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ]; then
-            echo "One or more cli test lanes failed: unit=$UNIT_TESTS_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
+          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ] || { [ "$CLI_PART" = "1" ] && [ "$CLI_COMMON_DIST_OUTCOME" != "success" ]; }; then
+            echo "One or more cli test lanes failed: unit=$UNIT_TESTS_OUTCOME common_dist=$CLI_COMMON_DIST_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME" >&2
             exit 1
           fi
 
@@ -1177,10 +1182,26 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run release contract tests
+        id: release-contracts
+        continue-on-error: true
+        run: yarn -s test:release:contracts
+
+      - name: Verify installer release projection
+        id: release-sync-installers
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node scripts/pipeline/run.mjs release-sync-installers --check
+
+      - name: Require all release contract checks
+        if: always()
+        env:
+          RELEASE_CONTRACTS_OUTCOME: ${{ steps.release-contracts.outcome }}
+          RELEASE_SYNC_INSTALLERS_OUTCOME: ${{ steps.release-sync-installers.outcome }}
         run: |
-          set -euo pipefail
-          yarn -s test:release:contracts
-          node scripts/pipeline/run.mjs release-sync-installers --check
+          if [ "$RELEASE_CONTRACTS_OUTCOME" != "success" ] || [ "$RELEASE_SYNC_INSTALLERS_OUTCOME" != "success" ]; then
+            echo "One or more release contract checks failed: contracts=$RELEASE_CONTRACTS_OUTCOME installer_projection=$RELEASE_SYNC_INSTALLERS_OUTCOME" >&2
+            exit 1
+          fi
 
   installers-smoke-linux:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
@@ -1863,16 +1884,66 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run governance self-tests
-        run: yarn test:wiring:self && yarn test:policy:self
+        id: wiring-self
+        continue-on-error: true
+        run: yarn test:wiring:self
+
+      - name: Run policy self-tests
+        id: policy-self
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: yarn test:policy:self
 
       - name: Run governance validator
+        id: wiring-validator
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         run: yarn test:wiring
 
-      - name: Run governance inventory reports
-        run: yarn test:inventory && yarn test:migration:inventory
+      - name: Run test inventory report
+        id: inventory
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: yarn test:inventory
+
+      - name: Run migration inventory report
+        id: migration-inventory
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: yarn test:migration:inventory
 
       - name: Run typecheck
+        id: workspace-typecheck
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         run: yarn typecheck
+
+      - name: Require all governance and typecheck checks
+        if: always()
+        env:
+          WIRING_SELF_OUTCOME: ${{ steps.wiring-self.outcome }}
+          POLICY_SELF_OUTCOME: ${{ steps.policy-self.outcome }}
+          WIRING_VALIDATOR_OUTCOME: ${{ steps.wiring-validator.outcome }}
+          INVENTORY_OUTCOME: ${{ steps.inventory.outcome }}
+          MIGRATION_INVENTORY_OUTCOME: ${{ steps.migration-inventory.outcome }}
+          WORKSPACE_TYPECHECK_OUTCOME: ${{ steps.workspace-typecheck.outcome }}
+        run: |
+          failed=0
+          for result in \
+            "$WIRING_SELF_OUTCOME" \
+            "$POLICY_SELF_OUTCOME" \
+            "$WIRING_VALIDATOR_OUTCOME" \
+            "$INVENTORY_OUTCOME" \
+            "$MIGRATION_INVENTORY_OUTCOME" \
+            "$WORKSPACE_TYPECHECK_OUTCOME"; do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more governance or typecheck checks failed; inspect the individual steps above." >&2
+            exit 1
+          fi
 
   cli-daemon-e2e:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_cli_daemon_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli_daemon_e2e == 'true') }}
