@@ -91,6 +91,54 @@ describe.sequential('daemon control client PID safety', () => {
     }
   }, 30_000);
 
+  it('replaces legacy daemon state and lock records whose live PID belongs to an unrelated process', async () => {
+    const homeDir = createTempDirSync('happier-cli-daemon-recycled-pid-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_PING_TIMEOUT_MS: '150',
+      });
+
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      if (!child.pid) throw new Error('missing pid for child');
+      spawnedChildren.push(child);
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+
+      vi.resetModules();
+      const [
+        { configuration },
+        { inspectDaemonRunningStateAndCleanupStaleState },
+        { acquireDaemonLock, releaseDaemonLock },
+      ] = await Promise.all([
+        import('@/configuration'),
+        import('./controlClient'),
+        import('@/persistence'),
+      ]);
+
+      writeFileSync(configuration.daemonStateFile, JSON.stringify({
+        pid: child.pid,
+        httpPort: 1,
+        startedAt: Date.now() - 60_000,
+        lastHeartbeatAt: Date.now() - 60_000,
+        startedWithCliVersion: '0.3.0',
+        controlToken: 'stale-token',
+      }), 'utf-8');
+      writeFileSync(configuration.daemonLockFile, String(child.pid), 'utf-8');
+
+      await expect(inspectDaemonRunningStateAndCleanupStaleState()).resolves.toEqual({ status: 'not-running' });
+      const lockHandle = await acquireDaemonLock(2, 1);
+      expect(lockHandle).not.toBeNull();
+      if (lockHandle) await releaseDaemonLock(lockHandle);
+      expect(() => process.kill(child.pid!, 0)).not.toThrow();
+      expect(existsSync(configuration.daemonStateFile)).toBe(true);
+    } finally {
+      removeTempDirSync(homeDir);
+    }
+  }, 120_000);
+
   it('stopDaemon reports a completed stop when the recorded daemon PID has already exited', async () => {
     // F-DAEMON-6: `happier daemon restart` stopped the daemon and then refused its own force-kill
     // with "daemon identity does not match the active lifecycle owner", leaving the stack daemonless.

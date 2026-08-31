@@ -343,21 +343,48 @@ export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
   }
 }
 
-export async function findHappyProcessByPid(pid: number): Promise<HappyProcessInfo | null> {
-  const procfs = await getProcessInfoByPidProcfs(pid);
-  if (procfs) {
-    return classifyHappyProcess(procfs);
-  }
-  const posixProc = getProcessInfoByPidPosix(pid);
-  if (posixProc) {
-    return classifyHappyProcess(posixProc);
-  }
-  const windowsProc = await getProcessInfoByPidWindows(pid);
-  if (windowsProc) {
-    return classifyHappyProcess(windowsProc);
+export type ProcessByPidClassification =
+  | Readonly<{ kind: 'happy'; process: HappyProcessInfo }>
+  | Readonly<{ kind: 'not_happy' }>
+  | Readonly<{ kind: 'unknown' }>;
+
+export type DaemonLifecycleProcessByPidClassification =
+  | Readonly<{ kind: 'daemon'; process: HappyProcessInfo }>
+  | Readonly<{ kind: 'not_daemon' }>
+  | Readonly<{ kind: 'unknown' }>;
+
+export async function classifyProcessByPid(pid: number): Promise<ProcessByPidClassification> {
+  const processInfo = await getProcessInfoByPidProcfs(pid)
+    ?? getProcessInfoByPidPosix(pid)
+    ?? await getProcessInfoByPidWindows(pid);
+  if (processInfo) {
+    const happy = classifyHappyProcess(processInfo);
+    return happy ? { kind: 'happy', process: happy } : { kind: 'not_happy' };
   }
   const all = await findAllHappyProcesses();
-  return all.find((p) => p.pid === pid) ?? null;
+  const happy = all.find((p) => p.pid === pid);
+  return happy ? { kind: 'happy', process: happy } : { kind: 'unknown' };
+}
+
+export async function findHappyProcessByPid(pid: number): Promise<HappyProcessInfo | null> {
+  const classified = await classifyProcessByPid(pid);
+  return classified.kind === 'happy' ? classified.process : null;
+}
+
+/**
+ * Classify whether a PID can own the daemon lifecycle without collapsing a verified unrelated
+ * process into the same result as an unreadable process. Lifecycle callers may replace the former
+ * while preserving fail-closed behavior for the latter.
+ */
+export async function classifyDaemonLifecycleProcessByPid(
+  pid: number,
+): Promise<DaemonLifecycleProcessByPidClassification> {
+  const classified = await classifyProcessByPid(pid);
+  if (classified.kind === 'unknown') return classified;
+  if (classified.kind === 'not_happy') return { kind: 'not_daemon' };
+  return classified.process.type === 'daemon' || classified.process.type === 'dev-daemon'
+    ? { kind: 'daemon', process: classified.process }
+    : { kind: 'not_daemon' };
 }
 
 /**

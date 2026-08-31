@@ -57,7 +57,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -88,7 +88,7 @@ describe('acquireDaemonLock', () => {
       };
     });
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     try {
@@ -105,7 +105,7 @@ describe('acquireDaemonLock', () => {
 
   it('does not replace a fresh live unclassified lock holder', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -120,7 +120,7 @@ describe('acquireDaemonLock', () => {
 
   it('does not replace an old live unclassified lock holder', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -137,7 +137,7 @@ describe('acquireDaemonLock', () => {
 
   it('does not replace a lock holder when PID liveness is denied with EPERM', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -173,7 +173,7 @@ describe('acquireDaemonLock', () => {
 
   it('default stale-state cleanup preserves a live unclassified singleton lock', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -191,7 +191,7 @@ describe('acquireDaemonLock', () => {
 
   it('does not remove a successor-owned lock file when releasing an old lock handle', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');
@@ -208,7 +208,7 @@ describe('acquireDaemonLock', () => {
 
   it('does not remove a same-PID successor lock when releasing an old lock handle', async () => {
     vi.doMock('@/daemon/doctor', () => ({
-      findHappyProcessByPid: async () => null,
+      classifyDaemonLifecycleProcessByPid: async () => ({ kind: 'unknown' as const }),
     }));
 
     const { configuration } = await import('@/configuration');

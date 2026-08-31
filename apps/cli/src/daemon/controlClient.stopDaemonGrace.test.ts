@@ -30,6 +30,10 @@ const {
 
 vi.mock('@/daemon/doctor', () => ({
   findHappyProcessByPid: (pid: number) => findHappyProcessByPidMock(pid),
+  classifyDaemonLifecycleProcessByPid: async (pid: number) => ({
+    kind: 'daemon' as const,
+    process: await findHappyProcessByPidMock(pid),
+  }),
 }));
 
 vi.mock('@/daemon/processIdentity', () => ({

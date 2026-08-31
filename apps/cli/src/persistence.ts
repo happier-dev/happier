@@ -1220,12 +1220,13 @@ async function inspectDaemonLockSnapshotOwner(snapshot: DaemonLockSnapshot): Pro
     return { status: 'replaceable', pid, reason: 'unrelated' };
   }
 
-  const { findHappyProcessByPid } = await import('@/daemon/doctor');
-  const proc = await findHappyProcessByPid(pid).catch(() => null);
-  if (proc?.type === 'daemon' || proc?.type === 'dev-daemon') {
+  const { classifyDaemonLifecycleProcessByPid } = await import('@/daemon/doctor');
+  const ownerProcess = await classifyDaemonLifecycleProcessByPid(pid)
+    .catch(() => ({ kind: 'unknown' as const }));
+  if (ownerProcess.kind === 'daemon') {
     return { status: 'starting', pid, evidence: 'classified' };
   }
-  if (proc) {
+  if (ownerProcess.kind === 'not_daemon') {
     return { status: 'replaceable', pid, reason: 'unrelated' };
   }
   const runState = await readProcessRunState(pid);

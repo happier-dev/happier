@@ -20,6 +20,7 @@ import {
   isDaemonProcessForCurrentRuntimeRoot,
 } from '@/daemon/ownership/daemonProcessScopeIdentity';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
+import { classifyDaemonLifecycleProcessByPid } from '@/daemon/doctor';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import { projectPath } from '@/projectPath';
 import { readFileSync, statSync } from 'fs';
@@ -348,6 +349,9 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
     return { status: 'starting', state };
   }
 
+  const ownerProcess = await classifyDaemonLifecycleProcessByPid(state.pid)
+    .catch(() => ({ kind: 'unknown' as const }));
+
   try {
     if (state.controlToken) {
       const ping = await daemonPost('/ping', undefined, { timeoutMs: resolveDaemonPingTimeoutMs() });
@@ -359,13 +363,28 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
       }
 
       if (ping?.error) {
+        if (ownerProcess.kind === 'not_daemon') {
+          logger.debug('[DAEMON RUN] Daemon control is unreachable and its state PID belongs to an unrelated process, treating state as replaceable');
+          return { status: 'not-running' };
+        }
         logger.debug('[DAEMON RUN] Daemon /ping unreachable while PID is alive, treating daemon as busy/unknown and keeping state');
         return { status: 'starting', state };
       }
+
+      return { status: 'running', state };
+    }
+
+    if (ownerProcess.kind === 'not_daemon') {
+      logger.debug('[DAEMON RUN] Daemon state PID belongs to an unrelated process, treating state as replaceable');
+      return { status: 'not-running' };
     }
 
     return { status: 'running', state };
   } catch {
+    if (ownerProcess.kind === 'not_daemon') {
+      logger.debug('[DAEMON RUN] Daemon control probe failed and its state PID belongs to an unrelated process, treating state as replaceable');
+      return { status: 'not-running' };
+    }
     const ageMs = resolveDaemonStateFreshnessAgeMs(state);
     if (ageMs !== null && ageMs <= DAEMON_STATE_FRESHNESS_GRACE_MS) {
       logger.debug('[DAEMON RUN] Daemon PID is not running but state is still fresh, keeping state while startup arbitration settles');

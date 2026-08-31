@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import type { findHappyProcessByPid, HappyProcessInfo } from '@/daemon/doctor';
+import type { classifyDaemonLifecycleProcessByPid, HappyProcessInfo } from '@/daemon/doctor';
 import type { readProcessRunState } from '@/daemon/processRunState';
 
 const daemonProcessFixture = {
@@ -12,11 +12,13 @@ const daemonProcessFixture = {
   command: 'happier daemon --started-by daemon',
   type: 'dev-daemon',
 } satisfies HappyProcessInfo;
-const findHappyProcessByPidMock = vi.fn<typeof findHappyProcessByPid>(async () => null);
+const classifyDaemonLifecycleProcessByPidMock = vi.fn<typeof classifyDaemonLifecycleProcessByPid>(
+  async () => ({ kind: 'unknown' }),
+);
 const readProcessRunStateMock = vi.fn<typeof readProcessRunState>(async () => 'servable');
 
 vi.mock('@/daemon/doctor', () => ({
-  findHappyProcessByPid: findHappyProcessByPidMock,
+  classifyDaemonLifecycleProcessByPid: classifyDaemonLifecycleProcessByPidMock,
 }));
 
 vi.mock('@/daemon/processRunState', () => ({
@@ -30,8 +32,8 @@ describe('daemon control client startup lock inspection', () => {
   afterEach(() => {
     envScope.restore();
     envScope = createEnvKeyScope(envKeys);
-    findHappyProcessByPidMock.mockReset();
-    findHappyProcessByPidMock.mockResolvedValue(null);
+    classifyDaemonLifecycleProcessByPidMock.mockReset();
+    classifyDaemonLifecycleProcessByPidMock.mockResolvedValue({ kind: 'unknown' });
     readProcessRunStateMock.mockReset();
     readProcessRunStateMock.mockResolvedValue('servable');
     vi.resetModules();
@@ -89,9 +91,9 @@ describe('daemon control client startup lock inspection', () => {
         import('@/configuration'),
         import('./controlClient'),
       ]);
-      findHappyProcessByPidMock
-        .mockResolvedValueOnce(daemonProcessFixture)
-        .mockResolvedValueOnce(null);
+      classifyDaemonLifecycleProcessByPidMock
+        .mockResolvedValueOnce({ kind: 'daemon', process: daemonProcessFixture })
+        .mockResolvedValueOnce({ kind: 'unknown' });
       mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
       writeFileSync(configuration.daemonLockFile, `${process.pid}\n`, 'utf8');
       const old = new Date(Date.now() - 120_000);
@@ -117,9 +119,9 @@ describe('daemon control client startup lock inspection', () => {
         import('@/configuration'),
         import('./controlClient'),
       ]);
-      findHappyProcessByPidMock
-        .mockResolvedValueOnce(daemonProcessFixture)
-        .mockResolvedValueOnce(null);
+      classifyDaemonLifecycleProcessByPidMock
+        .mockResolvedValueOnce({ kind: 'daemon', process: daemonProcessFixture })
+        .mockResolvedValueOnce({ kind: 'unknown' });
       readProcessRunStateMock.mockResolvedValueOnce('zombie');
       mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
       writeFileSync(configuration.daemonLockFile, `${process.pid}\n`, 'utf8');
@@ -143,7 +145,10 @@ describe('daemon control client startup lock inspection', () => {
         import('@/configuration'),
         import('./controlClient'),
       ]);
-      findHappyProcessByPidMock.mockResolvedValue(daemonProcessFixture);
+      classifyDaemonLifecycleProcessByPidMock.mockResolvedValue({
+        kind: 'daemon',
+        process: daemonProcessFixture,
+      });
       mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
       writeFileSync(configuration.daemonLockFile, `${process.pid}\n`, 'utf8');
       const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
