@@ -152,7 +152,38 @@ test('immutable candidate verification rejects a tag retargeted while assets are
     join(repoRoot, '.github', 'actions', 'verify-immutable-release-candidate', 'action.yml'),
     'utf8',
   );
-  const identityObservations = actionSource.match(/^\s*verify_candidate_tag_identity\s*$/gm)?.length ?? 0;
+  const identityObservationOffsets = [...actionSource.matchAll(/^\s*verify_candidate_tag_identity\s*$/gm)]
+    .map((match) => match.index);
+  assert.equal(identityObservationOffsets.length, 2, 'the immutable tag must be checked exactly twice');
+
+  const assetDownloadOffset = actionSource.indexOf(
+    'gh api "repos/${REPOSITORY}/releases/assets/${asset_id}"',
+  );
+  const currentSnapshotOffset = actionSource.indexOf('current_snapshot="$(gh api');
+  const snapshotEqualityOffset = actionSource.indexOf(
+    'if [ "$current_snapshot" != "$release_snapshot" ]; then',
+  );
+  assert.notEqual(assetDownloadOffset, -1, 'the release assets must be downloaded by immutable asset ID');
+  assert.notEqual(currentSnapshotOffset, -1, 'the release identity must be observed after asset download');
+  assert.notEqual(snapshotEqualityOffset, -1, 'the exact release snapshot must be compared after download');
+  const snapshotEqualityGuard = actionSource.slice(snapshotEqualityOffset).match(
+    /^if \[ "\$current_snapshot" != "\$release_snapshot" \]; then\n[\s\S]*?^        fi$/m,
+  );
+  assert.ok(snapshotEqualityGuard, 'the exact release snapshot comparison must remain fail-closed');
+  const snapshotGuardEndOffset = snapshotEqualityOffset + snapshotEqualityGuard[0].length;
+  assert.ok(
+    identityObservationOffsets[0] < assetDownloadOffset,
+    'the first immutable tag check must happen before any asset download',
+  );
+  assert.ok(
+    assetDownloadOffset < currentSnapshotOffset,
+    'assets must be downloaded before the release is observed again',
+  );
+  assert.ok(currentSnapshotOffset < snapshotEqualityOffset, 'the current release must be observed before comparison');
+  assert.ok(
+    snapshotGuardEndOffset < identityObservationOffsets[1],
+    'the second immutable tag check must happen after the exact release snapshot is accepted',
+  );
   let tagReads = 0;
   const server = createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
@@ -176,7 +207,7 @@ test('immutable candidate verification rejects a tag retargeted while assets are
 
   await assert.rejects(
     async () => {
-      for (let observation = 0; observation < identityObservations; observation += 1) {
+      for (let observation = 0; observation < identityObservationOffsets.length; observation += 1) {
         await main([
           '--repository', 'happier-dev/happier',
           '--channel', 'dev',
