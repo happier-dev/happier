@@ -114,6 +114,18 @@ describe('buildSpawnChildProcessEnv', () => {
     expect(env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY]).toBe('1');
   });
 
+  it('keeps self-migration enabled across an authorized daemon self-restart', () => {
+    const env = buildSpawnChildProcessEnv({
+      processEnv: {
+        PATH: '/bin',
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',
+      },
+      extraEnv: {},
+    });
+
+    expect(env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY]).toBe('1');
+  });
+
   it('does not enable self-migration for child runners spawned outside a background-service daemon', () => {
     const env = buildSpawnChildProcessEnv({
       processEnv: {

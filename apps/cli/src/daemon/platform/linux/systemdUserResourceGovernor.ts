@@ -21,6 +21,14 @@ export type SystemdUserScopedLaunchSpec = Readonly<{
   env?: Record<string, string>;
 }>;
 
+export function shouldUseSystemdUserSessionResourceGovernor(params: Readonly<{
+  platform: NodeJS.Platform;
+  startupSource: string | undefined;
+}>): boolean {
+  return params.platform === 'linux'
+    && (params.startupSource === 'background-service' || params.startupSource === 'self-restart');
+}
+
 export type SystemdUserResourceGovernorExecFile = (
   command: string,
   args: readonly string[],

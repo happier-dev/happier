@@ -3,9 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildSystemdUserScopedLaunchSpec,
   isSystemdUserResourceGovernorReady,
+  shouldUseSystemdUserSessionResourceGovernor,
 } from './systemdUserResourceGovernor';
 
 describe('systemd user resource governor', () => {
+  it.each([
+    ['linux background service', 'linux', 'background-service', true],
+    ['linux self-restart', 'linux', 'self-restart', true],
+    ['linux manual daemon', 'linux', 'manual', false],
+    ['non-linux self-restart', 'darwin', 'self-restart', false],
+  ] as const)('selects the session governor for %s', (_label, platform, startupSource, expected) => {
+    expect(shouldUseSystemdUserSessionResourceGovernor({ platform, startupSource })).toBe(expected);
+  });
+
   it('wraps an admitted runner in the disposable jobs slice without imposing a CPU or memory cap', () => {
     const spec = buildSystemdUserScopedLaunchSpec({
       launchSpec: {
