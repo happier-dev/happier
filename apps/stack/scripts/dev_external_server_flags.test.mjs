@@ -24,11 +24,29 @@ test('dev --json reports local server mode by default', async () => {
   const repoRoot = dirname(dirname(packageRoot)); // repo root
   const devScript = join(packageRoot, 'scripts', 'dev.mjs');
 
-  const res = await runNode([devScript, '--json'], { cwd: repoRoot, env: process.env });
-  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  const parsed = JSON.parse(res.stdout);
-  assert.equal(parsed.startServer, true);
-  assert.equal(parsed.serverConnectionSource, 'local');
+  const storageDir = await mkdtemp(join(tmpdir(), 'hstack-dev-local-default-'));
+  try {
+    const res = await runNode([devScript, '--json'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_SERVER_URL: '',
+        HAPPIER_STACK_STACK: 'repo-local-default',
+        HAPPIER_STACK_HOME_DIR: join(storageDir, 'home'),
+        HAPPIER_STACK_STORAGE_DIR: storageDir,
+        HAPPIER_STACK_SANDBOX_DIR: join(storageDir, 'sandbox'),
+        HAPPIER_STACK_REPO_DIR: '',
+        HAPPIER_STACK_ENV_FILE: '',
+        HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+      },
+    });
+    assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.startServer, true);
+    assert.equal(parsed.serverConnectionSource, 'local');
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
 });
 
 test('dev --no-server --json fails without an external server URL', async () => {
