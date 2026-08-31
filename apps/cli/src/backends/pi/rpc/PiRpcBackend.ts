@@ -979,9 +979,18 @@ export class PiRpcBackend implements AgentBackend {
     sessionId: SessionId,
     prompt: string,
   ): Promise<AcpPromptSubmissionEvidence> {
-    const outcome = await this.sendPromptWithAdmission(sessionId, prompt).admission;
+    const submission = this.sendPromptWithAdmission(sessionId, prompt);
+    const outcome = await submission.admission;
     if (outcome.status === 'accepted') {
       return { kind: 'accepted_without_exact_final_response' };
+    }
+    if (outcome.status === 'effect_may_have_occurred') {
+      return {
+        kind: 'effect_may_have_occurred',
+        finalResponseEvidence: submission.completion.then(() => ({
+          kind: 'accepted_without_exact_final_response',
+        })),
+      };
     }
     throw new AcpPromptSubmissionPhaseError(outcome.status, outcome.error);
   }
@@ -1082,6 +1091,15 @@ export class PiRpcBackend implements AgentBackend {
         settleAdmission(promptError instanceof PiRpcPromptRejectedBeforeEffectError
           ? { status: 'rejected_before_effect', error: promptError }
           : { status: 'effect_may_have_occurred', error: promptError });
+        if (isPromptResponseTimeoutError(promptError)) {
+          // The prompt bytes reached Pi, but threshold/overflow compaction can delay the RPC
+          // acknowledgement beyond the transport deadline. Keep the provider-owned pending turn
+          // authoritative: its later lifecycle either proves acceptance by completing or rejects
+          // with the real provider failure. The shared ACP evidence path keeps durable delivery
+          // blocked as uncertain until that proof arrives, without publishing a false turn failure.
+          await turn;
+          return;
+        }
         this.rejectPendingTurn(promptError);
         await turn.catch(() => undefined);
         throw promptError;

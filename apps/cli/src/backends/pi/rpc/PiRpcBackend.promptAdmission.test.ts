@@ -2,9 +2,10 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AcpPromptSubmissionEvidence } from '@/agent/acp/AcpBackend';
+import type { AgentMessage } from '@/agent/core';
 
 import { PiRpcBackend } from './PiRpcBackend';
 
@@ -25,7 +26,7 @@ type PiRpcBackendWithPromptAdmission = PiRpcBackend & {
 
 function makeFakePiRpcProcessScript(
   dir: string,
-  scenario: 'ack-before-turn' | 'command-without-turn' | 'command-ack-before-turn' | 'command-state-unknown-before-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
+  scenario: 'ack-before-turn' | 'ack-after-timeout-during-compaction' | 'command-without-turn' | 'command-ack-before-turn' | 'command-state-unknown-before-turn' | 'negative-ack-then-turn' | 'response-loss' | 'turn-before-ack',
 ): string {
   const scriptPath = join(dir, `fake-pi-rpc-${scenario}.js`);
   const observedPromptsPath = join(dir, 'observed-prompts.jsonl');
@@ -104,6 +105,17 @@ rl.on('line', (line) => {
         out({ id: command.id, type: 'response', command: command.type, success: true });
         setTimeout(() => out({ type: 'agent_start' }), 100);
         setTimeout(() => out({ type: 'agent_end' }), 140);
+        break;
+      }
+      if (scenario === 'ack-after-timeout-during-compaction') {
+        out({ type: 'compaction_start', reason: 'threshold', compactionId: 'delayed-prompt-compaction' });
+        setTimeout(() => {
+          out({ type: 'compaction_end', reason: 'threshold', compactionId: 'delayed-prompt-compaction' });
+          out({ type: 'agent_start' });
+        }, 100);
+        setTimeout(() => out({ id: command.id, type: 'response', command: command.type, success: true }), 110);
+        setTimeout(() => out({ type: 'agent_end' }), 120);
+        setTimeout(() => out({ type: 'message_update', assistantMessageEvent: { type: 'text_start' } }), 130);
         break;
       }
       if (scenario === 'negative-ack-then-turn') {
@@ -235,6 +247,56 @@ describe('PiRpcBackend prompt admission', () => {
     });
     expect(completionSettled).toBe(false);
     await expect(backend.waitForResponseComplete()).resolves.toBeUndefined();
+  });
+
+  it('keeps delayed prompt acceptance uncertain while Pi compacts, then accepts the completed turn', async () => {
+    const { backend, sessionId } = await startBackend('ack-after-timeout-during-compaction');
+    const waitForMessage = (predicate: (message: AgentMessage) => boolean) => (
+      new Promise<void>((resolve) => {
+        const handler = (message: AgentMessage) => {
+          if (!predicate(message)) return;
+          backend.offMessage(handler);
+          resolve();
+        };
+        backend.onMessage(handler);
+      })
+    );
+
+    const nativeSetTimeout = globalThis.setTimeout;
+    let shortenedPromptResponseTimeout = false;
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, timeout, ...args) => {
+      if (!shortenedPromptResponseTimeout && timeout === 30_000) {
+        shortenedPromptResponseTimeout = true;
+        return nativeSetTimeout(handler, 10, ...args);
+      }
+      return nativeSetTimeout(handler, timeout, ...args);
+    });
+    try {
+      const compactionStarted = waitForMessage((message) => (
+        message.type === 'event'
+        && message.name === 'context_compaction'
+        && (message.payload as { phase?: unknown } | undefined)?.phase === 'started'
+      ));
+      const evidencePromise = backend.sendPromptWithEvidence(sessionId, 'hello after compaction');
+
+      await compactionStarted;
+      const evidence = await evidencePromise;
+      expect(shortenedPromptResponseTimeout).toBe(true);
+      expect(evidence.kind).toBe('effect_may_have_occurred');
+      if (evidence.kind !== 'effect_may_have_occurred') return;
+
+      const postTurnActivity = waitForMessage((message) => (
+        message.type === 'event'
+        && message.name === 'thinking_update'
+      ));
+      await postTurnActivity;
+
+      await expect(evidence.finalResponseEvidence).resolves.toEqual({
+        kind: 'accepted_without_exact_final_response',
+      });
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it('keeps an exact negative prompt RPC response rejected when later uncorrelated turn events arrive', async () => {
