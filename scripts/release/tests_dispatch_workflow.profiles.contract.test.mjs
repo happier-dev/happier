@@ -116,6 +116,11 @@ test('manual deep CI retains the complete source certification set', () => {
 
   assert.equal(workflow.jobs.extended_db.uses, './.github/workflows/extended-db-tests.yml');
   assert.equal(workflow.jobs.extended_db.if, "${{ needs.resolve.outputs.run_extended_db == 'true' }}");
+  assert.deepEqual(
+    workflow.jobs.extended_db.needs,
+    ['resolve', 'release_actor_guard'],
+    'extended database certification must wait for the same trusted-ref and release-admin admission as the reusable test fanout',
+  );
   assert.ok(
     Object.values(workflow.jobs).every((job) => !String(job?.uses ?? '').match(/publish|deploy|promote/i)),
     'deep certification must not invoke publication, deployment, or promotion workflows',

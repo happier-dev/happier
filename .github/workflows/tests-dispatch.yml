@@ -345,7 +345,7 @@ jobs:
 
   extended_db:
     name: Extended database certification
-    needs: [resolve]
+    needs: [resolve, release_actor_guard]
     if: ${{ needs.resolve.outputs.run_extended_db == 'true' }}
     permissions:
       contents: read
