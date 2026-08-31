@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { reloadConfiguration } from '@/configuration';
-import { readSettings } from '@/persistence';
+import { readSettings, updateSettings } from '@/persistence';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { buildLaunchAgentPlistXml } from '@/daemon/service/darwin';
 import { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths, type DaemonServiceListEntry } from '@/daemon/service/cli';
@@ -493,6 +493,154 @@ describe('happier server add guided flow', () => {
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
       runTailscaleServeStatusMock.mockReset();
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('refreshes the Stack-selected server profile by its stable id', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-set-stack-profile-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+    const stackServerId = 'stack_agent-qa-api-sdk-0824__id_default';
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'User relay',
+        '--server-url',
+        'https://user.example.test',
+        '--webapp-url',
+        'https://app.user.example.test',
+        '--no-use',
+        '--yes',
+      ]);
+
+      await handleServerCommand([
+        'set',
+        '--server-id',
+        stackServerId,
+        '--server-url',
+        'http://127.0.0.1:3010',
+        '--local-server-url',
+        'http://127.0.0.1:3010',
+        '--webapp-url',
+        'http://localhost:3010',
+      ]);
+
+      const settings = await readSettings();
+      expect(settings.activeServerId).toBe(stackServerId);
+      expect(settings.servers?.[stackServerId]).toMatchObject({
+        id: stackServerId,
+        serverUrl: 'http://127.0.0.1:3010',
+        webappUrl: 'http://localhost:3010',
+      });
+      expect(settings.servers?.['User-relay']).toMatchObject({
+        id: 'User-relay',
+        serverUrl: 'https://user.example.test',
+        webappUrl: 'https://app.user.example.test',
+      });
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
+  it('migrates missing profile-scoped state from an equivalent Stack profile when explicitly requested', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-set-stack-profile-migrate-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
+    const restoreTty = setTtyMode(false, false);
+    const stackServerId = 'stack_agent-qa-api-sdk-0824__id_default';
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'Previous stack profile',
+        '--server-url',
+        'http://localhost:3010',
+        '--local-server-url',
+        'http://127.0.0.1:3010',
+        '--webapp-url',
+        'http://localhost:3010',
+        '--use',
+        '--yes',
+      ]);
+      const previousProfileId = (await readSettings()).activeServerId;
+      expect(previousProfileId).toBeTruthy();
+      await updateSettings((settings) => ({
+        ...settings,
+        machineIdByServerId: { ...settings.machineIdByServerId, [previousProfileId!]: 'machine-stack-local' },
+        machineIdByServerIdByAccountId: {
+          ...settings.machineIdByServerIdByAccountId,
+          [previousProfileId!]: { 'account-1': 'machine-stack-local-account-1' },
+        },
+        machineReplacementCandidatesByServerIdByAccountId: {
+          ...settings.machineReplacementCandidatesByServerIdByAccountId,
+          [previousProfileId!]: {
+            'account-1': { machineId: 'machine-old', replacementReason: 'reauth', createdAt: 123 },
+          },
+        },
+        lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [previousProfileId!]: 'account-1' },
+        machineIdConfirmedByServerByServerId: {
+          ...settings.machineIdConfirmedByServerByServerId,
+          [previousProfileId!]: true,
+        },
+        lastChangesCursorByServerIdByAccountId: {
+          ...settings.lastChangesCursorByServerIdByAccountId,
+          [previousProfileId!]: { 'account-1': 17 },
+        },
+      }));
+      process.env.HAPPIER_ACTIVE_SERVER_ID = stackServerId;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'set',
+        '--server-id',
+        stackServerId,
+        '--server-url',
+        'http://127.0.0.1:3010',
+        '--local-server-url',
+        'http://127.0.0.1:3010',
+        '--webapp-url',
+        'http://localhost:3010',
+        '--migrate-matching-profile-state',
+      ]);
+
+      const settings = await readSettings();
+      expect(settings.activeServerId).toBe(stackServerId);
+      expect(settings.servers?.[previousProfileId!]).toBeTruthy();
+      expect(settings.machineIdByServerId?.[stackServerId]).toBe('machine-stack-local');
+      expect(settings.machineIdByServerIdByAccountId?.[stackServerId]?.['account-1']).toBe(
+        'machine-stack-local-account-1',
+      );
+      expect(settings.machineReplacementCandidatesByServerIdByAccountId?.[stackServerId]?.['account-1']).toEqual({
+        machineId: 'machine-old',
+        replacementReason: 'reauth',
+        createdAt: 123,
+      });
+      expect(settings.lastTokenSubByServerId?.[stackServerId]).toBe('account-1');
+      expect(settings.machineIdConfirmedByServerByServerId?.[stackServerId]).toBe(true);
+      expect(settings.lastChangesCursorByServerIdByAccountId?.[stackServerId]?.['account-1']).toBe(17);
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      if (prevActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+      else process.env.HAPPIER_ACTIVE_SERVER_ID = prevActiveServerId;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
       spawnHappyCLIMock.mockReset();
     }
   });
