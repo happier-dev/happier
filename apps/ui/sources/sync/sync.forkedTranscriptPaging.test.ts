@@ -183,6 +183,113 @@ describe('sync forked transcript paging', () => {
         expect(requestMock).not.toHaveBeenCalled();
     });
 
+    it('prefetches newly eligible ancestors from nearest to furthest in one call', async () => {
+        applyChildForkSession();
+        storage.getState().applySessions([
+            { ...createSession('parent', forkMetadata('root', 2)), seq: 3 },
+            { ...createSession('root'), seq: 2 },
+        ]);
+
+        const { sync } = await import('./sync');
+        const syncForTest = sync as unknown as SyncForkPagingTestAccess;
+        syncForTest.activeServerSessionIds.add('parent');
+        syncForTest.activeServerSessionIds.add('root');
+        syncForTest.sessionMessagesHasMoreOlderByKey.set('child:main', false);
+
+        requestMock.mockImplementation(async (path: string) => {
+            if (path === '/v2/sessions/root') {
+                return new Response(JSON.stringify({
+                    session: {
+                        id: 'root',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        seq: 2,
+                        active: true,
+                        activeAt: 2,
+                        encryptionMode: 'plain',
+                        metadataVersion: 1,
+                        metadata: JSON.stringify({ readStateV1: null }),
+                        agentStateVersion: 1,
+                        agentState: JSON.stringify({ controlledByUser: true }),
+                        accessLevel: 'admin',
+                        canApprovePermissions: true,
+                    },
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+            if (path === '/v1/sessions/root/turns') {
+                return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+            }
+            if (path === '/v1/sessions/root/messages?scope=main') {
+                return new Response(JSON.stringify({
+                    messages: [],
+                    hasMore: false,
+                    nextBeforeSeq: null,
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+
+            if (isMainMessagesPageRequest(path, { sessionId: 'parent', beforeSeq: '4', limit: '150' })) {
+                return new Response(JSON.stringify({
+                    messages: [{
+                        id: 'parent-message',
+                        seq: 3,
+                        localId: null,
+                        sidechainId: null,
+                        messageRole: 'user',
+                        content: {
+                            t: 'plain',
+                            v: { role: 'user', content: { type: 'text', text: 'parent context' } },
+                        },
+                        createdAt: 3,
+                        updatedAt: 3,
+                    }],
+                    hasMore: false,
+                    nextBeforeSeq: 1,
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+
+            if (isMainMessagesPageRequest(path, { sessionId: 'root', beforeSeq: '3', limit: '150' })) {
+                return new Response(JSON.stringify({
+                    messages: [{
+                        id: 'root-message',
+                        seq: 2,
+                        localId: null,
+                        sidechainId: null,
+                        messageRole: 'user',
+                        content: {
+                            t: 'plain',
+                            v: { role: 'user', content: { type: 'text', text: 'root context' } },
+                        },
+                        createdAt: 2,
+                        updatedAt: 2,
+                    }],
+                    hasMore: false,
+                    nextBeforeSeq: 1,
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+
+            return new Response(JSON.stringify({ error: `unexpected ${path}` }), { status: 500 });
+        });
+
+        await syncForTest.prefetchForkedTranscriptContext('child');
+
+        const pageRequests = requestMock.mock.calls
+            .map((call) => String(call[0]))
+            .filter((path) => path.includes('/messages?') && path.includes('beforeSeq='));
+        expect(pageRequests).toHaveLength(2);
+        expect(pageRequests[0]).toContain('/v1/sessions/parent/messages?');
+        expect(pageRequests[1]).toContain('/v1/sessions/root/messages?');
+        expect(Object.values(storage.getState().sessionMessages.parent?.messagesById ?? {})
+            .some((message) => message.realID === 'parent-message')).toBe(true);
+        expect(Object.values(storage.getState().sessionMessages.root?.messagesById ?? {})
+            .some((message) => message.realID === 'root-message')).toBe(true);
+
+        await syncForTest.prefetchForkedTranscriptContext('child');
+        const repeatedPageRequests = requestMock.mock.calls
+            .map((call) => String(call[0]))
+            .filter((path) => path.includes('/messages?') && path.includes('beforeSeq='));
+        expect(repeatedPageRequests).toHaveLength(2);
+    });
+
     it('hydrates an unknown parent before loading ancestor context after child pages are exhausted', async () => {
         applyChildForkSession();
 

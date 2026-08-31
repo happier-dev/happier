@@ -7,6 +7,31 @@ export type DragDispatchResult = Readonly<{
   error?: string;
 }>;
 
+async function scrollConnectedTestIdIntoView(
+  page: Page,
+  testId: string,
+  timeoutMs: number = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const connectedAfterLayout = await page.evaluate(async (candidateTestId) => {
+      const selector = `[data-testid="${CSS.escape(candidateTestId)}"]`;
+      const element = document.querySelector<HTMLElement>(selector);
+      if (!element?.isConnected) return false;
+
+      // Query and scroll in one browser task. Playwright's locator action waits
+      // for stability while retaining an element handle, which is unsafe for
+      // this intentionally re-rendering/virtualized tree during drag setup.
+      element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      return document.querySelector<HTMLElement>(selector)?.isConnected === true;
+    }, testId);
+    if (connectedAfterLayout) return;
+    await page.waitForTimeout(50);
+  }
+  throw new Error(`missing connected ${testId}`);
+}
+
 async function dispatchSessionTreePointerDrag(page: Page, params: Readonly<{
   sourceTestId: string;
   sourceChildTestId?: string;
@@ -14,11 +39,11 @@ async function dispatchSessionTreePointerDrag(page: Page, params: Readonly<{
   targetEdge: 'top' | 'middle' | 'bottom';
   scrollDuringDrag?: 'target-into-view' | 'autoscroll-bottom';
 }>): Promise<DragDispatchResult> {
-  await page.getByTestId(params.sourceTestId).scrollIntoViewIfNeeded();
+  await scrollConnectedTestIdIntoView(page, params.sourceTestId);
   await page.getByTestId(params.sourceTestId).hover().catch(() => undefined);
 
   if (!params.scrollDuringDrag) {
-    await page.getByTestId(params.targetTestId).scrollIntoViewIfNeeded();
+    await scrollConnectedTestIdIntoView(page, params.targetTestId);
   }
 
   const scrollMetricsBefore = await page.evaluate((sourceTestId) => {
@@ -117,7 +142,7 @@ async function dispatchSessionTreePointerDrag(page: Page, params: Readonly<{
   await page.waitForTimeout(35);
 
   if (params.scrollDuringDrag === 'target-into-view') {
-    await page.getByTestId(params.targetTestId).scrollIntoViewIfNeeded();
+    await scrollConnectedTestIdIntoView(page, params.targetTestId);
     await page.waitForTimeout(80);
   } else if (params.scrollDuringDrag === 'autoscroll-bottom' && scrollMetricsBefore.rect) {
     await page.mouse.move(
@@ -281,11 +306,11 @@ export async function dragSessionWithGeometryProbe(page: Page, params: Readonly<
   preScroll?: 'target-into-view';
 }>): Promise<DragGeometryProbe> {
   const sourceTestId = `session-list-item-${params.sessionId}`;
-  await page.getByTestId(sourceTestId).scrollIntoViewIfNeeded();
+  await scrollConnectedTestIdIntoView(page, sourceTestId);
   await page.getByTestId(sourceTestId).hover();
   if (params.preScroll === 'target-into-view') {
-    await page.getByTestId(params.targetTestId).scrollIntoViewIfNeeded();
-    await page.getByTestId(sourceTestId).scrollIntoViewIfNeeded();
+    await scrollConnectedTestIdIntoView(page, params.targetTestId);
+    await scrollConnectedTestIdIntoView(page, sourceTestId);
     await page.getByTestId(sourceTestId).hover();
   }
 
@@ -382,7 +407,7 @@ export async function dragSessionWithGeometryProbe(page: Page, params: Readonly<
 
   // Scroll the target into view AFTER the drag lifts so the probe matches the
   // real pointer-drag contract used by the committed outcome helper.
-  await page.getByTestId(params.targetTestId).scrollIntoViewIfNeeded();
+  await scrollConnectedTestIdIntoView(page, params.targetTestId);
   await page.waitForTimeout(80);
 
   const targetBox = await resolveTargetBox(params.targetTestId);
@@ -635,7 +660,7 @@ export async function beginSteppedSessionDrag(page: Page, params: Readonly<{
   sessionId: string;
 }>): Promise<SteppedSessionDrag> {
   const sourceTestId = `session-list-item-${params.sessionId}`;
-  await page.getByTestId(sourceTestId).scrollIntoViewIfNeeded();
+  await scrollConnectedTestIdIntoView(page, sourceTestId);
   await page.getByTestId(sourceTestId).hover();
 
   const sourceHandle = page
@@ -670,7 +695,7 @@ export async function beginSteppedSessionDrag(page: Page, params: Readonly<{
 
   return {
     moveOverTarget: async (targetTestId, edge) => {
-      await page.getByTestId(targetTestId).scrollIntoViewIfNeeded();
+      await scrollConnectedTestIdIntoView(page, targetTestId);
       const targetBox = await page.getByTestId(targetTestId).boundingBox();
       if (!targetBox) throw new Error(`missing ${targetTestId}`);
 
