@@ -31,6 +31,25 @@ function runAsRoot(cmd, args, { cwd, env, timeoutMs = 0, allowFail = false, stdi
   });
 }
 
+function assertSystemdSystemManagerAvailable() {
+  const result = runAsRoot('systemctl', ['is-system-running'], {
+    allowFail: true,
+    timeoutMs: 15_000,
+    cwd: '/tmp',
+  });
+  const state = String(result.stdout ?? '').trim();
+  if (state === 'running' || state === 'degraded') return;
+
+  throw new Error(
+    [
+      '[self-host-systemd] systemd system manager is unavailable',
+      `state: ${state || 'unknown'}`,
+      `status: ${String(result.status ?? 'null')}`,
+      `stderr: ${String(result.stderr ?? '').trim()}`,
+    ].join('\n'),
+  );
+}
+
 test(
   'compiled hstack self-host install/uninstall works on systemd host without repo checkout',
   { timeout: 15 * 60_000 },
@@ -55,6 +74,7 @@ test(
       t.skip('sudo/root access is required');
       return;
     }
+    assertSystemdSystemManagerAvailable();
 
     const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
     const version = `0.0.0-systemd.${Date.now()}`;
@@ -139,7 +159,7 @@ test(
       if (!installSucceeded) return;
       runAsRoot(
         hstackPath,
-        ['self-host', 'uninstall', '--channel=preview', '--yes', '--purge-data', '--json'],
+        ['self-host', 'uninstall', '--channel=preview', '--mode=system', '--yes', '--json'],
         {
           env: commonEnv,
           allowFail: true,
@@ -152,7 +172,7 @@ test(
 
     const installResult = runAsRoot(
       hstackPath,
-      ['self-host', 'install', '--channel=preview', '--non-interactive', '--without-cli', '--json'],
+      ['self-host', 'install', '--channel=preview', '--mode=system', '--non-interactive', '--without-cli', '--json'],
       {
         env: commonEnv,
         timeoutMs: SELF_HOST_INSTALL_TIMEOUT_MS,
@@ -246,7 +266,7 @@ test(
 
     const status = runAsRoot(
       hstackPath,
-      ['self-host', 'status', '--channel=preview', '--json'],
+      ['self-host', 'status', '--channel=preview', '--mode=system', '--json'],
       {
         env: commonEnv,
         timeoutMs: 60_000,
@@ -268,7 +288,7 @@ test(
 
     runAsRoot(
       hstackPath,
-      ['self-host', 'uninstall', '--channel=preview', '--yes', '--purge-data', '--json'],
+      ['self-host', 'uninstall', '--channel=preview', '--mode=system', '--yes', '--json'],
       {
         env: commonEnv,
         timeoutMs: 120_000,

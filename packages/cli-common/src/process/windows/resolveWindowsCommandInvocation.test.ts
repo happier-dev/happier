@@ -43,6 +43,29 @@ describe('resolveWindowsCommandInvocation', () => {
         })?.toLowerCase()).toBe(cmdShimPath.toLowerCase());
     });
 
+    it('detects PATHEXT commands directly from the supplied Windows PATH', async () => {
+        if (!originalPlatformDescriptor) {
+            throw new Error('Expected process.platform to be configurable for this test');
+        }
+        Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+        const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-win32-command-exists-'));
+        tempDirs.add(root);
+        const binDir = join(root, 'bin');
+        mkdirSync(binDir, { recursive: true });
+        const executablePath = join(binDir, 'powershell.exe');
+        writeFileSync(executablePath, '', 'utf8');
+
+        const { commandExistsOnPath } = await import('../commandExists.js');
+
+        expect(commandExistsOnPath('powershell', {
+            env: {
+                PATH: binDir,
+                PATHEXT: '.EXE;.CMD',
+            },
+        })).toBe(true);
+    });
+
     it('normalizes full command paths without an extension to the matching .cmd shim', async () => {
         if (!originalPlatformDescriptor) {
             throw new Error('Expected process.platform to be configurable for this test');

@@ -53,6 +53,7 @@ import {
   assertPackagedServerRuntimeClosure,
   relocateServerRuntimeArtifactClosure,
 } from '@happier-dev/cli-common/firstPartyRuntime/serverRuntimeArtifactLayout';
+import { commandExistsOnPath } from '@happier-dev/cli-common/process';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import {
   PUBLIC_RELEASE_RING_IDS,
@@ -253,8 +254,7 @@ function commandExists(cmd) {
   const name = String(cmd ?? '').trim();
   if (!name) return false;
   if (process.platform === 'win32') {
-    const result = runCommand('where', [name], { allowFail: true, stdio: 'ignore' });
-    return (result.status ?? 1) === 0;
+    return commandExistsOnPath(name);
   }
   const result = runCommand('sh', ['-lc', `command -v ${name} >/dev/null 2>&1`], { allowFail: true, stdio: 'ignore' });
   return (result.status ?? 1) === 0;
