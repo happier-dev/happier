@@ -51,6 +51,37 @@ function convergedConsumer(overrides: Partial<ConsumerDeps> = {}) {
 }
 
 describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
+  it.each([
+    ['automatic_runtime_failure', 'same_provider_account_exhausted'],
+    ['pre_turn_group_policy', 'soft_threshold'],
+    ['manual', 'manual'],
+  ] as const)('classifies %s generation recipients as %s instead of reusing generation provenance', async (
+    switchReason,
+    expectedGenerationApplyReason,
+  ) => {
+    const hardLimitGeneration = buildConnectedServiceAuthGroupCommittedGenerationFact({
+      decisionId: `decision-${switchReason}`,
+      provenance: 'hard_limit',
+      decisionCommittedTarget: generation.decisionCommittedTarget,
+    });
+    const applyCommittedGeneration = vi.fn(async () => ({
+      reconciliationDisposition: 'converged' as const,
+      errorCode: null,
+      providerAdoptedTarget,
+    }));
+
+    await convergedConsumer({ applyCommittedGeneration }).consume({
+      executionAuthority: 'runtime_recovery',
+      committedGeneration: hardLimitGeneration,
+      switchReason,
+      sessions: [{ sessionId: 'recipient', activity: 'live' }],
+    });
+
+    expect(applyCommittedGeneration).toHaveBeenCalledWith(expect.objectContaining({
+      generationApplyReason: expectedGenerationApplyReason,
+    }));
+  });
+
   it('invokes the decision owner once and applies one immutable fact to every live recipient', async () => {
     const decideCommittedGeneration = vi.fn(async () => generation);
     const applyCommittedGeneration = vi.fn(async (_input: Parameters<ConsumerDeps['applyCommittedGeneration']>[0]) => ({
