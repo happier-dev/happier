@@ -113,7 +113,8 @@ test('linux provision (happier profile) runs corepack enable as root', async () 
   assert.match(happierJobsSliceUnit, /^\[Slice\]$/m);
   assert.match(happierJobsSliceUnit, /^CPUWeight=50$/m);
   assert.match(happierJobsSliceUnit, /^IOWeight=50$/m);
-  assert.doesNotMatch(happierJobsSliceUnit, /MemoryMax|MemoryHigh|TasksMax|OOM/u);
+  assert.match(happierJobsSliceUnit, /^MemoryHigh=80%$/m);
+  assert.doesNotMatch(happierJobsSliceUnit, /^(?:MemoryMax|TasksMax|OOM\w*)=/mu);
 
   const corepackOut = await readIfExists(corepackLog);
   assert.match(corepackOut, /corepack enable root=1/, 'expected corepack enable to be invoked via sudo/as_root');
@@ -122,6 +123,7 @@ test('linux provision (happier profile) runs corepack enable as root', async () 
   const aptOut = await readIfExists(aptLog);
   assert.match(aptOut, /apt-get update/, 'expected apt-get update to run');
   assert.match(aptOut, /apt-get install/, 'expected apt-get install to run');
+  assert.match(aptOut, /(?:^|\s)gh(?:\s|$)/, 'expected the GitHub CLI to be installed');
 
   const secondResult = spawnSync('bash', [scriptPath, '--profile=happier'], {
     cwd: root,

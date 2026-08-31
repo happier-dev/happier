@@ -7,8 +7,8 @@ import {
 } from '@/utils/spawnHappyCLI';
 import { resolveDaemonSessionScopeBaseRelativePath } from './resolveDaemonSessionScopeBaseRelativePath';
 import {
-    buildSystemdUserScopedLaunchSpec,
-    isSystemdUserResourceGovernorReady,
+    buildSystemdUserCriticalScopedLaunchSpec,
+    isSystemdUserCriticalResourceGovernorReady,
     type SystemdUserResourceGovernorExecFile,
 } from './systemdUserResourceGovernor';
 
@@ -53,12 +53,12 @@ export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonl
     const procfsRootDir = params.procfsRootDir ?? '/proc';
     const cgroupRootDir = params.cgroupRootDir ?? '/sys/fs/cgroup';
     const baseLaunchSpec: HappyCliSubprocessLaunchSpec = buildHappyCliSubprocessLaunchSpec(params.args, params.launchOptions);
-    const systemdUserResourceGovernorReady = await isSystemdUserResourceGovernorReady({
+    const systemdUserCriticalResourceGovernorReady = await isSystemdUserCriticalResourceGovernorReady({
         environment: params.environment ?? process.env,
         execFile: params.systemdUserResourceGovernorExecFile,
     });
-    if (systemdUserResourceGovernorReady) {
-        return buildSystemdUserScopedLaunchSpec({
+    if (systemdUserCriticalResourceGovernorReady) {
+        return buildSystemdUserCriticalScopedLaunchSpec({
             launchSpec: {
                 filePath: baseLaunchSpec.filePath,
                 args: baseLaunchSpec.args,

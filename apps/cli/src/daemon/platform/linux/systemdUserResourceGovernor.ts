@@ -21,6 +21,15 @@ export type SystemdUserScopedLaunchSpec = Readonly<{
   env?: Record<string, string>;
 }>;
 
+export function shouldUseSystemdUserSessionResourceGovernor(params: Readonly<{
+  platform: NodeJS.Platform;
+  startupSource: string | undefined;
+}>): boolean {
+  // Startup source describes lifecycle ownership, not resource policy. Stack/TUI-managed
+  // Linux daemons are intentionally labelled "manual" and need the same session isolation.
+  return params.platform === 'linux';
+}
+
 export type SystemdUserResourceGovernorExecFile = (
   command: string,
   args: readonly string[],
@@ -62,7 +71,14 @@ function parseSystemdProperties(raw: string): ReadonlyMap<string, string> {
 type SystemdUserSlicePolicy = Readonly<{
   sliceName: string;
   expectedProperties: readonly (readonly [string, string])[];
+  requiredFiniteProperties?: readonly string[];
 }>;
+
+function isFinitePositiveSystemdLimit(value: string | undefined): boolean {
+  if (!value || value === 'infinity') return false;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0;
+}
 
 async function isSystemdUserSliceReady(
   params: Readonly<{
@@ -80,12 +96,14 @@ async function isSystemdUserSliceReady(
 
   try {
     const runExecFile = params.execFile ?? defaultExecFile;
+    const requiredFiniteProperties = policy.requiredFiniteProperties ?? [];
     const result = await runExecFile('systemctl', [
       '--user',
       'show',
       policy.sliceName,
       '--property=LoadState',
       ...policy.expectedProperties.map(([property]) => `--property=${property}`),
+      ...requiredFiniteProperties.map((property) => `--property=${property}`),
     ], {
       timeout: SYSTEMD_USER_RESOURCE_GOVERNOR_PROBE_TIMEOUT_MS,
       env: environment,
@@ -95,7 +113,8 @@ async function isSystemdUserSliceReady(
     return properties.get('LoadState') === 'loaded'
       && policy.expectedProperties.every(([property, expectedValue]) => (
         properties.get(property) === expectedValue
-      ));
+      ))
+      && requiredFiniteProperties.every((property) => isFinitePositiveSystemdLimit(properties.get(property)));
   } catch {
     return false;
   }
@@ -135,6 +154,7 @@ export async function isSystemdUserResourceGovernorReady(params: Readonly<{
   return await isSystemdUserSliceReady(params, {
     sliceName: HAPPIER_JOBS_SLICE_NAME,
     expectedProperties: HAPPIER_JOBS_SLICE_EXPECTED_PROPERTIES,
+    requiredFiniteProperties: ['MemoryHigh'],
   });
 }
 
