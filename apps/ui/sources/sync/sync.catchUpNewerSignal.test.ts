@@ -56,6 +56,7 @@ vi.mock('@/sync/ops/machineDirectSessions', () => ({
 
 import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
+import type { NormalizedMessage } from './typesRaw';
 import { markSessionVisible } from '@/sync/domains/session/activeViewingSession';
 
 type SyncCatchUpTestAccess = {
@@ -87,6 +88,18 @@ function createSession(sessionId: string, seq: number): Session {
         thinkingAt: 0,
         presence: 'online',
         optimisticThinkingAt: null,
+    };
+}
+
+function buildMessage(id: string, seq: number): NormalizedMessage {
+    return {
+        id,
+        localId: null,
+        createdAt: seq,
+        role: 'user',
+        content: { type: 'text', text: id },
+        seq,
+        isSidechain: false,
     };
 }
 
@@ -134,6 +147,7 @@ async function seedLoadedSession(materializedMaxSeq: number, sessionSeq: number)
     const t = sync as unknown as SyncCatchUpTestAccess;
     sync.disconnectServer();
     storage.getState().applySessions([createSession(SESSION_ID, sessionSeq)]);
+    storage.getState().applyMessages(SESSION_ID, [buildMessage(`m${materializedMaxSeq}`, materializedMaxSeq)]);
     storage.getState().applyMessagesLoaded(SESSION_ID);
     t.encryption = { getSessionEncryption: () => null };
     t.activeServerSessionIds = new Set<string>([SESSION_ID]);

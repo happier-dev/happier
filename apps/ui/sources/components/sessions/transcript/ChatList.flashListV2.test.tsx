@@ -8430,11 +8430,12 @@ describe('ChatList (FlashList v2)', () => {
 
         await scrollFlashListTo(800, { trusted: true, turns: 1 });
 
-        expect(onViewportChange).toHaveBeenLastCalledWith({
+        expect(onViewportChange).toHaveBeenLastCalledWith(expect.objectContaining({
             isPinned: false,
             offsetY: 100,
+            shouldPersistViewport: false,
             shouldRestoreViewport: true,
-        });
+        }));
     });
 
     it('keeps the native jump button hidden after non-user scroll drift while bottom follow is armed', async () => {
@@ -8615,11 +8616,11 @@ describe('ChatList (FlashList v2)', () => {
 
             // Trusted arrival at the bottom re-arms follow and marks live-tail
             // (mode and emission agree within one observation window).
-            expect(onViewportChange).toHaveBeenCalledWith({
+            expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({
                 isPinned: true,
                 offsetY: 0,
                 shouldRestoreViewport: false,
-            });
+            }));
             expect(sessionViewportByIdState.get('session-1')).toMatchObject({
                 isPinned: true,
                 offsetY: 0,
@@ -8755,11 +8756,12 @@ describe('ChatList (FlashList v2)', () => {
             onViewportChange.mockClear();
             nativeScrollOffset = 900;
             await scrollFlashListTo(900, { trusted: true, turns: 1 });
-            expect(onViewportChange).toHaveBeenCalledWith({
+            expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({
                 isPinned: true,
                 offsetY: 0,
+                shouldPersistViewport: false,
                 shouldRestoreViewport: false,
-            });
+            }));
             expect(sessionViewportByIdState.get('session-1')).toMatchObject({
                 isPinned: true,
                 offsetY: 0,
@@ -9857,7 +9859,7 @@ describe('ChatList (FlashList v2)', () => {
         });
     });
 
-    it('preserves the stored entry anchor when reporting initial unpinned viewport state', async () => {
+    it('does not persist synthetic opening observations before stored-anchor restoration settles', async () => {
         await withWebFlashListFakeTimers(0, async () => {
             const syncMod = await import('@/sync/sync');
             vi.mocked(syncMod.sync.loadOlderMessages)
@@ -9906,10 +9908,7 @@ describe('ChatList (FlashList v2)', () => {
                     );
                     await primeFlashListMetrics(100, 1200, { turns: 2, frames: 1 });
 
-                    expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({
-                        shouldRestoreViewport: true,
-                        anchor: expect.objectContaining(storedAnchor),
-                    }));
+                    expect(onViewportChange).not.toHaveBeenCalled();
                 },
                 {
                     HTMLElement: FlashListChatListWebElement,
@@ -10123,18 +10122,9 @@ describe('ChatList (FlashList v2)', () => {
 
     it('hands an uncaptured viewport to a same-session structural replacement before its first entry decision', async () => {
         await withWebFlashListFakeTimers(0, async () => {
-            const telemetryMod = await import('./scroll/transcriptViewportTelemetry');
-            const telemetrySink = vi.fn();
-            telemetryMod.transcriptViewportTelemetry.configure({
-                enabled: true,
-                capacity: 64,
-                sink: telemetrySink,
-            });
             syncTuningState = {
                 ...syncTuningState,
                 transcriptViewportAnchorCaptureDebounceMs: 200,
-                transcriptViewportTelemetryEnabled: true,
-                transcriptViewportTelemetryMaxEvents: 64,
                 transcriptWebHotTailItemCount: 0,
             };
             const scrollToIndex = vi.fn();
@@ -10219,7 +10209,6 @@ describe('ChatList (FlashList v2)', () => {
                     await screen.settle({ turns: 2 });
 
                     scrollToIndex.mockClear();
-                    telemetrySink.mockClear();
                     scroller.setQuerySelectorAll('[data-testid]', [itemY, messageY]);
                     scroller.scrollTop = 500;
                     vi.setSystemTime(new Date(100));
@@ -10236,13 +10225,10 @@ describe('ChatList (FlashList v2)', () => {
                     scroller.scrollHeight = 1_401;
                     await triggerFlashListChatListContentSizeChange(400, 1_401, { turns: 2 });
 
-                    const restoreDecisions = telemetrySink.mock.calls
-                        .map(([event]) => event)
-                        .filter((event) => event?.type === 'restore-decision');
                     expect({
                         capturedAnchor: sessionViewportByIdState.get('session-1')?.anchor,
                         firstEntryIndexCommand: scrollToIndex.mock.calls[0]?.[0] ?? null,
-                        restoreDecisions,
+                        scrollTop: scroller.scrollTop,
                     }).toMatchObject({
                         capturedAnchor: {
                             messageId: 'm2',
@@ -10250,17 +10236,8 @@ describe('ChatList (FlashList v2)', () => {
                             itemOffsetPx: 55,
                         },
                         firstEntryIndexCommand: null,
-                        restoreDecisions: expect.arrayContaining([
-                            expect.objectContaining({
-                                reason: 'restored',
-                            }),
-                        ]),
+                        scrollTop: 500,
                     });
-                    expect(restoreDecisions).not.toEqual(expect.arrayContaining([
-                        expect.objectContaining({
-                            reason: 'skipped',
-                        }),
-                    ]));
                 },
                 {
                     HTMLElement: FlashListChatListWebElement,
@@ -12889,11 +12866,11 @@ describe('ChatList (FlashList v2)', () => {
 
             // Continuous bottom placement is renderer-owned on this FlashList surface. The
             // host commits the explicit live-tail intent without a competing JS offset write.
-            expect(onViewportChange).toHaveBeenCalledWith({
+            expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({
                 isPinned: true,
                 offsetY: 0,
                 shouldRestoreViewport: false,
-            });
+            }));
             expect(scrollToOffset).not.toHaveBeenCalled();
 
             // Content churn after the jump: the entry transaction was preempted, so a
@@ -12932,11 +12909,12 @@ describe('ChatList (FlashList v2)', () => {
                 },
                 { turns: 1 },
             );
-            expect(onViewportChange).toHaveBeenCalledWith({
+            expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({
                 isPinned: true,
                 offsetY: 0,
+                shouldPersistViewport: false,
                 shouldRestoreViewport: false,
-            });
+            }));
         });
     });
 

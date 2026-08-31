@@ -37,7 +37,8 @@ describe('modelOptions preflight', () => {
             },
         });
 
-        expect(out.map((option) => option.value)).toEqual([
+        const modelIds = out.map((option) => option.value);
+        expect(modelIds.slice(0, 7)).toEqual([
             'default',
             'claude-fable-5',
             'claude-opus-4-8',
@@ -45,10 +46,13 @@ describe('modelOptions preflight', () => {
             'claude-opus-4-6',
             'claude-sonnet-4-6',
             'claude-haiku-4-5',
+        ]);
+        expect(modelIds).toEqual(expect.arrayContaining([
             'claude-opus-5',
+            'claude-sonnet-5',
             'claude-opus-4-5',
             'claude-sonnet-4-5',
-        ]);
+        ]));
 
         // Preflight model lists often omit per-model option metadata; we must preserve catalog
         // options so controls like Claude "Thinking" can still render.

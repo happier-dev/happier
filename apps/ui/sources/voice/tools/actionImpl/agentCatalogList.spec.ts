@@ -137,7 +137,7 @@ describe('agent catalog voice tools', () => {
     expect(models?.items?.map((item: any) => item.label)).toEqual([
       'Default',
       'Opus 5',
-      'Fable 5',
+      'Sonnet 5',
     ]);
   });
 
