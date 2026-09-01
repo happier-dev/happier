@@ -249,9 +249,9 @@ function rollingProductIdForPackage(packageKey) {
 }
 
 async function main() {
-  const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
     options: {
+      'repo-root': { type: 'string', default: '' },
       channel: { type: 'string' },
       'publish-cli': { type: 'string', default: 'false' },
       'publish-stack': { type: 'string', default: 'false' },
@@ -266,6 +266,7 @@ async function main() {
     },
     allowPositionals: false,
   });
+  const repoRoot = path.resolve(String(values['repo-root'] ?? '').trim() || process.cwd());
 
   const requestedChannel = String(values.channel ?? '').trim();
   if (!requestedChannel) fail('--channel is required');

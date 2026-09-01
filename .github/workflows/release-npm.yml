@@ -415,6 +415,15 @@ jobs:
             write_version_output server_version server "$server_version"
           fi
 
+      - name: Checkout trusted npm release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: trusted-control
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: npm pack (pipeline)
         if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server
         env:
@@ -429,7 +438,8 @@ jobs:
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs npm-release \
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/npm/release-packages.mjs" \
+            --repo-root "$GITHUB_WORKSPACE" \
             --channel "${RELEASE_CHANNEL}" \
             --publish-cli "${PUBLISH_CLI}" \
             --publish-stack "${PUBLISH_STACK}" \

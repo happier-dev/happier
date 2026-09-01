@@ -250,7 +250,8 @@ test('release-npm is compatible with npm trusted publishing (OIDC)', async () =>
   const raw = await loadWorkflow('release-npm.yml');
 
   assert.match(raw, /node scripts\/pipeline\/npm\/publish-tarball\.mjs/, 'trusted release control should invoke the canonical npm tarball publisher directly');
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release/, 'release-npm should delegate npm pack preparation to the pipeline command');
+  assert.match(raw, /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs/, 'release-npm should prepare packs with trusted workflow-control code');
+  assert.match(raw, /--repo-root "\$GITHUB_WORKSPACE"/, 'trusted npm control must operate on the exact candidate checkout');
   assert.doesNotMatch(raw, /npm pack --ignore-scripts --json/, 'release-npm should not embed npm pack json parsing boilerplate (use release-packages.mjs)');
   assert.doesNotMatch(raw, /npm install --global npm@11/, 'release-npm should avoid global npm installs (use pinned npm via npx inside the pipeline)');
   assert.doesNotMatch(raw, /NPM_TOKEN is required for npm publish\./);
@@ -293,7 +294,7 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.match(raw, /dir="packages\/relay-server"/);
   assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}/);
   assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}[\s\S]*?yarn --cwd "\$\{SERVER_RUNNER_DIR\}" test/);
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
+  assert.match(raw, /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
 
   const script = await loadFile('scripts/pipeline/npm/set-preview-versions.mjs');
   assert.match(script, /resolveRollingPublishVersion/);

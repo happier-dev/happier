@@ -39,10 +39,16 @@ test('npm candidate packing is permission-minimized and secret-free', async () =
   );
 
   const checkouts = checkoutSteps(candidate);
-  assert.equal(checkouts.length, 1);
-  assert.equal(checkouts[0].with?.['persist-credentials'], false);
-  assert.notEqual(checkouts[0].with?.ref, '${{ job.workflow_sha }}');
-  assert.match(JSON.stringify(candidate), /node scripts\/pipeline\/run\.mjs npm-release/);
+  assert.equal(checkouts.length, 2);
+  const sourceCheckout = checkouts.find((step) => step.name === 'Checkout source ref');
+  const controlCheckout = checkouts.find((step) => step.name === 'Checkout trusted npm release control');
+  assert.equal(sourceCheckout?.with?.['persist-credentials'], false);
+  assert.notEqual(sourceCheckout?.with?.ref, '${{ job.workflow_sha }}');
+  assert.equal(controlCheckout?.with?.repository, '${{ job.workflow_repository }}');
+  assert.equal(controlCheckout?.with?.ref, '${{ job.workflow_sha }}');
+  assert.equal(controlCheckout?.with?.path, 'trusted-control');
+  assert.equal(controlCheckout?.with?.['persist-credentials'], false);
+  assert.match(JSON.stringify(candidate), /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs/);
 });
 
 test('an authorized npm candidate is checked out by exact SHA and rechecked against its canonical branch before packing', async () => {
