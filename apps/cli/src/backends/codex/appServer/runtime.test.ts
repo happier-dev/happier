@@ -171,6 +171,8 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     oversizedResumePayloadChars?: number;
     omitTurnStartedForPrompt?: string;
     omitTurnCompletedForPrompt?: string;
+    failStateRuntimeInitializationOnce?: boolean;
+    failLocalDbLogDbLockInitializationOnce?: boolean;
 }>): Promise<string> {
     const scriptPath = join(params.dir, 'fake-codex-app-server.mjs');
     const script = [
@@ -178,6 +180,17 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         'import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";',
         'import readline from "node:readline";',
         `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
+        `const failStateRuntimeInitializationOnce = ${JSON.stringify(params.failStateRuntimeInitializationOnce === true)};`,
+        `const failLocalDbLogDbLockInitializationOnce = ${JSON.stringify(params.failLocalDbLogDbLockInitializationOnce === true)};`,
+        `const startupFailureMessage = ${JSON.stringify(params.failLocalDbLogDbLockInitializationOnce === true
+            ? "Codex couldn't start because another Codex process is using its local data\nfailed to initialize state runtime at /tmp/codex-home\nfailed to open log DB at /tmp/codex-home/log.sqlite: database is locked\nfailed to initialize sqlite local db at /tmp/codex-home"
+            : 'failed to initialize sqlite state runtime under /tmp/codex-state failed to initialize state runtime at /tmp/codex-state')};`,
+        'const startupFailureMarkerPath = requestLogPath + ".state-runtime-initialization-failed";',
+        'if ((failStateRuntimeInitializationOnce || failLocalDbLogDbLockInitializationOnce) && !(await readFile(startupFailureMarkerPath, "utf8").catch(() => null))) {',
+        '    await writeFile(startupFailureMarkerPath, "failed");',
+        '    process.stderr.write(startupFailureMessage + "\\n");',
+        '    process.exit(1);',
+        '}',
         'const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });',
         'let staleTerminalTurnId = null;',
         'let loginStartCount = 0;',
@@ -1626,6 +1639,8 @@ describe('createCodexAppServerRuntime', () => {
             rpcTimeoutMs?: number;
             startupRpcTimeoutMs?: number;
             resumeRecoveryTimeoutMs?: number;
+            failStateRuntimeInitializationOnce?: boolean;
+            failLocalDbLogDbLockInitializationOnce?: boolean;
         }> = {},
     ): Promise<{
         root: string;
@@ -1678,6 +1693,8 @@ describe('createCodexAppServerRuntime', () => {
             oversizedResumePayloadChars: options.oversizedResumePayloadChars,
             omitTurnStartedForPrompt: options.omitTurnStartedForPrompt,
             omitTurnCompletedForPrompt: options.omitTurnCompletedForPrompt,
+            failStateRuntimeInitializationOnce: options.failStateRuntimeInitializationOnce,
+            failLocalDbLogDbLockInitializationOnce: options.failLocalDbLogDbLockInitializationOnce,
         });
         envScope.patch({
             HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
@@ -1723,6 +1740,56 @@ describe('createCodexAppServerRuntime', () => {
                 expect.objectContaining({ method: 'thread/start' }),
             ]),
         );
+    });
+
+    it('retries native resume when Codex transiently cannot initialize its shared SQLite state runtime', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture(
+            'happier-codex-app-server-runtime-state-runtime-startup-retry-',
+            { failStateRuntimeInitializationOnce: true },
+        );
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+            permissionMode: 'default',
+        });
+
+        await expect(runtime.startOrLoad({ resumeId: 'thread-resume-after-state-runtime-pressure' }))
+            .resolves.toBeUndefined();
+
+        const requests = await readRequestLog(requestLogPath);
+        expect(requests).toEqual(expect.arrayContaining([
+            expect.objectContaining({ method: 'initialize' }),
+            expect.objectContaining({
+                method: 'thread/resume',
+                params: expect.objectContaining({ threadId: 'thread-resume-after-state-runtime-pressure' }),
+            }),
+        ]));
+    });
+
+    it('retries native resume when Codex local and log SQLite databases are locked during startup', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture(
+            'happier-codex-app-server-runtime-local-db-lock-startup-retry-',
+            { failLocalDbLogDbLockInitializationOnce: true },
+        );
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+            permissionMode: 'default',
+        });
+
+        await expect(runtime.startOrLoad({ resumeId: 'thread-resume-after-local-db-lock' }))
+            .resolves.toBeUndefined();
+
+        const requests = await readRequestLog(requestLogPath);
+        expect(requests).toEqual(expect.arrayContaining([
+            expect.objectContaining({ method: 'initialize' }),
+            expect.objectContaining({
+                method: 'thread/resume',
+                params: expect.objectContaining({ threadId: 'thread-resume-after-local-db-lock' }),
+            }),
+        ]));
     });
 
     it('keeps a new app-server thread provisional until the first provider turn is accepted', async () => {

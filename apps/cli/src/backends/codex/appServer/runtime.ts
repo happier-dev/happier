@@ -182,6 +182,21 @@ type CodexAppServerStartOrLoadOptions = Readonly<{
     initialGoal?: SessionInitialGoalRequestV1 | null;
 }>;
 
+const CODEX_APP_SERVER_STATE_RUNTIME_RETRY_INITIAL_DELAY_MS = 250;
+const CODEX_APP_SERVER_STATE_RUNTIME_RETRY_MAX_DELAY_MS = 10_000;
+
+function isRetryableCodexStateRuntimeInitializationFailure(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('Codex app-server exited before completing the request')) return false;
+    if (message.includes('failed to initialize sqlite state runtime')) return true;
+    const normalizedMessage = message.toLowerCase();
+    return normalizedMessage.includes("codex couldn't start because another codex process is using its local data")
+        && normalizedMessage.includes('failed to initialize state runtime at ')
+        && normalizedMessage.includes('failed to open log db at ')
+        && normalizedMessage.includes('database is locked')
+        && normalizedMessage.includes('failed to initialize sqlite local db');
+}
+
 /** The app server explicitly named a different thread for the requested resume. */
 export class CodexAppServerResumeIdentityMismatchError extends Error {
     readonly code = 'codex_app_server_resume_identity_mismatch';
@@ -4135,61 +4150,84 @@ export function createCodexAppServerRuntime(params: Readonly<{
         } else if (existingSessionId) {
             publishRequestedResumeThreadId(existingSessionId);
         }
-        const client = await ensureClient();
-        const startOrLoadResult = await (async (): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
-            const importHistory = options.importHistory === true;
-            if (resumeId) {
-                return await resumeThread(client, resumeId, {
-                    preserveRequestedThreadId: options.strictNativeResumeIdentity === true,
-                    strictNativeResumeIdentity: options.strictNativeResumeIdentity === true,
-                    allowOversizedResponseRecovery: !importHistory,
-                    includeTurns: importHistory,
-                });
-            }
-            if (existingSessionId) {
-                return await resumeThread(client, existingSessionId, {
-                    preserveRequestedThreadId: false,
-                    allowOversizedResponseRecovery: !importHistory,
-                    includeTurns: importHistory,
-                });
-            }
-            const requestParams = {
-                cwd: params.directory,
-                ...(currentModelId ? { model: currentModelId } : {}),
-                ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
-                ...buildThreadConfigOverrideParams(currentReasoningEffort),
-                ...buildCurrentPermissionParams('thread'),
-                experimentalRawEvents: true,
-                persistExtendedHistory: true,
-            };
-            let response: unknown;
+        let client: DisposableCodexAppServerClient;
+        let startOrLoadResult: Readonly<{ nextThreadId: string; response: unknown }>;
+        let stateRuntimeRetryAttempt = 0;
+        let stateRuntimeRetryDelayMs = CODEX_APP_SERVER_STATE_RUNTIME_RETRY_INITIAL_DELAY_MS;
+        while (true) {
             try {
-                response = await client.request('thread/start', requestParams);
-                if (Object.prototype.hasOwnProperty.call(requestParams, 'permissions')) {
-                    permissionSupport = 'supported';
-                }
+                client = await ensureClient();
+                startOrLoadResult = await (async (): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
+                    const importHistory = options.importHistory === true;
+                    if (resumeId) {
+                        return await resumeThread(client, resumeId, {
+                            preserveRequestedThreadId: options.strictNativeResumeIdentity === true,
+                            strictNativeResumeIdentity: options.strictNativeResumeIdentity === true,
+                            allowOversizedResponseRecovery: !importHistory,
+                            includeTurns: importHistory,
+                        });
+                    }
+                    if (existingSessionId) {
+                        return await resumeThread(client, existingSessionId, {
+                            preserveRequestedThreadId: false,
+                            allowOversizedResponseRecovery: !importHistory,
+                            includeTurns: importHistory,
+                        });
+                    }
+                    const requestParams = {
+                        cwd: params.directory,
+                        ...(currentModelId ? { model: currentModelId } : {}),
+                        ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
+                        ...buildThreadConfigOverrideParams(currentReasoningEffort),
+                        ...buildCurrentPermissionParams('thread'),
+                        experimentalRawEvents: true,
+                        persistExtendedHistory: true,
+                    };
+                    let response: unknown;
+                    try {
+                        response = await client.request('thread/start', requestParams);
+                        if (Object.prototype.hasOwnProperty.call(requestParams, 'permissions')) {
+                            permissionSupport = 'supported';
+                        }
+                    } catch (error) {
+                        if (!shouldRetryWithoutPermissionProfile(error, requestParams)) {
+                            throw error;
+                        }
+                        permissionSupport = 'legacy';
+                        response = await client.request('thread/start', {
+                            cwd: params.directory,
+                            ...(currentModelId ? { model: currentModelId } : {}),
+                            ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
+                            ...buildThreadConfigOverrideParams(currentReasoningEffort),
+                            ...buildCurrentLegacyPermissionParams('thread'),
+                            experimentalRawEvents: true,
+                            persistExtendedHistory: true,
+                        });
+                    }
+                    const startedThreadId = readThreadId(response);
+                    if (!startedThreadId) {
+                        throw new Error('Codex app-server thread/start returned no thread id');
+                    }
+                    await historyBoundary.hydrateFromThreadSnapshot(response);
+                    return { nextThreadId: startedThreadId, response };
+                })();
+                break;
             } catch (error) {
-                if (!shouldRetryWithoutPermissionProfile(error, requestParams)) {
+                if (!isRetryableCodexStateRuntimeInitializationFailure(error)) {
                     throw error;
                 }
-                permissionSupport = 'legacy';
-                response = await client.request('thread/start', {
-                    cwd: params.directory,
-                    ...(currentModelId ? { model: currentModelId } : {}),
-                    ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
-                    ...buildThreadConfigOverrideParams(currentReasoningEffort),
-                    ...buildCurrentLegacyPermissionParams('thread'),
-                    experimentalRawEvents: true,
-                    persistExtendedHistory: true,
+                stateRuntimeRetryAttempt += 1;
+                logger.warn('[codex-app-server] Shared SQLite state runtime is temporarily unavailable; retrying attach', {
+                    attempt: stateRuntimeRetryAttempt,
+                    retryDelayMs: stateRuntimeRetryDelayMs,
                 });
+                await delay(stateRuntimeRetryDelayMs);
+                stateRuntimeRetryDelayMs = Math.min(
+                    stateRuntimeRetryDelayMs * 2,
+                    CODEX_APP_SERVER_STATE_RUNTIME_RETRY_MAX_DELAY_MS,
+                );
             }
-            const startedThreadId = readThreadId(response);
-            if (!startedThreadId) {
-                throw new Error('Codex app-server thread/start returned no thread id');
-            }
-            await historyBoundary.hydrateFromThreadSnapshot(response);
-            return { nextThreadId: startedThreadId, response };
-        })();
+        }
         await applyStartOrLoadResponse(
             client,
             startOrLoadResult.nextThreadId,
