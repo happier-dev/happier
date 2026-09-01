@@ -1,12 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
+  completeStackRestartStopBeforeSuccessor,
   createOuterStackRuntimeStartPublication,
   hasRecordedRuntimePortsForRestart,
   shouldReuseRuntimePortsOnRestart,
 } from './stack/run_script_with_stack_env.mjs';
+
+test('restart stop rethrows an initial failure when no persisted cleanup can be continued', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'happier-stack-restart-stop-'));
+  t.after(async () => {
+    await rm(fixtureDir, { recursive: true, force: true });
+  });
+  const invalidBaseDir = join(fixtureDir, 'not-a-directory');
+  await writeFile(invalidBaseDir, 'file blocks cleanup state writes', 'utf8');
+
+  await assert.rejects(
+    () => completeStackRestartStopBeforeSuccessor({
+      rootDir: fixtureDir,
+      stackName: 'restart-stop-error',
+      baseDir: invalidBaseDir,
+      env: {},
+      json: true,
+      noDocker: true,
+      aggressive: false,
+      sweepOwned: true,
+      preserveDaemon: true,
+    }),
+    { code: 'EEXIST' },
+  );
+});
 
 test('outer start publication records requested UI truth before the child runner starts', () => {
   const base = {

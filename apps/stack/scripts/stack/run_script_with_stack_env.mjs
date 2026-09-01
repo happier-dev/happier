@@ -285,10 +285,10 @@ export function buildAlreadyRunningMobileMetroArgs(args = []) {
 export async function completeStackRestartStopBeforeSuccessor(input) {
   try {
     await stopStackWithEnv(input);
-  } catch {
-    // The continuation owner below inspects the persisted stop request. When the
-    // first attempt failed before recording one, the existing port checks remain
-    // the authority for whether restart can safely continue.
+  } catch (initialStopError) {
+    const continuation = await completeInterruptedStackStopBeforeStart(input);
+    if (continuation.completed === true) return continuation;
+    throw initialStopError;
   }
   return await completeInterruptedStackStopBeforeStart(input);
 }
