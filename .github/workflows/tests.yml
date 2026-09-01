@@ -1714,6 +1714,7 @@ jobs:
 
       - name: Verify exact requested checkout SHA
         if: ${{ inputs.checkout_sha != '' }}
+        shell: bash
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
         run: |
@@ -1968,58 +1969,6 @@ jobs:
 
       - name: Build CLI
         run: yarn workspace @happier-dev/cli build
-
-      - name: Install provider CLI stubs (CI only)
-        run: |
-          set -euo pipefail
-          trap 'exit 0' TERM INT
-
-          STUB_BIN_DIR="/tmp/ci-bin"
-          mkdir -p "${STUB_BIN_DIR}"
-
-          write_stub() {
-            local name="$1"
-            local version="$2"
-            cat > "${STUB_BIN_DIR}/${name}" <<EOF
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          case "\${1:-}" in
-            --version|-v|version)
-              echo "${version}"
-              exit 0
-              ;;
-            --help|-h|help)
-              echo "${name} (ci stub)"
-              exit 0
-              ;;
-          esac
-
-          # Some callers expect a long-running interactive process; do not exit.
-          if [ -t 0 ]; then
-            while true; do sleep 3600 & wait \$!; done
-          else
-            cat >/dev/null || true
-            while true; do sleep 3600 & wait \$!; done
-          fi
-          EOF
-            chmod +x "${STUB_BIN_DIR}/${name}"
-          }
-
-          write_stub "auggie" "0.0.0-ci-stub"
-          write_stub "claude" "0.0.0-ci-stub"
-          write_stub "codex" "0.0.0-ci-stub"
-          write_stub "gemini" "0.0.0-ci-stub"
-          write_stub "opencode" "0.0.0-ci-stub"
-
-          echo "${STUB_BIN_DIR}" >> "${GITHUB_PATH}"
-          export PATH="${STUB_BIN_DIR}:${PATH}"
-
-          command -v auggie && auggie --version
-          command -v claude && claude --version
-          command -v codex && codex --version
-          command -v gemini && gemini --version
-          command -v opencode && opencode --version
 
       - name: Run daemon integration suite (with light server)
         run: |

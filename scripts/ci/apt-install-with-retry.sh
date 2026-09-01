@@ -73,7 +73,8 @@ run_apt_install() {
     # Optional package names differ between supported Ubuntu runner images.
     # Resolve them only after this attempt has refreshed apt metadata, then
     # install the selected names in the same bounded transaction.
-    for optional_group in "${OPTIONAL_PACKAGE_GROUPS[@]}"; do
+    for optional_group in "${OPTIONAL_PACKAGE_GROUPS[@]-}"; do
+        [ -n "$optional_group" ] || continue
         IFS=',' read -r -a optional_candidates <<< "$optional_group"
         for candidate in "${optional_candidates[@]}"; do
             if apt-cache show -- "$candidate" >/dev/null 2>&1; then

@@ -22,3 +22,37 @@ test('tests workflow includes self-host + daemon E2E gate and runs real integrat
     'self-host daemon e2e should execute the real integration test harness',
   );
 });
+
+test('daemon integration owns its provider fixture instead of relying on workflow-installed CLIs', async () => {
+  const workflow = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const daemonSuite = await readFile(join(repoRoot, 'apps', 'cli', 'src', 'daemon', 'daemon.integration.test.ts'), 'utf8');
+
+  assert.doesNotMatch(
+    workflow,
+    /Install provider CLI stubs \(CI only\)/,
+    'the reusable daemon suite should not depend on setup owned only by one workflow lane',
+  );
+  assert.match(
+    daemonSuite,
+    /HAPPIER_CLAUDE_PATH:\s*daemonClaudeCliStubPath/,
+    'the daemon suite should bind its own deterministic Claude fixture',
+  );
+});
+
+test('Windows self-host checkout verification explicitly uses bash', async () => {
+  const workflow = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
+  const jobStart = workflow.indexOf('  self-host-schtasks-e2e:');
+  const nextJob = workflow.indexOf('\n  self-host-daemon-e2e:', jobStart);
+  assert.ok(jobStart >= 0 && nextJob > jobStart, 'expected Windows self-host job boundaries');
+  const job = workflow.slice(jobStart, nextJob);
+  const verificationStart = job.indexOf('- name: Verify exact requested checkout SHA');
+  const setupNodeStart = job.indexOf('- name: Setup Node', verificationStart);
+  assert.ok(verificationStart >= 0 && setupNodeStart > verificationStart, 'expected checkout verification step');
+  const verification = job.slice(verificationStart, setupNodeStart);
+
+  assert.match(
+    verification,
+    /shell:\s*bash/,
+    'bash syntax must not run under the Windows PowerShell default',
+  );
+});

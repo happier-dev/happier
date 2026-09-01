@@ -34,6 +34,7 @@ type SessionScannerUnhookedSessionDisposition = 'ignore' | 'diagnostic' | 'main'
 
 const DISCOVERY_WATCH_FALLBACK_INTERVAL_MS = 30_000;
 const ACTIVE_SESSION_FALLBACK_INTERVAL_MS = 3_000;
+const DISCOVERY_STARTUP_RECONCILE_DELAYS_MS = [250, 1_000] as const;
 
 export async function createSessionScanner(opts: {
     sessionId: string | null,
@@ -812,6 +813,17 @@ export async function createSessionScanner(opts: {
 
     refreshProjectDirWatcher();
 
+    // fs.watch is advisory and can drop the first create event while many short-lived
+    // watchers are being replaced. Reconcile the narrow pre-hook startup window a
+    // bounded number of times; the long-lived 30s fallback remains intentionally slow.
+    const discoveryStartupTimeouts = opts.discoverNewSessions
+        ? DISCOVERY_STARTUP_RECONCILE_DELAYS_MS.map((delayMs) => {
+            const timeoutId = setTimeout(() => { sync.invalidate(); }, delayMs);
+            timeoutId.unref?.();
+            return timeoutId;
+        })
+        : [];
+
     // Slow fallback for missed fs.watch events and active follower maintenance.
     const intervalId = setInterval(
         () => { sync.invalidate(); },
@@ -835,6 +847,7 @@ export async function createSessionScanner(opts: {
         cleanup: async () => {
             closed = true;
             clearInterval(intervalId);
+            for (const timeoutId of discoveryStartupTimeouts) clearTimeout(timeoutId);
             closeProjectDirWatcher();
             invalidate = null;
             subagentCollector.cleanup();

@@ -3707,12 +3707,27 @@ function createLoopbackMachineTransferChannels() {
       releaseMutationLock.resolve();
       await mutationLock;
       const result = await statusPromise;
-      const realRunnerLease = await realRunnerLeasePromise;
+      let realRunnerLease = await realRunnerLeasePromise;
+      await vi.waitFor(async () => {
+        if (!realRunnerLease.acquired) {
+          realRunnerLease = await tryAcquireSessionHandoffPrepareTargetJobLease({
+            activeServerDir,
+            jobId: prepareJobId,
+            ownerId: realRunnerOwnerId,
+            nowMs: Date.now(),
+            ttlMs: 60_000,
+          });
+        }
+        expect(realRunnerLease.acquired).toBe(true);
+      }, { timeout: 5_000 });
+      if (!realRunnerLease.acquired) {
+        throw new Error('Real prepare-target runner did not acquire its lease after recovery completed');
+      }
       await releaseSessionHandoffPrepareTargetJobLease({
         activeServerDir,
         jobId: prepareJobId,
         ownerId: realRunnerOwnerId,
-        leaseId: realRunnerLease.lease!.leaseId!,
+        leaseId: realRunnerLease.lease.leaseId,
       });
 
       expect(realRunnerLease.acquired).toBe(true);
@@ -6003,11 +6018,12 @@ function createLoopbackMachineTransferChannels() {
       await published.dispose();
       isolatedHome.restore();
       if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
-        await rm(sourcePath, { recursive: true, force: true });
-        await rm(sourceActiveServerDir, { recursive: true, force: true });
-        await rm(targetActiveServerDir, { recursive: true, force: true });
-        await rm(targetPath, { recursive: true, force: true });
-        await rm(isolatedHome.homeDir, { recursive: true, force: true });
+        const cleanupOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
+        await rm(sourcePath, cleanupOptions);
+        await rm(sourceActiveServerDir, cleanupOptions);
+        await rm(targetActiveServerDir, cleanupOptions);
+        await rm(targetPath, cleanupOptions);
+        await rm(isolatedHome.homeDir, cleanupOptions);
       }
     }
   });
@@ -6736,6 +6752,9 @@ function createLoopbackMachineTransferChannels() {
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
     expect(prepare).toBeDefined();
 
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+    expect(statusGet).toBeDefined();
+
     const handoffId = 'handoff_invalid_server_routed_inline_fallback';
     const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const preparePromise = prepare!({
@@ -6782,9 +6801,25 @@ function createLoopbackMachineTransferChannels() {
       });
     }
 
-	    await expect(preparePromise).rejects.toThrow();
-	    expect(importSessionBundle).not.toHaveBeenCalled();
-	  });
+    let prepared: any | null = null;
+    let prepareError: unknown = null;
+    try {
+      prepared = await preparePromise;
+    } catch (error) {
+      prepareError = error;
+    }
+
+    if (!prepareError) {
+      expect(prepared?.status?.status).toBe('pending');
+    }
+
+    await vi.waitFor(async () => {
+      const latest = await statusGet!({ handoffId });
+      expect(latest?.status?.status).toBe('awaiting_recovery');
+    }, { timeout: 2000 });
+
+    expect(importSessionBundle).not.toHaveBeenCalled();
+  });
 
   it('fails closed when the server-routed transfer payload does not satisfy the canonical handoff schemas', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();

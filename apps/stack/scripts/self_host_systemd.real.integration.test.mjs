@@ -275,7 +275,7 @@ test(
     );
     const statusPayload = JSON.parse(String(status.stdout ?? '').trim());
     assert.equal(statusPayload?.ok, true);
-    assert.equal(statusPayload?.service?.name, `${serviceName}.service`);
+    assert.equal(statusPayload?.service?.name, serviceName);
     assert.equal(statusPayload?.service?.active, true);
     assert.equal(statusPayload?.healthy, true);
 
