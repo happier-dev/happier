@@ -182,7 +182,7 @@ jobs:
       contents: read
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
-      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
     steps:
       - name: Checkout trusted workflow control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
