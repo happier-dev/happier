@@ -3,8 +3,7 @@
  *
  * Contract (F0/F1 + Wave-2c degraded-retry): a probe failure is never an authoritative
  * provider quota verdict. Timeouts, connection resets, RPC-unavailable errors, and probes
- * racing the hot-swap app-server restart (`restartCodexRuntimeForConnectedServiceSwitch`
- * disposes the in-process client mid-flight) must keep the durable usage-limit intent
+ * racing an independent app-server process exit or client replacement must keep the durable usage-limit intent
  * WAITING. Only an authoritative provider rate-limit response (or a terminal switch
  * outcome such as `generation_apply_failed`) may drive the intent toward `exhausted`.
  *

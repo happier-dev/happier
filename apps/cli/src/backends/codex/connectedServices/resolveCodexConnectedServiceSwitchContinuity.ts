@@ -44,7 +44,7 @@ export async function resolveCodexConnectedServiceSwitchContinuity(
     return { mode: 'unsupported', reason: 'codex_api_key_switch_continuity_unsupported' };
   }
 
-  if (params.previousBinding?.source === 'connected' && params.runtimeAuthSelection) {
+  if (params.runtimeAuthSelection) {
     const hotApply = createCodexConnectedServiceRuntimeAuthAdapter().canHotApply({
       target: { agentId: params.agentId },
       selection: params.runtimeAuthSelection,

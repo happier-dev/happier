@@ -5,7 +5,6 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import {
   applyCodexConnectedServiceAuthGeneration,
   evaluateCodexConnectedServiceHotApplyEligibility,
-  recoverCodexConnectedServiceRestartResumeOnce,
 } from './applyCodexConnectedServiceAuthGeneration';
 
 describe('Codex connected-service runtime auth application', () => {
@@ -56,16 +55,14 @@ describe('Codex connected-service runtime auth application', () => {
       },
     });
     const client = { request: vi.fn(async () => ({ ok: true })) };
-    const invalidateTransports = vi.fn(async () => {});
     const persistAuthStore = vi.fn(async () => {});
 
     const result = await applyCodexConnectedServiceAuthGeneration({
       client,
       candidate,
       forcedWorkspaceId: 'workspace-work',
-      invalidateTransports,
       persistAuthStore,
-    } as any);
+    });
 
     expect(result).toMatchObject({
       applied: true,
@@ -81,7 +78,6 @@ describe('Codex connected-service runtime auth application', () => {
       chatgptAccountId: 'workspace-work',
     });
     expect(persistAuthStore).toHaveBeenCalledOnce();
-    expect(invalidateTransports).not.toHaveBeenCalled();
     expect(client.request.mock.invocationCallOrder[0]!)
       .toBeLessThan(persistAuthStore.mock.invocationCallOrder[0]!);
   });
@@ -104,14 +100,11 @@ describe('Codex connected-service runtime auth application', () => {
       },
     });
     const client = { request: vi.fn(async () => ({ ok: true })) };
-    const invalidateTransports = vi.fn(async () => {});
-
     await expect(applyCodexConnectedServiceAuthGeneration({
       client,
       candidate,
       forcedWorkspaceId: 'workspace-work',
-      invalidateTransports,
-    } as any)).resolves.toMatchObject({
+    })).resolves.toMatchObject({
       applied: true,
       appliedVia: 'direct_live_hot_auth',
       activeAccountId: 'workspace-work',
@@ -119,7 +112,6 @@ describe('Codex connected-service runtime auth application', () => {
     });
 
     expect(client.request).toHaveBeenCalledOnce();
-    expect(invalidateTransports).not.toHaveBeenCalled();
   });
 
   it('returns a durability diagnostic when auth-store persistence fails after live apply', async () => {
@@ -140,7 +132,6 @@ describe('Codex connected-service runtime auth application', () => {
       },
     });
     const client = { request: vi.fn(async () => ({ ok: true })) };
-    const invalidateTransports = vi.fn(async () => {});
     const persistAuthStore = vi.fn(async () => {
       throw new Error('disk full');
     });
@@ -149,9 +140,8 @@ describe('Codex connected-service runtime auth application', () => {
       client,
       candidate,
       forcedWorkspaceId: 'workspace-work',
-      invalidateTransports,
       persistAuthStore,
-    } as any)).resolves.toMatchObject({
+    })).resolves.toMatchObject({
       applied: true,
       appliedVia: 'direct_live_hot_auth',
       activeAccountId: 'workspace-work',
@@ -159,7 +149,6 @@ describe('Codex connected-service runtime auth application', () => {
     });
 
     expect(client.request).toHaveBeenCalledOnce();
-    expect(invalidateTransports).not.toHaveBeenCalled();
   });
 
   it('arms the refresh bridge selection before live login succeeds and before durability work', async () => {
@@ -585,17 +574,4 @@ describe('Codex connected-service runtime auth application', () => {
     });
   });
 
-  it('bounds restart/resume recovery to one attempt', async () => {
-    const restartAndResume = vi.fn(async () => ({ resumed: true as const }));
-
-    await expect(recoverCodexConnectedServiceRestartResumeOnce({
-      attemptsSoFar: 0,
-      restartAndResume,
-    })).resolves.toEqual({ recovered: true, via: 'restart' });
-    await expect(recoverCodexConnectedServiceRestartResumeOnce({
-      attemptsSoFar: 1,
-      restartAndResume,
-    })).resolves.toEqual({ recovered: false, reason: 'retry_limit_reached' });
-    expect(restartAndResume).toHaveBeenCalledTimes(1);
-  });
 });

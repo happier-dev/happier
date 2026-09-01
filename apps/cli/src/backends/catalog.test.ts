@@ -319,8 +319,7 @@ describe('AGENTS', () => {
       providerId: 'codex',
       generationApplicationScope: 'per_session_runtime',
       refreshedCredentialApplication: {
-        mode: 'restart_required',
-        noRestartRequiredWhenAccessTokenCallbackServiceIds: ['openai-codex'],
+        mode: 'hot_apply',
       },
       runtimeAuthApply: {
         directLiveHotAuth: {

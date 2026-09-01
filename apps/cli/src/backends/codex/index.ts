@@ -27,8 +27,7 @@ const codexConnectedServiceCredentialLifecycleDescriptor: ConnectedServiceCreden
   serviceIds: AGENTS_CORE.codex.connectedServices.supportedServiceIds,
   spawnPreflightOauthRefresh: { mode: 'expiry_window' },
   refreshedCredentialApplication: {
-    mode: 'restart_required',
-    noRestartRequiredWhenAccessTokenCallbackServiceIds: ['openai-codex'],
+    mode: 'hot_apply',
   },
   predictiveSoftSwitch: { mode: 'supported' },
   sameAccountFanoutStrategy: 'provider_account_id',

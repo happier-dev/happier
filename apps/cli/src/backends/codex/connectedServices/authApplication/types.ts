@@ -77,7 +77,6 @@ export type CodexDirectLiveAuthApplyResult =
       detailReason?: CodexDirectLiveAuthApplyDetailReason;
       appliedVia?: 'direct_live_hot_auth';
       activeAccountId?: string;
-      recovery?: 'restart_resume';
     }>;
 
 export type CodexDirectLiveAuthApplyInput = Readonly<{
@@ -85,7 +84,6 @@ export type CodexDirectLiveAuthApplyInput = Readonly<{
   candidate: ConnectedServiceCredentialRecordV1;
   forcedWorkspaceId: string | null;
   forcedLoginMethod?: string | null;
-  invalidateTransports?: (() => Promise<void> | void) | null;
   persistAuthStore?: (() => Promise<void> | void) | null;
   refreshSelection?: CodexConnectedServiceRefreshSelection | null;
   updateRefreshSelection?: ((

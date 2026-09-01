@@ -494,7 +494,7 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
     expect(restartRequestedPids.has(1)).toBe(false);
   });
 
-  it('keeps the REAL Codex lifecycle restart fallback for runtimes without the app-server token callback', async () => {
+  it('does not restart Codex when a runtime target lacks the app-server token callback', async () => {
     const { resolveConnectedServiceCredentialLifecycleDescriptor } = await import('@/backends/catalog');
     const restartRequestedPids = new Set<number>();
     const requestRestartSignal = vi.fn(async (_params: RestartSignalParams) => ({ signaled: true }));
@@ -520,8 +520,8 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
       affectedTargets: [{ pid: 1, agentId: 'codex' }],
     });
 
-    expect(requestRestartSignal).toHaveBeenCalledTimes(1);
-    expect(restartRequestedPids.has(1)).toBe(true);
+    expect(requestRestartSignal).not.toHaveBeenCalled();
+    expect(restartRequestedPids.has(1)).toBe(false);
   });
 
   it('does not restart OpenCode or Pi for brokered same-account OAuth refreshes', async () => {

@@ -58,6 +58,43 @@ function createParams(
 }
 
 describe('resolveCodexConnectedServiceSwitchContinuity', () => {
+  it('uses direct live apply when an active native Codex session switches into connected auth', async () => {
+    await expect(resolveCodexConnectedServiceSwitchContinuity(createParams({
+      previousBinding: {
+        source: 'native',
+        selection: 'native',
+        serviceId: 'openai-codex',
+        profileId: null,
+        groupId: null,
+      },
+      fromBindings: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'native' },
+        },
+      },
+      runtimeAuthSelection: {
+        applyConnectedServiceAuthGeneration: async () => ({ ok: true }),
+        record: buildConnectedServiceCredentialRecord({
+          now: 1_000,
+          serviceId: 'openai-codex',
+          profileId: 'new',
+          kind: 'oauth',
+          expiresAt: 2_000,
+          oauth: {
+            accessToken: 'access',
+            refreshToken: 'refresh',
+            idToken: 'id',
+            scope: null,
+            tokenType: null,
+            providerAccountId: 'acct',
+            providerEmail: 'codex-user@example.test',
+          },
+        }),
+      },
+    }))).resolves.toEqual({ mode: 'hot_apply' });
+  });
+
   it('keeps direct-live-required runtime auth selections on the hot-apply path when the runtime callback is unavailable', async () => {
     await expect(resolveCodexConnectedServiceSwitchContinuity(createParams({
       connectedServiceMaterializationIdentityV1: null,

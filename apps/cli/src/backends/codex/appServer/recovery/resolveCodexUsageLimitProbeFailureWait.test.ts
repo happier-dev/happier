@@ -51,9 +51,9 @@ describe('resolveCodexUsageLimitProbeFailureWait', () => {
     expect(result.nextCheckAtMs).toBeGreaterThan(nowMs);
   });
 
-  it('treats a probe racing the hot-swap app-server restart as a transient wait, not exhausted', () => {
-    // The wait-probe can race `restartCodexRuntimeForConnectedServiceSwitch` disposing the
-    // in-process client; the resulting transport rejection must classify as retry/wait.
+  it('treats a probe racing an app-server client replacement as a transient wait, not exhausted', () => {
+    // The wait-probe can race an independent provider-process exit; the resulting transport
+    // rejection must classify as retry/wait.
     const result = resolveCodexUsageLimitProbeFailureWait({
       resetAtMs: null,
       nextCheckAtMs: null,

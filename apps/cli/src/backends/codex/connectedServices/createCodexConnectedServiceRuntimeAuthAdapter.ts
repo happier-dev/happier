@@ -1,9 +1,6 @@
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
-import {
-  evaluateCodexConnectedServiceHotApplyEligibility,
-  recoverCodexConnectedServiceRestartResumeOnce,
-} from './applyCodexConnectedServiceAuthGeneration';
+import { evaluateCodexConnectedServiceHotApplyEligibility } from './applyCodexConnectedServiceAuthGeneration';
 import { classifyCodexConnectedServiceAuthFailure } from './classifyCodexConnectedServiceAuthFailure';
 import { mapCodexRateLimitSnapshotToQuotaSnapshot } from './mapCodexRateLimitSnapshot';
 import { readCodexRateLimitsSnapshot } from '../appServer/readCodexRateLimitsSnapshot';
@@ -29,11 +26,6 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readNonNegativeInteger(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return Math.trunc(value);
 }
 
 function readSelectionRecord(input: ConnectedServiceRuntimeAuthTargetInput): Record<string, unknown> | null {
@@ -81,7 +73,6 @@ function readRuntimeApplyPartialStateResult(
     error: readString(record.error) ?? reason,
     appliedVia: 'direct_live_hot_auth',
     ...(activeAccountId ? { activeAccountId } : {}),
-    recovery: readString(record.recovery) ?? 'restart_resume',
     ...(record.verification === undefined ? {} : { verification: record.verification }),
     ...(record.durability === undefined ? {} : { durability: record.durability }),
   };
@@ -118,11 +109,10 @@ function readRuntimeApplyResult(result: unknown): ConnectedServiceRuntimeAuthAda
       ...(record.error === undefined ? {} : { error: record.error }),
       ...(record.appliedVia === undefined ? {} : { appliedVia: record.appliedVia }),
       ...(record.activeAccountId === undefined ? {} : { activeAccountId: record.activeAccountId }),
-      ...(record.recovery === undefined ? {} : { recovery: record.recovery }),
       ...(record.durability === undefined ? {} : { durability: record.durability }),
     };
   }
-  return { applied: false, reason: 'invalid_runtime_apply_response', recovery: 'restart_resume' };
+  return { applied: false, reason: 'invalid_runtime_apply_response' };
 }
 
 function readRuntimeQuotaSnapshotStore(value: unknown): {
@@ -212,7 +202,6 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(deps: Readonly<{
       return {
         supported: false,
         reason: 'direct_live_hot_auth_unsupported',
-        recovery: 'restart_resume',
       };
     },
     async hotApply(input) {
@@ -235,21 +224,10 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(deps: Readonly<{
       return {
         applied: false,
         reason: 'direct_live_hot_auth_unsupported',
-        recovery: 'restart_resume',
       };
     },
-    async recoverAfterRuntimeAuthSwitch(input) {
-      const restartAndResume = readRecord(input.selection)?.restartAndResume;
-      if (typeof restartAndResume !== 'function') {
-        return { recovered: false, reason: 'missing_restart_resume' };
-      }
-      return await recoverCodexConnectedServiceRestartResumeOnce({
-        attemptsSoFar: readNonNegativeInteger(readRecord(input.selection)?.attemptsSoFar) ?? 0,
-        restartAndResume: async () => {
-          await restartAndResume();
-          return { resumed: true };
-        },
-      });
+    async recoverAfterRuntimeAuthSwitch() {
+      return { recovered: false, reason: 'direct_live_hot_auth_required' };
     },
     async verifyActiveAccount(input) {
       return await verifyCodexConnectedServiceActiveAccount(input);
