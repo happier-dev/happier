@@ -2718,26 +2718,37 @@ describe('createSessionMutationOutbox', () => {
         await outbox.close();
     });
 
-    it('delivers transcript snapshots through the exact released-server-v0.2.1 message seam', async () => {
+    it('parks turn mutations without blocking the exact released-server-v0.2.1 message seam', async () => {
         const emitted: Array<{ event: string; payload: unknown }> = [];
+        const requestReconnect = vi.fn();
+        let serverSupportsTurns = false;
         const socket = createApiSessionSocketStub({
             connected: true,
             emitWithAck: async (event, payload) => {
                 emitted.push({ event, payload });
                 return event === 'message'
                     ? { ok: true, id: 'message-1', seq: 1, localId: 'gemini-segment', didWrite: true }
+                    : event === 'session-turn-mutation' && serverSupportsTurns
+                        ? { result: 'success' }
                     : { ok: false, error: 'unsupported' };
             },
         });
         const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
-        const { createTranscriptMessageAppendMutation } = await import('./sessionMutationTypes');
+        const { createSessionTurnMutation, createTranscriptMessageAppendMutation } = await import('./sessionMutationTypes');
         const outbox = createSessionMutationOutbox({
             token: 'tok',
             sessionId: 's-gemini-released',
             getSocket: () => socket,
-            requestReconnect: () => {},
+            requestReconnect,
         });
         await outbox.setSessionSyncPendingInputServerContract(serverContract('released_server_v0_2_1'));
+        await outbox.enqueueSessionTurn(createSessionTurnMutation({
+            sessionId: 's-gemini-released',
+            action: 'complete',
+            turnId: 'turn-released',
+            mutationId: 'turn-released-complete',
+            observedAt: 900,
+        }));
 
         await expect(outbox.enqueueTranscriptMessage(createTranscriptMessageAppendMutation({
             sessionId: 's-gemini-released',
@@ -2759,6 +2770,23 @@ describe('createSessionMutationOutbox', () => {
                 messageRole: 'agent',
             },
         }]);
+        await expect(readPersistedOutboxMutations('s-gemini-released')).resolves.toEqual([
+            expect.objectContaining({
+                kind: 'session_turn',
+                mutationId: 'turn-released-complete',
+                attempts: 0,
+            }),
+        ]);
+        expect(requestReconnect).not.toHaveBeenCalled();
+        expect(vi.mocked(axios.post)).not.toHaveBeenCalled();
+
+        serverSupportsTurns = true;
+        await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+        await outbox.flush('connect');
+        expect(emitted.at(-1)).toEqual({
+            event: 'session-turn-mutation',
+            payload: expect.objectContaining({ mutationId: 'turn-released-complete' }),
+        });
         await expect(readPersistedOutboxMutations('s-gemini-released')).resolves.toEqual([]);
         await outbox.close();
     });
