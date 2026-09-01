@@ -57,11 +57,23 @@ test('stopped-stack restart cannot authorize the outer destructive stop path', a
 
   const source = await readFile(new URL('./stack/run_script_with_stack_env.mjs', import.meta.url), 'utf8');
   const decisionBoundary = source.indexOf('const isTrueRestart =');
-  const stopBoundary = source.indexOf('await stopStackWithEnv({', decisionBoundary);
+  const stopBoundary = source.indexOf('await completeStackRestartStopBeforeSuccessor({', decisionBoundary);
   const stopGuardBoundary = source.lastIndexOf('if (isTrueRestart)', stopBoundary);
   assert.ok(
     decisionBoundary >= 0 && stopGuardBoundary > decisionBoundary && stopBoundary > stopGuardBoundary,
     'the canonical true-restart decision must guard the destructive outer stop',
+  );
+  assert.equal(
+    (source.match(/await completeStackRestartStopBeforeSuccessor\(/g) ?? []).length,
+    2,
+    'both restart cleanup paths must complete the canonical stop before successor admission',
+  );
+  const helperBoundary = source.indexOf('export async function completeStackRestartStopBeforeSuccessor');
+  const helperStopBoundary = source.indexOf('await stopStackWithEnv(', helperBoundary);
+  const helperContinuationBoundary = source.indexOf('return await completeInterruptedStackStopBeforeStart(', helperBoundary);
+  assert.ok(
+    helperBoundary >= 0 && helperStopBoundary > helperBoundary && helperContinuationBoundary > helperStopBoundary,
+    'restart cleanup must continue any persisted incomplete stop after the first stop attempt',
   );
   assert.doesNotMatch(
     source,
