@@ -190,6 +190,49 @@ test('release resume preserves originally requested optional publication surface
   });
 });
 
+test('release resume preserves an explicitly requested UI no-op publication intent', () => {
+  const releaseExpected = {
+    repository: REPOSITORY,
+    workflowPath: '.github/workflows/release.yml',
+    channel: 'preview',
+  };
+  const optionalSurfaces = standardOptionalSurfaces(false);
+  const deployUiIndex = optionalSurfaces.findIndex((surface) => surface.id === 'deploy_ui');
+  optionalSurfaces[deployUiIndex] = {
+    id: 'deploy_ui',
+    requested: true,
+    required: false,
+    evidence: 'accepted',
+    state: 'partial',
+    result: 'skipped',
+    identity: {
+      sourceSha: SOURCE_SHA,
+      verified: false,
+      deployWeb: false,
+      expoAction: 'none',
+      desktopMode: 'none',
+    },
+  };
+
+  const resolved = resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({
+      channel: 'preview',
+      surfaces: [previewCliCandidate(), ...optionalSurfaces],
+    }),
+    expected: releaseExpected,
+  });
+
+  assert.equal(resolved.requested.deployUi, true);
+  assert.deepEqual(resolved.resumeInputs.deployUi, {
+    deployWeb: false,
+    expoAction: 'none',
+    desktopMode: 'none',
+  });
+});
+
 test('release resume fails closed when the origin status omits optional request intent', () => {
   assert.throws(() => resolveReleaseResume({
     originRun: originRun({ path: '.github/workflows/release.yml' }),

@@ -213,9 +213,6 @@ export function resolveReleaseResume(input) {
             expoAction: requiredChoice(identity.expoAction, 'requested deploy_ui expoAction', ['none', 'ota', 'native', 'native_submit']),
             desktopMode: requiredChoice(identity.desktopMode, 'requested deploy_ui desktopMode', ['none', 'build_only', 'build_and_publish']),
           };
-          if (!resumeInputs.deployUi.deployWeb && resumeInputs.deployUi.expoAction === 'none' && resumeInputs.deployUi.desktopMode === 'none') {
-            throw new Error('no publication action was selected');
-          }
         } catch (error) {
           throw new Error(`[release] cannot reconstruct requested deploy_ui intent: ${error instanceof Error ? error.message : String(error)}`);
         }
