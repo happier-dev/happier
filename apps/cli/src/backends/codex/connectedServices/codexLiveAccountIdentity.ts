@@ -4,7 +4,11 @@ export type CodexLiveAccountIdentity = Readonly<{
 }>;
 
 type CodexAccountReadClient = Readonly<{
-  request(method: 'account/read', params: Record<string, never>): Promise<unknown>;
+  request(
+    method: 'account/read',
+    params: Record<string, never>,
+    options?: Readonly<{ timeoutMs?: number | null }>,
+  ): Promise<unknown>;
 }>;
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -67,6 +71,7 @@ export function readCodexLiveAccountIdentity(value: unknown): CodexLiveAccountId
 
 export async function readCodexLiveAccountIdentityFromClient(
   client: CodexAccountReadClient,
+  requestOptions?: Readonly<{ timeoutMs?: number | null }>,
 ): Promise<CodexLiveAccountIdentity> {
-  return readCodexLiveAccountIdentity(await client.request('account/read', {}));
+  return readCodexLiveAccountIdentity(await client.request('account/read', {}, requestOptions));
 }

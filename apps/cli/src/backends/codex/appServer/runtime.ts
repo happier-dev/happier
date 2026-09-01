@@ -1403,8 +1403,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const readLiveAccountIdentity = async (): Promise<CodexLiveAccountIdentity> => {
         const client = await ensureClient();
         return await readCodexLiveAccountIdentityFromClient({
-            request: async (_method, params) => await client.request('account/read', params),
-        });
+            request: async (_method, params, options) => await client.request('account/read', params, options),
+        }, { timeoutMs: null });
     };
 
     const verifyLiveAccountAgainstAppliedIdentity = (
