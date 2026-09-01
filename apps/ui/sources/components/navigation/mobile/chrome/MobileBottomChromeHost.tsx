@@ -44,7 +44,10 @@ import { TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSess
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useTabState } from '@/hooks/ui/useTabState';
-import { isOverlaySurfaceRoutePathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
+import {
+    isOverlaySurfaceRoutePathname,
+    normalizeSurfaceRoutePathname,
+} from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
 import { usePersistSessionLastMobileSurface, useSessionLastMobileSurface, useSetting } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -139,7 +142,10 @@ function closeSessionLateralPicker(params: Readonly<{
 export const SESSION_LATERAL_SWIPE_GESTURE_TEST_ID = 'session-cockpit-lateral-swipe';
 export const SESSION_LATERAL_SWIPE_HIT_TARGET_TEST_ID = 'session-cockpit-band-hit-target';
 
-export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost() {
+export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost(props: Readonly<{
+    /** Canonical pre-push presentation decision from the app stack owner. */
+    newSessionRendersFloatingComposer?: boolean;
+}>) {
     const pathname = usePathname();
     const router = useRouter();
     const params = useGlobalSearchParams<{ mobileSurface?: string | string[]; serverId?: string | string[] }>();
@@ -254,6 +260,9 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // surface lifting away. Freezing the last real chrome keeps the bar mounted and untouched
     // underneath, which is also why it can come back with no animation at all.
     const overlayRouteActive = typeof pathname === 'string' && isOverlaySurfaceRoutePathname(pathname);
+    const androidFloatingNewSessionActive = Platform.OS === 'android'
+        && normalizeSurfaceRoutePathname(pathname) === '/new'
+        && props.newSessionRendersFloatingComposer === true;
     const frozenChromeRef = React.useRef<BottomChromeItem | null>(null);
 
     const resolvedChrome = React.useMemo((): BottomChromeItem | null => {
@@ -756,6 +765,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // rendering until BOTH are gone. The published chrome height already dropped to 0 above, so
     // the surfaces that pad by it reclaim their space immediately rather than waiting for the fade.
     if (!renderedChrome.current && !renderedChrome.previous) {
+        return null;
+    }
+
+    // Android's transparent native-stack screen and this global chrome host are sibling native
+    // views. The host is mounted after the Stack, so keeping its pixels rendered places them above
+    // the composer's app-painted scrim even though its frozen model is conceptually "under" the
+    // modal. Keep that model intact for an immediate return, but contribute no sibling pixels while
+    // the floating composer is active. Other presentations keep the normal frozen-underlay path.
+    if (androidFloatingNewSessionActive) {
         return null;
     }
 

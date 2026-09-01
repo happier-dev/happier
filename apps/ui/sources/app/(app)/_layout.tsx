@@ -642,7 +642,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 }}
             />
             </Stack>
-            <MobileBottomChromeHost />
+            <MobileBottomChromeHost newSessionRendersFloatingComposer={newSessionRendersFloatingComposer} />
         </SessionCockpitChromeRegistryProvider>
     );
 });

@@ -489,6 +489,45 @@ describe('MobileBottomChromeHost', () => {
         expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(1);
     });
 
+    it('suppresses frozen chrome above the Android floating new-session composer', async () => {
+        platformState.os = 'android';
+        pathState.pathname = '/';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost newSessionRendersFloatingComposer />);
+        expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(1);
+
+        pathState.pathname = '/new';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(0);
+
+        pathState.pathname = '/';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(1);
+        expect(animatedTimingState.timings).toHaveLength(0);
+    });
+
+    it('keeps frozen chrome under the Android new-session wizard modal', async () => {
+        platformState.os = 'android';
+        pathState.pathname = '/';
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        pathState.pathname = '/new';
+        await act(async () => {
+            notifyPathListeners();
+        });
+
+        expect(screen.tree.findAllByType('TabBar' as never)).toHaveLength(1);
+    });
+
     it('fades the bar out rather than cutting it when chrome genuinely resolves to nothing', async () => {
         pathState.pathname = '/';
         keyboardHeightState.value = 0;
