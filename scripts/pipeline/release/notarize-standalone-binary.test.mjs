@@ -172,8 +172,9 @@ test('Darwin payload notarization signs and strictly verifies every Mach-O leaf 
   const rootExecutableVerify = commands.verify.find(([, args]) => args.at(-1).endsWith('/happier'));
   assert.equal(rootExecutableVerify?.[1].includes('-R'), true);
   assert.equal(
-    rootExecutableVerify?.[1].includes('=entitlement[com.apple.security.cs.allow-jit] = true'),
+    rootExecutableVerify?.[1].includes('=entitlement["com.apple.security.cs.allow-jit"] exists'),
     true,
+    'codesign must parse the quoted entitlement key and require it to exist',
   );
   assert.equal(commands.verify.filter(([, args]) => args.at(-1) !== rootExecutableVerify?.[1].at(-1)).every(([, args]) => !args.includes('-R')), true);
   assert.deepEqual(commands.archive, [
