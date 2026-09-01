@@ -123,6 +123,12 @@ test(
 
     const sandboxDir = await mkdtemp(join(tmpdir(), 'happier-self-host-systemd-'));
     t.after(async () => {
+      if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+        runAsRoot('chown', ['-R', `${process.getuid()}:${process.getgid()}`, sandboxDir], {
+          cwd: '/tmp',
+          timeoutMs: 30_000,
+        });
+      }
       await rm(sandboxDir, { recursive: true, force: true });
     });
 
