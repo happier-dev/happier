@@ -286,11 +286,13 @@ jobs:
         if: inputs.bump != 'none'
         id: bump
         env:
-          HAPPIER_GIT_AUTHORIZATION_HEADER: "AUTHORIZATION: bearer ${{ steps.bump_token.outputs.token }}"
+          APP_TOKEN: ${{ steps.bump_token.outputs.token }}
           BUMP: ${{ inputs.bump }}
           SOURCE_BRANCH: ${{ needs.resolve_source.outputs.source_ref }}
         run: |
           set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export HAPPIER_GIT_AUTHORIZATION_HEADER="AUTHORIZATION: basic $auth"
           node "$RUNNER_TEMP/prepare-server-release-bump.mjs" \
             --bump "$BUMP" \
             --source-branch "$SOURCE_BRANCH" \
@@ -519,12 +521,12 @@ jobs:
       - name: Resolve exact server deploy ref before promotion
         id: deploy_before
         env:
-          GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: http.extraHeader
-          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ steps.promotion_token.outputs.token }}"
+          APP_TOKEN: ${{ steps.promotion_token.outputs.token }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           ref="refs/heads/deploy/${DEPLOY_ENVIRONMENT}/server"
           row="$(git ls-remote --refs origin "${ref}")"
           sha="${row%%[[:space:]]*}"
@@ -534,10 +536,12 @@ jobs:
       - name: Promote exact validated SHA to server deploy branch
         id: promote_ref
         env:
-          HAPPIER_GIT_AUTHORIZATION_HEADER: "AUTHORIZATION: bearer ${{ steps.promotion_token.outputs.token }}"
+          APP_TOKEN: ${{ steps.promotion_token.outputs.token }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export HAPPIER_GIT_AUTHORIZATION_HEADER="AUTHORIZATION: basic $auth"
           expected="${{ steps.deploy_before.outputs.sha }}"
           if [ -z "${expected}" ]; then expected="missing"; fi
           node "$RUNNER_TEMP/promote-server-deploy-ref.mjs" \

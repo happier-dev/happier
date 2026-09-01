@@ -154,8 +154,10 @@ test('promote-server performs the write-capable deploy-ref mutation only from a 
   assert.match(workflow, /steps\.bind\.outputs\.candidate_sha/);
   assert.match(workflow, /--expected-current-sha/);
   assert.doesNotMatch(workflow, /persist-credentials:\s+true/);
-  assert.doesNotMatch(workflow, /git remote set-url|x-access-token:/, 'deploy-capable credentials must not be persisted in git config');
+  assert.doesNotMatch(workflow, /git remote set-url|https:\/\/x-access-token:/, 'deploy-capable credentials must not be persisted in the remote URL');
   assert.match(workflow, /HAPPIER_GIT_AUTHORIZATION_HEADER/);
+  assert.doesNotMatch(workflow, /AUTHORIZATION:\s*bearer/, 'Git smart HTTP does not accept GitHub App bearer authentication');
+  assert.match(workflow, /AUTHORIZATION: basic \$auth/);
 
   const promotionStep = workflowStep(workflow, 'Promote exact validated SHA to server deploy branch');
   assert.match(promotionStep, /node "\$RUNNER_TEMP\/promote-server-deploy-ref\.mjs"/);
