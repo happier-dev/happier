@@ -87,3 +87,27 @@ test('release-compute-deploy-plan forwards --deploy-environment to the wrapped s
   assert.match(out, /--deploy-environment/);
   assert.match(out, /production/);
 });
+
+test('release-sync-installers check is hermetic and never reads release secrets', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'release-sync-installers',
+      '--secrets-source',
+      'keychain',
+      '--keychain-service',
+      'happier-test-missing-keychain-bundle',
+      '--check',
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /"ok": true/);
+  assert.match(out, /"checkOnly": true/);
+});

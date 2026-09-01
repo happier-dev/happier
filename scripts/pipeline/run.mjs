@@ -2105,7 +2105,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         const scriptArgs =
           subcommand === 'release-compute-deploy-plan' ? ['--deploy-environment', deployEnvironment, ...passthrough] : passthrough;
 
-        if (subcommand === 'release-analyze' || (subcommand === 'release-local-candidates' && dryRun)) {
+        const isHermeticInstallerProjectionCheck =
+          subcommand === 'release-sync-installers' && passthrough.includes('--check');
+        if (
+          subcommand === 'release-analyze' ||
+          (subcommand === 'release-local-candidates' && dryRun) ||
+          isHermeticInstallerProjectionCheck
+        ) {
           runReleaseWrappedScript({
             repoRoot,
             env: process.env,
