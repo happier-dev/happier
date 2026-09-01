@@ -10,6 +10,7 @@ on:
 jobs:
   triage-manual:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: issue-triage
     permissions:
       contents: read

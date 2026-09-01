@@ -80,6 +80,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -103,6 +104,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -122,6 +124,7 @@ jobs:
     needs: [release_actor_guard]
     if: inputs.publish_ota
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     outputs:
@@ -189,6 +192,7 @@ jobs:
     needs: [release_actor_guard, prepare_ota]
     if: inputs.publish_ota
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: release-shared
     permissions:
       contents: read
@@ -248,6 +252,7 @@ jobs:
   publish:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     environment: release-shared
     steps:
       - name: Create GitHub App token
@@ -359,6 +364,7 @@ jobs:
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     environment: release-shared
     continue-on-error: true
     steps:
@@ -455,6 +461,7 @@ jobs:
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_local'
     runs-on: macos-26
+    timeout-minutes: 180
     environment: release-shared
     continue-on-error: true
     steps:

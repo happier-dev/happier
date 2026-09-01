@@ -16,6 +16,7 @@ on:
 jobs:
   smoke-test-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
     - name: Checkout code
@@ -43,6 +44,7 @@ jobs:
 
   smoke-test-windows:
     runs-on: windows-latest
+    timeout-minutes: 60
 
     steps:
     - name: Checkout code
