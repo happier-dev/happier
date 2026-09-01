@@ -97,6 +97,82 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
     });
   });
 
+  it.each([
+    { snapshotScope: 'segment' as const, finalSnapshot: 'Final answer.' },
+    { snapshotScope: 'turn' as const, finalSnapshot: 'Progress update.Final answer.' },
+  ])('reconciles $snapshotScope authoritative snapshots after a tool boundary', async ({ snapshotScope, finalSnapshot }) => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const tracker = createTurnAssistantPreviewTracker();
+    const durableCalls: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async (_provider, body, opts) => {
+        durableCalls.push({ body, meta: opts.meta });
+      },
+    });
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      turnAssistantPreviewTracker: tracker,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    backend.emit({ type: 'model-output', textDelta: 'Progress update.' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', fullText: 'Progress update.' } satisfies AgentMessage);
+    backend.emit({ type: 'tool-call', toolName: 'Read', args: {}, callId: 'tool-1' } satisfies AgentMessage);
+    backend.emit({ type: 'tool-result', toolName: 'Read', result: 'done', callId: 'tool-1' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', textDelta: 'Final answer.' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', fullText: finalSnapshot, fullTextScope: snapshotScope } satisfies AgentMessage);
+
+    expect(tracker.getPreview()).toBe('Progress update.Final answer.');
+    await runtime.flushTurn();
+
+    const completedAssistantMessages = durableCalls.flatMap((call) => {
+      const streamMeta = call.meta?.happierStreamSegmentV1;
+      const segmentState = streamMeta && typeof streamMeta === 'object'
+        ? (streamMeta as { segmentState?: unknown }).segmentState
+        : undefined;
+      return call.body.type === 'message' && segmentState === 'complete' ? [call.body.message] : [];
+    });
+    expect(completedAssistantMessages).toEqual(['Progress update.', 'Final answer.']);
+  });
+
+  it('does not infer a segment snapshot scope from a shared prefix', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const tracker = createTurnAssistantPreviewTracker();
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session: createBasicSessionClientWithOverrides(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      turnAssistantPreviewTracker: tracker,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'model-output', textDelta: 'Shared prefix' } satisfies AgentMessage);
+    backend.emit({ type: 'tool-call', toolName: 'Read', args: {}, callId: 'tool-1' } satisfies AgentMessage);
+    backend.emit({
+      type: 'model-output',
+      fullText: 'Shared prefix continued',
+      fullTextScope: 'segment',
+    } satisfies AgentMessage);
+
+    expect(tracker.getPreview()).toBe('Shared prefixShared prefix continued');
+    await runtime.flushTurn();
+  });
+
   it('closes an unflushed assistant segment before the next turn can append output', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];

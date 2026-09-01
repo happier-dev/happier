@@ -17,7 +17,7 @@ describe('mapPiRpcEventToAgentMessages', () => {
       assistantMessageEvent: { type: 'text_end', contentIndex: 0, content: 'hello world' },
       message: { role: 'assistant', content: [{ type: 'text', text: 'hello world' }] },
     });
-    expect(output).toEqual([{ type: 'model-output', fullText: 'hello world' }]);
+    expect(output).toEqual([{ type: 'model-output', fullText: 'hello world', fullTextScope: 'segment' }]);
   });
 
   it('maps thinking deltas to thinking stream events', () => {
@@ -113,7 +113,7 @@ describe('mapPiRpcEventToAgentMessages', () => {
       type: 'message_end',
       message: { role: 'assistant', content: [{ type: 'text', text: 'final' }] },
     });
-    expect(output).toEqual([{ type: 'model-output', fullText: 'final' }]);
+    expect(output).toEqual([{ type: 'model-output', fullText: 'final', fullTextScope: 'segment' }]);
   });
 
   it('emits an authoritative thinking snapshot alongside text on message_end', () => {
@@ -129,7 +129,7 @@ describe('mapPiRpcEventToAgentMessages', () => {
     });
     expect(output).toEqual([
       { type: 'event', name: 'thinking', payload: { fullText: 'I should greet the user.' } },
-      { type: 'model-output', fullText: 'Hi!' },
+      { type: 'model-output', fullText: 'Hi!', fullTextScope: 'segment' },
     ]);
   });
 

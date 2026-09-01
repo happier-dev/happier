@@ -578,6 +578,7 @@ export function createAcpRuntime(params: {
     observedAt: number;
   }> | null = null;
   let accumulatedResponse = '';
+  let accumulatedAssistantSegmentResponse = '';
   let accumulatedThinkingText = '';
   let isResponseInProgress = false;
   let taskStartedSent = false;
@@ -815,6 +816,7 @@ export function createAcpRuntime(params: {
       });
     }
     accumulatedResponse = '';
+    accumulatedAssistantSegmentResponse = '';
     accumulatedThinkingText = '';
     isResponseInProgress = false;
     taskStartedSent = false;
@@ -1273,11 +1275,18 @@ export function createAcpRuntime(params: {
           const fullText = typeof (msg as any).fullText === 'string' ? String((msg as any).fullText) : '';
           let deltaRaw = typeof (msg as any).textDelta === 'string' ? String((msg as any).textDelta) : '';
           if (!deltaRaw && fullText) {
-            if (fullText.startsWith(accumulatedResponse)) {
-              deltaRaw = fullText.slice(accumulatedResponse.length);
+            const fullTextScope = msg.fullTextScope ?? 'turn';
+            const reconciledText = fullTextScope === 'segment'
+              ? accumulatedAssistantSegmentResponse
+              : accumulatedResponse;
+            if (fullText.startsWith(reconciledText)) {
+              deltaRaw = fullText.slice(reconciledText.length);
             } else {
-              // Defensive: if a provider restarts and sends a divergent fullText, restart accumulation.
-              accumulatedResponse = '';
+              // Defensive: if a provider restarts and sends divergent fullText, restart snapshot reconciliation.
+              if (fullTextScope === 'turn') {
+                accumulatedResponse = '';
+              }
+              accumulatedAssistantSegmentResponse = '';
               deltaRaw = fullText;
             }
           }
@@ -1298,7 +1307,10 @@ export function createAcpRuntime(params: {
             messageBuffer: params.messageBuffer,
             getIsResponseInProgress: () => isResponseInProgress,
             setIsResponseInProgress: (value) => { isResponseInProgress = value; },
-            appendToAccumulatedResponse: (delta) => { accumulatedResponse += delta; },
+            appendToAccumulatedResponse: (delta) => {
+              accumulatedResponse += delta;
+              accumulatedAssistantSegmentResponse += delta;
+            },
           });
           params.turnAssistantPreviewTracker?.replace(accumulatedResponse);
 
@@ -1364,6 +1376,7 @@ export function createAcpRuntime(params: {
             break;
           }
 
+          accumulatedAssistantSegmentResponse = '';
           void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
           params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
           recordToolCall(msg.callId, msg.toolName);
@@ -1526,6 +1539,7 @@ export function createAcpRuntime(params: {
           } catch (e) {
             logger.debug(`[${params.provider}] Failed to run permission-request hook (non-fatal)`, e);
           }
+          accumulatedAssistantSegmentResponse = '';
           void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' }).finally(() => {
             forwarder.forward(msg);
           });

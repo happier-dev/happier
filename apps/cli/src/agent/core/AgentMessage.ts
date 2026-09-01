@@ -30,8 +30,10 @@ export interface ModelOutputMessage {
   type: 'model-output';
   /** Incremental text delta (streaming) */
   textDelta?: string;
-  /** Full text (when not streaming) */
+  /** Authoritative cumulative text snapshot. */
   fullText?: string;
+  /** Whether fullText covers the whole turn (default) or only the current assistant segment. */
+  fullTextScope?: 'turn' | 'segment';
 }
 
 /**

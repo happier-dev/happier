@@ -197,7 +197,7 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
       // Older pi sent no delta field and still carried the cumulative message.
       const fullText = extractAssistantText(record.message);
       if (fullText !== null && fullText.length > 0) {
-        return [{ type: 'model-output', fullText }];
+        return [{ type: 'model-output', fullText, fullTextScope: 'segment' }];
       }
       return [];
     }
@@ -211,7 +211,7 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
       // older pi's cumulative `message` adds reconciliation value here.
       const fullText = extractAssistantText(record.message);
       if (fullText === null || fullText.length === 0) return [];
-      return [{ type: 'model-output', fullText }];
+      return [{ type: 'model-output', fullText, fullTextScope: 'segment' }];
     }
     return [];
   }
@@ -224,7 +224,7 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
       messages.push({ type: 'event', name: 'thinking', payload: { fullText: thinking } });
     }
     if (fullText !== null && fullText.length > 0) {
-      messages.push({ type: 'model-output', fullText });
+      messages.push({ type: 'model-output', fullText, fullTextScope: 'segment' });
     }
     return messages;
   }
