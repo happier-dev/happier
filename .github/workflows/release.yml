@@ -1009,7 +1009,7 @@ jobs:
             '
 
   deploy_ui:
-    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_ui_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, deploy_plan, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: write
@@ -1028,7 +1028,7 @@ jobs:
       release_notes_id: ${{ inputs.release_notes_id }}
 
   deploy_server:
-    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && needs.promote_server_runtime.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_server_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_server_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && needs.promote_server_runtime.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_server_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, deploy_plan, prepare_release_candidate, verify_release_candidates, promote_server_runtime]
     permissions:
       contents: write
@@ -1206,7 +1206,7 @@ jobs:
       retry_version: ${{ needs.publish_hstack_binaries.outputs.version }}
 
   publish_docker:
-    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_docker_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.docker_complete != 'true' && needs.plan.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_docker_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime]
     permissions:
       contents: read
@@ -1224,7 +1224,7 @@ jobs:
       build_dev_box: ${{ needs.plan.outputs.publish_docker_dev_box_needed == 'true' }}
 
   deploy_website:
-    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_website_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_website_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_website_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, deploy_plan, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: write
@@ -1240,7 +1240,7 @@ jobs:
       run_build: true
 
   deploy_docs:
-    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_docs_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_docs_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_docs_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, deploy_plan, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: read
@@ -1255,7 +1255,7 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_npm_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.npm_complete != 'true' && needs.plan.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_npm_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: write
@@ -1275,7 +1275,7 @@ jobs:
 
   release_verify:
     name: Verify promoted release references
-    needs: [plan, deploy_plan, prepare_release_candidate, verify_release_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_server]
+    needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, verify_release_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_server]
     if: >-
       always() &&
       inputs.dry_run != true &&
@@ -1286,7 +1286,7 @@ jobs:
       (needs.promote_hstack_binaries.result == 'success' || (needs.plan.outputs.publish_stack != 'true' && needs.promote_hstack_binaries.result == 'skipped')) &&
       (needs.promote_server_runtime.result == 'success' || (needs.plan.outputs.publish_server_runtime_needed != 'true' && needs.promote_server_runtime.result == 'skipped')) &&
       (needs.promote_ui_web.result == 'success' || (needs.plan.outputs.publish_ui_web_needed != 'true' && needs.promote_ui_web.result == 'skipped')) &&
-      (needs.deploy_server.result == 'success' || (needs.deploy_plan.outputs.deploy_server_requested != 'true' && needs.deploy_server.result == 'skipped'))
+      (needs.deploy_server.result == 'success' || needs.resolve_resume.outputs.deploy_server_complete == 'true' || (needs.deploy_plan.outputs.deploy_server_requested != 'true' && needs.deploy_server.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1327,7 +1327,7 @@ jobs:
               --remote origin
           done
       - name: Verify loaded server API revision
-        if: ${{ needs.deploy_server.result == 'success' }}
+        if: ${{ needs.deploy_server.result == 'success' || needs.resolve_resume.outputs.deploy_server_complete == 'true' }}
         env:
           SERVER_API_VERSION_URL: ${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}
           CANDIDATE_SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
@@ -1447,6 +1447,12 @@ jobs:
           NPM_PUBLISH_CLI: ${{ needs.resolve_resume.outputs.npm_publish_cli_requested == 'true' || needs.plan.outputs.npm_publish_cli_needed == 'true' }}
           NPM_PUBLISH_STACK: ${{ needs.resolve_resume.outputs.npm_publish_stack_requested == 'true' || needs.plan.outputs.npm_publish_stack_needed == 'true' }}
           NPM_PUBLISH_SERVER: ${{ needs.resolve_resume.outputs.npm_publish_server_requested == 'true' || needs.plan.outputs.npm_publish_server_needed == 'true' }}
+          DEPLOY_UI_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_ui_complete }}
+          DEPLOY_SERVER_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_server_complete }}
+          DEPLOY_WEBSITE_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_website_complete }}
+          DEPLOY_DOCS_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_docs_complete }}
+          DOCKER_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.docker_complete }}
+          NPM_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.npm_complete }}
           CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
           IMMUTABLE_VERIFICATION_RESULT: ${{ needs.verify_release_candidates.result }}
           CLI_RESULT: ${{ needs.promote_cli_binaries.result }}

@@ -156,6 +156,14 @@ test('resume resolution reuses only successful verified immutable candidates', (
       docker: false,
       npm: false,
     },
+    completed: {
+      deployDocs: false,
+      deployServer: false,
+      deployUi: false,
+      deployWebsite: false,
+      docker: false,
+      npm: false,
+    },
   });
 });
 
@@ -188,6 +196,73 @@ test('release resume preserves originally requested optional publication surface
     docker: true,
     npm: true,
   });
+});
+
+test('release resume preserves exact completed downstream publications without rerunning siblings', () => {
+  const optionalSurfaces = standardOptionalSurfaces(true).map((surface) => ({
+    ...surface,
+    state: 'published',
+    result: 'accepted',
+    identity: {
+      sourceSha: SOURCE_SHA,
+      verified: false,
+      ...(surface.identity ?? {}),
+    },
+  }));
+  const resolved = resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({
+      channel: 'preview',
+      surfaces: [previewCliCandidate(), ...optionalSurfaces],
+    }),
+    expected: {
+      repository: REPOSITORY,
+      workflowPath: '.github/workflows/release.yml',
+      channel: 'preview',
+    },
+  });
+
+  assert.deepEqual(resolved.completed, {
+    deployDocs: true,
+    deployServer: true,
+    deployUi: true,
+    deployWebsite: true,
+    docker: true,
+    npm: true,
+  });
+});
+
+test('release resume rejects completed downstream evidence bound to another source', () => {
+  const optionalSurfaces = standardOptionalSurfaces(false);
+  optionalSurfaces[0] = {
+    id: 'deploy_ui',
+    requested: true,
+    required: false,
+    evidence: 'accepted',
+    state: 'published',
+    result: 'accepted',
+    identity: {
+      sourceSha: 'f'.repeat(40),
+      verified: false,
+      deployWeb: true,
+      expoAction: 'none',
+      desktopMode: 'none',
+    },
+  };
+
+  assert.throws(() => resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({ channel: 'preview', surfaces: [previewCliCandidate(), ...optionalSurfaces] }),
+    expected: {
+      repository: REPOSITORY,
+      workflowPath: '.github/workflows/release.yml',
+      channel: 'preview',
+    },
+  }), /deploy_ui source SHA/);
 });
 
 test('release resume preserves an explicitly requested UI no-op publication intent', () => {

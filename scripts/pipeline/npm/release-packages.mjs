@@ -364,6 +364,7 @@ async function main() {
                 baseVersion: base,
                 explicitVersion: explicitVersions[pkg.key],
                 publishSurface: 'npm',
+                allowExistingExactVersion: mode === 'pack',
                 dryRun,
                 env: process.env,
               })

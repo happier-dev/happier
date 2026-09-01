@@ -77,3 +77,25 @@ test('standard status reports a requested skipped optional UI delivery as partia
   assert.equal(deployUi?.state, 'partial');
   assert.equal(status.terminal, 'partial');
 });
+
+test('standard status carries accepted downstream evidence across a control-fixed resume', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '46',
+    RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/46',
+    RELEASE_RUN_NAME: 'RELEASE — Publish (rel_abcdefgh)',
+    HMAINT_OPERATION_ID: 'rel_abcdefgh',
+    RELEASE_CHANNEL: 'preview',
+    SOURCE_SHA: 'e'.repeat(40),
+    REQUEST_DOCKER: 'true',
+    DOCKER_RESULT: 'skipped',
+    DOCKER_RESUME_COMPLETE: 'true',
+    CANDIDATE_RESULT: 'success',
+    IMMUTABLE_VERIFICATION_RESULT: 'success',
+    RELEASE_VERIFY_RESULT: 'success',
+  });
+  const docker = status.surfaces.find((surface) => surface.id === 'docker');
+  assert.equal(docker?.requested, true);
+  assert.equal(docker?.result, 'accepted');
+  assert.equal(docker?.state, 'published');
+  assert.equal(status.terminal, 'published');
+});

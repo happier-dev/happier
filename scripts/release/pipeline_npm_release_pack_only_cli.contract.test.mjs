@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,3 +42,7 @@ test('pipeline CLI npm-release supports --mode pack (no publish) in dry-run', as
   assert.doesNotMatch(out, /publish-tarball\.mjs/);
 });
 
+test('pack mode explicitly admits reconstruction of an already-published exact version', () => {
+  const source = readFileSync(resolve(repoRoot, 'scripts/pipeline/npm/release-packages.mjs'), 'utf8');
+  assert.match(source, /allowExistingExactVersion:\s*mode === 'pack'/);
+});

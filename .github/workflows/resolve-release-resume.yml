@@ -52,6 +52,18 @@ on:
         value: ${{ jobs.resolve.outputs.docker_requested }}
       npm_requested:
         value: ${{ jobs.resolve.outputs.npm_requested }}
+      deploy_ui_complete:
+        value: ${{ jobs.resolve.outputs.deploy_ui_complete }}
+      deploy_server_complete:
+        value: ${{ jobs.resolve.outputs.deploy_server_complete }}
+      deploy_website_complete:
+        value: ${{ jobs.resolve.outputs.deploy_website_complete }}
+      deploy_docs_complete:
+        value: ${{ jobs.resolve.outputs.deploy_docs_complete }}
+      docker_complete:
+        value: ${{ jobs.resolve.outputs.docker_complete }}
+      npm_complete:
+        value: ${{ jobs.resolve.outputs.npm_complete }}
       deploy_ui_web_requested:
         value: ${{ jobs.resolve.outputs.deploy_ui_web_requested }}
       deploy_ui_expo_action:
@@ -89,6 +101,12 @@ jobs:
       deploy_docs_requested: ${{ steps.resume.outputs.deploy_docs_requested || steps.empty.outputs.deploy_docs_requested }}
       docker_requested: ${{ steps.resume.outputs.docker_requested || steps.empty.outputs.docker_requested }}
       npm_requested: ${{ steps.resume.outputs.npm_requested || steps.empty.outputs.npm_requested }}
+      deploy_ui_complete: ${{ steps.resume.outputs.deploy_ui_complete || steps.empty.outputs.deploy_ui_complete }}
+      deploy_server_complete: ${{ steps.resume.outputs.deploy_server_complete || steps.empty.outputs.deploy_server_complete }}
+      deploy_website_complete: ${{ steps.resume.outputs.deploy_website_complete || steps.empty.outputs.deploy_website_complete }}
+      deploy_docs_complete: ${{ steps.resume.outputs.deploy_docs_complete || steps.empty.outputs.deploy_docs_complete }}
+      docker_complete: ${{ steps.resume.outputs.docker_complete || steps.empty.outputs.docker_complete }}
+      npm_complete: ${{ steps.resume.outputs.npm_complete || steps.empty.outputs.npm_complete }}
       deploy_ui_web_requested: ${{ steps.resume.outputs.deploy_ui_web_requested || steps.empty.outputs.deploy_ui_web_requested }}
       deploy_ui_expo_action: ${{ steps.resume.outputs.deploy_ui_expo_action || steps.empty.outputs.deploy_ui_expo_action }}
       deploy_ui_desktop_mode: ${{ steps.resume.outputs.deploy_ui_desktop_mode || steps.empty.outputs.deploy_ui_desktop_mode }}
@@ -125,6 +143,12 @@ jobs:
             echo 'deploy_docs_requested=false'
             echo 'docker_requested=false'
             echo 'npm_requested=false'
+            echo 'deploy_ui_complete=false'
+            echo 'deploy_server_complete=false'
+            echo 'deploy_website_complete=false'
+            echo 'deploy_docs_complete=false'
+            echo 'docker_complete=false'
+            echo 'npm_complete=false'
             echo 'deploy_ui_web_requested=false'
             echo 'deploy_ui_expo_action=none'
             echo 'deploy_ui_desktop_mode=none'

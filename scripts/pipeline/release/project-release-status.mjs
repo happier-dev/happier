@@ -48,9 +48,9 @@ export function projectReleaseStatus(mode, env) {
       recoveryHint,
     };
   };
-  const accepted = (id, name, recoveryHint, identity = {}) => ({
+  const accepted = (id, name, resumeCompleteName, recoveryHint, identity = {}) => ({
     id,
-    result: exact(name) ? 'accepted' : result(env, name),
+    result: exact(name) || value(env, resumeCompleteName) ? 'accepted' : result(env, name),
     identity: { sourceSha, verified: false, ...identity },
     recoveryHint,
   });
@@ -136,7 +136,7 @@ export function projectReleaseStatus(mode, env) {
       observed('hstack_rolling_release', 'STACK_RESULT', releaseVerified('STACK_RESULT'), { job: 'promote_hstack_binaries' }),
       observed('server_rolling_release', 'SERVER_RESULT', releaseVerified('SERVER_RESULT'), { job: 'promote_server_runtime' }),
       observed('ui_web_rolling_release', 'UI_WEB_RESULT', releaseVerified('UI_WEB_RESULT'), { job: 'promote_ui_web' }),
-      accepted('deploy_ui', 'DEPLOY_UI_RESULT', { job: 'deploy_ui' }, deployUiResumeIdentity), accepted('deploy_server', 'DEPLOY_SERVER_RESULT', { job: 'deploy_server' }), accepted('deploy_website', 'DEPLOY_WEBSITE_RESULT', { job: 'deploy_website' }), accepted('deploy_docs', 'DEPLOY_DOCS_RESULT', { job: 'deploy_docs' }), accepted('docker', 'DOCKER_RESULT', { job: 'publish_docker' }), accepted('npm', 'NPM_RESULT', { job: 'publish_npm' }, npmResumeIdentity),
+      accepted('deploy_ui', 'DEPLOY_UI_RESULT', 'DEPLOY_UI_RESUME_COMPLETE', { job: 'deploy_ui' }, deployUiResumeIdentity), accepted('deploy_server', 'DEPLOY_SERVER_RESULT', 'DEPLOY_SERVER_RESUME_COMPLETE', { job: 'deploy_server' }), accepted('deploy_website', 'DEPLOY_WEBSITE_RESULT', 'DEPLOY_WEBSITE_RESUME_COMPLETE', { job: 'deploy_website' }), accepted('deploy_docs', 'DEPLOY_DOCS_RESULT', 'DEPLOY_DOCS_RESUME_COMPLETE', { job: 'deploy_docs' }), accepted('docker', 'DOCKER_RESULT', 'DOCKER_RESUME_COMPLETE', { job: 'publish_docker' }), accepted('npm', 'NPM_RESULT', 'NPM_RESUME_COMPLETE', { job: 'publish_npm' }, npmResumeIdentity),
       observed('post_promotion_identity', 'RELEASE_VERIFY_RESULT', exact('RELEASE_VERIFY_RESULT'), { job: 'release_verify' }),
     ],
   });
