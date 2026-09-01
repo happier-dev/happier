@@ -639,7 +639,6 @@ jobs:
       checkout_sha: ${{ needs.plan.outputs.source_sha }}
       select_jobs_explicitly: true
       run_ui_e2e: false
-      run_wsrepl_lima: false
       run_mobile_e2e_android: false
       run_mobile_e2e_ios: false
       run_ui: false

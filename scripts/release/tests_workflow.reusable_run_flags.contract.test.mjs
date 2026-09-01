@@ -93,7 +93,6 @@ test('reusable tests calls make their run flags authoritative regardless of the 
   assert.deepEqual(testsWorkflow.jobs.ui.needs, ['ci_plan', 'ui-unit', 'ui-integration']);
 
   for (const [jobName, inputName] of [
-    ['ui-e2e-wsrepl-lima', 'run_wsrepl_lima'],
     ['mobile-e2e-android', 'run_mobile_e2e_android'],
     ['mobile-e2e-ios', 'run_mobile_e2e_ios'],
     ['release-assets-docker', 'run_release_assets_docker'],
@@ -107,6 +106,9 @@ test('reusable tests calls make their run flags authoritative regardless of the 
       `${jobName} must honor explicit reusable inputs even when GitHub preserves the caller event`,
     );
   }
+
+  assert.equal(testsWorkflow.on.workflow_call.inputs.run_wsrepl_lima, undefined);
+  assert.equal(testsWorkflow.jobs['ui-e2e-wsrepl-lima'], undefined);
 
   for (const jobName of ['installers-smoke-linux', 'installers-smoke-macos', 'installers-smoke-windows']) {
     const env = testsWorkflow.jobs[jobName].env;

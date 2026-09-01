@@ -103,6 +103,12 @@ test('ordinary pull requests admit only exact GitHub merge refs through the cano
       runnerPool: 'github',
       workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/124/merge',
     },
+    {
+      eventName: 'workflow_call',
+      eventRef: 'refs/heads/untrusted-branch',
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/heads/untrusted-branch',
+    },
   ]) {
     const result = admitWorkflowRef(admission, rejected);
     assert.notEqual(result.status, 0, `must reject ${JSON.stringify(rejected)}`);
@@ -211,5 +217,16 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
   assert.equal(tests.jobs.providers['runs-on'], 'ubuntu-latest');
   assert.equal(tests.jobs['installers-smoke-macos']['runs-on'], 'macos-latest');
   assert.equal(tests.jobs['installers-smoke-windows']['runs-on'], 'windows-latest');
-  assert.deepEqual(tests.jobs['ui-e2e-wsrepl-lima']['runs-on'], ['self-hosted', 'macOS', 'wsrepl-lima']);
+  assert.equal(tests.on.workflow_call.inputs.run_wsrepl_lima, undefined, 'arbitrary reusable callers must not select a persistent runner');
+  assert.equal(tests.jobs['ui-e2e-wsrepl-lima'], undefined, 'persistent WSREPL execution belongs to the actor-authorized manual dispatcher');
+  const wsreplLima = dispatch.jobs['ui-e2e-wsrepl-lima'];
+  assert.deepEqual(wsreplLima['runs-on'], ['self-hosted', 'macOS', 'wsrepl-lima']);
+  assert.deepEqual(needs(wsreplLima), ['resolve', 'release_actor_guard']);
+  assert.equal(wsreplLima.if, "${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}");
+  const wsreplCheckout = wsreplLima.steps.find((step) => step.name === 'Checkout');
+  assert.deepEqual(wsreplCheckout.with, {
+    repository: '${{ job.workflow_repository }}',
+    ref: '${{ job.workflow_sha }}',
+    'persist-credentials': false,
+  });
 });

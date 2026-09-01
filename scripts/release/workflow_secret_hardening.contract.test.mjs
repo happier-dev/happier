@@ -44,6 +44,43 @@ function assertInheritedSecretsRequireTrustedRefGuard(file, parsed) {
   }
 }
 
+function usesPersistentSelfHostedRunner(job) {
+  const labels = Array.isArray(job?.['runs-on']) ? job['runs-on'] : [job?.['runs-on']];
+  return labels.includes('self-hosted');
+}
+
+test('every persistent self-hosted job waits for trusted workflow admission', async () => {
+  const workflowDir = join(repoRoot, '.github', 'workflows');
+  const files = (await readdir(workflowDir)).filter((name) => name.endsWith('.yml'));
+  const persistentJobs = [];
+
+  for (const file of files) {
+    const { parsed } = await loadWorkflow(file);
+    const jobs = parsed?.jobs ?? {};
+    for (const [jobName, job] of Object.entries(jobs)) {
+      if (!usesPersistentSelfHostedRunner(job)) continue;
+      persistentJobs.push(`${file}:${jobName}`);
+      assert.ok(jobs.trusted_ref_guard, `${file} must define trusted_ref_guard before using a persistent runner`);
+      assert.ok(jobs.release_actor_guard, `${file} must authorize the actor before using a persistent runner`);
+      assert.ok(
+        jobNeedsTransitively(jobs, jobName, 'trusted_ref_guard'),
+        `${file} job '${jobName}' must depend directly or transitively on trusted_ref_guard`,
+      );
+      assert.ok(
+        jobNeedsTransitively(jobs, jobName, 'release_actor_guard'),
+        `${file} job '${jobName}' must depend directly or transitively on release_actor_guard`,
+      );
+      assert.doesNotMatch(
+        String(job.if ?? ''),
+        /\balways\s*\(/,
+        `${file} job '${jobName}' must not bypass failed admission with always()`,
+      );
+    }
+  }
+
+  assert.deepEqual(persistentJobs, ['tests-dispatch.yml:ui-e2e-wsrepl-lima']);
+});
+
 test('release workflows scope shared signing/publishing secrets to release-shared environment', async () => {
   const checks = [
     ['release-npm.yml', 'publish-cli', 'release-shared'],

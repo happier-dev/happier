@@ -318,7 +318,6 @@ jobs:
       runner_pool: ${{ inputs.runner_pool }}
       run_ui_e2e: ${{ needs.resolve.outputs.run_ui_e2e == 'true' }}
       ui_e2e_specs: ${{ needs.resolve.outputs.ui_e2e_specs }}
-      run_wsrepl_lima: ${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}
       run_mobile_e2e_android: ${{ needs.resolve.outputs.run_mobile_e2e_android == 'true' }}
       run_mobile_e2e_ios: ${{ needs.resolve.outputs.run_mobile_e2e_ios == 'true' }}
       run_ui: ${{ needs.resolve.outputs.run_ui == 'true' }}
@@ -345,6 +344,64 @@ jobs:
       run_self_host_launchd: ${{ needs.resolve.outputs.run_self_host_launchd == 'true' }}
       run_self_host_schtasks: ${{ needs.resolve.outputs.run_self_host_schtasks == 'true' }}
       run_self_host_daemon: ${{ needs.resolve.outputs.run_self_host_daemon == 'true' }}
+
+  ui-e2e-wsrepl-lima:
+    name: UI E2E (WSREPL Lima matrix)
+    needs: [resolve, release_actor_guard]
+    if: ${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}
+    runs-on:
+      - self-hosted
+      - macOS
+      - wsrepl-lima
+    timeout-minutes: 90
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Verify Lima host prerequisites
+        run: |
+          limactl --version
+          sw_vers
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Run WSREPL Lima matrix
+        run: yarn -s test:e2e:ui:wsrepl:lima
+
+      - name: Upload WSREPL Lima artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-e2e-wsrepl-lima-artifacts
+          path: |
+            apps/stack/output/wsrepl-lima-matrix
+            .project/logs/e2e/*ui-e2e*
+          if-no-files-found: ignore
 
   extended_db:
     name: Extended database certification

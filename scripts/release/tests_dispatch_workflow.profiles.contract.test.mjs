@@ -114,6 +114,17 @@ test('manual deep CI retains the complete source certification set', () => {
   assert.equal(flags.run_cli_update_continuity, undefined, 'published-channel CLI updates remain release-candidate validation');
   assert.equal(workflow.jobs.tests.with.run_cli_update_continuity, undefined);
 
+  const wsreplLima = workflow.jobs['ui-e2e-wsrepl-lima'];
+  assert.deepEqual(wsreplLima.needs, ['resolve', 'release_actor_guard']);
+  assert.equal(wsreplLima.if, "${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}");
+  assert.deepEqual(wsreplLima['runs-on'], ['self-hosted', 'macOS', 'wsrepl-lima']);
+  const checkout = wsreplLima.steps.find((step) => step.name === 'Checkout');
+  assert.deepEqual(checkout.with, {
+    repository: '${{ job.workflow_repository }}',
+    ref: '${{ job.workflow_sha }}',
+    'persist-credentials': false,
+  });
+
   assert.equal(workflow.jobs.extended_db.uses, './.github/workflows/extended-db-tests.yml');
   assert.equal(workflow.jobs.extended_db.if, "${{ needs.resolve.outputs.run_extended_db == 'true' }}");
   assert.deepEqual(

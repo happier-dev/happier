@@ -28,10 +28,6 @@ on:
         required: false
         default: ''
         type: string
-      run_wsrepl_lima:
-        required: false
-        default: false
-        type: boolean
       run_mobile_e2e_android:
         required: false
         default: false
@@ -461,59 +457,6 @@ jobs:
             packages/tests/.project/logs/e2e/ui-playwright
             .project/logs/e2e/*ui-e2e*/**/*.log
             .project/logs/e2e/*ui-e2e*/**/*.jsonl
-          if-no-files-found: ignore
-
-  ui-e2e-wsrepl-lima:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_wsrepl_lima }}
-    name: UI E2E (WSREPL Lima matrix)
-    runs-on:
-      - self-hosted
-      - macOS
-      - wsrepl-lima
-    timeout-minutes: 90
-    env:
-      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Verify Lima host prerequisites
-        run: |
-          limactl --version
-          sw_vers
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
-
-      - name: Enable Corepack
-        uses: ./.github/actions/enable-corepack-yarn
-
-      - name: Install dependencies
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile
-
-      - name: Install Playwright browsers
-        run: npx playwright install chromium
-
-      - name: Run WSREPL Lima matrix
-        run: yarn -s test:e2e:ui:wsrepl:lima
-
-      - name: Upload WSREPL Lima artifacts
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ui-e2e-wsrepl-lima-artifacts
-          path: |
-            apps/stack/output/wsrepl-lima-matrix
-            .project/logs/e2e/*ui-e2e*
           if-no-files-found: ignore
 
   mobile-e2e-android:
@@ -2638,7 +2581,7 @@ jobs:
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [ci_plan, ui-e2e, ui-e2e-wsrepl-lima, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    needs: [ci_plan, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -2649,7 +2592,6 @@ jobs:
           NEEDS_JSON: ${{ toJSON(needs) }}
           SELECT_JOBS_EXPLICITLY: ${{ inputs.select_jobs_explicitly }}
           REQUEST_RUN_UI_E2E: ${{ inputs.run_ui_e2e }}
-          REQUEST_RUN_WSREPL_LIMA: ${{ inputs.run_wsrepl_lima }}
           REQUEST_RUN_MOBILE_E2E_ANDROID: ${{ inputs.run_mobile_e2e_android }}
           REQUEST_RUN_MOBILE_E2E_IOS: ${{ inputs.run_mobile_e2e_ios }}
           REQUEST_RUN_UI: ${{ inputs.run_ui }}
@@ -2690,7 +2632,6 @@ jobs:
           }));
           const requestedLaneGroups = {
             REQUEST_RUN_UI_E2E: ['ui-e2e'],
-            REQUEST_RUN_WSREPL_LIMA: ['ui-e2e-wsrepl-lima'],
             REQUEST_RUN_MOBILE_E2E_ANDROID: ['mobile-e2e-android'],
             REQUEST_RUN_MOBILE_E2E_IOS: ['mobile-e2e-ios'],
             REQUEST_RUN_UI: ['ui-unit', 'ui-integration', 'ui', 'shared-packages-unit'],
