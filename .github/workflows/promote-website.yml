@@ -424,12 +424,9 @@ jobs:
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
         working-directory: apps/website
         run: |
-          set -euo pipefail
-          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
-            npx --yes wrangler@4 deploy --message "promote $RELEASE_SHA"
-          else
-            npx --yes wrangler@4 versions upload --preview-alias preview --message "promote $RELEASE_SHA"
-          fi
+          bash ../../scripts/pipeline/cloudflare/publish-worker.sh \
+            --environment "$DEPLOY_ENVIRONMENT" \
+            --release-sha "$RELEASE_SHA"
       - name: Cloudflare note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}

@@ -360,14 +360,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ github.sha }}
         working-directory: apps/docs
         run: |
-          set -euo pipefail
-          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
-            npx --yes wrangler@4 deploy --message "promote ${{ github.sha }}"
-          else
-            npx --yes wrangler@4 versions upload --preview-alias preview --message "promote ${{ github.sha }}"
-          fi
+          bash ../../scripts/pipeline/cloudflare/publish-worker.sh \
+            --environment "$DEPLOY_ENVIRONMENT" \
+            --release-sha "$RELEASE_SHA"
       - name: Cloudflare note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}

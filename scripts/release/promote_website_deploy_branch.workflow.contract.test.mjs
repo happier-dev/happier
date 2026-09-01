@@ -41,8 +41,7 @@ test('promote-website publishes to Cloudflare and not to the Dokploy webhook', a
   const raw = await loadWorkflow('promote-website.yml');
   assert.doesNotMatch(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);
   assert.doesNotMatch(raw, /CF_WEBHOOK_DEPLOY_CLIENT_(ID|SECRET)/);
-  assert.match(raw, /wrangler@4 deploy/);
-  assert.match(raw, /wrangler@4 versions upload --preview-alias preview/);
+  assert.match(raw, /scripts\/pipeline\/cloudflare\/publish-worker\.sh/);
 });
 
 // Cloudflare credentials must stay out of the job that builds candidate code,
