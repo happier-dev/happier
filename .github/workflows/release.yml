@@ -1022,6 +1022,7 @@ jobs:
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_cross_promote: true
       bump: none
+      run_tests: false
       deploy_web: ${{ needs.deploy_plan.outputs.deploy_ui_web == 'true' }}
       expo_action: ${{ needs.deploy_plan.outputs.deploy_ui_expo_action }}
       desktop_mode: ${{ needs.deploy_plan.outputs.deploy_ui_desktop_mode }}

@@ -398,6 +398,7 @@ test('release workflow lets promote-ui derive exact-candidate Expo notes from th
   const workflow = parse(raw);
   assert.equal(workflow?.on?.workflow_dispatch?.inputs?.release_message, undefined, 'release.yml must not accept operator-authored release notes');
   assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);
+  assert.equal(workflow.jobs.deploy_ui.with.run_tests, false, 'release admission owns source tests; UI promotion must not rerun them after artifact verification');
   assert.doesNotMatch(raw, /deploy_ui:[\s\S]*?expo_update_message:/);
 });
 
