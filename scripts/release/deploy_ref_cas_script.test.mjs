@@ -5,7 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { promoteDeployRef, readRemoteRef } from '../pipeline/github/deploy-ref-cas.mjs';
+import {
+  buildGitHubGitAuthorizationHeader,
+  promoteDeployRef,
+  readRemoteRef,
+} from '../pipeline/github/deploy-ref-cas.mjs';
+
+test('GitHub App tokens use Git smart-HTTP basic authentication', () => {
+  assert.equal(
+    buildGitHubGitAuthorizationHeader('installation-token'),
+    `AUTHORIZATION: basic ${Buffer.from('x-access-token:installation-token').toString('base64')}`,
+  );
+  assert.equal(buildGitHubGitAuthorizationHeader(''), '');
+});
 
 function git(cwd, args, env = {}) {
   return execFileSync('git', args, {

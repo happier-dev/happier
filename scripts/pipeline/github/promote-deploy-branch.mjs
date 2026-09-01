@@ -3,7 +3,7 @@
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import { promoteDeployRef } from './deploy-ref-cas.mjs';
+import { buildGitHubGitAuthorizationHeader, promoteDeployRef } from './deploy-ref-cas.mjs';
 
 function fail(message) {
   console.error(message);
@@ -159,7 +159,7 @@ function main() {
 
   const targetRef = `refs/heads/${targetBranch}`;
   const authorizationHeader =
-    String(process.env.HAPPIER_GIT_AUTHORIZATION_HEADER ?? '').trim() || (token ? `AUTHORIZATION: bearer ${token}` : '');
+    String(process.env.HAPPIER_GIT_AUTHORIZATION_HEADER ?? '').trim() || buildGitHubGitAuthorizationHeader(token);
   let result;
   try {
     result = promoteDeployRef({ candidateSha: sourceSha, targetRef, remote, authorizationHeader, dryRun });

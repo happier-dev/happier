@@ -2,6 +2,14 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 
+/** @param {string} token */
+export function buildGitHubGitAuthorizationHeader(token) {
+  const value = String(token ?? '').trim();
+  if (!value) return '';
+  const credentials = Buffer.from(`x-access-token:${value}`, 'utf8').toString('base64');
+  return `AUTHORIZATION: basic ${credentials}`;
+}
+
 /** @param {unknown} raw @param {string} name */
 export function readCommitSha(raw, name) {
   const value = String(raw ?? '').trim().toLowerCase();
