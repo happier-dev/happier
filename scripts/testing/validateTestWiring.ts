@@ -6,6 +6,11 @@ import { discoverTestFiles } from './lib/discoverTestFiles.ts';
 import { FEATURE_GATING_CONFIG_PATHS, collectWorkflowScriptParityReport, type WorkflowScriptParityInput } from './lib/workflowScriptParity.ts';
 import { classifyTestFile, collectLaneIssues, resolveFeatureTagIssue, type LaneId } from './lib/testLaneMap.ts';
 
+const TEST_WORKFLOW_PATHS = Object.freeze([
+  '.github/workflows/tests.yml',
+  '.github/workflows/tests-dispatch.yml',
+]);
+
 export interface WiringIssue {
   filePath: string;
   message: string;
@@ -28,7 +33,9 @@ export function loadDefaultParityInput(rootDir: string = process.cwd()): Workflo
 
     return {
       packageJsonText: readFileSync(join(rootDir, 'package.json'), 'utf8'),
-      workflowText: readFileSync(join(rootDir, '.github/workflows/tests.yml'), 'utf8'),
+      workflowText: TEST_WORKFLOW_PATHS
+        .map((workflowPath) => readFileSync(join(rootDir, workflowPath), 'utf8'))
+        .join('\n'),
       docsText: readFileSync(join(rootDir, 'apps/docs/content/docs/development/testing.mdx'), 'utf8'),
       configTexts,
     };

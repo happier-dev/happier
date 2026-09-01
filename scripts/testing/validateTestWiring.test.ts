@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { collectWiringReport } from './validateTestWiring.ts';
+import { collectWiringReport, loadDefaultParityInput } from './validateTestWiring.ts';
 import { FEATURE_IDS } from './lib/protocolFeatureIds.ts';
 
 test('collectWiringReport counts lanes and feature tagged files', () => {
@@ -40,4 +40,11 @@ test('collectWiringReport merges parity issues when repo metadata drifts', () =>
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Missing root script test:integration/);
   assert.match(messages, /Docs are missing command yarn test/);
+});
+
+test('default parity input includes test commands owned by dispatch workflows', () => {
+  const input = loadDefaultParityInput();
+
+  assert.ok(input);
+  assert.match(input.workflowText, /yarn -s test:e2e:ui:wsrepl:lima\b/);
 });
