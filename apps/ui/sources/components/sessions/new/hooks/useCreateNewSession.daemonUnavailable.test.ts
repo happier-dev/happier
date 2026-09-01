@@ -106,6 +106,8 @@ async function setupHarness() {
     updateSessionPermissionMode: vi.fn(),
     updateSessionModelMode: vi.fn(),
     updateSessionDraft: vi.fn(),
+    markSessionOptimisticThinking: vi.fn(),
+    upsertPendingMessage: vi.fn(),
   };
 
   installNewSessionScreenModelCommonModuleMocks({
@@ -210,9 +212,14 @@ async function setupHarness() {
   vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' })),
   }));
-  vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
-    followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
-    readRecoverableFollowUpPayload: (error: unknown) => {
+  vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession')>(
+      '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession',
+    );
+    return {
+      ...actual,
+      followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
+      readRecoverableFollowUpPayload: (error: unknown) => {
       if (!(error instanceof Error)) return null;
       const payload = (error as Error & { recoverableFollowUpPayload?: unknown }).recoverableFollowUpPayload;
       if (
@@ -224,8 +231,9 @@ async function setupHarness() {
         return payload;
       }
       return null;
-    },
-  }));
+      },
+    };
+  });
   vi.doMock('@/sync/domains/settings/terminalSettings', () => ({ resolveTerminalSpawnOptions: vi.fn(() => null) }));
   vi.doMock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     getMachineCapabilitiesSnapshot: vi.fn(() => ({ supported: true, response: { protocolVersion: 1, results: {} } })),
@@ -750,7 +758,23 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }));
     storageState.sessions['session-created'] = { id: 'session-created' };
     completeMachineSpawnAttemptCustodySpy.mockResolvedValueOnce(false);
-    const router = { push: vi.fn(), replace: vi.fn() };
+    const callOrder: string[] = [];
+    storageState.markSessionOptimisticThinking.mockImplementation(() => {
+      callOrder.push('thinking');
+    });
+    storageState.upsertPendingMessage.mockImplementation(() => {
+      callOrder.push('pending');
+    });
+    clearSessionDraftCurrentnessSpy.mockImplementationOnce(async () => {
+      callOrder.push('clear');
+      return true;
+    });
+    const router = {
+      push: vi.fn(),
+      replace: vi.fn(() => {
+        callOrder.push('replace');
+      }),
+    };
     const afterCreated = vi.fn(async () => {});
     const persistDraftForLaunch = vi.fn();
     const onLaunchUserAttemptIdChange = vi.fn();
@@ -824,6 +848,23 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       initialMessageText: 'First turn',
       messageLocalId: expect.stringMatching(/^first-turn-/),
     }));
+    expect(storageState.markSessionOptimisticThinking).toHaveBeenCalledWith('session-created');
+    expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
+      'session-created',
+      expect.objectContaining({
+        localId: expect.stringMatching(/^first-turn-/),
+        source: 'local_outbound',
+        deliveryStatus: 'accepted',
+        text: 'First turn',
+        displayText: 'First turn',
+      }),
+    );
+    const projectedFirstTurn = storageState.upsertPendingMessage.mock.calls[0]?.[1];
+    expect(projectedFirstTurn).not.toHaveProperty('pendingOutboxScope');
+    expect(projectedFirstTurn).not.toHaveProperty('pendingOutboxOperation');
+    expect(callOrder.indexOf('pending')).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf('replace')).toBeGreaterThan(callOrder.indexOf('pending'));
+    expect(callOrder.indexOf('clear')).toBeGreaterThan(callOrder.indexOf('replace'));
     expect(afterCreated).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session-created',
       launchAttempt: expect.objectContaining({
@@ -2044,6 +2085,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       '/session/session-created?serverId=server-a',
       expect.anything(),
     );
+    // The scoped send owner already records an ACK timeout as unconfirmed. The
+    // launch flow must not overwrite that projection as accepted merely because
+    // it still opens the created session for retry.
+    expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
 
     expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
 

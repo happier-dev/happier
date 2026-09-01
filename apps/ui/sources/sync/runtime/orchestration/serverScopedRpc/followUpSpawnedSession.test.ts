@@ -12,6 +12,7 @@ import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErr
 import {
     createFollowUpSpawnedSessionWithServerScope,
     requireLocalSessionVisibleForRoute,
+    requireSpawnedSessionVisibleForRoute,
     readRecoverableFollowUpPayload,
 } from './followUpSpawnedSession';
 
@@ -51,6 +52,35 @@ describe('followUpSpawnedSessionWithServerScope', () => {
 
         expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledOnce();
         expect(isLocalSessionReady).toHaveBeenCalledOnce();
+    });
+
+    it('waits through bounded post-spawn propagation before requiring route visibility', async () => {
+        vi.useFakeTimers();
+        try {
+            let stored: Session | null = null;
+            const hydrated = {
+                id: 'spawned',
+                encryptionMode: 'plain',
+            } as Session;
+            const ensureSessionVisibleForMessageRoute = vi.fn(async () => {
+                if (ensureSessionVisibleForMessageRoute.mock.calls.length === 2) {
+                    stored = hydrated;
+                }
+            });
+
+            const visibility = requireSpawnedSessionVisibleForRoute({
+                sessionId: 'spawned',
+                serverId: 'server-a',
+                getStoredSession: () => stored,
+                ensureSessionVisibleForMessageRoute,
+            });
+            await vi.advanceTimersByTimeAsync(250);
+
+            await expect(visibility).resolves.toBe(hydrated);
+            expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('attaches a recoverable follow-up payload when active-scope durable enqueue fails before navigation hydration', async () => {

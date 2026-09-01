@@ -105,11 +105,15 @@ async function setupUseCreateNewSessionHarness() {
     const switchConnectionToActiveServerSpy = vi.fn(async (..._args: unknown[]) => ({ token: 'next-token', secret: 'next-secret' }));
     const refreshMachinesSpy = vi.fn(async () => {});
     const refreshSessionsSpy = vi.fn(async () => {});
-    const ensureSessionVisibleForMessageRouteSpy = vi.fn(async (_sessionId: string) => {});
+    const ensureSessionVisibleForMessageRouteSpy = vi.fn(async (sessionId: string) => {
+        sessions[sessionId] = { id: sessionId };
+    });
     const refreshAutomationsSpy = vi.fn(async () => {});
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
     const updateAutomationSpy = vi.fn(async () => {});
     const updateSessionDraftSpy = vi.fn();
+    const markSessionOptimisticThinkingSpy = vi.fn();
+    const upsertPendingMessageSpy = vi.fn();
     const saveSessionDraftsSpy = vi.fn();
     const getMachineCapabilitiesSnapshotSpy = vi.fn(() => ({ supported: true, response: { protocolVersion: 1, results: {} } }));
     const prefetchMachineCapabilitiesSpy = vi.fn(async () => {});
@@ -187,6 +191,8 @@ async function setupUseCreateNewSessionHarness() {
                 updateSessionPermissionMode: vi.fn(),
                 updateSessionModelMode: vi.fn(),
                 updateSessionDraft: updateSessionDraftSpy,
+                markSessionOptimisticThinking: markSessionOptimisticThinkingSpy,
+                upsertPendingMessage: upsertPendingMessageSpy,
             }),
         },
     }));
@@ -345,9 +351,15 @@ async function setupUseCreateNewSessionHarness() {
     vi.doMock('@/sync/ops/workspaces', () => ({
         deleteWorkspaceCheckout: vi.fn(async () => ({ success: true, workspace: { id: 'ws_generated', locationIds: ['loc_generated'], checkoutIds: [], defaultLocationId: 'loc_generated', defaultCheckoutId: null, displayName: 'workspace' } })),
     }));
-    vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
-        followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
-    }));
+    vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', async () => {
+        const actual = await vi.importActual<typeof import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession')>(
+            '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession',
+        );
+        return {
+            ...actual,
+            followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
+        };
+    });
     vi.doMock('@/sync/ops/sessionGoals', () => ({
         sessionGoalSet: (sessionId: string, request: unknown, opts?: unknown) => sessionGoalSetSpy(sessionId, request, opts),
         sessionGoalClear: (sessionId: string, opts?: unknown) => sessionGoalClearSpy(sessionId, opts),
@@ -380,6 +392,8 @@ async function setupUseCreateNewSessionHarness() {
         refreshAutomationsSpy,
         updateAutomationSpy,
         updateSessionDraftSpy,
+        markSessionOptimisticThinkingSpy,
+        upsertPendingMessageSpy,
         saveSessionDraftsSpy,
         materializeNewSessionCheckoutSpy,
         getMachineCapabilitiesSnapshotSpy,
@@ -528,6 +542,8 @@ describe('useCreateNewSession permission seeding', () => {
             captured,
             followUpSpawnedSessionWithServerScopeSpy,
             machineSpawnNewSessionSpy,
+            markSessionOptimisticThinkingSpy,
+            upsertPendingMessageSpy,
         } = await setupUseCreateNewSessionHarness();
 
         machineSpawnNewSessionSpy.mockImplementationOnce(async (options: unknown) => {
@@ -597,6 +613,19 @@ describe('useCreateNewSession permission seeding', () => {
             },
         }));
         expect(followUpSpawnedSessionWithServerScopeSpy).not.toHaveBeenCalled();
+        expect(markSessionOptimisticThinkingSpy).toHaveBeenCalledWith('sess_target');
+        expect(upsertPendingMessageSpy).toHaveBeenCalledWith(
+            'sess_target',
+            expect.objectContaining({
+                localId: captured.value?.pendingFirstInput?.localId,
+                source: 'local_outbound',
+                deliveryStatus: 'accepted',
+                text: 'hello',
+            }),
+        );
+        const projectedFirstTurn = upsertPendingMessageSpy.mock.calls[0]?.[1];
+        expect(projectedFirstTurn).not.toHaveProperty('pendingOutboxScope');
+        expect(projectedFirstTurn).not.toHaveProperty('pendingOutboxOperation');
     });
 
     it('sends the first turn from the UI when the transport did not transfer it', async () => {

@@ -76,7 +76,15 @@ import { materializeNewSessionCheckout } from '@/components/sessions/new/modules
 import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/rollbackNewSessionArtifacts';
 import { resolveConnectedServiceSwitchUnavailablePresentation } from '@/components/sessions/new/modules/connectedServiceSwitchUnavailable';
 import { translateConnectedServiceUxDiagnosticBody } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
-import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import {
+    followUpSpawnedSessionWithServerScope,
+    requireSpawnedSessionVisibleForRoute,
+} from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import {
+    buildOutgoingUserTextRecord,
+    projectLocalOutboundUserMessage,
+} from '@/sync/domains/messages/outgoingUserMessage';
+import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import { supportsSpawnPendingFirstInput } from '@/sync/domains/session/spawn/spawnSessionPayload';
 import {
@@ -1262,6 +1270,57 @@ export function useCreateNewSession(params: Readonly<{
 
                 if (!preserveLaunchAttemptForFirstTurnRetry) {
                     launchAttempt = markNewSessionLaunchAttemptComplete(launchAttempt);
+                }
+
+                await requireSpawnedSessionVisibleForRoute({
+                    sessionId: createdSessionId,
+                    serverId: resolvedTargetServerId,
+                    getStoredSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+                    ensureSessionVisibleForMessageRoute: sync.ensureSessionVisibleForMessageRoute,
+                });
+
+                const firstTurnTextForRoute = handedFirstTurnToDaemon
+                    ? daemonFirstTurnText
+                    : initialMessageText.trim();
+                if (firstTurnTextForRoute && !preserveLaunchAttemptForFirstTurnRetry) {
+                    const state = storage.getState();
+                    const session = state.sessions[createdSessionId] ?? null;
+                    if (session) {
+                        state.markSessionOptimisticThinking(createdSessionId);
+                    }
+                    projectLocalOutboundUserMessage({
+                        sessionId: createdSessionId,
+                        localId: launchAttempt.firstTurnLocalId,
+                        text: firstTurnTextForRoute,
+                        displayText: firstTurnTextForRoute,
+                        rawRecord: buildOutgoingUserTextRecord({
+                            text: firstTurnTextForRoute,
+                            sentFrom: resolveSentFrom(),
+                            displayText: firstTurnTextForRoute,
+                            agentId: current.agentType,
+                            modelMode: current.modelMode,
+                            permissionMode: current.permissionMode,
+                            settings: state.settings,
+                            session,
+                            metaOverrides: pendingFirstInputMeta,
+                        }),
+                        deliveryStatus: 'accepted',
+                    });
+                }
+
+                const sessionRoute = buildScopedSessionRouteHref({
+                    sessionId: createdSessionId,
+                    serverId: resolvedTargetServerId,
+                    suffix: postSpawnSessionRouteSuffix,
+                });
+
+                current.router.replace(postSpawnReplacementHref ?? sessionRoute, {
+                    dangerouslySingular() {
+                        return 'session';
+                    },
+                });
+
+                if (!preserveLaunchAttemptForFirstTurnRetry) {
                     if (operationCustody?.status === 'completed') {
                         await completeMachineSpawnAttemptCustody({
                             machineId: current.selectedMachineId,
@@ -1288,18 +1347,6 @@ export function useCreateNewSession(params: Readonly<{
                     current.onLaunchUserAttemptIdChange?.(null);
                     operationReentryRegistration?.markWorkflowComplete(createdSessionId);
                 }
-
-                const sessionRoute = buildScopedSessionRouteHref({
-                    sessionId: createdSessionId,
-                    serverId: resolvedTargetServerId,
-                    suffix: postSpawnSessionRouteSuffix,
-                });
-
-                current.router.replace(postSpawnReplacementHref ?? sessionRoute, {
-                    dangerouslySingular() {
-                        return 'session';
-                    },
-                });
                 const persistedPresentedOperation = current.persistedOperationReentry?.operation;
                 const presentedOperation = persistedPresentedOperation?.state === 'succeeded'
                     && readTrackedSpawnCreatedSessionId(persistedPresentedOperation) === createdSessionId

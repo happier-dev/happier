@@ -167,6 +167,30 @@ export async function requireLocalSessionVisibleForRoute(params: Readonly<{
     });
 }
 
+/**
+ * Wait for bounded server-to-client propagation after a successful spawn before
+ * requiring the created session to be locally routable.
+ */
+export async function requireSpawnedSessionVisibleForRoute(params: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    getStoredSession: (sessionId: string) => Session | null;
+    ensureSessionVisibleForMessageRoute?: EnsureSessionVisibleForMessageRoute | null;
+}>): Promise<Session> {
+    return await ensureSessionHydratedForNavigation({
+        sessionId: params.sessionId,
+        serverId: params.serverId,
+        contextTimeoutMs: POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS,
+        getStoredSession: params.getStoredSession,
+        ...(params.ensureSessionVisibleForMessageRoute
+            ? { ensureSessionVisibleForMessageRoute: params.ensureSessionVisibleForMessageRoute }
+            : {}),
+        sleep: delay,
+        now: Date.now,
+        visibilityGraceMs: POST_SPAWN_SESSION_VISIBILITY_GRACE_MAX_MS,
+    });
+}
+
 function getDefaultActiveSync() {
     return {
         ensureSessionVisibleForMessageRoute: async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean }>) => {

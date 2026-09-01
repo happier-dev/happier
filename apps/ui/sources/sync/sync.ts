@@ -90,6 +90,7 @@ import { ActivityUpdateAccumulator, type ActivityUpdateAccumulatorFlushOptions }
 import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
+import { buildOutgoingUserTextRecord } from './domains/messages/outgoingUserMessage';
 import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
@@ -251,7 +252,6 @@ import {
 import { kvBulkGet } from './api/account/apiKv';
 import { FeedItem } from './domains/social/feedTypes';
 import { UserProfile } from './domains/social/friendTypes';
-import { buildSendMessageMeta } from './domains/messages/buildSendMessageMeta';
 import { HappyError } from '@/utils/errors/errors';
 import {
     createAccountSettingsFailedStatus,
@@ -2544,25 +2544,17 @@ class Sync {
             };
 
             const sentFrom = resolveSentFrom();
-            const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
-            // Create user message content with metadata
-            const content: RawRecord = {
-                role: 'user',
-                content: {
-                    type: 'text',
-                    text
-                },
-                meta: buildSendMessageMeta({
-                    sentFrom,
-                    permissionMode: permissionMode || 'default',
-                    model,
-                    displayText,
-                    agentId,
-                    settings: storage.getState().settings,
-                    session,
-                    metaOverrides: metaOverrides as any,
-                })
-            };
+            const content = buildOutgoingUserTextRecord({
+                text,
+                sentFrom,
+                displayText,
+                agentId,
+                modelMode,
+                permissionMode,
+                settings: storage.getState().settings,
+                session,
+                metaOverrides,
+            });
 
             const messagePayload =
                 sessionEncryptionMode === 'plain'

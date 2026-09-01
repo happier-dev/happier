@@ -23,14 +23,14 @@ import type {
     PendingDeliveryStatus,
     PendingMessage,
 } from '@/sync/domains/state/storageTypes';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import {
     collectCommittedTranscriptLocalIds,
     resolveCommittedTranscriptSeqHighWaterMark,
 } from '@/sync/domains/pending/pendingTranscriptProjection';
 import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
+import { buildOutgoingUserTextRecord } from '@/sync/domains/messages/outgoingUserMessage';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
-import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
 import { throwAuthenticationResponseErrorIfNeeded } from '@/sync/runtime/connectivity/authErrors';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import {
@@ -1776,22 +1776,17 @@ async function enqueuePendingMessageV2Owned(params: {
     const permissionMode = session.permissionMode || 'default';
     const flavor = session.metadata?.flavor;
     const agentId = resolveAgentIdFromFlavor(flavor);
-    const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
-    const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
-    const candidateRawRecord: unknown = existingOutboxRow?.rawRecord ?? {
-        role: 'user',
-        content: { type: 'text', text },
-        meta: buildSendMessageMeta({
-            sentFrom: resolveSentFrom(),
-            permissionMode: permissionMode || 'default',
-            model,
-            displayText,
-            agentId,
-            settings: storage.getState().settings,
-            session,
-            metaOverrides: metaOverrides as any,
-        }),
-    };
+    const candidateRawRecord: unknown = existingOutboxRow?.rawRecord ?? buildOutgoingUserTextRecord({
+        text,
+        sentFrom: resolveSentFrom(),
+        displayText,
+        agentId,
+        modelMode: session.modelMode,
+        permissionMode,
+        settings: storage.getState().settings,
+        session,
+        metaOverrides,
+    });
     const parsedRawRecord = RawRecordSchema.safeParse(candidateRawRecord);
     const rawRecord = parsedRawRecord.success && parsedRawRecord.data.role === 'user'
         ? parsedRawRecord.data
@@ -2339,25 +2334,18 @@ export async function updatePendingMessageV2(params: {
         const permissionMode = session?.permissionMode || 'default';
         const flavor = session?.metadata?.flavor;
         const agentId = resolveAgentIdFromFlavor(flavor);
-        const modelMode = session?.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
-        const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
-
-        return {
-            role: 'user',
-            content: { type: 'text', text },
-            meta: buildSendMessageMeta({
-                sentFrom: resolveSentFrom(),
-                permissionMode: permissionMode || 'default',
-                model,
-                displayText:
-                    existing.pendingDecryptFailure
-                        ? undefined
-                        : (typeof existing.displayText === 'string' ? existing.displayText : undefined),
-                agentId,
-                settings: storage.getState().settings,
-                session,
-            }),
-        };
+        return buildOutgoingUserTextRecord({
+            text,
+            sentFrom: resolveSentFrom(),
+            displayText: existing.pendingDecryptFailure
+                ? undefined
+                : (typeof existing.displayText === 'string' ? existing.displayText : undefined),
+            agentId,
+            modelMode: session?.modelMode,
+            permissionMode,
+            settings: storage.getState().settings,
+            session,
+        });
     })();
 
     const writeBody =
