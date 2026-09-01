@@ -1111,6 +1111,10 @@ jobs:
     name: Verify exact immutable release candidates
     if: ${{ always() && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && (needs.publish_cli_binaries.result == 'success' || (needs.plan.outputs.publish_cli_binaries_needed != 'true' && needs.publish_cli_binaries.result == 'skipped')) && (needs.publish_hstack_binaries.result == 'success' || (needs.plan.outputs.publish_stack != 'true' && needs.publish_hstack_binaries.result == 'skipped')) && (needs.publish_server_runtime.result == 'success' || (needs.plan.outputs.publish_server_runtime_needed != 'true' && needs.publish_server_runtime.result == 'skipped')) && (needs.publish_ui_web.result == 'success' || (needs.plan.outputs.publish_ui_web_needed != 'true' && needs.publish_ui_web.result == 'skipped')) }}
     needs: [plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web]
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     uses: ./.github/workflows/release-verify.yml
     with:
       channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}

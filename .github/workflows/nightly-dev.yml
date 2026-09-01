@@ -370,6 +370,10 @@ jobs:
   release_verify:
     name: Verify exact immutable nightly candidates
     needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
