@@ -56,7 +56,7 @@ test('promote-website builds without deploy secrets and publishes only the built
   assert.doesNotMatch(validate, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID/);
   assert.match(validate, /actions\/upload-artifact@/);
 
-  assert.equal(deploy?.environment, 'website-deploy');
+  assert.equal(deploy?.environment, 'cloudflare-deploy');
   assert.match(JSON.stringify(deploy), /actions\/download-artifact@/);
 
   const upload = parsed.jobs.validate_candidate.steps.find(

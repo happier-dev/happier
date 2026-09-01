@@ -378,7 +378,7 @@ jobs:
 
   # Publishes the exact bytes validate_candidate built. Kept out of `promote`
   # because that job owns release-shared (GitHub App) secrets and a job may
-  # only bind one environment; Cloudflare credentials live in website-deploy.
+  # only bind one environment; shared Cloudflare credentials live in cloudflare-deploy.
   #
   # Cloudflare's Git integration is deliberately NOT connected to this repo.
   # It would rebuild the whole monorepo in Cloudflare's build container and
@@ -387,7 +387,7 @@ jobs:
     needs: [release_actor_guard, apply_bump, validate_candidate, promote]
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: website-deploy
+    environment: cloudflare-deploy
     permissions:
       contents: read
     steps:

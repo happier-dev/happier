@@ -80,6 +80,8 @@ test('website and docs delegate Cloudflare publication to the shared trusted hel
   for (const workflow of ['promote-website.yml', 'promote-docs.yml']) {
     const raw = readFileSync(path.join(repoRoot, '.github', 'workflows', workflow), 'utf8');
     assert.match(raw, /scripts\/pipeline\/cloudflare\/publish-worker\.sh/);
+    assert.match(raw, /environment: cloudflare-deploy/);
     assert.doesNotMatch(raw, /npx --yes wrangler@4 (?:deploy|versions upload)/);
+    assert.doesNotMatch(raw, /environment: (?:website|docs)-deploy/);
   }
 });
