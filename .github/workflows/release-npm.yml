@@ -390,7 +390,7 @@ jobs:
 
           if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
             if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||\"\"));' "${versions_json}")"
+              cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||""));' "${versions_json}")"
             else
               cli_version="$(node -e 'process.stdout.write(String(require("./apps/cli/package.json").version ?? ""));')"
             fi
@@ -399,7 +399,7 @@ jobs:
 
           if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
             if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||\"\"));' "${versions_json}")"
+              stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||""));' "${versions_json}")"
             else
               stack_version="$(node -e 'process.stdout.write(String(require("./apps/stack/package.json").version ?? ""));')"
             fi
@@ -408,7 +408,7 @@ jobs:
 
           if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
             if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||\"\"));' "${versions_json}")"
+              server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||""));' "${versions_json}")"
             else
               server_version="$(node -e 'process.stdout.write(String(require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version ?? ""));')"
             fi

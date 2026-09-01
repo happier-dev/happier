@@ -161,3 +161,26 @@ test('npm release metadata rejects newline output forgery before emitting packag
     );
   }
 });
+
+test('preview npm metadata extractors execute as valid JavaScript for every product', async () => {
+  const workflow = await loadWorkflow();
+  const metadata = workflow.jobs?.release?.steps?.find((step) => step.name === 'Release metadata');
+  const source = String(metadata?.run ?? '');
+  const versions = {
+    cli: '0.2.11-preview.1',
+    stack: '0.2.11-preview.2',
+    server: '0.2.11-preview.3',
+  };
+
+  for (const [productId, expected] of Object.entries(versions)) {
+    const assignment = new RegExp(
+      `${productId}_version="\\$\\(node -e '([^']+)' "\\$\\{versions_json\\}"\\)"`,
+    ).exec(source);
+    assert.ok(assignment, `missing ${productId} preview version extractor`);
+    const result = spawnSync(process.execPath, ['-e', assignment[1], JSON.stringify(versions)], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `${productId} extractor failed: ${result.stderr}`);
+    assert.equal(result.stdout, expected);
+  }
+});
