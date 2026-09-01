@@ -151,4 +151,41 @@ describe('foreground catch-up request count', () => {
         expect(fetchSessions).toHaveBeenCalledTimes(1);
         expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
     });
+
+    it('closes the post-subscription gap with one changes-only catch-up queued behind the foreground resume', async () => {
+        const { sync, units, fetchSessions } = await createResumableSync();
+        fetchChangesMock
+            .mockImplementationOnce(async () => {
+                // The server-side query has completed, but its empty response has not reached the
+                // resume pipeline yet. The socket now subscribes and a durable change can land
+                // immediately after the response's database snapshot.
+                for (const handler of socketStatusHandlers) {
+                    handler('connected');
+                }
+                return { status: 'ok', changes: [], nextCursor: '1' };
+            })
+            .mockResolvedValueOnce({
+                status: 'ok',
+                changes: [{ cursor: '2', kind: 'session', entityId: 's1' }],
+                nextCursor: '2',
+            });
+
+        const appStateHandler = Array.from(appStateHandlers)[0];
+        appStateHandler!('background');
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        appStateHandler!('active');
+        const foregroundResume = (sync as unknown as { resumeInFlight: Promise<void> | null }).resumeInFlight;
+        await foregroundResume;
+        await vi.advanceTimersByTimeAsync(0);
+        await (sync as unknown as { resumeInFlight: Promise<void> | null }).resumeInFlight;
+
+        expect(fetchChangesMock).toHaveBeenCalledTimes(2);
+        expect(fetchSessions).toHaveBeenCalledTimes(1);
+        expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+        expect(units.machinesSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+        expect(units.purchasesSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+        expect(units.pushTokenSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+        expect(units.nativeUpdateSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
+    });
 });

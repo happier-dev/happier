@@ -951,6 +951,7 @@ class Sync {
         private syncTuning: SyncTuning = loadSyncTuning();
         private sessionTranscriptRetention!: SessionTranscriptRetentionController;
       private resumeInFlight: Promise<void> | null = null;
+      private changesCatchUpQueuedAfterResume = false;
       private pendingOutboxRearmInFlightByScope = new Map<string, Promise<void>>();
       private readonly usesPersistentDesktopSync = isTauriDesktop();
       private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
@@ -1044,6 +1045,8 @@ class Sync {
 		      private lastSocketDisconnectedAtMs: number | null = null;
 		      private lastSocketOfflineDurationMs: number | null = null;
               private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
+              private socketStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+              private postSubscriptionChangesCatchUpPending = false;
 	      revenueCatInitialized = false;
 	    private settingsSecretsKey: Uint8Array | null = null;
 	    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
@@ -1083,6 +1086,51 @@ class Sync {
     private markSocketOfflineCatchUpConsumedForSession(sessionId: string, offlineForMs: number): void {
         if (!sessionId || offlineForMs <= 0 || this.lastSocketDisconnectedAtMs != null) return;
         this.socketOfflineCatchUpConsumedSessionIds.add(sessionId);
+    }
+
+    private connectSocketWithPostSubscriptionCatchUp(): void {
+        if (this.socketStatus !== 'connected') {
+            this.postSubscriptionChangesCatchUpPending = true;
+        }
+        apiSocket.connect();
+    }
+
+    private disconnectSocketIntentionally(): void {
+        this.postSubscriptionChangesCatchUpPending = false;
+        this.socketStatus = 'disconnected';
+        apiSocket.disconnect();
+    }
+
+    private resumeAfterForegroundTransition(tag: string): void {
+        const resume = this.resumeSync('app-foreground');
+        fireAndForget(resume, { tag });
+        try {
+            this.connectSocketWithPostSubscriptionCatchUp();
+        } catch {
+            // The foreground resume still repairs the HTTP snapshot. A later successful connect
+            // consumes the armed post-subscription catch-up demand.
+        }
+    }
+
+    private requestChangesCatchUp(): void {
+        if (!this.isForeground) return;
+        const activeResume = this.resumeInFlight;
+        if (!activeResume) {
+            fireAndForget(this.resumeSync('changes-catch-up'), { tag: 'Sync.resumeSync.changes-catch-up' });
+            return;
+        }
+        if (this.changesCatchUpQueuedAfterResume) return;
+        this.changesCatchUpQueuedAfterResume = true;
+        void activeResume.then(
+            () => this.runQueuedChangesCatchUp(),
+            () => this.runQueuedChangesCatchUp(),
+        );
+    }
+
+    private runQueuedChangesCatchUp(): void {
+        if (!this.changesCatchUpQueuedAfterResume) return;
+        this.changesCatchUpQueuedAfterResume = false;
+        this.requestChangesCatchUp();
     }
 
 	        constructor() {
@@ -1254,12 +1302,7 @@ class Sync {
                   log.log('📱 App became active');
                   this.pauseController.resume();
                   fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors' });
-                  try {
-                      apiSocket.connect();
-                  } catch {
-                      // ignore
-                  }
-                  fireAndForget(this.resumeSync('app-foreground'), { tag: 'Sync.resumeSync.app-foreground' });
+                  this.resumeAfterForegroundTransition('Sync.resumeSync.app-foreground');
               } else {
                   this.isForeground = false;
                   this.markNativeCryptoWorkerBackgroundQuiescent();
@@ -1267,7 +1310,7 @@ class Sync {
                   log.log(`📱 App state changed to: ${nextAppState}`);
                   this.pauseController.pause();
                   try {
-                      apiSocket.disconnect();
+                      this.disconnectSocketIntentionally();
                   } catch {
                       // ignore
                   }
@@ -1299,7 +1342,7 @@ class Sync {
                       setServerReachabilityNetworkAllowed(false);
                       this.pauseController.pause();
                       try {
-                          apiSocket.disconnect();
+                          this.disconnectSocketIntentionally();
                       } catch {
                           // ignore
                       }
@@ -1313,12 +1356,7 @@ class Sync {
                       setServerReachabilityNetworkAllowed(true);
                       this.pauseController.resume();
                       fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: `${tag}.reachability` });
-                      try {
-                          apiSocket.connect();
-                      } catch {
-                          // ignore
-                      }
-                      fireAndForget(this.resumeSync('app-foreground'), { tag });
+                      this.resumeAfterForegroundTransition(tag);
                   };
                   const onVisibilityChange = () => {
                       const state = String(doc.visibilityState ?? '').trim().toLowerCase();
@@ -1930,6 +1968,8 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = () => {
+        this.changesCatchUpQueuedAfterResume = false;
+        this.postSubscriptionChangesCatchUpPending = false;
         this.sessionDraftSyncEnabled = false;
         this.sessionDraftOfflineCatchUpPending = false;
         this.sessionDraftRepositoryConfiguredScope = null;
@@ -1942,7 +1982,7 @@ class Sync {
         this.flushPendingSettingsForCurrentScopeNow();
         this.flushSessionMaterializedMaxSeq();
         this.clearActiveAccountSettingsScope();
-        apiSocket.disconnect();
+        this.disconnectSocketIntentionally();
         this.activityAccumulator.reset();
         this.machineActivityAccumulator.reset();
 
@@ -4357,10 +4397,11 @@ class Sync {
     }
 
       public retryNow = () => {
+          let reconnectSocket = false;
           try {
               storage.getState().clearSyncError();
-              apiSocket.disconnect();
-              apiSocket.connect();
+              this.disconnectSocketIntentionally();
+              reconnectSocket = true;
           } catch {
               // ignore
           }
@@ -4376,10 +4417,19 @@ class Sync {
           } catch {
               // ignore
           }
-          fireAndForget(this.resumeSync('manual'), { tag: 'Sync.resumeSync.manual' });
+          const resume = this.resumeSync('manual');
+          fireAndForget(resume, { tag: 'Sync.resumeSync.manual' });
+          if (reconnectSocket) {
+              try {
+                  this.connectSocketWithPostSubscriptionCatchUp();
+              } catch {
+                  // The manual HTTP resume remains active; the next successful connection will
+                  // consume the armed post-subscription catch-up demand.
+              }
+          }
       }
 
-      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual' | 'server-reachable'): Promise<void> => {
+      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual' | 'server-reachable' | 'changes-catch-up'): Promise<void> => {
           return runWithInFlightDedupe(
               {
                   get: () => this.resumeInFlight,
@@ -4389,7 +4439,10 @@ class Sync {
               },
               async () => {
                   const shouldContinue = this.createServerScopeGuard();
-                  if ((reason === 'socket-reconnect' || reason === 'server-reachable') && !this.isForeground) {
+                  if (
+                      (reason === 'socket-reconnect' || reason === 'server-reachable' || reason === 'changes-catch-up')
+                      && !this.isForeground
+                  ) {
                       return;
                   }
                   if (this.pauseController.isPaused()) {
@@ -4413,19 +4466,25 @@ class Sync {
                       return;
                   }
 
-                  await this.rearmPendingOutboxForActiveScope();
-                  if (!shouldContinue()) {
-                      return;
+                  if (reason !== 'changes-catch-up') {
+                      await this.rearmPendingOutboxForActiveScope();
+                      if (!shouldContinue()) {
+                          return;
+                      }
+
+                      await this.ensureSessionDraftRepositoryRuntimeReady({
+                          forceSnapshotHydration: reason === 'manual' || this.sessionDraftOfflineCatchUpPending,
+                      });
+                      if (!shouldContinue()) {
+                          return;
+                      }
                   }
 
-                  await this.ensureSessionDraftRepositoryRuntimeReady({
-                      forceSnapshotHydration: reason === 'manual' || this.sessionDraftOfflineCatchUpPending,
+                  const { status, refreshedByCatchUp } = await this.resumeViaChanges({
+                      accountId,
+                      shouldContinue,
+                      allowOfflineSnapshotRefresh: reason !== 'changes-catch-up',
                   });
-                  if (!shouldContinue()) {
-                      return;
-                  }
-
-                  const { status, refreshedByCatchUp } = await this.resumeViaChanges({ accountId, shouldContinue });
                   if (status === 'aborted') {
                       return;
                   }
@@ -4434,6 +4493,10 @@ class Sync {
                           return;
                       }
                       await this.snapshotRefreshOnResume({ mode: 'fallback', reason: 'changes-fallback' });
+                      return;
+                  }
+
+                  if (reason === 'changes-catch-up') {
                       return;
                   }
 
@@ -6807,13 +6870,19 @@ class Sync {
         apiSocket.onMessage('session', () => {});
 
 	          apiSocket.onStatusChange((status) => {
+	              this.socketStatus = status;
 	              if (status === 'connected') {
+	                  const shouldClosePostSubscriptionGap = this.postSubscriptionChangesCatchUpPending;
+	                  this.postSubscriptionChangesCatchUpPending = false;
 	                  if (this.lastSocketDisconnectedAtMs != null) {
 	                      this.lastSocketOfflineDurationMs = Date.now() - this.lastSocketDisconnectedAtMs;
                           this.sessionDraftOfflineCatchUpPending = true;
                           this.socketOfflineCatchUpConsumedSessionIds.clear();
 	                  }
 	                  this.lastSocketDisconnectedAtMs = null;
+	                  if (shouldClosePostSubscriptionGap) {
+	                      this.requestChangesCatchUp();
+	                  }
 	                  return;
 	              }
 	              if (status === 'disconnected' || status === 'error') {
@@ -6980,6 +7049,7 @@ class Sync {
       private async resumeViaChanges(opts: {
           accountId: string;
           shouldContinue?: () => boolean;
+          allowOfflineSnapshotRefresh?: boolean;
       }): Promise<ResumeViaChangesOutcome> {
           const CHANGES_PAGE_LIMIT = this.syncTuning.changesPageLimit;
           const afterCursor = this.changesCursor ?? '0';
@@ -7002,7 +7072,8 @@ class Sync {
           };
 
           const offlineForMs = this.readSocketOfflineDurationMs();
-          const forceSnapshotRefresh = offlineForMs >= this.syncTuning.messageForceSnapshotOfflineMs;
+          const forceSnapshotRefresh = opts.allowOfflineSnapshotRefresh !== false
+              && offlineForMs >= this.syncTuning.messageForceSnapshotOfflineMs;
 
           const catchUp = await runSocketReconnectCatchUpViaChanges({
               credentials: this.credentials,
