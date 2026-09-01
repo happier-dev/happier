@@ -7979,7 +7979,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             activeProfileId: target.profileId,
             generation: target.generation,
             credentialRevision: target.credentialRevision,
-            reason: input.committedGeneration.provenance,
+            reason: input.generationApplyReason,
             fromProfileId: input.fromProfileId,
           });
           const mapped = mapCommittedGenerationApplyResult({
