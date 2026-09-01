@@ -3209,6 +3209,27 @@ export function createCodexAppServerRuntime(params: Readonly<{
         await updateUsageLimitRecoveryFromSurfacedIssue(issue);
     };
 
+    const requestUsageLimitGroupRecoveryForTerminalFailure = async (
+        classification: CodexConnectedServiceRuntimeFailureClassification | null,
+    ): Promise<void> => {
+        if (
+            classification?.kind !== 'usage_limit'
+            || !classification.groupId
+            || !classification.profileId
+            || typeof params.onUsageLimitGroupRecovery !== 'function'
+        ) {
+            return;
+        }
+        try {
+            await params.onUsageLimitGroupRecovery({
+                sessionId: params.session.sessionId,
+                classification,
+            });
+        } catch (error) {
+            logger.debug('[codex-app-server] Failed to request connected-service group recovery after terminal usage limit', error);
+        }
+    };
+
     // Settle the tracked primary pending turn from a terminal (`turn/completed` /
     // `turn/interrupted`) notification. Both the terminal-status write
     // (`turnBoundaryTracker.completeActiveTurn`) and the `thinking` reset live inside
@@ -3247,6 +3268,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 return;
             }
             await abortPendingTurnWithFailure(failure);
+            const usageLimitGroupRecoveryClassification = failure instanceof CodexAppServerTurnFailure
+                && failure.runtimeAuthClassification?.kind === 'usage_limit'
+                ? failure.runtimeAuthClassification
+                : null;
+            // The daemon may hot-apply a replacement credential back through this same
+            // runtime. Start recovery only after the terminal boundary and quota evidence
+            // are published, but do not await it while a notification bridge owns the
+            // runtime queue or the hot-apply callback can deadlock behind that bridge.
+            void requestUsageLimitGroupRecoveryForTerminalFailure(
+                usageLimitGroupRecoveryClassification,
+            );
             return;
         }
         if (method !== 'turn/completed' || isCodexTurnInterruptedStatus(terminalStatus)) {

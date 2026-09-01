@@ -4261,6 +4261,95 @@ describe('runCodex CodexACP resume behavior', () => {
     expect(warnCalls.some((call) => call.some((value) => value instanceof Error && value.message.includes('secret-test-token')))).toBe(false);
   });
 
+  it('does not report a group usage limit again after the app-server terminal owner requests recovery', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    const runtimeAuthClassification = {
+      kind: 'usage_limit',
+      serviceId: 'openai-codex',
+      profileId: 'limited',
+      groupId: 'main',
+      resetsAtMs: 2_000,
+      retryAfterMs: null,
+      planType: null,
+      rateLimits: null,
+      source: 'provider_runtime_marker',
+    };
+    const providerError = Object.assign(new Error('usage limit reached'), {
+      runtimeAuthClassification,
+    });
+    const flushTurn = vi.fn(async () => {});
+    createCodexAppServerRuntimeSpy.mockImplementationOnce((runtimeParams: {
+      onUsageLimitGroupRecovery: (input: { classification: typeof runtimeAuthClassification }) => Promise<unknown>;
+    }) => ({
+      getSessionId: () => 'thread-usage-limit',
+      supportsInFlightSteer: () => false,
+      isTurnInFlight: () => false,
+      beginTurn: vi.fn(),
+      cancel: vi.fn(async () => {}),
+      reset: vi.fn(async () => {}),
+      startOrLoad: vi.fn(async () => {}),
+      setSessionMode: vi.fn(async () => {}),
+      setSessionModel: vi.fn(async () => {}),
+      setSessionConfigOption: vi.fn(async () => {}),
+      steerPrompt: vi.fn(async () => {}),
+      sendPrompt: vi.fn(async () => {
+        await runtimeParams.onUsageLimitGroupRecovery({ classification: runtimeAuthClassification });
+        throw providerError;
+      }),
+      compactContext: vi.fn(async () => {}),
+      flushTurn,
+      rollbackConversation: vi.fn(async () => ({ ok: true as const, target: { type: 'latest_turn' }, threadId: 'thread-usage-limit' })),
+    }));
+    notifyDaemonConnectedServiceRuntimeAuthFailureSpy.mockResolvedValue({
+      ok: true,
+      result: { status: 'switch_attempted', result: { status: 'switched', activeProfileId: 'backup' } },
+    });
+
+    let waitCallCount = 0;
+    sessionInputConsumerWaitForNextInputImpl = async () => {
+      waitCallCount += 1;
+      if (waitCallCount === 1) {
+        return {
+          message: 'continue after usage limit',
+          mode: {
+            permissionMode: 'default',
+            permissionModeUpdatedAt: 1,
+          },
+          isolate: false,
+          hash: 'hash-usage-limit',
+        };
+      }
+      return null;
+    };
+
+    const { runCodex } = await import('./runCodex');
+    const outcome = await runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      codexBackendMode: 'appServer',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    expect(outcome).toMatchObject({ ok: true });
+    expect(notifyDaemonConnectedServiceRuntimeAuthFailureSpy).toHaveBeenCalledTimes(1);
+    expect(notifyDaemonConnectedServiceRuntimeAuthFailureSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'sess_1',
+        switchesThisTurn: 0,
+        classification: runtimeAuthClassification,
+      }),
+      expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
+    );
+    expect(flushTurn).not.toHaveBeenCalled();
+  });
+
   it('admits a connected-service initial-goal resume without a generation transition and starts it once', async () => {
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },

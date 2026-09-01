@@ -7838,6 +7838,20 @@ describe('createCodexAppServerRuntime', () => {
                 }),
                 policyDisposition: 'evidence_only',
             });
+            expect(onUsageLimitGroupRecovery).toHaveBeenCalledTimes(1);
+            expect(onUsageLimitGroupRecovery).toHaveBeenCalledWith({
+                sessionId: 'session-stale-env-group',
+                classification: expect.objectContaining({
+                    kind: 'usage_limit',
+                    serviceId: 'openai-codex',
+                    groupId: 'happier',
+                    profileId: 'backup',
+                    groupGeneration: 7,
+                    sourceProviderAccountId: 'acct_team_seeded',
+                    failingAccessTokenFingerprint: 'sha256:deadbeef',
+                }),
+            });
+            onUsageLimitGroupRecovery.mockClear();
             const requestLogBeforeManualCheck = await readRequestLog(requestLogPath);
             expect(requestLogBeforeManualCheck.map((entry) => entry.method)).toEqual(expect.arrayContaining([
                 'account/rateLimits/read',
@@ -9228,6 +9242,8 @@ describe('createCodexAppServerRuntime', () => {
             await expect(runtime.sendPrompt('usage-limit-structured')).rejects.toMatchObject({
                 runtimeAuthClassification: { kind: 'usage_limit' },
             });
+            expect(onUsageLimitGroupRecovery).toHaveBeenCalledOnce();
+            onUsageLimitGroupRecovery.mockClear();
             const controls = runtime as typeof runtime & {
                 enableUsageLimitWaitResume?: (request: { sessionId: string }) => Promise<unknown>;
                 checkUsageLimitRecoveryNow?: (request: { sessionId: string }) => Promise<unknown>;

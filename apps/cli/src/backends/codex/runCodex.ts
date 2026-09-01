@@ -211,6 +211,16 @@ function readRuntimeAuthClassification(error: unknown): ConnectedServiceRuntimeF
     return isRuntimeAuthFailureClassification(classification) ? classification : null;
 }
 
+function isAppServerTerminalOwnedUsageLimitGroupRecovery(
+    classification: ConnectedServiceRuntimeFailureClassification,
+): boolean {
+    return classification.kind === 'usage_limit'
+        && typeof classification.groupId === 'string'
+        && classification.groupId.length > 0
+        && typeof classification.profileId === 'string'
+        && classification.profileId.length > 0;
+}
+
 function readRuntimeAuthClassificationLogField(
     classification: Record<string, unknown>,
     field: string,
@@ -2880,43 +2890,54 @@ export async function runCodex(opts: {
                     const runtimeAuthClassification = readRuntimeAuthClassification(error);
                     let runtimeAuthRecoveryStatusEmitted = false;
                     if (runtimeAuthClassification) {
-                        logger.warn(
-                            '[Codex] Runtime auth failure reported to daemon',
-                            summarizeRuntimeAuthClassificationForLog(runtimeAuthClassification),
-                        );
-                        const runtime = useCodexAcp || useCodexAppServer
-                            ? getCodexRemoteRuntime()
-                            : null;
-                        if (runtime) {
-                            // The exact provider turn has already failed. Publish its terminal
-                            // boundary before Connected Services attempts refresh/switch/continuation
-                            // so recovery cannot wait on the turn that is waiting on recovery.
-                            await runtime.flushTurn();
+                        const appServerTerminalOwnsRecovery = useCodexAppServer
+                            && isAppServerTerminalOwnedUsageLimitGroupRecovery(runtimeAuthClassification);
+                        if (appServerTerminalOwnsRecovery) {
+                            // The app-server terminal notification owns this exact group-bound
+                            // usage-limit report. It settles the provider turn before delegating to
+                            // the shared reporter, including when the outer prompt await has already
+                            // failed through a different error path. Do not report or flush it twice.
                             providerTurnSettledBeforeRuntimeAuthRecovery = true;
+                            runtimeAuthRecoveryStatusEmitted = true;
+                        } else {
+                            logger.warn(
+                                '[Codex] Runtime auth failure reported to daemon',
+                                summarizeRuntimeAuthClassificationForLog(runtimeAuthClassification),
+                            );
+                            const runtime = useCodexAcp || useCodexAppServer
+                                ? getCodexRemoteRuntime()
+                                : null;
+                            if (runtime) {
+                                // The exact provider turn has already failed. Publish its terminal
+                                // boundary before Connected Services attempts refresh/switch/continuation
+                                // so recovery cannot wait on the turn that is waiting on recovery.
+                                await runtime.flushTurn();
+                                providerTurnSettledBeforeRuntimeAuthRecovery = true;
+                            }
+                            const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
+                                sessionId: session.sessionId,
+                                switchesThisTurn: 0,
+                                classification: runtimeAuthClassification,
+                                logPrefix: '[Codex]',
+                            });
+                            runtimeAuthRecoveryStatusEmitted = projectConnectedServiceRuntimeAuthRecoveryReport({
+                                report: recoveryReport,
+                                classification: runtimeAuthClassification,
+                                addStatusMessage: (message) => {
+                                    messageBuffer.addMessage(message, 'status');
+                                },
+                                sendGenericStatusMessage: (message) => {
+                                    session.sendSessionEvent({ type: 'message', message });
+                                },
+                                commitTypedProjection: (projection) => {
+                                    if (projection.transcriptEvent) {
+                                        session.sendSessionEvent(projection.transcriptEvent);
+                                        return true;
+                                    }
+                                    return false;
+                                },
+                            }).emitted;
                         }
-                        const recoveryReport = await reportConnectedServiceRuntimeAuthFailureToDaemon({
-                            sessionId: session.sessionId,
-                            switchesThisTurn: 0,
-                            classification: runtimeAuthClassification,
-                            logPrefix: '[Codex]',
-                        });
-                        runtimeAuthRecoveryStatusEmitted = projectConnectedServiceRuntimeAuthRecoveryReport({
-                            report: recoveryReport,
-                            classification: runtimeAuthClassification,
-                            addStatusMessage: (message) => {
-                                messageBuffer.addMessage(message, 'status');
-                            },
-                            sendGenericStatusMessage: (message) => {
-                                session.sendSessionEvent({ type: 'message', message });
-                            },
-                            commitTypedProjection: (projection) => {
-                                if (projection.transcriptEvent) {
-                                    session.sendSessionEvent(projection.transcriptEvent);
-                                    return true;
-                                }
-                                return false;
-                            },
-                        }).emitted;
                     } else {
                         logger.warn('Error in codex session:', error);
                     }
