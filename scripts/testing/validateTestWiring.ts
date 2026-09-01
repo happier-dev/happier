@@ -25,23 +25,19 @@ export interface WiringReport {
 
 export interface WiringReportOptions extends Partial<WorkflowScriptParityInput> {}
 
-export function loadDefaultParityInput(rootDir: string = process.cwd()): WorkflowScriptParityInput | null {
-  try {
-    const configTexts = Object.fromEntries(
-      FEATURE_GATING_CONFIG_PATHS.map((configPath) => [configPath, readFileSync(join(rootDir, configPath), 'utf8')]),
-    );
+export function loadDefaultParityInput(rootDir: string = process.cwd()): WorkflowScriptParityInput {
+  const configTexts = Object.fromEntries(
+    FEATURE_GATING_CONFIG_PATHS.map((configPath) => [configPath, readFileSync(join(rootDir, configPath), 'utf8')]),
+  );
 
-    return {
-      packageJsonText: readFileSync(join(rootDir, 'package.json'), 'utf8'),
-      workflowText: TEST_WORKFLOW_PATHS
-        .map((workflowPath) => readFileSync(join(rootDir, workflowPath), 'utf8'))
-        .join('\n'),
-      docsText: readFileSync(join(rootDir, 'apps/docs/content/docs/development/testing.mdx'), 'utf8'),
-      configTexts,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    packageJsonText: readFileSync(join(rootDir, 'package.json'), 'utf8'),
+    workflowText: TEST_WORKFLOW_PATHS
+      .map((workflowPath) => readFileSync(join(rootDir, workflowPath), 'utf8'))
+      .join('\n'),
+    docsText: readFileSync(join(rootDir, 'apps/docs/content/docs/development/testing.mdx'), 'utf8'),
+    configTexts,
+  };
 }
 
 export function collectWiringReport(filePaths: readonly string[], options: WiringReportOptions = {}): WiringReport {
@@ -114,7 +110,7 @@ function printReport(report: WiringReport): void {
 }
 
 export async function main(): Promise<void> {
-  const report = collectWiringReport(discoverTestFiles(), loadDefaultParityInput() ?? {});
+  const report = collectWiringReport(discoverTestFiles(), loadDefaultParityInput());
   printReport(report);
   if (report.issues.length > 0) {
     process.exitCode = 1;

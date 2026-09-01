@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { collectWiringReport, loadDefaultParityInput } from './validateTestWiring.ts';
 import { FEATURE_IDS } from './lib/protocolFeatureIds.ts';
@@ -47,4 +52,25 @@ test('default parity input includes test commands owned by dispatch workflows', 
 
   assert.ok(input);
   assert.match(input.workflowText, /yarn -s test:e2e:ui:wsrepl:lima\b/);
+});
+
+test('standalone governance commands fail closed when the canonical parity corpus is missing', async (t) => {
+  const incompleteRoot = mkdtempSync(join(tmpdir(), 'happier-test-wiring-incomplete-'));
+  t.after(() => rmSync(incompleteRoot, { recursive: true, force: true }));
+  const featureCatalogPath = join(incompleteRoot, 'packages/protocol/src/features/catalog.ts');
+  mkdirSync(join(incompleteRoot, 'packages/protocol/src/features'), { recursive: true });
+  writeFileSync(featureCatalogPath, 'const catalog = {\n  example: {\n', 'utf8');
+
+  for (const scriptName of ['validateTestWiring.ts', 'validateTestInventory.ts']) {
+    await t.test(scriptName, () => {
+      const result = spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', fileURLToPath(new URL(`./${scriptName}`, import.meta.url))],
+        { cwd: incompleteRoot, encoding: 'utf8' },
+      );
+
+      assert.notEqual(result.status, 0, `${scriptName} unexpectedly passed:\n${result.stdout}\n${result.stderr}`);
+      assert.match(result.stderr, /ENOENT/);
+    });
+  }
 });
