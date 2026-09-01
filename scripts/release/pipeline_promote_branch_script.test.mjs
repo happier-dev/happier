@@ -74,7 +74,7 @@ function writeGhStub(binDir) {
       '',
       'if (method === "GET") {',
       '  if (endpoint.includes("/git/ref/heads/dev")) { process.stdout.write(`${nextSourceSha()}\\n`); process.exit(0); }',
-      '  if (endpoint.includes("/git/ref/heads/main")) { process.stdout.write("TARGET_SHA\\n"); process.exit(0); }',
+      '  if (endpoint.includes("/git/ref/heads/main")) { process.stdout.write(`${process.env.GH_STUB_TARGET_SHA ?? "TARGET_SHA"}\\n`); process.exit(0); }',
       '  if (endpoint.includes("/compare/")) {',
       '    process.stdout.write(JSON.stringify({ status: "ahead", ahead_by: 1, behind_by: 0, files: [] }));',
       '    process.exit(0);',
@@ -103,7 +103,7 @@ function writeGhStub(binDir) {
   return ghPath;
 }
 
-function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE_SHA] }) {
+function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE_SHA], targetSha = 'TARGET_SHA' }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-promote-branch-script-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
@@ -123,6 +123,7 @@ function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE
     GH_STUB_PATCH_OUTCOME: patchOutcome ?? 'require_typed_force',
     GH_STUB_SOURCE_SHA_SEQUENCE: sourceShaSequence.join(','),
     GH_STUB_SOURCE_SHA_STATE: sourceShaStatePath,
+    GH_STUB_TARGET_SHA: targetSha,
   };
 
   const res = spawnSync(
@@ -154,6 +155,17 @@ function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE
 
   return { res, calls };
 }
+
+test('promote-branch accepts an already-promoted authorized target after the source branch advances', () => {
+  const { res, calls } = runPromoteBranch({
+    sourceShaSequence: [ADVANCED_SOURCE_SHA],
+    targetSha: AUTHORIZED_SOURCE_SHA,
+  });
+
+  assert.equal(res.status, 0, `expected idempotent success (stderr: ${res.stderr})`);
+  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('PATCH')), 'must not PATCH an already-correct target');
+  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('POST')), 'must not recreate an already-correct target');
+});
 
 test('promote-branch reset uses typed force update (no fallback create)', () => {
   const { res, calls } = runPromoteBranch({ patchOutcome: 'require_typed_force' });
