@@ -85,7 +85,7 @@ import {
   resolveClaudeUnifiedDialogBlockedReason,
   type ClaudeUnifiedDialogBlockedReason,
 } from './tuiControls/dialogRegistry.js';
-import { createClaudeUnifiedPermissionHookHandler } from './permissionHooks.js';
+import { createClaudePermissionHookHandler } from '../../shared/permissionHookHandler.js';
 import { createClaudeUnifiedPromptEchoSuppressor } from './promptEchoSuppression.js';
 import { normalizeClaudeActivityStatusSignal } from '../../../activityStatus.js';
 import { readClaudeJsonlRowTimestampMs } from '../../../transcripts/jsonlReplaySuppression.js';
@@ -1917,7 +1917,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           }
           await statuslineApplier.apply(parsed);
         },
-        onPermissionHook: createClaudeUnifiedPermissionHookHandler(params.ctx),
+        onPermissionHook: createClaudePermissionHookHandler(params.ctx),
         defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
         permissionHookSecret: hookSecret,
         // Host response ceiling aligned with the installed Claude permission-hook `timeout`

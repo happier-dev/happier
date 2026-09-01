@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createClaudeUnifiedPermissionHookHandler } from './permissionHooks.js';
+import { createClaudePermissionHookHandler } from './permissionHookHandler.js';
 
-describe('createClaudeUnifiedPermissionHookHandler Agent tool interception', () => {
+describe('createClaudePermissionHookHandler Agent tool interception', () => {
   it('feeds one transformed provider-native input into the existing permission engine', async () => {
     const before = vi.fn(async () => ({
       status: 'continue' as const,
       input: { command: 'pwd', intercepted: true },
     }));
     const requestDecision = vi.fn(async () => ({ decision: 'approved' }));
-    const handler = createClaudeUnifiedPermissionHookHandler({
+    const handler = createClaudePermissionHookHandler({
       agentRuntime: { toolExecution: { before } },
       sessions: { current: { permissions: { requestDecision } } },
     } as never);
@@ -40,7 +40,7 @@ describe('createClaudeUnifiedPermissionHookHandler Agent tool interception', () 
 
   it('maps an explicit interception rejection to the existing provider-native denial', async () => {
     const requestDecision = vi.fn(async () => ({ decision: 'approved' }));
-    const handler = createClaudeUnifiedPermissionHookHandler({
+    const handler = createClaudePermissionHookHandler({
       agentRuntime: {
         toolExecution: {
           before: vi.fn(async () => ({

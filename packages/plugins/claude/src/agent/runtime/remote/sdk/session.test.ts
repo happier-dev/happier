@@ -836,11 +836,25 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         '/tmp/happier-claude-hook-plugin',
         '--include-hook-events',
       ]));
+      expect(exec.spawnClient.mock.calls[0]?.[0].launch.args).not.toContain('--permission-prompt-tool');
+
+      const pluginRequest = sessionHooks.service.createPluginDir.mock.calls[0]?.[0] as Readonly<{
+        files?: ReadonlyArray<Readonly<{ path: string; json?: unknown }>>;
+      }> | undefined;
+      const hookFile = pluginRequest?.files?.find((file) => file.path === 'hooks/hooks.json');
+      expect(hookFile?.json).toMatchObject({
+        hooks: {
+          PermissionRequest: [expect.objectContaining({ matcher: '' })],
+          PreToolUse: [expect.objectContaining({ matcher: 'AskUserQuestion' })],
+        },
+      });
 
       const hookRequest = sessionHooks.service.startServer.mock.calls[0]?.[0] as Readonly<{
         onSessionHook?: (providerSessionId: string, payload: Readonly<Record<string, unknown>>) => void | Promise<void>;
+        onPermissionHook?: (payload: Readonly<Record<string, unknown>>) => unknown | Promise<unknown>;
       }> | undefined;
       if (!hookRequest?.onSessionHook) throw new Error('Claude Agent SDK session hook server was not started');
+      expect(hookRequest.onPermissionHook).toEqual(expect.any(Function));
       await hookRequest.onSessionHook('claude-provider-session-1', {
         hook_event_name: 'PostToolUse',
         session_id: 'claude-provider-session-1',
@@ -866,6 +880,37 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       });
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('uses the SDK permission callback only when a session hook plugin cannot be created', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const exec = createSdkExecFixture();
+    const sessionHooks = createSessionHooksFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      exec: exec.service,
+      sessionHooks: sessionHooks.service,
+    });
+    const operations = createClaudeAgentSdkProviderOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      launchEnv: {},
+      permissionMode: 'default',
+    });
+
+    try {
+      operations.beginProviderTurn();
+      await operations.sendProviderTurnPrompt('launch without a Happier session id');
+      await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
+
+      expect(sessionHooks.service.createPluginDir).not.toHaveBeenCalled();
+      expect(exec.spawnClient.mock.calls[0]?.[0].launch.args).toEqual(expect.arrayContaining([
+        '--permission-prompt-tool',
+        'stdio',
+      ]));
+    } finally {
+      await operations.disposeProviderSession();
     }
   });
 

@@ -2,13 +2,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse, type LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
+import {
+  resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-import { sendPermissionRequestPushNotificationAsync } from './permissionRequestPush';
+import {
+  sendPermissionRequestPushNotificationAsync,
+  sendPermissionRequestPushNotificationForActiveAccount,
+} from './permissionRequestPush';
 
 describe('sendPermissionRequestPushNotificationAsync', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    resetActiveAccountSettingsSnapshotForTests();
   });
 
   it('does not send when permissionRequest pushes are disabled', async () => {
@@ -81,6 +89,30 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
       expect.objectContaining({ sessionId: 's1', requestId: 'p1' }),
       { sound: 'happier_urgent.wav', priority: 'high', androidSoundId: 'urgent' },
     );
+  });
+
+  it('notifies for an actual safe-yolo permission request instead of predicting Auto approval', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
+    });
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings,
+      settingsVersion: 1,
+      loadedAtMs: Date.now(),
+      settingsSecretsReadKeys: [],
+    });
+
+    sendPermissionRequestPushNotificationForActiveAccount({
+      pushSender: { sendToAllDevicesAsync },
+      sessionId: 's-auto',
+      permissionId: 'p-auto',
+      toolName: 'Read',
+      permissionMode: 'safe-yolo',
+    });
+
+    await vi.waitFor(() => expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1));
   });
 
   it('forwards permission requests to the Live Activity remote sender', async () => {

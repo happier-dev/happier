@@ -3,12 +3,12 @@ import {
   readPermissionHookEventName,
   type PermissionHookData,
   type PermissionHookResponse,
-} from '../../../hooks/protocol.js';
+} from '../../hooks/protocol.js';
 import {
   createClaudePermissionEngine,
   type ClaudePermissionContext,
-} from '../../../permissions/createClaudePermissionEngine.js';
-import type { PermissionResult } from '../../../sdk/types.js';
+} from '../../permissions/createClaudePermissionEngine.js';
+import type { PermissionResult } from '../../sdk/types.js';
 import {
   AgentRuntimeJsonValueSchema,
   type AgentSessionHostServices,
@@ -85,7 +85,7 @@ function buildPermissionResponse(
   };
 }
 
-export function createClaudeUnifiedPermissionHookHandler(
+export function createClaudePermissionHookHandler(
   ctx: ClaudeToolExecutionContext,
 ): (data: PermissionHookData) => Promise<PermissionHookResponse> {
   const permissionEngine = createClaudePermissionEngine(ctx);

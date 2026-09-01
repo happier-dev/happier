@@ -25,6 +25,8 @@ import {
     buildClaudeHookPluginHooks,
     buildClaudeHookPluginManifest,
 } from '../../../hooks/settings.js';
+import { buildDefaultPermissionHookResponse } from '../../../hooks/protocol.js';
+import { resolveClaudePermissionHookCeilingMs } from '../../../hooks/permissionHookTimeout.js';
 import {
     createClaudeSdkNoResultError,
     queryWithContext,
@@ -97,6 +99,7 @@ import {
     readClaudeRuntimeString,
     respondToClaudePermission,
 } from '../../shared/runtimeHelpers.js';
+import { createClaudePermissionHookHandler } from '../../shared/permissionHookHandler.js';
 import { createClaudeAgentSdkResumeIdentityOwner } from './resumeIdentity.js';
 import type { ClaudeUnifiedTerminalContext } from '../../terminal/unified/turnOperations.js';
 import {
@@ -830,6 +833,12 @@ export function createClaudeAgentSdkTurnOperations(
                         activeCompletion?.reject(explicitResumeFailure);
                     }
                 },
+                ...(toolPermissionPolicy === null ? {
+                    onPermissionHook: createClaudePermissionHookHandler(params.ctx),
+                    defaultPermissionHookResponse: buildDefaultPermissionHookResponse,
+                    permissionHookSecret: sessionHookSecret,
+                    permissionRequestTimeoutMs: resolveClaudePermissionHookCeilingMs({ env: params.launchEnv }),
+                } : {}),
             });
             sessionHookServer = server;
             try {
@@ -838,8 +847,15 @@ export function createClaudeAgentSdkTurnOperations(
                     port: server.port,
                     nodeExecutable: assets.nodeExecutable,
                     sessionForwarderScript: assets.sessionForwarderScript,
+                    ...(toolPermissionPolicy === null ? {
+                        permissionForwarderScript: assets.permissionForwarderScript,
+                        enableLocalPermissionBridge: true,
+                    } : {}),
                     ...(server.sessionHookSecretFile
                         ? { sessionHookSecretFile: server.sessionHookSecretFile }
+                        : {}),
+                    ...(toolPermissionPolicy === null && server.permissionHookSecretFile
+                        ? { permissionHookSecretFile: server.permissionHookSecretFile }
                         : {}),
                 });
                 const manifest = buildClaudeHookPluginManifest({ instanceId: happierSessionId });
@@ -1709,7 +1725,11 @@ export function createClaudeAgentSdkTurnOperations(
                             : {}),
                         ...(toolPermissionPolicy === 'read_only'
                             ? {}
-                            : { canCallTool: resolvePermission }),
+                            : toolPermissionPolicy !== null || !hookPluginDir
+                                // Execution policies are SDK-owned. Ordinary sessions use the
+                                // provider-native hook unless no session id exists to host it.
+                                ? { canCallTool: resolvePermission }
+                                : {}),
                         ...(getClaudeSdkOAuthToken ? { getOAuthToken: getClaudeSdkOAuthToken } : {}),
                         ...params.advancedOptions,
                     },
