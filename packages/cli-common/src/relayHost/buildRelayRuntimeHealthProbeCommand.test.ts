@@ -18,7 +18,7 @@ describe('buildRelayRuntimeHealthProbeCommand', () => {
     });
 
     try {
-      await new Promise<void>((resolve) => server.listen(0, resolve));
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       const address = server.address();
       if (!address || typeof address === 'string') {
         throw new Error('Unexpected http server address');
@@ -31,7 +31,7 @@ describe('buildRelayRuntimeHealthProbeCommand', () => {
         maxAttempts: 2,
         sleepSeconds: 0,
       });
-      const child = spawn('bash', ['-lc', command], { stdio: 'ignore' });
+      const child = spawn('bash', ['-c', command], { stdio: 'ignore' });
       const status = await new Promise<number | null>((resolve) => {
         child.on('exit', (code) => resolve(code));
       });
@@ -48,7 +48,7 @@ describe('buildRelayRuntimeHealthProbeCommand', () => {
       maxAttempts: 1,
       sleepSeconds: 0,
     });
-    const result = spawnSync('bash', ['-lc', command], { encoding: 'utf8' });
+    const result = spawnSync('bash', ['-c', command], { encoding: 'utf8' });
     expect(result.status).not.toBe(0);
   });
 
