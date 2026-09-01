@@ -16,6 +16,11 @@ function loadWorkflow() {
 test('extended DB E2E owns provider generation once and runs only database-relevant coverage', () => {
   const workflow = loadWorkflow();
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.deepEqual(workflow.on.workflow_call.inputs.checkout_sha, {
+    required: false,
+    default: '',
+    type: 'string',
+  });
   assert.equal(workflow.on.workflow_call.inputs.select_jobs_explicitly.type, 'boolean');
   assert.equal(workflow.on.workflow_call.inputs.select_jobs_explicitly.default, false);
 
@@ -25,6 +30,8 @@ test('extended DB E2E owns provider generation once and runs only database-relev
     ['db-contract-postgres', 'run_db_contract_postgres'],
     ['db-contract-mysql', 'run_db_contract_mysql'],
   ]) {
+    const checkout = workflow.jobs[jobName].steps.find((step) => step.name === 'Checkout');
+    assert.equal(checkout.with.ref, '${{ inputs.checkout_sha || github.sha }}');
     assert.equal(
       workflow.jobs[jobName].if,
       `\${{ !inputs.select_jobs_explicitly || inputs.${inputName} }}`,

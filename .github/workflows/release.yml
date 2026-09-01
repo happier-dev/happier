@@ -1058,7 +1058,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
-      run_repo_release_checks: false
 
   publish_ui_web:
     if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_ui_web_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
@@ -1075,7 +1074,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
-      run_repo_release_checks: false
 
   publish_cli_binaries:
     if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_cli_binaries_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
@@ -1092,7 +1090,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
-      run_repo_release_checks: false
 
   publish_hstack_binaries:
     if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_stack == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
@@ -1109,7 +1106,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       publish_rolling: false
-      run_repo_release_checks: false
 
   verify_release_candidates:
     name: Verify exact immutable release candidates
@@ -1158,7 +1154,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       retry_version: ${{ needs.publish_server_runtime.outputs.version }}
-      run_repo_release_checks: false
 
   promote_ui_web:
     if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version != '' }}
@@ -1174,7 +1169,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       retry_version: ${{ needs.publish_ui_web.outputs.version }}
-      run_repo_release_checks: false
 
   promote_cli_binaries:
     if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version != '' }}
@@ -1190,7 +1184,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       retry_version: ${{ needs.publish_cli_binaries.outputs.version }}
-      run_repo_release_checks: false
 
   promote_hstack_binaries:
     if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version != '' }}
@@ -1206,7 +1199,6 @@ jobs:
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
       retry_version: ${{ needs.publish_hstack_binaries.outputs.version }}
-      run_repo_release_checks: false
 
   publish_docker:
     if: always() && needs.resolve_resume.result == 'success' && needs.plan.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_docker_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
