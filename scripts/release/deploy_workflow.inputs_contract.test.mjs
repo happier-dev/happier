@@ -40,6 +40,8 @@ test('deploy workflow trusted-ref guard admits intended deployment refs and even
   const { parsed } = await loadWorkflow('deploy.yml');
   const guard = parsed.jobs?.trusted_ref_guard?.steps?.find((step) => step.name === 'Admit trusted workflow control ref');
   assert.ok(guard?.run, 'deploy.yml should keep deployment ref admission in trusted_ref_guard');
+  const manualGuard = parsed.jobs?.deploy?.steps?.find((step) => step.name === 'Enforce trusted refs for manual dispatch');
+  assert.ok(manualGuard?.run, 'deploy.yml should retain defense-in-depth for manual dispatch refs');
 
   const repository = 'happier-dev/happier';
   const execute = ({ ref, event }) => spawnSync('/bin/bash', ['-c', guard.run], {
@@ -55,13 +57,17 @@ test('deploy workflow trusted-ref guard admits intended deployment refs and even
     encoding: 'utf8',
   });
 
+  const canonicalDeployRefs = ['preview', 'production'].flatMap((environment) =>
+    ['ui', 'server', 'website', 'docs'].map((component) => `refs/heads/deploy/${environment}/${component}`),
+  );
   for (const input of [
     { ref: 'refs/heads/dev', event: 'workflow_dispatch' },
     { ref: 'refs/heads/preview', event: 'workflow_call' },
     { ref: 'refs/heads/main', event: 'workflow_dispatch' },
-    { ref: 'refs/heads/deploy/preview/ui', event: 'workflow_dispatch' },
-    { ref: 'refs/heads/deploy/production/server', event: 'push' },
-    { ref: 'refs/heads/deploy/preview/docs', event: 'workflow_call' },
+    ...canonicalDeployRefs.map((ref, index) => ({
+      ref,
+      event: ['workflow_dispatch', 'push', 'workflow_call'][index % 3],
+    })),
   ]) {
     const result = execute(input);
     assert.equal(result.status, 0, `${input.event} ${input.ref} should be admitted: ${result.stderr}`);
@@ -72,10 +78,38 @@ test('deploy workflow trusted-ref guard admits intended deployment refs and even
     { ref: 'refs/heads/deploy/staging/ui', event: 'workflow_dispatch' },
     { ref: 'refs/heads/deploy/preview', event: 'workflow_dispatch' },
     { ref: 'refs/heads/deploy/preview/', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/preview/not-a-component', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/production/evil/nested', event: 'workflow_dispatch' },
     { ref: 'refs/pull/123/merge', event: 'pull_request' },
     { ref: 'refs/heads/deploy/preview/ui', event: 'pull_request' },
   ]) {
     const result = execute(input);
     assert.notEqual(result.status, 0, `${input.event} ${input.ref} must fail closed`);
+  }
+
+  const executeManualGuard = ({ refName, event = 'workflow_dispatch' }) => spawnSync('/bin/bash', ['-c', manualGuard.run], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      GITHUB_EVENT_NAME: event,
+      GITHUB_REF_NAME: refName,
+    },
+    encoding: 'utf8',
+  });
+  for (const environment of ['preview', 'production']) {
+    for (const component of ['ui', 'server', 'website', 'docs']) {
+      const refName = `deploy/${environment}/${component}`;
+      const result = executeManualGuard({ refName });
+      assert.equal(result.status, 0, `${refName} should pass manual-dispatch defense-in-depth: ${result.stderr}`);
+    }
+  }
+  for (const refName of [
+    'deploy/preview/not-a-component',
+    'deploy/production/evil/nested',
+    'deploy/staging/ui',
+    'deploy/preview',
+  ]) {
+    const result = executeManualGuard({ refName });
+    assert.notEqual(result.status, 0, `${refName} must fail manual-dispatch defense-in-depth`);
   }
 });

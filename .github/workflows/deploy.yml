@@ -81,8 +81,14 @@ jobs:
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/"?*|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/"?*) ;;
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/ui"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/server"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/website"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/docs"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/ui"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/server"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/website"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/docs") ;;
             *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
           esac
 
@@ -134,9 +140,11 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|preview|main|deploy/*) ;;
+            dev|preview|main|\
+            deploy/preview/ui|deploy/preview/server|deploy/preview/website|deploy/preview/docs|\
+            deploy/production/ui|deploy/production/server|deploy/production/website|deploy/production/docs) ;;
             *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, main, or deploy/*." >&2
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, main, or a canonical deploy/<preview|production>/<ui|server|website|docs> ref." >&2
               exit 1
               ;;
           esac
