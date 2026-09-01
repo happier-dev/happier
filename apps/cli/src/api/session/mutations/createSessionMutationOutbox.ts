@@ -162,6 +162,14 @@ const sharedSessionMutationOutboxes = new Map<string, SessionMutationOutboxShare
 
 const loggedUnsupportedSessionTurnMutationDiagnostics = new Set<string>();
 
+function isSessionTurnMutationParkedForReleasedServer(
+    mutation: QueuedSessionMutation,
+    serverContract: SessionSyncPendingInputServerContractResult | null,
+): boolean {
+    return mutation.kind === 'session_turn'
+        && serverContract?.mode === 'released_server_v0_2_1';
+}
+
 function createQueuedSessionTurn(mutation: SessionTurnMutationV1): QueuedSessionMutation {
     const now = Date.now();
     return {
@@ -813,6 +821,14 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
             };
             for (let index = 0; index < batch.length; index += 1) {
                 const mutation = batch[index];
+                if (isSessionTurnMutationParkedForReleasedServer(
+                    mutation,
+                    sessionSyncPendingInputServerContract,
+                )) {
+                    remaining.push(mutation);
+                    refreshInFlightMutations(index + 1);
+                    continue;
+                }
                 if (mutation.kind === 'runtime_activity_snapshot') {
                     if (!supportsRuntimeActivityV2(sessionSyncPendingInputServerContract)) {
                         if (sessionSyncPendingInputServerContract?.runtimeActivity === 'legacy') {
@@ -1044,10 +1060,16 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                 publishRuntimeActivityTail({ custody: null, settlement: null });
             }
             const hasDeliverableMutation = mutations.some((mutation) => (
-                mutation.kind !== 'runtime_activity_snapshot'
-                || (
-                    runtimeActivitySnapshotInitialized
-                    && supportsRuntimeActivityV2(sessionSyncPendingInputServerContract)
+                !isSessionTurnMutationParkedForReleasedServer(
+                    mutation,
+                    sessionSyncPendingInputServerContract,
+                )
+                && (
+                    mutation.kind !== 'runtime_activity_snapshot'
+                    || (
+                        runtimeActivitySnapshotInitialized
+                        && supportsRuntimeActivityV2(sessionSyncPendingInputServerContract)
+                    )
                 )
             ));
             if (!closed && hasDeliverableMutation) {
