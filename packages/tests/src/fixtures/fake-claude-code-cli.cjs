@@ -540,6 +540,7 @@ void emitHookEvent('SessionStart', {
 async function runSdkStreamUntilEof() {
   const rl = readline.createInterface({ input: process.stdin });
   let initialized = false;
+  let permissionRequestHookCallbackId = null;
   let turn = 0;
   let stagedRuntimeActivityTaskId = null;
   let stagedRuntimeActivityTerminalEmitted = false;
@@ -655,14 +656,22 @@ async function runSdkStreamUntilEof() {
     };
   }
 
-  function createCanUseToolControlRequest(toolName, input) {
+  function createPermissionHookControlRequest(callbackId, toolName, input, toolUseId) {
     return {
       type: 'control_request',
-      request_id: `can_use_${randomUUID()}`,
+      request_id: `hook_callback_${randomUUID()}`,
       request: {
-        subtype: 'can_use_tool',
-        tool_name: toolName,
-        input,
+        subtype: 'hook_callback',
+        callback_id: callbackId,
+        tool_use_id: toolUseId,
+        input: {
+          hook_event_name: 'PermissionRequest',
+          session_id: sessionId,
+          cwd: process.cwd(),
+          tool_name: toolName,
+          tool_input: input,
+          tool_use_id: toolUseId,
+        },
       },
     };
   }
@@ -767,6 +776,21 @@ async function runSdkStreamUntilEof() {
     // Respond to Agent SDK control requests (initialize, set_permission_mode, etc).
     if (msg && typeof msg === 'object' && msg.type === 'control_request') {
       const requestId = typeof msg.request_id === 'string' ? msg.request_id : null;
+      if (msg?.request?.subtype === 'initialize') {
+        const registrations = msg?.request?.hooks?.PermissionRequest;
+        if (Array.isArray(registrations)) {
+          for (const registration of registrations) {
+            const callbackIds = registration?.hookCallbackIds;
+            const callbackId = Array.isArray(callbackIds)
+              ? callbackIds.find((value) => typeof value === 'string' && value.length > 0)
+              : null;
+            if (callbackId) {
+              permissionRequestHookCallbackId = callbackId;
+              break;
+            }
+          }
+        }
+      }
       safeAppendJsonl(logPath, {
         type: 'sdk_stdin',
         invocationId,
@@ -870,7 +894,10 @@ async function runSdkStreamUntilEof() {
       ]);
 
       emitSdk(assistant);
-      emitSdk(createCanUseToolControlRequest('Write', writeInput));
+      if (!permissionRequestHookCallbackId) {
+        throw new Error('permission-prompt-write requires an initialized PermissionRequest hook callback');
+      }
+      emitSdk(createPermissionHookControlRequest(permissionRequestHookCallbackId, 'Write', writeInput, writeToolUseId));
       // Intentionally omit the result message: the agent SDK will pause the turn
       // until the client approves/denies the permission and provides a tool_result.
       continue;
