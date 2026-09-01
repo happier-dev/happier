@@ -69,13 +69,20 @@ jobs:
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
           WORKFLOW_FILE: deploy.yml
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$EVENT_NAME" in
+            workflow_dispatch|workflow_call|push) ;;
+            *) echo "Unsupported deploy workflow event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/"?*|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/"?*) ;;
             *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
           esac
 

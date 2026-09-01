@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
@@ -35,11 +36,46 @@ test('deploy workflow does not include cli/stack targets (npm publish is handled
   assert.doesNotMatch(raw, /deploy preview cli/);
 });
 
-test('deploy workflow allows manual dispatch from deploy branches so protected environments remain reachable', async () => {
-  const { raw } = await loadWorkflow('deploy.yml');
-  assert.match(
-    raw,
-    /case "\$\{GITHUB_REF_NAME\}" in[\s\S]*deploy\/\*\)/,
-    'deploy.yml should allow workflow_dispatch from deploy/* refs because protected deploy environments only accept deploy branches'
-  );
+test('deploy workflow trusted-ref guard admits intended deployment refs and events only', async () => {
+  const { parsed } = await loadWorkflow('deploy.yml');
+  const guard = parsed.jobs?.trusted_ref_guard?.steps?.find((step) => step.name === 'Admit trusted workflow control ref');
+  assert.ok(guard?.run, 'deploy.yml should keep deployment ref admission in trusted_ref_guard');
+
+  const repository = 'happier-dev/happier';
+  const execute = ({ ref, event }) => spawnSync('/bin/bash', ['-c', guard.run], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      CALLER_REPOSITORY: repository,
+      WORKFLOW_REPOSITORY: repository,
+      WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@${ref}`,
+      WORKFLOW_FILE: 'deploy.yml',
+      EVENT_NAME: event,
+    },
+    encoding: 'utf8',
+  });
+
+  for (const input of [
+    { ref: 'refs/heads/dev', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/preview', event: 'workflow_call' },
+    { ref: 'refs/heads/main', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/preview/ui', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/production/server', event: 'push' },
+    { ref: 'refs/heads/deploy/preview/docs', event: 'workflow_call' },
+  ]) {
+    const result = execute(input);
+    assert.equal(result.status, 0, `${input.event} ${input.ref} should be admitted: ${result.stderr}`);
+  }
+
+  for (const input of [
+    { ref: 'refs/heads/feature/untrusted', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/staging/ui', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/preview', event: 'workflow_dispatch' },
+    { ref: 'refs/heads/deploy/preview/', event: 'workflow_dispatch' },
+    { ref: 'refs/pull/123/merge', event: 'pull_request' },
+    { ref: 'refs/heads/deploy/preview/ui', event: 'pull_request' },
+  ]) {
+    const result = execute(input);
+    assert.notEqual(result.status, 0, `${input.event} ${input.ref} must fail closed`);
+  }
 });
