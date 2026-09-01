@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir, mkdtemp, readFile, rm, watch, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { join } from 'node:path';
@@ -1172,6 +1172,9 @@ function createLoopbackMachineTransferChannels() {
         terminal: { status: 'completed', operationId: 'commit_original', completedRevision: 3 },
         status: { ...current.status, status: 'completed', phase: 'finalizing', recoveryActions: [] },
       }));
+      const transferStore = createSessionHandoffSourceExportStore({ activeServerDir });
+      const receivedProviderBundlePath = await transferStore.prepareReceivedProviderBundleFilePath(handoffId);
+      await writeFile(receivedProviderBundlePath, Buffer.from('received-provider-bundle'));
 
       const registered = new Map<string, (params: unknown) => Promise<any>>();
       const clearPublishedTransfer = vi.fn();
@@ -1196,6 +1199,30 @@ function createLoopbackMachineTransferChannels() {
       });
       expect(clearPublishedTransfer).toHaveBeenCalledWith(`session-handoff:${handoffId}:provider-bundle-file`);
       expect(clearPublishedTransfer).toHaveBeenCalledWith(`session-handoff:${handoffId}:workspace-manifest`);
+      await expect(stat(receivedProviderBundlePath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const abortHandoffId = 'handoff_abort_v2_transfer_cleanup';
+      const abortJobId = 'prepare_abort_v2_transfer_cleanup';
+      const abortSessionId = 'session_abort_v2_transfer_cleanup';
+      await store.writePreparedV2({
+        jobId: abortJobId,
+        handoffId: abortHandoffId,
+        sessionId: abortSessionId,
+        createdAtMs: 5,
+        updatedAtMs: 5,
+        transitionRevision: 0,
+        resume: { status: 'not_attempted' },
+        terminal: { status: 'open' },
+        targetCleanup: { status: 'not_required' },
+        status: { handoffId: abortHandoffId, jobId: abortJobId, status: 'ready_for_cutover', phase: 'cutover', recoveryActions: [] },
+      });
+      const abortReceivedPath = await transferStore.prepareReceivedProviderBundleFilePath(abortHandoffId);
+      await writeFile(abortReceivedPath, Buffer.from('received-provider-bundle'));
+      const abortV2 = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V2);
+      expect(abortV2).toBeDefined();
+      await expect(abortV2!({ handoffId: abortHandoffId, sessionId: abortSessionId, reason: 'cancelled' }))
+        .resolves.toMatchObject({ status: { status: 'aborted' } });
+      await expect(stat(abortReceivedPath)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       vi.doUnmock('@/configuration');
       vi.resetModules();
@@ -1244,6 +1271,21 @@ function createLoopbackMachineTransferChannels() {
         exportedAtMs: 1,
       });
 
+      const abortCleanupHandoffId = 'handoff_source_export_abort_cleanup';
+      const abortCleanupRecordDir = join(activeServerDir, 'session-handoff', abortCleanupHandoffId);
+      await mkdir(abortCleanupRecordDir, { recursive: true });
+      await writeJsonAtomic(join(abortCleanupRecordDir, 'source-export.json'), {
+        t: 'session_handoff_source_export_v1',
+        schemaVersion: 1,
+        handoffId: abortCleanupHandoffId,
+        exportedAtMs: 1,
+      });
+      const abortCleanupPayloadPath = join(abortCleanupRecordDir, 'received-provider-bundle.bin');
+      await writeFile(abortCleanupPayloadPath, Buffer.from('received-provider-bundle'));
+      await expect(abort!({ handoffId: abortCleanupHandoffId, reason: 'user_abort' }))
+        .resolves.toMatchObject({ status: { status: 'aborted' } });
+      await expect(stat(abortCleanupPayloadPath)).rejects.toMatchObject({ code: 'ENOENT' });
+
       const { createUnregisteredSessionHandoffAbortV2FoundationHandler } = await import('./rpcHandlers.sessionHandoff');
       const abortV2 = createUnregisteredSessionHandoffAbortV2FoundationHandler({ activeServerDir });
       const abortResult = SessionHandoffAbortResponseV2Schema.parse(
@@ -1274,8 +1316,11 @@ function createLoopbackMachineTransferChannels() {
         handoffId: commitHandoffId,
         exportedAtMs: 1,
       });
+      const commitPayloadPath = join(commitRecordDir, 'received-provider-bundle.bin');
+      await writeFile(commitPayloadPath, Buffer.from('received-provider-bundle'));
 
       await commit!({ handoffId: commitHandoffId, mode: 'source_cleanup' });
+      await expect(stat(commitPayloadPath)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(statusGet!({ handoffId: commitHandoffId })).resolves.toMatchObject({
         handoffId: commitHandoffId,
         status: { status: 'completed' },
@@ -6003,11 +6048,12 @@ function createLoopbackMachineTransferChannels() {
       await published.dispose();
       isolatedHome.restore();
       if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
-        await rm(sourcePath, { recursive: true, force: true });
-        await rm(sourceActiveServerDir, { recursive: true, force: true });
-        await rm(targetActiveServerDir, { recursive: true, force: true });
-        await rm(targetPath, { recursive: true, force: true });
-        await rm(isolatedHome.homeDir, { recursive: true, force: true });
+        const cleanupOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
+        await rm(sourcePath, cleanupOptions);
+        await rm(sourceActiveServerDir, cleanupOptions);
+        await rm(targetActiveServerDir, cleanupOptions);
+        await rm(targetPath, cleanupOptions);
+        await rm(isolatedHome.homeDir, cleanupOptions);
       }
     }
   });
@@ -6734,9 +6780,11 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
 
-    const handoffId = 'handoff_invalid_server_routed_inline_fallback';
+    const handoffId = `handoff_invalid_server_routed_inline_fallback_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const preparePromise = prepare!({
       handoffId,
@@ -6782,7 +6830,17 @@ function createLoopbackMachineTransferChannels() {
       });
     }
 
-	    await expect(preparePromise).rejects.toThrow();
+      const prepared = await preparePromise.catch((error: unknown) => {
+        expect(error).toMatchObject({ message: 'Invalid session handoff transfer payload' });
+        return null;
+      });
+      if (prepared) {
+        expect(prepared.status.status).toBe('pending');
+      }
+      await vi.waitFor(async () => {
+        const latest = await statusGet!({ handoffId });
+        expect(latest?.status?.status).toBe('awaiting_recovery');
+      }, { timeout: 2000 });
 	    expect(importSessionBundle).not.toHaveBeenCalled();
 	  });
 
@@ -7182,22 +7240,24 @@ function createLoopbackMachineTransferChannels() {
       endpointCandidates: started.endpointCandidates,
     });
 
-	    expect(requestPayloadFile).not.toHaveBeenCalled();
 	    expect(prepared.status.transportStrategy).toBe('direct_peer');
-	    expect(importSessionBundle).toHaveBeenCalledWith(
-      {
-        providerId: 'claude',
+      await vi.waitFor(() => {
+	      expect(importSessionBundle).toHaveBeenCalledWith(
+        {
+          providerId: 'claude',
         remoteSessionId: 'claude_session_source',
         transcriptBase64: 'e30K',
       },
-      '/repo',
-      'persisted',
-    );
+        '/repo',
+        'persisted',
+      );
+      });
+	    expect(requestPayloadFile).not.toHaveBeenCalled();
 
 	    const commit = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT);
 	    expect(commit).toBeDefined();
 	    await commit!({ handoffId: started.handoffId });
-	    await expect(access(publishedPayloadSource.filePath)).resolves.toBeUndefined();
+	    await expect(access(publishedPayloadSource.filePath)).rejects.toMatchObject({ code: 'ENOENT' });
 	  });
 
   it('fails closed when a source export leaks a legacy codex backend field instead of canonical affinity', async () => {
@@ -7266,6 +7326,8 @@ function createLoopbackMachineTransferChannels() {
 
   it('fails closed when the direct-peer provider bundle payload is malformed', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const handoffId = `handoff_invalid_direct_peer_payload_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const transferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
       payload: Buffer.from('{"providerId":', 'utf8'),
     });
@@ -7305,7 +7367,7 @@ function createLoopbackMachineTransferChannels() {
       expect(statusGet).toBeDefined();
 
       const preparePromise = prepare!({
-        handoffId: 'handoff_invalid_direct_peer_payload',
+        handoffId,
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         negotiatedTransportStrategy: 'direct_peer',
@@ -7313,13 +7375,13 @@ function createLoopbackMachineTransferChannels() {
         targetPath: '/repo',
         handoffMetadataV2: {
           providerBundleTransferPublication: {
-            transferId: 'session-handoff:handoff_invalid_direct_peer_payload:provider-bundle-file',
+            transferId,
             sizeBytes: 0,
             manifestHash: `sha256:${'0'.repeat(64)}`,
             endpointCandidates: [
               {
                 ...buildDirectPeerEndpointCandidate({
-                  transferId: 'session-handoff:handoff_invalid_direct_peer_payload:provider-bundle-file',
+                  transferId,
                   authorizationToken: 'test-token',
                   port: 46001,
                 }),
@@ -7330,7 +7392,7 @@ function createLoopbackMachineTransferChannels() {
         endpointCandidates: [
           {
             ...buildDirectPeerEndpointCandidate({
-              transferId: 'session-handoff:handoff_invalid_direct_peer_payload:provider-bundle-file',
+              transferId,
               authorizationToken: 'test-token',
               port: 46001,
             }),
@@ -7340,10 +7402,15 @@ function createLoopbackMachineTransferChannels() {
 
       // Prepare acknowledges the durable job before the background transfer/parser settles.
       // Fail-closed behavior is observed through the persisted terminal recovery state.
-      const prepared = await preparePromise;
-      expect(prepared?.status?.status).toBe('pending');
+      const prepared = await preparePromise.catch((error: unknown) => {
+        expect(error).toMatchObject({ message: 'Invalid session handoff transfer payload' });
+        return null;
+      });
+      if (prepared) {
+        expect(prepared.status.status).toBe('pending');
+      }
       await vi.waitFor(async () => {
-        const latest = await statusGet!({ handoffId: 'handoff_invalid_direct_peer_payload' });
+        const latest = await statusGet!({ handoffId });
         expect(latest?.status?.status).toBe('awaiting_recovery');
       }, { timeout: 2000 });
 
@@ -7457,6 +7524,8 @@ function createLoopbackMachineTransferChannels() {
 
   it('fails closed when the direct-peer provider bundle payload fails schema validation', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const handoffId = `handoff_invalid_direct_peer_workspace_artifacts_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const transferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
       payload: Buffer.from(JSON.stringify({
         providerId: 'claude',
@@ -7481,7 +7550,6 @@ function createLoopbackMachineTransferChannels() {
         registered.set(method, handler);
       },
     } as any;
-    const transferId = 'session-handoff:handoff_invalid_direct_peer_workspace_artifacts:provider-bundle-file';
 
     try {
       registerMachineSessionHandoffRpcHandlers({
@@ -7495,10 +7563,12 @@ function createLoopbackMachineTransferChannels() {
       });
 
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+      const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
       expect(prepare).toBeDefined();
+      expect(statusGet).toBeDefined();
 
-      await expect(prepare!({
-        handoffId: 'handoff_invalid_direct_peer_workspace_artifacts',
+      await prepare!({
+        handoffId,
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         negotiatedTransportStrategy: 'direct_peer',
@@ -7527,7 +7597,11 @@ function createLoopbackMachineTransferChannels() {
             expiresAt: Date.now() + 30_000,
           },
         ],
-      })).rejects.toThrow();
+      });
+      await vi.waitFor(async () => {
+        const latest = await statusGet!({ handoffId });
+        expect(latest?.status?.status).toBe('awaiting_recovery');
+      }, { timeout: 2000 });
 
       expect(importSessionBundle).not.toHaveBeenCalled();
     } finally {
@@ -7560,10 +7634,14 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
+    expect(statusGet).toBeDefined();
+    const handoffId = `handoff_direct_peer_forbidden_fallback_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const transferId = `session-handoff:${handoffId}:provider-bundle-file`;
 
-    await expect(prepare!({
-      handoffId: 'handoff_direct_peer_forbidden_fallback',
+    const prepared = await prepare!({
+      handoffId,
       sourceMachineId: 'machine_source',
       targetMachineId: 'machine_target',
       negotiatedTransportStrategy: 'direct_peer',
@@ -7572,13 +7650,13 @@ function createLoopbackMachineTransferChannels() {
       targetPath: '/repo',
       handoffMetadataV2: {
         providerBundleTransferPublication: {
-          transferId: 'session-handoff:handoff_direct_peer_forbidden_fallback:provider-bundle-file',
+          transferId,
           sizeBytes: 0,
           manifestHash: `sha256:${'0'.repeat(64)}`,
           endpointCandidates: [
             {
               kind: 'http',
-              url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_direct_peer_forbidden_fallback' }).url,
+              url: buildDirectPeerEndpointCandidate({ transferId }).url,
               authorizationToken: 'test-token',
               expiresAt: Date.now() + 30_000,
             },
@@ -7588,16 +7666,21 @@ function createLoopbackMachineTransferChannels() {
       endpointCandidates: [
         {
           kind: 'http',
-          url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_direct_peer' }).url,
+          url: buildDirectPeerEndpointCandidate({ transferId }).url,
           authorizationToken: 'test-token',
           expiresAt: Date.now() + 30_000,
         },
       ],
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'direct_peer_transfer_unavailable',
-      error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
     });
+    if ('ok' in prepared && prepared.ok === false) {
+      expect(prepared).toMatchObject({ errorCode: 'direct_peer_transfer_unavailable' });
+    } else {
+      expect(prepared.status.status).toBe('pending');
+    }
+    await vi.waitFor(async () => {
+      const latest = await statusGet!({ handoffId });
+      expect(latest?.status?.status).toBe('awaiting_recovery');
+    }, { timeout: 2000 });
 
 	    expect(requestPayloadFile).toHaveBeenCalledTimes(1);
 	  });

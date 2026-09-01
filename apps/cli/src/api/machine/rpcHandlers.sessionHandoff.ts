@@ -1574,6 +1574,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId }));
+    await sourceExportStore.releaseTransferFiles(handoffId);
   };
   const loadRemoteSessionMetadata =
     params.loadSessionMetadata ??
@@ -3309,6 +3310,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
+    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId);
     return result;
   });
 
@@ -3459,6 +3461,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
+    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId);
     return { handoffId: parsed.data.handoffId, status };
   });
 
@@ -3539,6 +3542,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
+    await sourceExportStore.releaseTransferFiles(parsed.data.handoffId);
     return { handoffId: parsed.data.handoffId, status };
   });
 
