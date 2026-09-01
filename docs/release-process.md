@@ -57,10 +57,11 @@ and installer/updater trust-root gates are selected by the affected diff rather
 than every server, CLI, preview, or stable candidate.
 
 An explicit maintainer may refine the heavy upgrade/continuity suite selection
-or waive exact-SHA CI with a bounded reason. The workflow reports that evidence
-as `WAIVED`, never `PASS`. Candidate identity, artifact integrity, signing,
-release authorization, MySQL migration admission, and trust-root checks remain
-hard contracts on this shipping line.
+or waive exact-SHA source certification with a bounded reason. That source
+waiver also skips the source-only MySQL and platform-service gates; the workflow
+reports the evidence as `WAIVED`, never `PASS`. Candidate identity, artifact
+integrity, binary smoke, signing/notarization, release authorization, and
+installer/updater trust-root checks remain hard contracts on this shipping line.
 
 The slow test lane contains two pinned server-v0.2.1 regressions for pending
 queue and first-prompt behavior. They are exact tests, not a general

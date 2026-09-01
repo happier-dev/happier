@@ -117,7 +117,8 @@ export async function main(argv = process.argv.slice(2)) {
   const base = String(values.base ?? '').trim();
   const head = String(values.head ?? '').trim();
   if (!base || !head) throw new Error('--base and --head are required');
-  const normalizedReleaseChannel = releaseChannel(values.channel);
+  const rawReleaseChannel = String(values.channel ?? '').trim();
+  const normalizedReleaseChannel = rawReleaseChannel ? releaseChannel(rawReleaseChannel) : 'dev';
   const repositoryRoot = String(values['repository-root'] ?? '').trim() || undefined;
   const paths = git(['diff', '--name-only', `${base}..${head}`], repositoryRoot)
     .split('\n')
@@ -137,7 +138,18 @@ export async function main(argv = process.argv.slice(2)) {
   if (githubOutput) {
     await appendFile(githubOutput, renderReleaseChangeAnalysisGitHubOutput(result), 'utf8');
   } else {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (rawReleaseChannel) {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } else {
+      const {
+        releaseChannel: _releaseChannel,
+        publicApiHumanReviewRequired: _publicApiHumanReviewRequired,
+        publicSdkReleaseApprovalRequired: _publicSdkReleaseApprovalRequired,
+        publicApiComparisons: _publicApiComparisons,
+        ...legacyResult
+      } = result;
+      process.stdout.write(`${JSON.stringify(legacyResult)}\n`);
+    }
   }
   return result;
 }

@@ -40,7 +40,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       "--deploy-environment <env>        dev|preview|production (default: preview).",
       '--deploy-targets <csv>            ui,server,website,docs,cli,stack,server_runner (default: ui,server,website,docs).',
       '--force-deploy <bool>             true|false (default: false).',
-      '--waive-ci <bool>                Explicit maintainer waiver for exact-SHA CI evidence (default: false).',
+      '--waive-ci <bool>                Explicit maintainer waiver for exact-SHA source CI plus source-only MySQL/platform gates (default: false).',
       '--include-validation-suites <csv> Add heavy validation beyond the risk-selected defaults.',
       '--waive-validation-suites <csv>  Explicitly waive waivable risk-selected suites.',
       '--override-reason <text>         Required single-line reason for a waiver.',

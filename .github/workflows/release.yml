@@ -55,7 +55,7 @@ on:
           - build_only
           - build_and_publish
       waive_ci:
-        description: "Maintainer override — waive exact-SHA CI evidence for this candidate"
+        description: "Maintainer override — waive exact-SHA source CI and source-only MySQL/platform gates"
         required: true
         default: false
         type: boolean
@@ -615,7 +615,7 @@ jobs:
   mysql_db_contract:
     name: Server DB Contract (MySQL 8)
     needs: [plan, ci, admit_release_notes]
-    if: ${{ inputs.dry_run != true && needs.plan.outputs.publish_server_runtime_needed == 'true' && needs.plan.outputs.risk_mysql_contract == 'true' }}
+    if: ${{ inputs.dry_run != true && inputs.waive_ci != true && needs.plan.outputs.publish_server_runtime_needed == 'true' && needs.plan.outputs.risk_mysql_contract == 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/extended-db-tests.yml
@@ -630,7 +630,7 @@ jobs:
   platform_service_validation:
     name: Platform service validation
     needs: [plan, ci, admit_release_notes]
-    if: ${{ inputs.dry_run != true && needs.plan.outputs.risk_platform_services == 'true' && (needs.plan.outputs.publish_server_runtime_needed == 'true' || needs.plan.outputs.publish_cli_binaries_needed == 'true' || needs.plan.outputs.publish_stack == 'true') }}
+    if: ${{ inputs.dry_run != true && inputs.waive_ci != true && needs.plan.outputs.risk_platform_services == 'true' && (needs.plan.outputs.publish_server_runtime_needed == 'true' || needs.plan.outputs.publish_cli_binaries_needed == 'true' || needs.plan.outputs.publish_stack == 'true') }}
     permissions:
       contents: read
       pull-requests: read
@@ -717,6 +717,7 @@ jobs:
           PUBLISH_SERVER_RUNTIME_NEEDED: ${{ needs.plan.outputs.publish_server_runtime_needed }}
           PUBLISH_CLI_BINARIES_NEEDED: ${{ needs.plan.outputs.publish_cli_binaries_needed }}
           PUBLISH_STACK: ${{ needs.plan.outputs.publish_stack }}
+          WAIVE_SOURCE_CHECKS: ${{ inputs.waive_ci }}
           RISK_MYSQL_CONTRACT: ${{ needs.plan.outputs.risk_mysql_contract }}
           RISK_PLATFORM_SERVICES: ${{ needs.plan.outputs.risk_platform_services }}
           RISK_TRUST_ROOTS: ${{ needs.plan.outputs.risk_trust_roots }}

@@ -91,3 +91,36 @@ test('release analyze CLI accepts a channel and emits the strict hmaint v1 envel
   assert.equal(analysis.publicSdkReleaseApprovalRequired, false);
   assert.deepEqual(analysis.publicApiComparisons, []);
 });
+
+test('release analyze CLI preserves the advertised legacy v1 envelope when channel is omitted', () => {
+  const output = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'release-analyze',
+      '--base', 'HEAD',
+      '--head', 'HEAD',
+      '--profile', 'integrated',
+      '--has-cli-candidate', 'false',
+      '--has-server-candidate', 'false',
+      '--has-published-relay-predecessor', 'false',
+      '--repository-root', repoRoot,
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const analysis = JSON.parse(output);
+
+  assert.deepEqual(Object.keys(analysis).sort(), [
+    'base',
+    'changedPaths',
+    'compatibilityAnalysisRequired',
+    'deepCertification',
+    'head',
+    'kind',
+    'requiredFastSuites',
+    'requiredHeavySuites',
+    'risks',
+    'schemaVersion',
+    'skippedHeavySuites',
+  ]);
+});

@@ -221,6 +221,7 @@ test('server releases admit the focused MySQL contract and stable platform evide
   assert.equal(mysqlGate.uses, './.github/workflows/extended-db-tests.yml');
   assert.match(mysqlGate.if, /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/);
   assert.match(mysqlGate.if, /needs\.plan\.outputs\.risk_mysql_contract == 'true'/);
+  assert.match(mysqlGate.if, /inputs\.waive_ci != true/);
   assert.doesNotMatch(mysqlGate.if, /checks_profile/);
   assert.deepEqual(mysqlGate.with, {
     checkout_sha: '${{ needs.plan.outputs.source_sha }}',
@@ -233,6 +234,7 @@ test('server releases admit the focused MySQL contract and stable platform evide
 
   assert.equal(platformGate.uses, './.github/workflows/tests.yml');
   assert.match(platformGate.if, /needs\.plan\.outputs\.risk_platform_services == 'true'/);
+  assert.match(platformGate.if, /inputs\.waive_ci != true/);
   assert.match(platformGate.if, /needs\.plan\.outputs\.publish_stack == 'true'/);
   assert.equal(platformGate.with.checkout_sha, '${{ needs.plan.outputs.source_sha }}');
   assert.equal(platformGate.with.select_jobs_explicitly, true);
@@ -249,6 +251,7 @@ test('server releases admit the focused MySQL contract and stable platform evide
   assert.equal(admissionStep.env.RISK_PLATFORM_SERVICES, '${{ needs.plan.outputs.risk_platform_services }}');
   assert.equal(admissionStep.env.RISK_TRUST_ROOTS, '${{ needs.plan.outputs.risk_trust_roots }}');
   assert.equal(admissionStep.env.PUBLISH_STACK, '${{ needs.plan.outputs.publish_stack }}');
+  assert.equal(admissionStep.env.WAIVE_SOURCE_CHECKS, '${{ inputs.waive_ci }}');
 
   for (const jobName of ['promote_preview', 'promote_main']) {
     assert.ok(release.jobs[jobName].needs.includes('release_admission'));
