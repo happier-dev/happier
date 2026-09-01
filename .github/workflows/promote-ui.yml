@@ -584,7 +584,7 @@ jobs:
       platform: all
       profile: auto
       action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
-      publish_apk_release: "false"
+      publish_apk_release: ${{ 'false' }}
       release_message: ${{ needs.promote.outputs.release_notes_expo_message }}
       release_notes_id: ${{ inputs.release_notes_id }}
 
@@ -602,7 +602,7 @@ jobs:
       platform: android
       profile: ${{ inputs.environment == 'production' && 'production-apk' || 'preview-apk' }}
       action: build_only
-      publish_apk_release: "true"
+      publish_apk_release: ${{ 'true' }}
       release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
       release_notes_id: ${{ inputs.release_notes_id }}
 

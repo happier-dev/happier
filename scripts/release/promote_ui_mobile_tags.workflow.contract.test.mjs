@@ -59,7 +59,8 @@ test('promote-ui runs a dedicated public APK release build for preview and produ
   assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
   assert.match(raw, /platform:\s*android/);
   assert.match(raw, /profile:\s*\$\{\{\s*inputs\.environment == 'production' && 'production-apk' \|\| 'preview-apk'\s*\}\}/);
-  assert.match(raw, /publish_apk_release:\s*"true"/);
+  assert.match(raw, /mobile_native:[\s\S]*?publish_apk_release:\s*\$\{\{\s*'false'\s*\}\}/);
+  assert.match(raw, /mobile_apk_release:[\s\S]*?publish_apk_release:\s*\$\{\{\s*'true'\s*\}\}/);
 });
 
 test('promote-ui passes the exact candidate release-note projection to desktop and APK publishers', async () => {
