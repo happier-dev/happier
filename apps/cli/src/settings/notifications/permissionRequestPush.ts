@@ -1,7 +1,6 @@
 import type { AccountSettings } from '@happier-dev/protocol';
 import type { PermissionMode } from '@/api/types';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 import type { AgentRequestKind } from '@/agent/permissions/requestKind';
 import { dispatchActivityNotificationAsync } from '@/activity/notifications/dispatchActivityNotification';
 import {
@@ -157,17 +156,6 @@ export function sendPermissionRequestPushNotificationBestEffort(params: Readonly
   void sendPermissionRequestPushNotificationAsync(params).catch(() => {});
 }
 
-/**
- * Returns true when the given permission mode would auto-approve the tool,
- * meaning a push notification would just be noise.
- */
-function isAutoApprovedByMode(permissionMode: PermissionMode | null | undefined, toolName: string): boolean {
-  if (!permissionMode) return false;
-  if (permissionMode === 'yolo' || permissionMode === 'bypassPermissions') return true;
-  if (permissionMode === 'safe-yolo' && !isDefaultWriteLikeToolName(toolName)) return true;
-  return false;
-}
-
 export function sendPermissionRequestPushNotificationForActiveAccount(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
@@ -179,7 +167,6 @@ export function sendPermissionRequestPushNotificationForActiveAccount(params: Re
   toolInput?: unknown;
   toolDetails?: string | null;
 }>): void {
-  if (isAutoApprovedByMode(params.permissionMode, params.toolName)) return;
   const settings = getActiveAccountSettingsSnapshot()?.settings ?? null;
   const settingsSecretsReadKeys = getActiveAccountSettingsSnapshot()?.settingsSecretsReadKeys ?? [];
   sendPermissionRequestPushNotificationBestEffort({

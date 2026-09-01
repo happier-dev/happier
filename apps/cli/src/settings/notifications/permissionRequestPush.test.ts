@@ -1,9 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
+import {
+  resetActiveAccountSettingsSnapshotForTests,
+  setActiveAccountSettingsSnapshot,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-import { sendPermissionRequestPushNotificationAsync } from './permissionRequestPush';
+import {
+  sendPermissionRequestPushNotificationAsync,
+  sendPermissionRequestPushNotificationForActiveAccount,
+} from './permissionRequestPush';
+
+beforeEach(() => {
+  resetActiveAccountSettingsSnapshotForTests();
+});
 
 describe('sendPermissionRequestPushNotificationAsync', () => {
   it('does not send when permissionRequest pushes are disabled', async () => {
@@ -47,6 +58,30 @@ describe('sendPermissionRequestPushNotificationAsync', () => {
       expect.stringContaining('Claude asks permission to use Read'),
       expect.objectContaining({ sessionId: 's1', requestId: 'p1' }),
     );
+  });
+
+  it('notifies for an actual safe-yolo permission request instead of predicting Auto approval', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
+    });
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings,
+      settingsVersion: 1,
+      loadedAtMs: Date.now(),
+      settingsSecretsReadKeys: [],
+    });
+
+    sendPermissionRequestPushNotificationForActiveAccount({
+      pushSender: { sendToAllDevicesAsync },
+      sessionId: 's-auto',
+      permissionId: 'p-auto',
+      toolName: 'Read',
+      permissionMode: 'safe-yolo',
+    });
+
+    await vi.waitFor(() => expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1));
   });
 
   it('does not throw when push sender throws', async () => {

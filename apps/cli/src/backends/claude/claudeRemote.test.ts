@@ -244,6 +244,7 @@ describe('claudeRemote', () => {
       '--plugin-dir',
       '/tmp/happier-hook-plugin',
     ]);
+    expect((call?.options as any)?.canCallTool).toBeUndefined();
   });
 
   it('confirms provider acceptance after the legacy SDK reports successful prompt transport', async () => {

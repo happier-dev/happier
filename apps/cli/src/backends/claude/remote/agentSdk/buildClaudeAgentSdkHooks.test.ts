@@ -69,13 +69,18 @@ describe('buildClaudeAgentSdkHooks', () => {
     }
   });
 
-  it('does not register blocking PermissionRequest hooks when canUseTool can wait indefinitely', () => {
+  it('registers PermissionRequest and AskUserQuestion hooks so Claude Auto remains the permission authority', () => {
     const { hooks } = buildHooks();
 
-    expect(hooks.PermissionRequest).toBeUndefined();
+    expect(hooks.PermissionRequest).toEqual([
+      expect.objectContaining({ matcher: '' }),
+    ]);
+    expect(hooks.PreToolUse).toEqual([
+      expect.objectContaining({ matcher: 'AskUserQuestion' }),
+    ]);
   });
 
-  it('preserves permission metadata and provider updates through canUseTool', async () => {
+  it('preserves permission metadata and provider updates through PermissionRequest hooks', async () => {
     const updatedInput = { file_path: '/tmp/file.txt' };
     const updatedPermissions = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }];
     const suggestions = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }];
@@ -84,17 +89,21 @@ describe('buildClaudeAgentSdkHooks', () => {
       updatedInput,
       updatedPermissions,
     }));
-    const { canUseTool } = buildHooks(canCallTool);
+    const { hooks } = buildHooks(canCallTool);
     const signal = new AbortController().signal;
+    const registrations = hooks.PermissionRequest as Array<{
+      hooks: Array<(input: unknown, toolUseId: string, options: { signal: AbortSignal }) => Promise<unknown>>;
+    }>;
 
-    const output = await canUseTool('Read', { file_path: '/tmp/input.txt' }, {
-      signal,
-      toolUseID: 'toolu_123',
-      agentID: 'agent_456',
-      suggestions,
-      blockedPath: '/tmp/blocked.txt',
-      decisionReason: 'requires approval',
-    });
+    const output = await registrations[0]!.hooks[0]!({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Read',
+      tool_input: { file_path: '/tmp/input.txt' },
+      permission_suggestions: suggestions,
+      blocked_path: '/tmp/blocked.txt',
+      decision_reason: 'requires approval',
+      agent_id: 'agent_456',
+    }, 'toolu_123', { signal });
 
     expect(canCallTool).toHaveBeenCalledWith(
       'Read',
@@ -110,9 +119,12 @@ describe('buildClaudeAgentSdkHooks', () => {
       }),
     );
     expect(output).toEqual({
-      behavior: 'allow',
-      updatedInput,
-      updatedPermissions,
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow', updatedInput, updatedPermissions },
+      },
     });
   });
 });

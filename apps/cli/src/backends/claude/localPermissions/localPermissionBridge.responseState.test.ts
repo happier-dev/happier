@@ -151,7 +151,7 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
     await expect(unrelated).resolves.toMatchObject({ suppressOutput: true });
   });
 
-  it('auto-completes only pending requests that match mode side effects', async () => {
+  it('does not reclassify pending PermissionRequest hooks when mode changes to safe-yolo', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-mode-side-effects-match-only');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
     bridge.activate();
@@ -183,14 +183,15 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
     await expect(first).resolves.toMatchObject({
       hookSpecificOutput: { decision: { behavior: 'allow' } },
     });
-    await expect(matching).resolves.toMatchObject({
-      hookSpecificOutput: { decision: { behavior: 'allow' } },
-    });
     expect(client.agentState.requests.toolu_mode_match_1).toBeUndefined();
-    expect(client.agentState.requests.toolu_mode_match_2).toBeUndefined();
+    expect(client.agentState.requests.toolu_mode_match_2).toBeDefined();
     expect(client.agentState.requests.toolu_mode_write_like_1).toBeDefined();
     expect(client.agentState.completedRequests.toolu_mode_write_like_1).toBeUndefined();
 
+    await permissionHandler?.({ id: 'toolu_mode_match_2', approved: false });
+    await expect(matching).resolves.toMatchObject({
+      hookSpecificOutput: { decision: { behavior: 'deny' } },
+    });
     bridge.dispose();
     await expect(writeLike).resolves.toMatchObject({ suppressOutput: true });
   });

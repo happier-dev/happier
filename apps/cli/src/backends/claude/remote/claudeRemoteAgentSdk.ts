@@ -626,7 +626,6 @@ export async function claudeRemoteAgentSdk(opts: {
             }),
     });
     const hooks = builtHooks.hooks as any;
-    const canUseTool = builtHooks.canUseTool as any;
 
     let syntheticUuidCounter = 0;
     const createSyntheticUuid = () => `happier_synth_${process.pid}_${++syntheticUuidCounter}`;
@@ -767,7 +766,6 @@ export async function claudeRemoteAgentSdk(opts: {
             maxTurns: argOverrides.maxTurns,
             systemPrompt: buildSystemPrompt(),
             strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
-            canUseTool,
             ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
             env: claudeSubprocessEnv,
             executable: runtimeExecutable,
