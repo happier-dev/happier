@@ -375,6 +375,7 @@ export async function prepareBinaryReleaseAssets(params) {
         product: productSpec.id,
         version,
         releaseChannel: channel,
+        manifestsInArtifactsRoot: params.preparedArtifacts === true && params.finalizedArtifacts !== true,
         skipSmoke: params.skipSmoke === true,
       },
     });
@@ -396,6 +397,7 @@ export async function prepareBinaryReleaseAssets(params) {
         product: productSpec.id,
         version,
         releaseChannel: channel,
+        manifestsInArtifactsRoot: params.preparedArtifacts === true && params.finalizedArtifacts !== true,
         skipSmoke: params.skipSmoke === true,
       },
     });
