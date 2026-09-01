@@ -68,6 +68,7 @@ jobs:
   resolve:
     name: Resolve flags
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       run_ui_e2e: ${{ steps.flags.outputs.run_ui_e2e }}
       ui_e2e_specs: ${{ steps.flags.outputs.ui_e2e_specs }}
@@ -269,6 +270,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -285,6 +287,7 @@ jobs:
 
   trusted_ref_guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:

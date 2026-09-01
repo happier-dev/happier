@@ -104,6 +104,7 @@ test('release workflows bound every runner job', async () => {
     'release-npm.yml',
     'release.yml',
     'resolve-release-resume.yml',
+    'tests-dispatch.yml',
     'verify-release-resume-candidates.yml',
   ];
   const longLaneMinimums = {
@@ -123,6 +124,11 @@ test('release workflows bound every runner job', async () => {
     'promote-website.yml': { deploy_cloudflare: 60 },
     'publish-docker.yml': { publish: 120 },
     'release-npm.yml': { release: 120 },
+    'tests-dispatch.yml': {
+      resolve: 10,
+      release_actor_guard: 15,
+      trusted_ref_guard: 10,
+    },
   };
 
   for (const file of files) {
