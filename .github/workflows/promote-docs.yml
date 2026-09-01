@@ -244,7 +244,7 @@ jobs:
       - name: Upload the exact built site
         uses: actions/upload-artifact@v4
         with:
-          name: docs-out-${{ github.sha }}
+          name: docs-out-${{ needs.resolve_source.outputs.candidate_sha }}
           path: apps/docs/out
           retention-days: 7
           if-no-files-found: error
@@ -314,7 +314,7 @@ jobs:
   # reconnect Cloudflare's Git integration: two publishers for one Worker race,
   # and CI is the one that ran the checks.
   deploy_cloudflare:
-    needs: [promote]
+    needs: [release_actor_guard, resolve_source, validate_candidate, promote]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: cloudflare-deploy
@@ -333,7 +333,7 @@ jobs:
       - name: Download the exact built site
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: docs-out-${{ github.sha }}
+          name: docs-out-${{ needs.resolve_source.outputs.candidate_sha }}
           path: apps/docs/out
       # A green build that produced a partial export publishes a dead site just
       # as successfully as a good one. These are the files whose absence is
@@ -360,7 +360,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_SHA: ${{ needs.resolve_source.outputs.candidate_sha }}
         working-directory: apps/docs
         run: |
           bash ../../scripts/pipeline/cloudflare/publish-worker.sh \
@@ -369,5 +369,6 @@ jobs:
       - name: Cloudflare note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.resolve_source.outputs.candidate_sha }}
         run: |
-          echo "Published apps/docs/out to the happier-docs Worker ($DEPLOY_ENVIRONMENT) from ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published apps/docs/out to the happier-docs Worker ($DEPLOY_ENVIRONMENT) from $RELEASE_SHA." >> "$GITHUB_STEP_SUMMARY"
