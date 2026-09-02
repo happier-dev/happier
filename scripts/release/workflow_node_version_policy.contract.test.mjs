@@ -164,9 +164,8 @@ test('every workflow runner job declares a positive timeout bound', async () => 
   }
 });
 
-test('metadata-only and opaque-promotion jobs do not install workspace dependencies', async () => {
+test('metadata-only and opaque binary-promotion jobs do not install workspace dependencies', async () => {
   const jobsByWorkflow = {
-    'promote-ui.yml': ['promote'],
     'publish-cli-binaries.yml': ['prepare', 'promote_existing'],
     'publish-docker.yml': ['publish'],
     'publish-hstack-binaries.yml': ['prepare', 'promote_existing'],

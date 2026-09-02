@@ -82,6 +82,20 @@ test('promote-ui prepares OTA bytes without secrets and publishes only the bound
   assert.doesNotMatch(promoteText, /ui-mobile-release/);
 });
 
+test('promote-ui installs the app-config runtime before publishing prepared OTA bytes', async () => {
+  const { parsed } = await loadWorkflow('promote-ui.yml');
+  const steps = parsed?.jobs?.promote?.steps ?? [];
+  const installIndex = steps.findIndex((step) => step?.name === 'Install trusted OTA publisher dependencies');
+  const publishIndex = steps.findIndex((step) => step?.name === 'Publish Android OTA from validated bytes');
+  const firstCredentialIndex = steps.findIndex((step) => JSON.stringify(step).includes('secrets.'));
+  assert.ok(installIndex >= 0, 'trusted OTA publisher must install app-config dependencies');
+  assert.ok(installIndex < publishIndex, 'app-config dependencies must exist before EAS reads app.config.js');
+  assert.ok(installIndex < firstCredentialIndex, 'dependency lifecycle hooks must finish before any release credential is materialized');
+  assert.equal(steps[installIndex]?.uses, './.github/actions/install-yarn-dependencies');
+  assert.match(String(steps[installIndex]?.env?.HAPPIER_INSTALL_SCOPE ?? ''), /ui/);
+  assert.doesNotMatch(JSON.stringify(steps[installIndex]), /secrets\./);
+});
+
 test('prepared OTA artifacts preserve manifest-covered hidden files across the trust boundary', async () => {
   for (const [workflowName, jobName, stepName] of [
     ['publish-ui-mobile-dev.yml', 'prepare_ota', 'Upload exact prepared OTA bytes'],

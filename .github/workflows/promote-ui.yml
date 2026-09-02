@@ -475,6 +475,21 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install trusted OTA publisher dependencies
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,release-runtime"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
       - name: Download release notes assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
