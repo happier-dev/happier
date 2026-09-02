@@ -93,6 +93,18 @@ on:
         required: false
         default: false
         type: boolean
+      cli_version:
+        required: false
+        default: ""
+        type: string
+      stack_version:
+        required: false
+        default: ""
+        type: string
+      server_version:
+        required: false
+        default: ""
+        type: string
       release_message:
         description: "Release message — Optional note to include at the top of GitHub rolling release notes"
         required: false
@@ -344,6 +356,9 @@ jobs:
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          INPUT_CLI_VERSION: ${{ inputs.cli_version }}
+          INPUT_STACK_VERSION: ${{ inputs.stack_version }}
+          INPUT_SERVER_VERSION: ${{ inputs.server_version }}
           RESOLVED_SOURCE_REF: ${{ steps.resolve_source.outputs.ref }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
@@ -384,12 +399,17 @@ jobs:
               --publish-cli "${INPUT_PUBLISH_CLI}" \
               --publish-stack "${INPUT_PUBLISH_STACK}" \
               --publish-server "${INPUT_PUBLISH_SERVER}" \
+              --cli-version "${INPUT_CLI_VERSION}" \
+              --stack-version "${INPUT_STACK_VERSION}" \
+              --server-version "${INPUT_SERVER_VERSION}" \
               --server-runner-dir "${SERVER_RUNNER_DIR}" \
               --write false)"
           fi
 
           if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            if [ -n "${INPUT_CLI_VERSION}" ]; then
+              cli_version="${INPUT_CLI_VERSION}"
+            elif [ "${INPUT_CHANNEL}" = "preview" ]; then
               cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||""));' "${versions_json}")"
             else
               cli_version="$(node -e 'process.stdout.write(String(require("./apps/cli/package.json").version ?? ""));')"
@@ -398,7 +418,9 @@ jobs:
           fi
 
           if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            if [ -n "${INPUT_STACK_VERSION}" ]; then
+              stack_version="${INPUT_STACK_VERSION}"
+            elif [ "${INPUT_CHANNEL}" = "preview" ]; then
               stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||""));' "${versions_json}")"
             else
               stack_version="$(node -e 'process.stdout.write(String(require("./apps/stack/package.json").version ?? ""));')"
@@ -407,7 +429,9 @@ jobs:
           fi
 
           if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            if [ -n "${INPUT_SERVER_VERSION}" ]; then
+              server_version="${INPUT_SERVER_VERSION}"
+            elif [ "${INPUT_CHANNEL}" = "preview" ]; then
               server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||""));' "${versions_json}")"
             else
               server_version="$(node -e 'process.stdout.write(String(require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version ?? ""));')"

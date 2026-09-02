@@ -1257,7 +1257,7 @@ jobs:
 
   publish_npm:
     if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.npm_complete != 'true' && needs.plan.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.plan.outputs.publish_npm_needed == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates]
+    needs: [resolve_resume, plan, promote_preview, promote_main, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, verify_release_candidates]
     permissions:
       contents: write
       id-token: write
@@ -1267,6 +1267,9 @@ jobs:
       publish_cli: ${{ needs.plan.outputs.npm_publish_cli_needed == 'true' }}
       publish_stack: ${{ needs.plan.outputs.npm_publish_stack_needed == 'true' }}
       publish_server: ${{ needs.plan.outputs.npm_publish_server_needed == 'true' }}
+      cli_version: ${{ needs.publish_cli_binaries.outputs.version }}
+      stack_version: ${{ needs.publish_hstack_binaries.outputs.version }}
+      server_version: ${{ needs.publish_server_runtime.outputs.version }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}

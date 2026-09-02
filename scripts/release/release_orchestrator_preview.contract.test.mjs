@@ -301,6 +301,24 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.doesNotMatch(script, /GITHUB_RUN_NUMBER/);
 });
 
+test('release-npm reuses caller-bound candidate versions instead of allocating replacements', async () => {
+  const workflow = parse(await loadWorkflow('release-npm.yml'));
+  const inputs = workflow?.on?.workflow_call?.inputs ?? {};
+  for (const name of ['cli_version', 'stack_version', 'server_version']) {
+    assert.equal(inputs[name]?.required, false);
+    assert.equal(inputs[name]?.default, '');
+    assert.equal(inputs[name]?.type, 'string');
+  }
+
+  const metadata = workflow?.jobs?.release?.steps?.find((step) => step.name === 'Release metadata');
+  assert.equal(metadata?.env?.INPUT_CLI_VERSION, '${{ inputs.cli_version }}');
+  assert.equal(metadata?.env?.INPUT_STACK_VERSION, '${{ inputs.stack_version }}');
+  assert.equal(metadata?.env?.INPUT_SERVER_VERSION, '${{ inputs.server_version }}');
+  assert.match(metadata?.run ?? '', /--cli-version "\$\{INPUT_CLI_VERSION\}"/);
+  assert.match(metadata?.run ?? '', /--stack-version "\$\{INPUT_STACK_VERSION\}"/);
+  assert.match(metadata?.run ?? '', /--server-version "\$\{INPUT_SERVER_VERSION\}"/);
+});
+
 test('final release workflows only consume already-materialized version bumps', async () => {
   const orchestrator = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');

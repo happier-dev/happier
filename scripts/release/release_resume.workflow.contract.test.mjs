@@ -157,6 +157,12 @@ test('full release resume binds the prior run to the same operation and authoriz
   }
   assert.match(String(statusProjection.env.REQUEST_NPM), /needs\.resolve_resume\.outputs\.npm_requested == 'true'/);
   assert.match(String(parsed.jobs.publish_npm.if), /needs\.resolve_resume\.outputs\.npm_complete != 'true'/);
+  assert.ok(needs(parsed.jobs.publish_npm).includes('publish_cli_binaries'));
+  assert.ok(needs(parsed.jobs.publish_npm).includes('publish_hstack_binaries'));
+  assert.ok(needs(parsed.jobs.publish_npm).includes('publish_server_runtime'));
+  assert.equal(parsed.jobs.publish_npm.with.cli_version, '${{ needs.publish_cli_binaries.outputs.version }}');
+  assert.equal(parsed.jobs.publish_npm.with.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
+  assert.equal(parsed.jobs.publish_npm.with.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
   for (const name of ['DEPLOY_UI_RESUME_COMPLETE', 'DEPLOY_SERVER_RESUME_COMPLETE', 'DEPLOY_WEBSITE_RESUME_COMPLETE', 'DEPLOY_DOCS_RESUME_COMPLETE', 'DOCKER_RESUME_COMPLETE', 'NPM_RESUME_COMPLETE']) {
     assert.match(String(statusProjection.env[name]), /needs\.resolve_resume\.outputs\./, `${name} must preserve accepted resume evidence`);
   }
