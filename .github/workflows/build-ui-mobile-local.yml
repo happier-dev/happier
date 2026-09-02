@@ -141,7 +141,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-ui-mobile-local-${{ github.ref }}
+  group: build-ui-mobile-local-${{ github.repository }}-${{ inputs.source_ref }}-${{ inputs.environment }}-${{ inputs.platform }}-${{ inputs.profile }}-${{ inputs.action }}-${{ inputs.publish_apk_release }}
   cancel-in-progress: false
 
 env:

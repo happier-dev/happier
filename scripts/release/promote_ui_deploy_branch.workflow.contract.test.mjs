@@ -94,3 +94,16 @@ test('promote-ui carries the resolver authorized SHA into every exact-candidate 
   assert.equal(resolvedSha, '${{ steps.candidate.outputs.authorized_sha }}');
   assert.equal(candidateCheckout?.with?.ref, '${{ needs.resolve_source.outputs.candidate_sha }}');
 });
+
+test('mobile reusable concurrency separates channel and deliverable lanes without canceling in-flight work', async () => {
+  const parsed = parse(await loadWorkflow('build-ui-mobile-local.yml'));
+  const group = String(parsed?.concurrency?.group ?? '');
+  assert.equal(parsed?.concurrency?.['cancel-in-progress'], false);
+  assert.match(group, /inputs\.source_ref/);
+  assert.match(group, /inputs\.environment/);
+  assert.match(group, /inputs\.platform/);
+  assert.match(group, /inputs\.profile/);
+  assert.match(group, /inputs\.action/);
+  assert.match(group, /inputs\.publish_apk_release/);
+  assert.doesNotMatch(group, /^build-ui-mobile-local-\$\{\{ github\.ref \}\}$/);
+});
