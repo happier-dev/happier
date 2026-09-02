@@ -407,7 +407,7 @@ jobs:
               for (const [key, value] of Object.entries(values)) {
                 if (typeof value !== "string") throw new Error(`Missing ${key} projection`);
                 const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`${key}:${value}`).digest("hex")}`;
-                appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\n${value}\\n${delimiter}\\n`);
+                appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\n${value}\n${delimiter}\n`);
               }
             '
       - name: Upload release notes assets

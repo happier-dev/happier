@@ -75,6 +75,14 @@ test('post-promotion verification receives the selected server runtime probe URL
   assert.ok(serverProbe, 'the short signoff must retain the deployed-server identity check');
   assert.equal(serverProbe.env.CANDIDATE_SOURCE_SHA, '${{ needs.prepare_release_candidate.outputs.source_sha }}');
   assert.equal(serverProbe.env.SERVER_API_VERSION_URL, "${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}");
+  assert.match(
+    String(serverProbe.if),
+    /vars\.HAPPIER_SERVER_API_(?:PRODUCTION|PREVIEW)_VERSION_URL != ''/,
+    'a loaded-runtime check may only run when the selected deployment exposes a canonical probe URL',
+  );
+  const unobservable = workflow.jobs.release_verify.steps.find((step) => step.name === 'Record unavailable server runtime observation');
+  assert.ok(unobservable, 'an unobservable loaded runtime must be reported explicitly instead of failing or claiming verification');
+  assert.match(String(unobservable.if), /vars\.HAPPIER_SERVER_API_(?:PRODUCTION|PREVIEW)_VERSION_URL == ''/);
   assert.doesNotMatch(JSON.stringify(workflow.jobs.release_verify), /run_installers_smoke|run_binary_smoke|run_session_continuity/);
 });
 

@@ -64,7 +64,8 @@ test('promote-ui runs a dedicated public APK release build for preview and produ
 });
 
 test('promote-ui passes the exact candidate release-note projection to desktop and APK publishers', async () => {
-  const workflow = YAML.parse(await loadWorkflow('promote-ui.yml'));
+  const source = await loadWorkflow('promote-ui.yml');
+  const workflow = YAML.parse(source);
   const raw = JSON.stringify(workflow);
   const promote = workflow.jobs?.promote;
   assert.equal(promote?.outputs?.release_notes_github_markdown, '${{ needs.validate_candidate.outputs.release_notes_github_markdown }}');
@@ -77,6 +78,16 @@ test('promote-ui passes the exact candidate release-note projection to desktop a
   assert.equal(
     workflow.jobs?.desktop?.with?.release_message,
     '${{ needs.promote.outputs.release_notes_github_markdown }}',
+  );
+  assert.equal(
+    source.includes('appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\n${value}\\n${delimiter}\\n`);'),
+    true,
+    'multiline GitHub outputs must contain newline bytes around their delimiter',
+  );
+  assert.equal(
+    source.includes('appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\\\n${value}\\\\n${delimiter}\\\\n`);'),
+    false,
+    'literal backslash-n sequences make GitHub reject the multiline output',
   );
 });
 
