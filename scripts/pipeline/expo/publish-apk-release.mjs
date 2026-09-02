@@ -280,6 +280,7 @@ async function main() {
     if (environment !== 'production' || !immutableReleaseMeta) {
       fail('--retry-version is supported only for production immutable APK releases.');
     }
+    ensureMinisign(repoRoot, opts);
     promoteRollingRelease({
       opts,
       repoRoot,

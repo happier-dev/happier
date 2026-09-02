@@ -163,6 +163,7 @@ test('production APK retry derives its release identity from the requested immut
   );
 
   assert.match(out, new RegExp(`version=${retryVersion.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')}`));
+  assert.match(out, /bootstrap-minisign\.sh/);
   assert.match(out, new RegExp(`--source-tag\\s+ui-mobile-v${retryVersion.replace(/[.*+?^${}()|[\\]\\]/g, '\\\\$&')}\\b`));
   assert.doesNotMatch(out, /must match apps\/ui version/);
 });
