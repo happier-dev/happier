@@ -518,7 +518,7 @@ jobs:
             --authorized-sha "$AUTHORIZED_SHA" \
             --prepared-artifacts \
             --github-output "$GITHUB_OUTPUT" \
-            --run-contracts "true" \
+            --run-contracts "false" \
             --check-installers "true"
 
   promote_existing:

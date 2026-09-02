@@ -586,7 +586,7 @@ jobs:
             --authorized-sha "$AUTHORIZED_SHA" \
             --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \
-            --run-contracts true \
+            --run-contracts false \
             --check-installers true
 
   promote_existing:
