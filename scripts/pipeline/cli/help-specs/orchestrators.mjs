@@ -44,7 +44,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--include-validation-suites <csv> Add heavy validation beyond the risk-selected defaults.',
       '--waive-validation-suites <csv>  Explicitly waive waivable risk-selected suites.',
       '--override-reason <text>         Required single-line reason for a waiver.',
-      '--ui-expo-action <mode>           none|ota|native|native_submit (default: none).',
+      '--ui-expo-action <mode>           none|ota|native|native_submit|full (default: none).',
       '--desktop-mode <mode>             none|build_only|build_and_publish (default: none).',
       '--release-profile <profile>       integrated|stable|deep (default: integrated for dev/preview, stable for production; deep is manual-only).',
       '--source-sha <sha>                Required for non-dry hosted dispatch; exact source commit to promote.',

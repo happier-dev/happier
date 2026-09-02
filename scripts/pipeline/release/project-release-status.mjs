@@ -113,7 +113,7 @@ export function projectReleaseStatus(mode, env) {
   };
   const deployUiResumeIdentity = {
     deployWeb: value(env, 'DEPLOY_UI_WEB'),
-    expoAction: choice(env, 'DEPLOY_UI_EXPO_ACTION', ['none', 'ota', 'native', 'native_submit']),
+    expoAction: choice(env, 'DEPLOY_UI_EXPO_ACTION', ['none', 'ota', 'native', 'native_submit', 'full']),
     desktopMode: choice(env, 'DEPLOY_UI_DESKTOP_MODE', ['none', 'build_only', 'build_and_publish']),
   };
   const npmResumeIdentity = {
@@ -130,7 +130,7 @@ export function projectReleaseStatus(mode, env) {
       requested('candidate', true, true, 'verified'), requested('immutable_candidate_verification', true, true, 'verified'),
       requested('cli-immutable-candidate', request.cli, request.cli, 'verified'), requested('hstack-immutable-candidate', request.stack, request.stack, 'verified'), requested('server-immutable-candidate', request.server, request.server, 'verified'), requested('ui-web-immutable-candidate', request.uiWeb, request.uiWeb, 'verified'),
       requested('cli_rolling_release', request.cli, request.cli, 'verified'), requested('hstack_rolling_release', request.stack, request.stack, 'verified'), requested('server_rolling_release', request.server, request.server, 'verified'), requested('ui_web_rolling_release', request.uiWeb, request.uiWeb, 'verified'),
-      requested('deploy_ui', request.deployUi, false, 'accepted'), requested('deploy_server', request.deployServer, request.deployServer, 'accepted'), requested('deploy_website', request.deployWebsite, request.deployWebsite, 'accepted'), requested('deploy_docs', request.deployDocs, request.deployDocs, 'accepted'),
+      requested('deploy_ui', request.deployUi, request.deployUi, 'accepted'), requested('deploy_server', request.deployServer, request.deployServer, 'accepted'), requested('deploy_website', request.deployWebsite, request.deployWebsite, 'accepted'), requested('deploy_docs', request.deployDocs, request.deployDocs, 'accepted'),
       requested('docker', request.docker, false, 'accepted'), requested('npm', request.npm, request.npm, 'accepted'), requested('post_promotion_identity', true, true, 'verified'),
     ],
     surfaces: [

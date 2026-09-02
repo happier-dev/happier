@@ -241,7 +241,7 @@ export function resolveReleaseResume(input) {
           }
           resumeInputs.deployUi = {
             deployWeb: requiredBoolean(identity.deployWeb, 'requested deploy_ui deployWeb'),
-            expoAction: requiredChoice(identity.expoAction, 'requested deploy_ui expoAction', ['none', 'ota', 'native', 'native_submit']),
+            expoAction: requiredChoice(identity.expoAction, 'requested deploy_ui expoAction', ['none', 'ota', 'native', 'native_submit', 'full']),
             desktopMode: requiredChoice(identity.desktopMode, 'requested deploy_ui desktopMode', ['none', 'build_only', 'build_and_publish']),
           };
         } catch (error) {

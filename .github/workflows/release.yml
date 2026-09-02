@@ -36,7 +36,7 @@ on:
         default: false
         type: boolean
       ui_expo_action:
-        description: "Deploy — UI Expo action (none|ota|native|native_submit) for the selected environment"
+        description: "Deploy — UI Expo action (full includes OTA + native submit + APK)"
         required: true
         default: none
         type: choice
@@ -45,6 +45,7 @@ on:
           - ota
           - native
           - native_submit
+          - full
       desktop_mode:
         description: "Deploy — Desktop artifacts mode"
         required: true
@@ -235,6 +236,8 @@ jobs:
           QUALIFIED_V4_ACTIVATION_APPROVAL: ${{ inputs.qualified_v4_activation_approval }}
           CONFIRM: ${{ inputs.confirm }}
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
+          UI_EXPO_ACTION: ${{ inputs.ui_expo_action }}
+          DESKTOP_MODE: ${{ inputs.desktop_mode }}
           ENVIRONMENT: ${{ inputs.environment }}
           DRY_RUN: ${{ inputs.dry_run }}
           WAIVE_CI: ${{ inputs.waive_ci }}
@@ -826,10 +829,11 @@ jobs:
       deploy_website_needed: ${{ steps.plan.outputs.deploy_website_needed }}
       deploy_docs_needed: ${{ steps.plan.outputs.deploy_docs_needed }}
       deploy_ui_requested: ${{ needs.resolve_resume.outputs.deploy_ui_requested == 'true' || (contains(format(',{0},', inputs.deploy_targets), ',ui,') && (steps.plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none' || inputs.desktop_mode != 'none')) }}
+      deploy_ui_resume_complete: ${{ needs.resolve_resume.outputs.deploy_ui_complete == 'true' && needs.resolve_resume.outputs.deploy_ui_web_requested == 'true' && needs.resolve_resume.outputs.deploy_ui_expo_action == inputs.ui_expo_action && needs.resolve_resume.outputs.deploy_ui_desktop_mode == inputs.desktop_mode }}
       deploy_server_requested: ${{ needs.resolve_resume.outputs.deploy_server_requested == 'true' || (contains(format(',{0},', inputs.deploy_targets), ',server,') && (steps.plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true)) }}
       deploy_website_requested: ${{ needs.resolve_resume.outputs.deploy_website_requested == 'true' || (contains(format(',{0},', inputs.deploy_targets), ',website,') && (steps.plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true)) }}
       deploy_docs_requested: ${{ needs.resolve_resume.outputs.deploy_docs_requested == 'true' || (contains(format(',{0},', inputs.deploy_targets), ',docs,') && (steps.plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true)) }}
-      deploy_ui_web: ${{ needs.resolve_resume.outputs.deploy_ui_web_requested == 'true' || inputs.environment == 'production' }}
+      deploy_ui_web: ${{ needs.resolve_resume.outputs.deploy_ui_web_requested == 'true' || contains(format(',{0},', inputs.deploy_targets), ',ui,') }}
       deploy_ui_expo_action: ${{ needs.resolve_resume.outputs.deploy_ui_expo_action != 'none' && needs.resolve_resume.outputs.deploy_ui_expo_action || inputs.ui_expo_action }}
       deploy_ui_desktop_mode: ${{ (needs.resolve_resume.outputs.deploy_ui_desktop_mode == 'build_and_publish' || inputs.desktop_mode == 'build_and_publish') && 'build_and_publish' || (needs.resolve_resume.outputs.deploy_ui_desktop_mode == 'build_only' || inputs.desktop_mode == 'build_only') && 'build_only' || 'none' }}
     steps:
@@ -1015,7 +1019,7 @@ jobs:
             '
 
   deploy_ui:
-    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_ui_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.resolve_resume.result == 'success' && needs.deploy_plan.outputs.deploy_ui_resume_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.verify_release_candidates.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [resolve_resume, plan, promote_preview, promote_main, deploy_plan, prepare_release_candidate, verify_release_candidates]
     permissions:
       contents: write
@@ -1468,7 +1472,7 @@ jobs:
           NPM_PUBLISH_CLI: ${{ needs.resolve_resume.outputs.npm_publish_cli_requested == 'true' || needs.plan.outputs.npm_publish_cli_needed == 'true' }}
           NPM_PUBLISH_STACK: ${{ needs.resolve_resume.outputs.npm_publish_stack_requested == 'true' || needs.plan.outputs.npm_publish_stack_needed == 'true' }}
           NPM_PUBLISH_SERVER: ${{ needs.resolve_resume.outputs.npm_publish_server_requested == 'true' || needs.plan.outputs.npm_publish_server_needed == 'true' }}
-          DEPLOY_UI_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_ui_complete }}
+          DEPLOY_UI_RESUME_COMPLETE: ${{ needs.deploy_plan.outputs.deploy_ui_resume_complete }}
           DEPLOY_SERVER_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_server_complete }}
           DEPLOY_WEBSITE_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_website_complete }}
           DEPLOY_DOCS_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_docs_complete }}

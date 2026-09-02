@@ -160,8 +160,12 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(statusProjection.env.CLI_ROLLING_RESUME_COMPLETE, '${{ needs.resolve_resume.outputs.cli_rolling_complete }}');
   assert.ok(needs(parsed.jobs.deploy_ui).includes('resolve_resume'));
   assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_requested), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_web), /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',ui,'\)/);
   assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);
-  assert.match(String(parsed.jobs.deploy_ui.if), /needs\.resolve_resume\.outputs\.deploy_ui_complete != 'true'/);
+  assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_resume_complete != 'true'/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /needs\.resolve_resume\.outputs\.deploy_ui_complete == 'true'/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /needs\.resolve_resume\.outputs\.deploy_ui_expo_action == inputs\.ui_expo_action/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /needs\.resolve_resume\.outputs\.deploy_ui_desktop_mode == inputs\.desktop_mode/);
   assert.match(String(parsed.jobs.deploy_ui.with.desktop_mode), /needs\.deploy_plan\.outputs\.deploy_ui_desktop_mode/);
   assert.match(String(statusProjection.env.REQUEST_DEPLOY_UI), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
   assert.match(String(statusProjection.env.REQUEST_DEPLOY_UI), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);
@@ -184,9 +188,10 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(parsed.jobs.publish_npm.with.cli_version, '${{ needs.publish_cli_binaries.outputs.version }}');
   assert.equal(parsed.jobs.publish_npm.with.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
   assert.equal(parsed.jobs.publish_npm.with.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
-  for (const name of ['DEPLOY_UI_RESUME_COMPLETE', 'DEPLOY_SERVER_RESUME_COMPLETE', 'DEPLOY_WEBSITE_RESUME_COMPLETE', 'DEPLOY_DOCS_RESUME_COMPLETE', 'DOCKER_RESUME_COMPLETE', 'NPM_RESUME_COMPLETE']) {
+  for (const name of ['DEPLOY_SERVER_RESUME_COMPLETE', 'DEPLOY_WEBSITE_RESUME_COMPLETE', 'DEPLOY_DOCS_RESUME_COMPLETE', 'DOCKER_RESUME_COMPLETE', 'NPM_RESUME_COMPLETE']) {
     assert.match(String(statusProjection.env[name]), /needs\.resolve_resume\.outputs\./, `${name} must preserve accepted resume evidence`);
   }
+  assert.match(String(statusProjection.env.DEPLOY_UI_RESUME_COMPLETE), /needs\.deploy_plan\.outputs\.deploy_ui_resume_complete/);
 });
 
 test('failed grouped verification independently certifies each successful immutable sibling for resume', () => {

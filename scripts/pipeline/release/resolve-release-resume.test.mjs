@@ -90,7 +90,7 @@ function standardOptionalSurfaces(requested) {
   return STANDARD_OPTIONAL_SURFACE_IDS.map((id) => ({
     id,
     requested,
-    required: false,
+    required: id === 'deploy_ui' ? requested : false,
     evidence: 'accepted',
     state: requested ? 'failed' : 'not_requested',
     ...(requested ? { result: 'failed' } : {}),
@@ -375,6 +375,50 @@ test('release resume preserves an explicitly requested UI no-op publication inte
     deployWeb: false,
     expoAction: 'none',
     desktopMode: 'none',
+  });
+});
+
+test('release resume preserves full UI publication intent for exact recovery', () => {
+  const optionalSurfaces = standardOptionalSurfaces(false);
+  const deployUiIndex = optionalSurfaces.findIndex((surface) => surface.id === 'deploy_ui');
+  optionalSurfaces[deployUiIndex] = {
+    id: 'deploy_ui',
+    requested: true,
+    required: true,
+    evidence: 'accepted',
+    state: 'failed',
+    result: 'failed',
+    identity: {
+      sourceSha: SOURCE_SHA,
+      verified: false,
+      deployWeb: true,
+      expoAction: 'full',
+      desktopMode: 'build_and_publish',
+    },
+  };
+
+  const resolved = resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({
+      channel: 'production',
+      surfaces: [{
+        ...previewCliCandidate(),
+        identity: { ...previewCliCandidate().identity, version: '0.2.11' },
+      }, ...optionalSurfaces],
+    }),
+    expected: {
+      repository: REPOSITORY,
+      workflowPath: '.github/workflows/release.yml',
+      channel: 'production',
+    },
+  });
+
+  assert.deepEqual(resolved.resumeInputs.deployUi, {
+    deployWeb: true,
+    expoAction: 'full',
+    desktopMode: 'build_and_publish',
   });
 });
 

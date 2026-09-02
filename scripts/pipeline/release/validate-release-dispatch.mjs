@@ -10,6 +10,8 @@ const OPERATION = /^rel_[A-Za-z0-9_-]{8,80}$/u;
 const ATTEMPT = /^attempt_[1-9][0-9]*$/u;
 const RELEASE_NOTES = /^[a-z0-9][a-z0-9._-]*$/u;
 const TARGETS = new Set(['ui', 'server', 'website', 'docs', 'cli', 'stack', 'server_runner']);
+const UI_EXPO_ACTIONS = new Set(['none', 'ota', 'native', 'native_submit', 'full']);
+const DESKTOP_MODES = new Set(['none', 'build_only', 'build_and_publish']);
 const OVERRIDE_REASON_MAX = 500;
 
 /** @param {unknown} value */
@@ -28,7 +30,8 @@ function csv(value, label) {
 /**
  * @param {{ authorizedPromotionSourceSha?: string; resumeRunId?: string; operationId?: string;
  * attemptId?: string; releaseNotesId?: string; confirm?: string;
- * deployTargets?: string; environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
+ * deployTargets?: string; uiExpoAction?: string; desktopMode?: string;
+ * environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
  * qualifiedV4ActivationApproval?: boolean; waiveCi?: boolean; includeValidationSuites?: string;
  * waiveValidationSuites?: string; overrideReason?: string }} input
  */
@@ -94,8 +97,18 @@ export function validateReleaseDispatch(input) {
   for (const target of deployTargets) {
     if (!TARGETS.has(target)) throw new Error(`Unknown deploy_targets entry: '${target}'.`);
   }
+  const uiExpoAction = text(input.uiExpoAction) || 'none';
+  const desktopMode = text(input.desktopMode) || 'none';
+  if (!UI_EXPO_ACTIONS.has(uiExpoAction)) throw new Error(`Unknown ui_expo_action: '${uiExpoAction}'.`);
+  if (!DESKTOP_MODES.has(desktopMode)) throw new Error(`Unknown desktop_mode: '${desktopMode}'.`);
+  if (!deployTargets.includes('ui') && uiExpoAction !== 'none') {
+    throw new Error('ui_expo_action requires deploy_targets to include ui.');
+  }
+  if (!deployTargets.includes('ui') && desktopMode !== 'none') {
+    throw new Error('desktop_mode requires deploy_targets to include ui.');
+  }
   return {
-    mode, sourceRef, baseRef, compareLabel, deployTargets,
+    mode, sourceRef, baseRef, compareLabel, deployTargets, uiExpoAction, desktopMode,
     overrides: {
       waiveCi,
       includeValidationSuiteIds: refinements.includeSuiteIds,
@@ -115,6 +128,8 @@ export function validateReleaseDispatchFromEnvironment(env) {
     releaseNotesId: env.RELEASE_NOTES_ID,
     confirm: env.CONFIRM,
     deployTargets: env.DEPLOY_TARGETS,
+    uiExpoAction: env.UI_EXPO_ACTION,
+    desktopMode: env.DESKTOP_MODE,
     environment: env.ENVIRONMENT,
     dryRun: env.DRY_RUN === 'true',
     eventName: env.GITHUB_EVENT_NAME,

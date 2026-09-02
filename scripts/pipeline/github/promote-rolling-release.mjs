@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { closeSync, createReadStream, openSync } from 'node:fs';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -12,6 +12,7 @@ import {
   inspectImmutableReleaseCandidate,
   resolveImmutableCandidateIdentity,
 } from '../release/lib/immutable-release-candidate.mjs';
+import { buildRollingAssetPlan } from './rolling-release-asset-plan.mjs';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
 const DEFAULT_UPLOAD_ATTEMPTS = 8;
@@ -136,18 +137,19 @@ async function fileSha256(filePath) {
   return hash.digest('hex');
 }
 
-async function assertDirectoriesEqual(leftDir, rightDir) {
-  const leftNames = (await readdir(leftDir)).sort();
-  const rightNames = (await readdir(rightDir)).sort();
-  if (leftNames.length !== rightNames.length || leftNames.some((name, index) => name !== rightNames[index])) {
-    fail('Rolling release asset names differ from the immutable release.');
+async function assertAssetPlanEqual(expectedDir, actualDir, assetPlan) {
+  const expectedNames = assetPlan.map((entry) => entry.name).sort();
+  const actualNames = (await readdir(actualDir)).sort();
+  if (actualNames.length !== expectedNames.length
+    || actualNames.some((name, index) => name !== expectedNames[index])) {
+    fail('Rolling release asset names differ from the audited asset plan.');
   }
-  for (const name of leftNames) {
-    const [leftSha, rightSha] = await Promise.all([
-      fileSha256(join(leftDir, name)),
-      fileSha256(join(rightDir, name)),
+  for (const { name, sourceName } of assetPlan) {
+    const [expectedSha, actualSha] = await Promise.all([
+      fileSha256(join(expectedDir, sourceName)),
+      fileSha256(join(actualDir, name)),
     ]);
-    if (leftSha !== rightSha) {
+    if (expectedSha !== actualSha) {
       fail(`Rolling release asset differs from immutable source bytes: ${name}`);
     }
   }
@@ -455,12 +457,40 @@ async function inspectAndVerifyCandidate({ directory, sourceTag, expectedProduct
   return inspected;
 }
 
+async function auditDownloadedAssetDirectory({
+  directory,
+  expectedDir,
+  assetPlan,
+  sourceTag,
+  expectedProduct,
+  expectedVersion,
+  publicKey,
+}) {
+  const signedDestination = await mkdtemp(join(tmpdir(), 'happier-visible-release-signed-audit-'));
+  try {
+    for (const { name, sourceName } of assetPlan) {
+      if (name === sourceName) await copyFile(join(directory, name), join(signedDestination, name));
+    }
+    await inspectAndVerifyCandidate({
+      directory: signedDestination,
+      sourceTag,
+      expectedProduct,
+      expectedVersion,
+      publicKey,
+    });
+    await assertAssetPlanEqual(expectedDir, directory, assetPlan);
+  } finally {
+    await rm(signedDestination, { recursive: true, force: true });
+  }
+}
+
 async function auditReleaseById({
   repo,
   releaseId,
   expectedTag,
   expectedDraft,
   expectedDir,
+  assetPlan,
   sourceTag,
   expectedProduct,
   expectedVersion,
@@ -475,14 +505,15 @@ async function auditReleaseById({
     }
     await downloadReleaseAssetsById({ repo, assets: snapshot.assets, destination, env, dryRun: false });
     assertReleaseSnapshotCurrent({ repo, snapshot, expectedTag, expectedDraft, env });
-    await inspectAndVerifyCandidate({
+    await auditDownloadedAssetDirectory({
       directory: destination,
+      expectedDir,
+      assetPlan,
       sourceTag,
       expectedProduct,
       expectedVersion,
       publicKey,
     });
-    await assertDirectoriesEqual(expectedDir, destination);
   } finally {
     await rm(destination, { recursive: true, force: true });
   }
@@ -542,6 +573,7 @@ async function main() {
   };
   const sourceDir = await mkdtemp(join(tmpdir(), 'happier-immutable-release-'));
   const auditDir = await mkdtemp(join(tmpdir(), 'happier-rolling-release-audit-'));
+  let assetPlan = [];
   try {
     const immutableSha = readTagSha({ repo, tag: sourceTag, env: ghEnv, dryRun });
     if (!dryRun && immutableSha !== targetSha) {
@@ -572,12 +604,22 @@ async function main() {
       if (readTagSha({ repo, tag: sourceTag, env: ghEnv, dryRun: false }) !== targetSha) {
         fail(`Immutable source tag ${sourceTag} changed while release ${immutableSnapshot.release.id} was audited.`);
       }
-      await inspectAndVerifyCandidate({
+      const inspectedCandidate = await inspectAndVerifyCandidate({
         directory: sourceDir,
         sourceTag,
         expectedProduct,
         expectedVersion,
         publicKey,
+      });
+      assetPlan = buildRollingAssetPlan({
+        immutableNames: [
+          ...inspectedCandidate.assetNames,
+          inspectedCandidate.checksumsName,
+          inspectedCandidate.signatureName,
+        ],
+        payloadNames: inspectedCandidate.assetNames,
+        version: inspectedCandidate.version,
+        rollingTag,
       });
     } else {
       console.log(`[dry-run] download immutable assets for ${sourceTag} by observed release and asset IDs`);
@@ -636,6 +678,7 @@ async function main() {
           expectedTag: rollingTag,
           expectedDraft: false,
           expectedDir: sourceDir,
+          assetPlan,
           sourceTag,
           expectedProduct,
           expectedVersion,
@@ -707,19 +750,12 @@ async function main() {
     }
 
     if (!dryRun) {
-      const { assetNames, checksumsName, signatureName } = await inspectImmutableReleaseCandidate({
-        directory: sourceDir,
-        sourceTag,
-        expectedProduct,
-        expectedVersion,
-      });
-      const names = [...assetNames, checksumsName, signatureName].sort();
-      for (const name of names) {
+      for (const { name, sourceName } of assetPlan) {
         uploadReleaseAssetWithRetry({
           repo,
           releaseId: draftReleaseId,
           name,
-          sourcePath: join(sourceDir, name),
+          sourcePath: join(sourceDir, sourceName),
           env: ghEnv,
         });
       }
@@ -748,14 +784,15 @@ async function main() {
         expectedDraft: true,
         env: ghEnv,
       });
-      await inspectAndVerifyCandidate({
+      await auditDownloadedAssetDirectory({
         directory: auditDir,
+        expectedDir: sourceDir,
+        assetPlan,
         sourceTag,
         expectedProduct,
         expectedVersion,
         publicKey,
       });
-      await assertDirectoriesEqual(sourceDir, auditDir);
     }
 
     const predecessor = rollingRelease;
@@ -819,6 +856,7 @@ async function main() {
           expectedTag: rollingTag,
           expectedDraft: false,
           expectedDir: sourceDir,
+          assetPlan,
           sourceTag,
           expectedProduct,
           expectedVersion,

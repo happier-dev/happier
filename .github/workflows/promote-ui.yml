@@ -46,7 +46,7 @@ on:
         default: true
         type: boolean
       expo_action:
-        description: "Deploy (Expo) — Action (requires EXPO_TOKEN secret)"
+        description: "Deploy (Expo) — Action (full includes OTA + native submit + APK)"
         required: true
         default: none
         type: choice
@@ -55,6 +55,7 @@ on:
           - ota
           - native
           - native_submit
+          - full
       release_notes_id:
         description: "Release notes — Exact approved project release ID"
         required: true
@@ -418,7 +419,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Prepare Android OTA artifact without credentials
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -428,7 +429,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Prepare iOS OTA artifact without credentials
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -438,7 +439,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/ios" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Upload prepared OTA artifacts
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
@@ -480,7 +481,7 @@ jobs:
           name: ui-release-notes-${{ needs.apply_bump.outputs.release_sha }}
           path: ${{ runner.temp }}/release-notes-assets
       - name: Download prepared OTA artifacts
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
@@ -511,7 +512,7 @@ jobs:
           node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
             --in-dir "$RUNNER_TEMP/release-notes-assets" --repo happier-dev/happier-assets --tag release-notes
       - name: Publish Android OTA from validated bytes
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
@@ -523,7 +524,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --expected-source-sha "$RELEASE_SHA" \
             --message "$UPDATE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
       - name: Publish iOS OTA from validated bytes
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
@@ -572,7 +573,7 @@ jobs:
 
   mobile_native:
     name: Mobile native (local runner)
-    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
       contents: write
@@ -583,14 +584,14 @@ jobs:
       environment: ${{ inputs.environment }}
       platform: all
       profile: auto
-      action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
+      action: ${{ (inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') && 'build_and_submit' || 'build_only' }}
       publish_apk_release: ${{ 'false' }}
       release_message: ${{ needs.promote.outputs.release_notes_expo_message }}
       release_notes_id: ${{ inputs.release_notes_id }}
 
   mobile_apk_release:
     name: Mobile APK release (local runner)
-    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
       contents: write
