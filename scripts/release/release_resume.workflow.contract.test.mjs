@@ -117,6 +117,13 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(parsed.jobs.resolve_resume.with.expected_operation_id, '${{ inputs.hmaint_operation_id }}');
   assert.ok(needs(parsed.jobs.plan).includes('resolve_resume'));
   assert.match(parsed.jobs.plan.if, /needs\.resolve_resume\.result == 'success'/);
+  const bumpPlanStep = parsed.jobs.plan.steps.find((step) => step.id === 'bump_plan');
+  assert.equal(bumpPlanStep.env.RESUME_CLI_VERSION, '${{ needs.resolve_resume.outputs.cli_version }}');
+  assert.equal(bumpPlanStep.env.RESUME_STACK_VERSION, '${{ needs.resolve_resume.outputs.stack_version }}');
+  assert.equal(bumpPlanStep.env.RESUME_SERVER_VERSION, '${{ needs.resolve_resume.outputs.server_version }}');
+  assert.match(bumpPlanStep.run, /--resume-cli-version "\$\{RESUME_CLI_VERSION\}"/);
+  assert.match(bumpPlanStep.run, /--resume-stack-version "\$\{RESUME_STACK_VERSION\}"/);
+  assert.match(bumpPlanStep.run, /--resume-server-version "\$\{RESUME_SERVER_VERSION\}"/);
   for (const [jobName, output] of [
     ['publish_cli_binaries', 'cli_version'],
     ['publish_hstack_binaries', 'stack_version'],

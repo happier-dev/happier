@@ -590,6 +590,9 @@ jobs:
           VERSIONED_CLI_CHANGED: ${{ steps.versioned_plan.outputs.changed_cli }}
           VERSIONED_STACK_CHANGED: ${{ steps.versioned_plan.outputs.changed_stack }}
           VERSIONED_SERVER_CHANGED: ${{ steps.versioned_plan.outputs.changed_server }}
+          RESUME_CLI_VERSION: ${{ needs.resolve_resume.outputs.cli_version }}
+          RESUME_STACK_VERSION: ${{ needs.resolve_resume.outputs.stack_version }}
+          RESUME_SERVER_VERSION: ${{ needs.resolve_resume.outputs.server_version }}
         run: |
           set -euo pipefail
           node ../scripts/pipeline/release/resolve-bump-plan.mjs \
@@ -610,6 +613,9 @@ jobs:
             --versioned-cli-changed "${VERSIONED_CLI_CHANGED}" \
             --versioned-stack-changed "${VERSIONED_STACK_CHANGED}" \
             --versioned-server-changed "${VERSIONED_SERVER_CHANGED}" \
+            --resume-cli-version "${RESUME_CLI_VERSION}" \
+            --resume-stack-version "${RESUME_STACK_VERSION}" \
+            --resume-server-version "${RESUME_SERVER_VERSION}" \
             --github-output "$GITHUB_OUTPUT"
 
   mysql_db_contract:

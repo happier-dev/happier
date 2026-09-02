@@ -201,3 +201,50 @@ test('resolve-bump-plan rejects an automatic bump when called by the final relea
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Materialize and commit changelog and version updates, then rerun with --bump none\./);
 });
+
+test('resolve-bump-plan admits an exact verified resume version after production branch promotion', () => {
+  const packageVersion = JSON.parse(
+    execFileSync('git', ['show', 'origin/main:apps/cli/package.json'], {
+      cwd: repoRoot,
+      env: process.env,
+      encoding: 'utf8',
+    }),
+  ).version;
+  const commonArgs = [
+    resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+    '--environment', 'production',
+    '--bump-preset', 'none',
+    '--deploy-targets', 'cli',
+    '--changed-ui', 'false',
+    '--changed-cli', 'false',
+    '--changed-stack', 'false',
+    '--changed-server', 'false',
+    '--changed-website', 'false',
+    '--changed-shared', 'false',
+    '--require-materialized',
+  ];
+
+  const withoutResume = spawnSync(process.execPath, commonArgs, {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: 'utf8',
+  });
+  assert.equal(withoutResume.status, 1);
+  assert.match(withoutResume.stderr, /Refusing production deploy_targets includes cli without a version change/);
+
+  const wrongResume = spawnSync(process.execPath, [...commonArgs, '--resume-cli-version', '0.0.0-wrong'], {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: 'utf8',
+  });
+  assert.equal(wrongResume.status, 1);
+
+  const withResume = spawnSync(process.execPath, [...commonArgs, '--resume-cli-version', packageVersion], {
+    cwd: repoRoot,
+    env: process.env,
+    encoding: 'utf8',
+  });
+  assert.equal(withResume.status, 0, withResume.stderr);
+  assert.equal(JSON.parse(withResume.stdout).publish_cli, true);
+  assert.equal(JSON.parse(withResume.stdout).bump_cli, 'none');
+});
