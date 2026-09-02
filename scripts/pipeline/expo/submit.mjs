@@ -387,7 +387,10 @@ function main() {
   }
 
   if (hadFailure) {
-    process.exitCode = 0;
+    console.error(
+      `::error::One or more Expo submissions failed for ${formatMobileReleaseEnvironment(environment)} after all requested platforms were attempted.`,
+    );
+    process.exitCode = 1;
   }
 }
 

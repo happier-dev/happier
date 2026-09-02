@@ -329,7 +329,7 @@ jobs:
           printf 'has_apk=%s\n' "$([ "${#apks[@]}" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Upload mobile build artifact
-        if: ${{ inputs.native_build_mode == 'local' || steps.apk.outputs.has_apk == 'true' }}
+        if: ${{ always() && (inputs.native_build_mode == 'local' || steps.apk.outputs.has_apk == 'true') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-mobile-${{ inputs.environment }}-android

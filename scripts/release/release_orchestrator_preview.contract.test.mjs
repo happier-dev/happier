@@ -356,7 +356,7 @@ test('publish-github-release delegates release creation + asset upload to the pi
   assert.doesNotMatch(raw, /gh api -X DELETE/, 'publish-github-release should not embed release asset pruning logic');
 });
 
-test('promote-ui native_submit uses the shared Expo submit script (handles preview credential gaps)', async () => {
+test('promote-ui native_submit uses the shared Expo submit script and reports preview credential gaps after preserving siblings', async () => {
   const promoteUi = await loadWorkflow('promote-ui.yml');
   assert.match(promoteUi, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
   assert.match(promoteUi, /action:\s*\$\{\{\s*\(inputs\.expo_action == 'native_submit' \|\| inputs\.expo_action == 'full'\) && 'build_and_submit' \|\| 'build_only'\s*\}\}/);
@@ -374,6 +374,7 @@ test('promote-ui native_submit uses the shared Expo submit script (handles previ
   assert.match(script, /for \(const platform of platforms\)/);
   assert.match(script, /allowsBestEffortSubmit\(environment\)/);
   assert.match(script, /::warning::Expo submit failed for/);
+  assert.match(script, /process\.exitCode = 1/);
 });
 
 test('promote-ui full publication prepares OTA and publishes native and APK surfaces', async () => {

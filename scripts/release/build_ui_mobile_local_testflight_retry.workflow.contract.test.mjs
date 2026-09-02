@@ -29,6 +29,7 @@ test('build-ui-mobile-local can resume TestFlight distribution without rebuildin
   const androidJob = src.slice(src.indexOf('  build_android:'), src.indexOf('  publish_android_apk:'));
   const iosJob = src.slice(src.indexOf('  build_ios:'), src.indexOf('  retry_testflight_distribution:'));
   assert.match(androidJob, /inputs\.action != 'retry_testflight_distribution'/);
+  assert.match(androidJob, /if: \$\{\{ always\(\) && \(inputs\.native_build_mode == 'local' \|\| steps\.apk\.outputs\.has_apk == 'true'\) \}\}/);
   assert.match(iosJob, /inputs\.action != 'retry_testflight_distribution'/);
   assert.match(iosJob, /if: \$\{\{ always\(\) && inputs\.native_build_mode == 'local' \}\}/);
 });
