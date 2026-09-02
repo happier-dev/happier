@@ -70,6 +70,7 @@ function fixture({ missingRolling = false } = {}) {
   const log = join(root, 'gh.log');
   const uploadCounter = join(root, 'upload-counter');
   const draftState = join(root, 'draft-state');
+  const staleOtherDraftState = join(root, 'stale-other-draft-state');
   const publishedState = join(root, 'published-state');
   const channelRef = join(root, 'channel-ref');
   const stagingRef = join(root, 'staging-ref');
@@ -235,7 +236,11 @@ if [ "$1" = "api" ]; then
       fi
       ;;
     *"releases?per_page=100"*)
-      if [ "\${HAPPIER_TEST_DELAY_DRAFT_VISIBILITY:-0}" != "1" ] \
+      if echo "$*" | grep -q 'startswith'; then
+        if [ -f ${JSON.stringify(staleOtherDraftState)} ]; then
+          printf '88\\thappier-rolling-staging-cli-preview-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n'
+        fi
+      elif [ "\${HAPPIER_TEST_DELAY_DRAFT_VISIBILITY:-0}" != "1" ] \
         && [ -f ${JSON.stringify(draftState)} ] \
         && echo "$*" | grep -q "cli-preview"; then
         printf '%s\\n' "77"
@@ -309,6 +314,15 @@ if [ "$1" = "api" ]; then
         done
       else
         printf '{"id":55,"tag_name":"cli-v1.2.3-preview.4","name":"Immutable CLI","body":"","prerelease":true,"draft":false}\n'
+      fi
+      ;;
+    *releases/88*)
+      if echo "$*" | grep -q -- "-X DELETE"; then
+        rm -f ${JSON.stringify(staleOtherDraftState)}
+      elif [ -f ${JSON.stringify(staleOtherDraftState)} ]; then
+        printf '{"id":88,"tag_name":"happier-rolling-staging-cli-preview-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"old staging","body":"","prerelease":true,"draft":true}\n'
+      else
+        not_found
       fi
       ;;
     *releases/1*)
@@ -389,6 +403,7 @@ exit 2
     staging,
     uploadCounter,
     draftState,
+    staleOtherDraftState,
     publishedState,
     channelRef,
     stagingRef,
@@ -419,6 +434,25 @@ test('rolling promotion dry-run shows private staging and whole-release backup c
   assert.match(output, /happier-rolling-staging-cli-preview-/);
   assert.match(output, /happier-rolling-backup-cli-preview/);
   assert.doesNotMatch(output, /releases\/assets\//);
+});
+
+test('rolling promotion removes an abandoned staging draft from an older target SHA', () => {
+  const testFixture = fixture();
+  try {
+    writeFileSync(testFixture.staleOtherDraftState, '1');
+    execFileSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(existsSync(testFixture.staleOtherDraftState), false);
+    assert.match(readFileSync(testFixture.log, 'utf8'), /-X DELETE repos\/test\/test\/releases\/88/);
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
 });
 
 test('rolling promotion rejects a mismatched expected product/version before GitHub access', () => {
