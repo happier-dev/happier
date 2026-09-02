@@ -81,3 +81,17 @@ test('apps/ui/eas.json keeps canonical preview and production profiles on matchi
   assert.equal(productionApk?.env?.APP_ENV, 'production');
   assert.equal(productionApk?.env?.HAPPIER_APP_VARIANT_OVERRIDE ?? undefined, undefined);
 });
+
+test('Android release profiles materialize a Gradle daemon heap above the Expo template default', () => {
+  const easPath = path.join(repoRoot, 'apps', 'ui', 'eas.json');
+  const appConfigPath = path.join(repoRoot, 'apps', 'ui', 'app.config.js');
+  const eas = JSON.parse(fs.readFileSync(easPath, 'utf8'));
+  const appConfig = fs.readFileSync(appConfigPath, 'utf8');
+
+  assert.match(eas?.build?.base?.env?.HAPPIER_ANDROID_GRADLE_JVMARGS ?? '', /-Xmx(?:4\d{3}|[4-9]g)/i);
+  assert.match(
+    appConfig,
+    /shouldUseAndroidReleaseShrinkerPlugin\s*=\s*[^;]*androidGradleJvmArgsOverride/,
+    'the app config must materialize the heap override into generated android/gradle.properties',
+  );
+});

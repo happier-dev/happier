@@ -122,7 +122,9 @@ const expoBuildPropertiesPlugin = [
     },
 ];
 const shouldUseAndroidReleaseShrinkerPlugin =
-    androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
+    androidEnableMinifyInReleaseBuilds ||
+    androidEnableShrinkResourcesInReleaseBuilds ||
+    Boolean(androidGradleJvmArgsOverride);
 
 const androidReleaseShrinkerPlugin = shouldUseAndroidReleaseShrinkerPlugin
     ? [
