@@ -5,8 +5,8 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
-function run(cwd, cmd, args) {
-  const res = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
+function run(cwd, cmd, args, options = {}) {
+  const res = spawnSync(cmd, args, { cwd, encoding: 'utf8', ...options });
   if (res.error) throw res.error;
   return res;
 }
@@ -113,4 +113,30 @@ test('compute-versioned-component-changes accepts remote tag identities without 
   assert.equal(parsed.changed_cli, 'true');
   assert.equal(parsed.cli_baseline_tag, 'cli-v0.1.0');
   assert.equal(git(dir, ['for-each-ref', '--format=%(refname)', 'refs/tags']), '');
+});
+
+test('compute-versioned-component-changes handles repositories whose tracked path list exceeds the child-process default buffer', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-versioned-components-large-index-'));
+
+  git(dir, ['init']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+
+  const blob = run(dir, 'git', ['hash-object', '-w', '--stdin'], { input: 'fixture\n' });
+  assert.equal(blob.status, 0, blob.stderr || blob.stdout);
+  const blobSha = String(blob.stdout).trim();
+  const indexEntries = Array.from({ length: 14_000 }, (_, index) => {
+    const suffix = String(index).padStart(5, '0');
+    return `100644 ${blobSha}\tapps/cli/generated/${suffix}-${'x'.repeat(72)}.txt`;
+  }).join('\n');
+  const updateIndex = run(dir, 'git', ['update-index', '--index-info'], { input: `${indexEntries}\n` });
+  assert.equal(updateIndex.status, 0, updateIndex.stderr || updateIndex.stdout);
+  git(dir, ['commit', '-q', '-m', 'large tracked path index']);
+
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'compute-versioned-component-changes.mjs');
+  const res = run(dir, process.execPath, [script, '--environment', 'production', '--head', 'HEAD']);
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+
+  const parsed = JSON.parse(String(res.stdout).trim());
+  assert.equal(parsed.changed_cli, 'true');
 });
