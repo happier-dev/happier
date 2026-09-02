@@ -194,14 +194,6 @@ jobs:
             --source-ref "$SOURCE_REF" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Guard stable channel
-        if: ${{ inputs.channel == 'stable' && steps.channel_meta.outputs.source_ref != 'main' }}
-        env:
-          RESOLVED_SOURCE_REF: ${{ steps.channel_meta.outputs.source_ref }}
-        run: |
-          echo "Stable Docker publishing must build from main (resolved ref: '$RESOLVED_SOURCE_REF')." >&2
-          exit 1
-
       - name: Checkout exact candidate source as inert data
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -221,6 +213,23 @@ jobs:
           source_sha="$(git rev-parse HEAD)"
           if [ -n "$AUTHORIZED_SHA" ]; then test "$source_sha" = "$AUTHORIZED_SHA"; fi
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verify stable candidate is current main
+        if: ${{ inputs.channel == 'stable' }}
+        working-directory: .candidate-source
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          main_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          if [ -z "$main_sha" ]; then
+            echo "Unable to resolve the stable main branch identity." >&2
+            exit 1
+          fi
+          if ! test "$SOURCE_SHA" = "$main_sha"; then
+            echo "Stable Docker candidate $SOURCE_SHA is not current main ($main_sha)." >&2
+            exit 1
+          fi
 
       - name: Pack exact candidate source as data
         working-directory: .candidate-source
