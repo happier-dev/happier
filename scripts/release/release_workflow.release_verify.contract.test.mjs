@@ -40,17 +40,17 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /promote_server_runtime:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_server_runtime\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_server_runtime\.outputs\.version\s*\}\}/,
+    /promote_server_runtime:[\s\S]*?needs:\s*\[resolve_resume, prepare_release_candidate, verify_release_candidates, publish_server_runtime\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_server_runtime\.outputs\.version\s*\}\}/,
   );
   assert.match(
     raw,
-    /promote_ui_web:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_ui_web\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_ui_web\.outputs\.version\s*\}\}/,
+    /promote_ui_web:[\s\S]*?needs:\s*\[resolve_resume, prepare_release_candidate, verify_release_candidates, publish_ui_web\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_ui_web\.outputs\.version\s*\}\}/,
   );
   assert.match(
     raw,
-    /promote_cli_binaries:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_cli_binaries\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_cli_binaries\.outputs\.version\s*\}\}/,
+    /promote_cli_binaries:[\s\S]*?needs:\s*\[resolve_resume, prepare_release_candidate, verify_release_candidates, publish_cli_binaries\][\s\S]*?retry_version:\s*\$\{\{\s*needs\.publish_cli_binaries\.outputs\.version\s*\}\}/,
   );
-  assert.match(raw, /promote_hstack_binaries:[\s\S]*?needs:\s*\[prepare_release_candidate, verify_release_candidates, publish_hstack_binaries\]/);
+  assert.match(raw, /promote_hstack_binaries:[\s\S]*?needs:\s*\[resolve_resume, prepare_release_candidate, verify_release_candidates, publish_hstack_binaries\]/);
 
   for (const job of ['promote_hstack_binaries', 'promote_cli_binaries', 'promote_server_runtime', 'promote_ui_web']) {
     assert.ok(workflow.jobs.release_verify.needs.includes(job));

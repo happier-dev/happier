@@ -99,3 +99,28 @@ test('standard status carries accepted downstream evidence across a control-fixe
   assert.equal(docker?.state, 'published');
   assert.equal(status.terminal, 'published');
 });
+
+test('standard status carries verified rolling projections across a control-fixed resume', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '47',
+    RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/47',
+    RELEASE_RUN_NAME: 'RELEASE — Publish (rel_abcdefgh)',
+    HMAINT_OPERATION_ID: 'rel_abcdefgh',
+    RELEASE_CHANNEL: 'preview',
+    SOURCE_SHA: 'f'.repeat(40),
+    REQUEST_CLI: 'true',
+    CLI_CANDIDATE_RESULT: 'success',
+    CLI_VERSION: '0.2.11-preview.1',
+    CLI_RESUME_VERIFIED: 'true',
+    CLI_RESULT: 'skipped',
+    CLI_ROLLING_RESUME_COMPLETE: 'true',
+    CANDIDATE_RESULT: 'success',
+    IMMUTABLE_VERIFICATION_RESULT: 'success',
+    RELEASE_VERIFY_RESULT: 'success',
+  });
+  const rolling = status.surfaces.find((surface) => surface.id === 'cli_rolling_release');
+  assert.equal(rolling?.result, 'success');
+  assert.equal(rolling?.state, 'complete');
+  assert.equal(rolling?.identity?.verified, true);
+  assert.equal(status.terminal, 'complete');
+});

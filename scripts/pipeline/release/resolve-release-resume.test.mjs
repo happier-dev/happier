@@ -157,12 +157,16 @@ test('resume resolution reuses only successful verified immutable candidates', (
       npm: false,
     },
     completed: {
+      cliRolling: false,
       deployDocs: false,
       deployServer: false,
       deployUi: false,
       deployWebsite: false,
       docker: false,
+      serverRolling: false,
+      stackRolling: false,
       npm: false,
+      uiWebRolling: false,
     },
   });
 });
@@ -225,13 +229,79 @@ test('release resume preserves exact completed downstream publications without r
   });
 
   assert.deepEqual(resolved.completed, {
+    cliRolling: false,
     deployDocs: true,
     deployServer: true,
     deployUi: true,
     deployWebsite: true,
     docker: true,
+    serverRolling: false,
+    stackRolling: false,
     npm: true,
+    uiWebRolling: false,
   });
+});
+
+test('release resume preserves exact verified rolling projections without mutating them again', () => {
+  const rollingSurfaces = [
+    ['cli_rolling_release', 'cliRolling'],
+    ['hstack_rolling_release', 'stackRolling'],
+    ['server_rolling_release', 'serverRolling'],
+    ['ui_web_rolling_release', 'uiWebRolling'],
+  ].map(([id]) => ({
+    id,
+    requested: true,
+    required: true,
+    evidence: 'verified',
+    state: 'complete',
+    result: 'success',
+    identity: { sourceSha: SOURCE_SHA, verified: true },
+  }));
+  const resolved = resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({
+      channel: 'preview',
+      surfaces: [previewCliCandidate(), ...rollingSurfaces, ...standardOptionalSurfaces(false)],
+    }),
+    expected: {
+      repository: REPOSITORY,
+      workflowPath: '.github/workflows/release.yml',
+      channel: 'preview',
+    },
+  });
+
+  assert.equal(resolved.completed.cliRolling, true);
+  assert.equal(resolved.completed.stackRolling, true);
+  assert.equal(resolved.completed.serverRolling, true);
+  assert.equal(resolved.completed.uiWebRolling, true);
+});
+
+test('release resume rejects rolling completion evidence without exact verified source identity', () => {
+  const invalidRolling = {
+    id: 'cli_rolling_release',
+    requested: true,
+    required: true,
+    evidence: 'verified',
+    state: 'complete',
+    result: 'success',
+    identity: { sourceSha: 'f'.repeat(40), verified: true },
+  };
+  assert.throws(() => resolveReleaseResume({
+    originRun: originRun({ path: '.github/workflows/release.yml' }),
+    artifacts: [statusArtifact()],
+    downloadedDigest: DIGEST,
+    status: status({
+      channel: 'preview',
+      surfaces: [previewCliCandidate(), invalidRolling, ...standardOptionalSurfaces(false)],
+    }),
+    expected: {
+      repository: REPOSITORY,
+      workflowPath: '.github/workflows/release.yml',
+      channel: 'preview',
+    },
+  }), /cli_rolling_release source SHA/);
 });
 
 test('release resume rejects completed downstream evidence bound to another source', () => {

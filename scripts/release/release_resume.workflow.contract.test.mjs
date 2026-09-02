@@ -117,6 +117,10 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(parsed.jobs.resolve_resume.with.expected_operation_id, '${{ inputs.hmaint_operation_id }}');
   assert.ok(needs(parsed.jobs.plan).includes('resolve_resume'));
   assert.match(parsed.jobs.plan.if, /needs\.resolve_resume\.result == 'success'/);
+  const resumeResolver = workflow('resolve-release-resume.yml');
+  for (const output of ['cli_rolling_complete', 'stack_rolling_complete', 'server_rolling_complete', 'ui_web_rolling_complete']) {
+    assert.ok(resumeResolver.on.workflow_call.outputs[output], `expected resume output ${output}`);
+  }
   const bumpPlanStep = parsed.jobs.plan.steps.find((step) => step.id === 'bump_plan');
   assert.equal(bumpPlanStep.env.RESUME_CLI_VERSION, '${{ needs.resolve_resume.outputs.cli_version }}');
   assert.equal(bumpPlanStep.env.RESUME_STACK_VERSION, '${{ needs.resolve_resume.outputs.stack_version }}');
@@ -144,6 +148,16 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.match(String(parsed.jobs.publish_docker.with.build_relay), /needs\.plan\.outputs\.publish_docker_relay_needed == 'true'/);
   assert.match(String(parsed.jobs.publish_docker.with.build_dev_box), /needs\.plan\.outputs\.publish_docker_dev_box_needed == 'true'/);
   assert.match(String(statusProjection.env.REQUEST_DOCKER), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
+  for (const [jobName, output] of [
+    ['promote_cli_binaries', 'cli_rolling_complete'],
+    ['promote_hstack_binaries', 'stack_rolling_complete'],
+    ['promote_server_runtime', 'server_rolling_complete'],
+    ['promote_ui_web', 'ui_web_rolling_complete'],
+  ]) {
+    assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'));
+    assert.match(String(parsed.jobs[jobName].if), new RegExp(`needs\\.resolve_resume\\.outputs\\.${output} != 'true'`));
+  }
+  assert.equal(statusProjection.env.CLI_ROLLING_RESUME_COMPLETE, '${{ needs.resolve_resume.outputs.cli_rolling_complete }}');
   assert.ok(needs(parsed.jobs.deploy_ui).includes('resolve_resume'));
   assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_requested), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
   assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);

@@ -64,6 +64,14 @@ on:
         value: ${{ jobs.resolve.outputs.docker_complete }}
       npm_complete:
         value: ${{ jobs.resolve.outputs.npm_complete }}
+      cli_rolling_complete:
+        value: ${{ jobs.resolve.outputs.cli_rolling_complete }}
+      stack_rolling_complete:
+        value: ${{ jobs.resolve.outputs.stack_rolling_complete }}
+      server_rolling_complete:
+        value: ${{ jobs.resolve.outputs.server_rolling_complete }}
+      ui_web_rolling_complete:
+        value: ${{ jobs.resolve.outputs.ui_web_rolling_complete }}
       deploy_ui_web_requested:
         value: ${{ jobs.resolve.outputs.deploy_ui_web_requested }}
       deploy_ui_expo_action:
@@ -107,6 +115,10 @@ jobs:
       deploy_docs_complete: ${{ steps.resume.outputs.deploy_docs_complete || steps.empty.outputs.deploy_docs_complete }}
       docker_complete: ${{ steps.resume.outputs.docker_complete || steps.empty.outputs.docker_complete }}
       npm_complete: ${{ steps.resume.outputs.npm_complete || steps.empty.outputs.npm_complete }}
+      cli_rolling_complete: ${{ steps.resume.outputs.cli_rolling_complete || steps.empty.outputs.cli_rolling_complete }}
+      stack_rolling_complete: ${{ steps.resume.outputs.stack_rolling_complete || steps.empty.outputs.stack_rolling_complete }}
+      server_rolling_complete: ${{ steps.resume.outputs.server_rolling_complete || steps.empty.outputs.server_rolling_complete }}
+      ui_web_rolling_complete: ${{ steps.resume.outputs.ui_web_rolling_complete || steps.empty.outputs.ui_web_rolling_complete }}
       deploy_ui_web_requested: ${{ steps.resume.outputs.deploy_ui_web_requested || steps.empty.outputs.deploy_ui_web_requested }}
       deploy_ui_expo_action: ${{ steps.resume.outputs.deploy_ui_expo_action || steps.empty.outputs.deploy_ui_expo_action }}
       deploy_ui_desktop_mode: ${{ steps.resume.outputs.deploy_ui_desktop_mode || steps.empty.outputs.deploy_ui_desktop_mode }}
@@ -149,6 +161,10 @@ jobs:
             echo 'deploy_docs_complete=false'
             echo 'docker_complete=false'
             echo 'npm_complete=false'
+            echo 'cli_rolling_complete=false'
+            echo 'stack_rolling_complete=false'
+            echo 'server_rolling_complete=false'
+            echo 'ui_web_rolling_complete=false'
             echo 'deploy_ui_web_requested=false'
             echo 'deploy_ui_expo_action=none'
             echo 'deploy_ui_desktop_mode=none'

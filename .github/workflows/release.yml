@@ -1153,8 +1153,8 @@ jobs:
       candidate_ui_web_version: ${{ needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version || '' }}
 
   promote_server_runtime:
-    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version != '' }}
-    needs: [prepare_release_candidate, verify_release_candidates, publish_server_runtime]
+    if: ${{ always() && needs.resolve_resume.outputs.server_rolling_complete != 'true' && needs.verify_release_candidates.result == 'success' && needs.publish_server_runtime.result == 'success' && needs.publish_server_runtime.outputs.version != '' }}
+    needs: [resolve_resume, prepare_release_candidate, verify_release_candidates, publish_server_runtime]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-server-runtime.yml
@@ -1168,8 +1168,8 @@ jobs:
       retry_version: ${{ needs.publish_server_runtime.outputs.version }}
 
   promote_ui_web:
-    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version != '' }}
-    needs: [prepare_release_candidate, verify_release_candidates, publish_ui_web]
+    if: ${{ always() && needs.resolve_resume.outputs.ui_web_rolling_complete != 'true' && needs.verify_release_candidates.result == 'success' && needs.publish_ui_web.result == 'success' && needs.publish_ui_web.outputs.version != '' }}
+    needs: [resolve_resume, prepare_release_candidate, verify_release_candidates, publish_ui_web]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-ui-web.yml
@@ -1183,8 +1183,8 @@ jobs:
       retry_version: ${{ needs.publish_ui_web.outputs.version }}
 
   promote_cli_binaries:
-    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version != '' }}
-    needs: [prepare_release_candidate, verify_release_candidates, publish_cli_binaries]
+    if: ${{ always() && needs.resolve_resume.outputs.cli_rolling_complete != 'true' && needs.verify_release_candidates.result == 'success' && needs.publish_cli_binaries.result == 'success' && needs.publish_cli_binaries.outputs.version != '' }}
+    needs: [resolve_resume, prepare_release_candidate, verify_release_candidates, publish_cli_binaries]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-cli-binaries.yml
@@ -1198,8 +1198,8 @@ jobs:
       retry_version: ${{ needs.publish_cli_binaries.outputs.version }}
 
   promote_hstack_binaries:
-    if: ${{ always() && needs.verify_release_candidates.result == 'success' && needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version != '' }}
-    needs: [prepare_release_candidate, verify_release_candidates, publish_hstack_binaries]
+    if: ${{ always() && needs.resolve_resume.outputs.stack_rolling_complete != 'true' && needs.verify_release_candidates.result == 'success' && needs.publish_hstack_binaries.result == 'success' && needs.publish_hstack_binaries.outputs.version != '' }}
+    needs: [resolve_resume, prepare_release_candidate, verify_release_candidates, publish_hstack_binaries]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-hstack-binaries.yml
@@ -1292,10 +1292,10 @@ jobs:
       needs.plan.result == 'success' &&
       (needs.deploy_plan.result == 'success' || needs.deploy_plan.result == 'skipped') &&
       needs.verify_release_candidates.result == 'success' &&
-      (needs.promote_cli_binaries.result == 'success' || (needs.plan.outputs.publish_cli_binaries_needed != 'true' && needs.promote_cli_binaries.result == 'skipped')) &&
-      (needs.promote_hstack_binaries.result == 'success' || (needs.plan.outputs.publish_stack != 'true' && needs.promote_hstack_binaries.result == 'skipped')) &&
-      (needs.promote_server_runtime.result == 'success' || (needs.plan.outputs.publish_server_runtime_needed != 'true' && needs.promote_server_runtime.result == 'skipped')) &&
-      (needs.promote_ui_web.result == 'success' || (needs.plan.outputs.publish_ui_web_needed != 'true' && needs.promote_ui_web.result == 'skipped')) &&
+      (needs.promote_cli_binaries.result == 'success' || needs.resolve_resume.outputs.cli_rolling_complete == 'true' || (needs.plan.outputs.publish_cli_binaries_needed != 'true' && needs.promote_cli_binaries.result == 'skipped')) &&
+      (needs.promote_hstack_binaries.result == 'success' || needs.resolve_resume.outputs.stack_rolling_complete == 'true' || (needs.plan.outputs.publish_stack != 'true' && needs.promote_hstack_binaries.result == 'skipped')) &&
+      (needs.promote_server_runtime.result == 'success' || needs.resolve_resume.outputs.server_rolling_complete == 'true' || (needs.plan.outputs.publish_server_runtime_needed != 'true' && needs.promote_server_runtime.result == 'skipped')) &&
+      (needs.promote_ui_web.result == 'success' || needs.resolve_resume.outputs.ui_web_rolling_complete == 'true' || (needs.plan.outputs.publish_ui_web_needed != 'true' && needs.promote_ui_web.result == 'skipped')) &&
       (needs.deploy_server.result == 'success' || needs.resolve_resume.outputs.deploy_server_complete == 'true' || (needs.deploy_plan.outputs.deploy_server_requested != 'true' && needs.deploy_server.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1317,10 +1317,10 @@ jobs:
         env:
           EXPECTED_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
           CHANNEL_SUFFIX: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-          CLI_PROMOTED: ${{ needs.promote_cli_binaries.result == 'success' }}
-          HSTACK_PROMOTED: ${{ needs.promote_hstack_binaries.result == 'success' }}
-          SERVER_PROMOTED: ${{ needs.promote_server_runtime.result == 'success' }}
-          UI_WEB_PROMOTED: ${{ needs.promote_ui_web.result == 'success' }}
+          CLI_PROMOTED: ${{ needs.promote_cli_binaries.result == 'success' || needs.resolve_resume.outputs.cli_rolling_complete == 'true' }}
+          HSTACK_PROMOTED: ${{ needs.promote_hstack_binaries.result == 'success' || needs.resolve_resume.outputs.stack_rolling_complete == 'true' }}
+          SERVER_PROMOTED: ${{ needs.promote_server_runtime.result == 'success' || needs.resolve_resume.outputs.server_rolling_complete == 'true' }}
+          UI_WEB_PROMOTED: ${{ needs.promote_ui_web.result == 'success' || needs.resolve_resume.outputs.ui_web_rolling_complete == 'true' }}
         run: |
           set -euo pipefail
           for tag in server-$CHANNEL_SUFFIX stack-$CHANNEL_SUFFIX cli-$CHANNEL_SUFFIX ui-web-$CHANNEL_SUFFIX; do
@@ -1474,6 +1474,10 @@ jobs:
           DEPLOY_DOCS_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.deploy_docs_complete }}
           DOCKER_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.docker_complete }}
           NPM_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.npm_complete }}
+          CLI_ROLLING_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.cli_rolling_complete }}
+          STACK_ROLLING_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.stack_rolling_complete }}
+          SERVER_ROLLING_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.server_rolling_complete }}
+          UI_WEB_ROLLING_RESUME_COMPLETE: ${{ needs.resolve_resume.outputs.ui_web_rolling_complete }}
           CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
           IMMUTABLE_VERIFICATION_RESULT: ${{ needs.verify_release_candidates.result }}
           CLI_RESULT: ${{ needs.promote_cli_binaries.result }}
