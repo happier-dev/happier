@@ -83,7 +83,7 @@ test('previously broad release-path tokens use the minimum current-repository co
     ['promote-website.yml/promote/Create GitHub App token', 'write'],
     ['promote-docs.yml/promote/Create GitHub App token', 'write'],
     ['publish-docker.yml/publish/Create GitHub App token', 'read'],
-    ['build-ui-mobile-local.yml/build_android/Create GitHub App token (APK publishing)', 'write'],
+    ['build-ui-mobile-local.yml/publish_android_apk/Create GitHub App token (APK publishing)', 'write'],
     ['publish-ui-mobile-dev.yml/publish/Create GitHub App token', 'read'],
     ['publish-ui-mobile-dev.yml/ios_cloud/Create GitHub App token', 'read'],
     ['publish-ui-mobile-dev.yml/ios_local/Create GitHub App token', 'read'],

@@ -13,6 +13,7 @@ import {
   supportsMobileApkReleasePublishing,
 } from './mobile-release-environments.mjs';
 import { createSignedReleaseAssetEnvelope } from '../release/lib/signed-asset-envelope.mjs';
+import { buildRollingAssetPlan } from '../github/rolling-release-asset-plan.mjs';
 
 function fail(message) {
   console.error(message);
@@ -81,6 +82,33 @@ function immutableEnvelopeAssetPaths(input) {
     path.join(assetDir, checksumsName),
     path.join(assetDir, `${checksumsName}.minisig`),
   ];
+}
+
+/**
+ * Materializes any compatibility aliases selected by the canonical rolling
+ * asset planner next to the built APK. Every alias is an exact byte copy.
+ *
+ * @param {{ apkAbs: string; appVersion: string; rollingTag: string; dryRun: boolean }} input
+ */
+function rollingApkAssetPaths(input) {
+  const sourceName = path.basename(input.apkAbs);
+  const plan = buildRollingAssetPlan({
+    immutableNames: [sourceName],
+    payloadNames: [sourceName],
+    version: input.appVersion,
+    rollingTag: input.rollingTag,
+  });
+  return plan.map(({ name, sourceName: plannedSourceName }) => {
+    const destination = path.join(path.dirname(input.apkAbs), name);
+    if (name !== plannedSourceName) {
+      if (input.dryRun) {
+        console.log(`[dry-run] copy ${plannedSourceName} to ${name}`);
+      } else {
+        fs.copyFileSync(input.apkAbs, destination);
+      }
+    }
+    return destination;
+  });
 }
 
 /**
@@ -191,9 +219,11 @@ async function main() {
     options: {
       environment: { type: 'string' },
       'apk-path': { type: 'string' },
+      version: { type: 'string', default: '' },
       'retry-version': { type: 'string', default: '' },
       'target-sha': { type: 'string' },
       'release-message': { type: 'string', default: '' },
+      'release-message-file': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -211,15 +241,32 @@ async function main() {
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
-  const releaseMessage = String(values['release-message'] ?? '').trim();
+  const inlineReleaseMessage = String(values['release-message'] ?? '').trim();
+  const releaseMessageFile = String(values['release-message-file'] ?? '').trim();
+  if (inlineReleaseMessage && releaseMessageFile) {
+    fail('--release-message and --release-message-file are mutually exclusive.');
+  }
+  if (releaseMessageFile && !fs.existsSync(path.resolve(releaseMessageFile))) {
+    fail(`Missing release message file: ${path.resolve(releaseMessageFile)}`);
+  }
+  const releaseMessage = releaseMessageFile
+    ? fs.readFileSync(path.resolve(releaseMessageFile), 'utf8').trim()
+    : inlineReleaseMessage;
+  const explicitVersion = String(values.version ?? '').trim();
   const retryVersion = String(values['retry-version'] ?? '').trim();
+  if (explicitVersion && !CANONICAL_SEMVER_RE.test(explicitVersion)) {
+    fail('--version must be a canonical semantic version.');
+  }
   if (retryVersion && !CANONICAL_SEMVER_RE.test(retryVersion)) {
     fail('--retry-version must be a canonical semantic version.');
+  }
+  if (explicitVersion && retryVersion) {
+    fail('--version and --retry-version are mutually exclusive.');
   }
 
   // A retry is admitted by the immutable version tag and its authorized SHA;
   // the current checkout's package.json is not part of that candidate identity.
-  const appVersion = retryVersion || String(
+  const appVersion = retryVersion || explicitVersion || String(
     JSON.parse(fs.readFileSync(path.join(repoRoot, 'apps', 'ui', 'package.json'), 'utf8')).version ?? '',
   ).trim();
   if (!appVersion) fail('Unable to resolve apps/ui version');
@@ -286,12 +333,18 @@ async function main() {
     return;
   }
 
+  const rollingAssetPaths = rollingApkAssetPaths({
+    apkAbs,
+    appVersion,
+    rollingTag: releaseMeta.tag,
+    dryRun,
+  });
   publishGitHubRelease({
     opts,
     repoRoot,
     releaseMeta,
     targetSha,
-    assetPaths: [apkAbs],
+    assetPaths: rollingAssetPaths,
     releaseMessage,
   });
 }

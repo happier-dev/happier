@@ -72,3 +72,33 @@ test('rolling alias derivation fails closed on a filename collision', () => {
     rollingTag: 'cli-stable',
   }), /collides/i);
 });
+
+test('stable mobile APK keeps immutable bytes and adds the website-compatible stable name', () => {
+  const versionedName = `happier-production-android-v${version}.apk`;
+  const plan = buildRollingAssetPlan({
+    immutableNames: [versionedName],
+    payloadNames: [versionedName],
+    version,
+    rollingTag: 'ui-mobile-stable',
+  });
+
+  assert.deepEqual(plan, [
+    { name: 'happier-production-android.apk', sourceName: versionedName },
+    { name: versionedName, sourceName: versionedName },
+  ].sort((left, right) => left.name.localeCompare(right.name)));
+});
+
+test('preview mobile APK adds the longstanding website-compatible name', () => {
+  const sourceName = 'happier-preview-android.apk';
+  const plan = buildRollingAssetPlan({
+    immutableNames: [sourceName],
+    payloadNames: [sourceName],
+    version,
+    rollingTag: 'ui-mobile-preview',
+  });
+
+  assert.deepEqual(plan, [
+    { name: sourceName, sourceName },
+    { name: 'happier-preview.apk', sourceName },
+  ]);
+});

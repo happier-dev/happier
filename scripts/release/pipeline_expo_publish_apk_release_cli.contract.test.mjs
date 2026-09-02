@@ -190,3 +190,73 @@ test('production immutable APK publication disables generated notes when approve
   assert.match(out, /--generate-notes\s+false/);
   assert.doesNotMatch(out, /--tag ui-mobile-v[^\n]*--generate-notes\s+true/);
 });
+
+test('trusted publication binds a built APK to its explicit candidate version instead of control package metadata', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'happier-apk-explicit-version-'));
+  const apkPath = join(dir, 'happier-production-android-v9.8.7.apk');
+  writeFileSync(apkPath, 'fake-apk');
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'publish-apk-release.mjs'),
+      '--environment', 'production',
+      '--apk-path', apkPath,
+      '--version', '9.8.7',
+      '--target-sha', '0123456789abcdef0123456789abcdef01234567',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, GH_REPO: 'happier-dev/happier', GITHUB_REPOSITORY: 'happier-dev/happier' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /tag=ui-mobile-stable version=9\.8\.7/);
+  assert.match(out, /--tag\s+ui-mobile-v9\.8\.7\b/);
+  assert.match(out, /--source-tag\s+ui-mobile-v9\.8\.7\b/);
+});
+
+test('preview APK publication retains the build filename and the website compatibility alias', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'happier-apk-preview-alias-'));
+  const apkPath = join(dir, 'happier-preview-android.apk');
+  writeFileSync(apkPath, 'fake-apk');
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'publish-apk-release.mjs'),
+      '--environment', 'preview',
+      '--apk-path', apkPath,
+      '--target-sha', '0123456789abcdef0123456789abcdef01234567',
+      '--dry-run',
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  assert.match(out, /happier-preview-android\.apk/);
+  assert.match(out, /happier-preview\.apk/);
+});
+
+test('APK publication accepts release notes from a file without multiline GitHub outputs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'happier-apk-notes-file-'));
+  const apkPath = join(dir, 'happier-preview-android.apk');
+  const notesPath = join(dir, 'release-notes.md');
+  writeFileSync(apkPath, 'fake-apk');
+  writeFileSync(notesPath, 'First line\n\n- second line\n');
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'publish-apk-release.mjs'),
+      '--environment', 'preview',
+      '--apk-path', apkPath,
+      '--target-sha', '0123456789abcdef0123456789abcdef01234567',
+      '--release-message-file', notesPath,
+      '--dry-run',
+    ],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+  );
+
+  assert.match(out, /--release-message\s+"First line\\n\\n- second line"/);
+});

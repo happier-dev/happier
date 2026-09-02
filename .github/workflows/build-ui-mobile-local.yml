@@ -231,8 +231,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
-      contents: write
+      contents: read
     environment: release-shared
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.candidate_sha }}
+      app_version: ${{ steps.candidate.outputs.app_version }}
+      has_apk: ${{ steps.apk.outputs.has_apk }}
     env:
       EAS_CLI_VERSION: 18.0.1
       APP_ENV: ${{ inputs.environment }}
@@ -245,23 +249,23 @@ jobs:
           ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
 
-      - name: Create GitHub App token (APK publishing)
-        id: app_token
-        if: ${{ inputs.publish_apk_release != 'false' }}
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Bind built candidate identity
+        id: candidate
+        run: |
+          set -euo pipefail
+          candidate_sha="$(git rev-parse HEAD)"
+          app_version="$(node -p "require('./apps/ui/package.json').version")"
+          canonical_semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          [[ "$candidate_sha" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$app_version" =~ $canonical_semver_re ]]
+          printf 'candidate_sha=%s\napp_version=%s\n' "$candidate_sha" "$app_version" >> "$GITHUB_OUTPUT"
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
@@ -279,11 +283,6 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: EAS build (pipeline)
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs ui-mobile-release \
@@ -294,17 +293,91 @@ jobs:
             --native-build-mode "${{ inputs.native_build_mode }}" \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
-            --publish-apk-release "${{ inputs.publish_apk_release }}" \
+            --publish-apk-release false \
             --release-message "${{ inputs.release_message }}" \
             --secrets-source env
 
+      - name: Locate built APK candidate
+        id: apk
+        if: ${{ inputs.publish_apk_release == 'true' || (inputs.publish_apk_release == 'auto' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production')) }}
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist/ui-mobile -type f -name '*.apk' -print)
+          if [ "${#apks[@]}" -gt 1 ]; then
+            echo "Expected at most one built APK candidate; found ${#apks[@]}." >&2
+            exit 1
+          fi
+          printf 'has_apk=%s\n' "$([ "${#apks[@]}" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Upload mobile build artifact
-        if: ${{ inputs.native_build_mode == 'local' }}
+        if: ${{ inputs.native_build_mode == 'local' || steps.apk.outputs.has_apk == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-mobile-${{ inputs.environment }}-android
           path: dist/ui-mobile/**
           retention-days: 7
+
+  publish_android_apk:
+    name: Sign and publish Android APK
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') && needs.build_android.outputs.has_apk == 'true' }}
+    needs: [release_actor_guard, build_android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Download built APK candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ui-mobile-${{ inputs.environment }}-android
+          path: dist/ui-mobile
+
+      - name: Create GitHub App token (APK publishing)
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Sign and publish APK with trusted control
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+          APP_VERSION: ${{ needs.build_android.outputs.app_version }}
+          AUTHORIZED_SHA: ${{ needs.build_android.outputs.candidate_sha }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist/ui-mobile -type f -name '*.apk' -print)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "Expected exactly one built APK candidate; found ${#apks[@]}." >&2
+            exit 1
+          fi
+          node scripts/pipeline/expo/publish-apk-release.mjs \
+            --environment "${{ inputs.environment }}" \
+            --apk-path "${apks[0]}" \
+            --version "$APP_VERSION" \
+            --target-sha "$AUTHORIZED_SHA" \
+            --release-message "$RELEASE_MESSAGE"
 
   build_ios:
     name: Build (ios)
@@ -480,7 +553,6 @@ jobs:
           persist-credentials: false
 
       - name: Project approved release notes from exact immutable candidate
-        id: release_notes
         env:
           RETRY_VERSION: ${{ inputs.retry_version }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
@@ -497,8 +569,7 @@ jobs:
             --component-version "ui=$RETRY_VERSION" \
             --changelog "$GITHUB_WORKSPACE/candidate/apps/ui/CHANGELOG.md" | \
             node --input-type=module -e '
-              import { appendFileSync } from "node:fs";
-              import { createHash } from "node:crypto";
+              import { writeFileSync } from "node:fs";
               let raw = "";
               for await (const chunk of process.stdin) raw += chunk;
               const bundle = JSON.parse(raw);
@@ -507,8 +578,7 @@ jobs:
               }
               const value = bundle.projections?.github?.markdown;
               if (typeof value !== "string") throw new Error("Missing github_markdown projection");
-              const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`github_markdown:${value}`).digest("hex")}`;
-              appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\\n${value}\\n${delimiter}\\n`);
+              writeFileSync(`${process.env.RUNNER_TEMP}/release-notes.md`, value, { mode: 0o600 });
             '
 
       - name: Create scoped release token
@@ -527,11 +597,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
-          RELEASE_MESSAGE: ${{ steps.release_notes.outputs.release_notes_github_markdown }}
         run: |
           set -euo pipefail
           node scripts/pipeline/expo/publish-apk-release.mjs \
             --environment production \
             --retry-version "$RETRY_VERSION" \
             --target-sha "$AUTHORIZED_SHA" \
-            --release-message "$RELEASE_MESSAGE"
+            --release-message-file "$RUNNER_TEMP/release-notes.md"
