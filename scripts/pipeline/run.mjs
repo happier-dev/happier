@@ -4414,6 +4414,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             fail('--qualified-v4-activation-approval is not supported by this release line because it has no Qualified V4 activation path.');
           }
           const promotionSourceBranch = resolveReleasePromotionSourceBranch(action);
+          const productionPromotionMode = action === 'reset main from preview' || action === 'reset main from dev'
+            ? 'reset'
+            : 'fast-forward';
 
           const uiExpoAction = String(values['ui-expo-action'] ?? '').trim() || 'none';
           const desktopMode = String(values['desktop-mode'] ?? '').trim() || 'none';
@@ -4484,6 +4487,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 kind: 'happier.release-dispatch-plan.v3',
                 schemaVersion: 3,
                 sourceBranch: promotionSourceBranch,
+                productionPromotionMode,
                 authorizedPromotionSourceSha: authorizedPromotionSource.sha,
                 effectiveDeployTargets: deployTargets,
                 validationProfile: releaseProfile.id,
