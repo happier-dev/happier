@@ -150,6 +150,17 @@ test('npm-e2e-smoke stack entrypoint forces non-production dependency installs (
   assert.match(raw, /\bunset\s+YARN_PRODUCTION\b/, 'expected entrypoint to unset YARN_PRODUCTION');
 });
 
+test('npm-e2e-smoke admits the read-only mounted monorepo before hstack clones it', async () => {
+  const entrypointPath = join(smokeDir, 'bin', 'stack-entrypoint.sh');
+  const raw = await readFile(entrypointPath, 'utf8');
+  const safeDirectory = 'git config --global --add safe.directory "$HSTACK_HAPPIER_REPO"';
+  assert.match(raw, /git config --global --add safe\.directory "\$HSTACK_HAPPIER_REPO"/);
+  assert.ok(
+    raw.indexOf(safeDirectory) < raw.indexOf('"${HSTACK_PREFIX[@]}" "${setup_args[@]}"'),
+    'expected the mounted repository to be admitted before hstack setup asks Git to clone it',
+  );
+});
+
 test('npm-e2e-smoke stack entrypoint retries transient npm install network failures', async () => {
   const entrypointPath = join(smokeDir, 'bin', 'stack-entrypoint.sh');
   const raw = await readFile(entrypointPath, 'utf8');
