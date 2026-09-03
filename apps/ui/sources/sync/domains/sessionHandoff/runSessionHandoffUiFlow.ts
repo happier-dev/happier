@@ -2,14 +2,14 @@ import type { ActionExecutorContext, SessionHandoffWorkspaceTransfer } from '@ha
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { openSessionHandoffProgressModal } from '@/components/sessions/handoff/openSessionHandoffProgressModal';
+import { openObservedSessionHandoffProgressModal } from '@/components/sessions/handoff/openSessionHandoffProgressModal';
 import { openSessionHandoffFailureRecoveryModal } from '@/components/sessions/handoff/openSessionHandoffFailureRecoveryModal';
 
 import { executeSessionHandoffAction } from './executeSessionHandoffAction';
-import { subscribeActionOperationByRequest } from '@/sync/domains/actionOperations/subscribeActionOperationByRequest';
 import { performSessionHandoffRecoveryAction } from '../../ops/sessionHandoffs';
 import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
+import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<unknown>;
 
@@ -59,27 +59,30 @@ export async function runSessionHandoffUiFlow(
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
         const actionRequestId = randomUUID();
-        const modalId = openSessionHandoffProgressModal({
-            workspaceTransferEnabled: args.workspaceTransfer?.enabled === true,
-        });
-        const unsubscribeProgress = subscribeActionOperationByRequest({
-            actionId: 'session.handoff',
+        const workspaceTransferEnabled = args.workspaceTransfer?.enabled === true;
+        const progressPresentation = openObservedSessionHandoffProgressModal({
             requestId: actionRequestId,
             sessionId: args.sessionId,
-            onUpdate: (operation) => {
-            Modal.update(modalId, {
-                operation,
-            });
+            workspaceTransferEnabled,
+        });
+        actionOperationReentry.registerOrigin({
+            requestId: actionRequestId,
+            origin: {
+                resolve: (snapshot) => (
+                    snapshot.state === 'accepted' || snapshot.state === 'running'
+                        ? () => {
+                            openObservedSessionHandoffProgressModal({
+                                requestId: actionRequestId,
+                                sessionId: args.sessionId,
+                                workspaceTransferEnabled,
+                            });
+                        }
+                        : null
+                ),
             },
         });
-        let progressModalClosed = false;
         const closeProgressModal = () => {
-            if (progressModalClosed) {
-                return;
-            }
-            unsubscribeProgress();
-            Modal.hide(modalId);
-            progressModalClosed = true;
+            progressPresentation.close();
         };
         try {
             const releaseUserRequestLease = sync.acquireUserRequestLease();
@@ -94,6 +97,9 @@ export async function runSessionHandoffUiFlow(
             }
             if (result.ok) {
                 return result;
+            }
+            if (!progressPresentation.isAttached()) {
+                return { ok: false, handled: true };
             }
             if (result.recovery) {
                 closeProgressModal();
@@ -145,6 +151,9 @@ export async function runSessionHandoffUiFlow(
                 return { ok: false, handled: true };
             }
         } catch (error) {
+            if (!progressPresentation.isAttached()) {
+                return { ok: false, handled: true };
+            }
             const shouldRetry = await Modal.confirm(
                 t('sessionHandoff.failure.title'),
                 normalizeErrorMessage(error instanceof Error ? error.message : error),

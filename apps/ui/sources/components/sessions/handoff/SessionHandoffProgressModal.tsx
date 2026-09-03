@@ -19,6 +19,8 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ActionOperationDetailFooter } from '@/components/inbox/actionOperations/ActionOperationDetail';
+import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 
 type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
@@ -58,6 +60,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.default(),
         flex: 1,
+    },
+    cancelError: {
+        fontSize: 13,
+        color: theme.colors.state.danger.foreground,
+        ...Typography.default(),
     },
     progressSection: {
         gap: 10,
@@ -371,7 +378,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ setChrome, title, message, status, operation, workspaceTransferEnabled = false }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, workspaceTransferEnabled = false }: Props) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
 
@@ -493,6 +500,10 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
     const operationSteps = BASE_HANDOFF_STEPS.filter((step) => workspaceTransferEnabled || step.id !== 'transfer-workspace');
     const operationStepId = resolveOperationStepId(operation);
     const operationStepIndex = operationSteps.findIndex((step) => step.id === operationStepId);
+    const stopControl = useActionOperationStopControl(operation);
+    const operationTerminal = operation?.state === 'succeeded'
+        || operation?.state === 'failed'
+        || operation?.state === 'cancelled';
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
@@ -500,7 +511,16 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
         testID: 'session-handoff-progress-modal',
         bodyScroll: 'auto' as const,
         dimensions: { width: 420, maxHeightRatio: 0.92 },
-    }), [resolvedTitle]);
+        footer: (
+            <ActionOperationDetailFooter
+                terminal={operationTerminal}
+                canCancel={!operationTerminal && operation?.cancellation === 'supported'}
+                cancelPending={stopControl.pending}
+                onCancel={stopControl.requestStop}
+                onClose={onClose}
+            />
+        ),
+    }), [onClose, operation?.cancellation, operationTerminal, resolvedTitle, stopControl.pending, stopControl.requestStop]);
 
     useModalCardChrome(setChrome, chrome);
 
@@ -509,6 +529,11 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status,
             <View style={styles.messageRow}>
                 <Text style={styles.message}>{resolvedMessage}</Text>
             </View>
+            {stopControl.failed ? (
+                <Text accessibilityLiveRegion="polite" style={styles.cancelError}>
+                    {t('inbox.actionOperations.stopFailed')}
+                </Text>
+            ) : null}
             {operation || (!effectiveStatus && showSpinner) ? (
                 <View testID="session-handoff-operation-progress" style={styles.timeline}>
                     {operationSteps.map((step, index) => {

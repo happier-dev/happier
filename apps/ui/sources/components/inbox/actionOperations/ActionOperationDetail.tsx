@@ -113,7 +113,7 @@ export const ActionOperationDetail = React.memo(function ActionOperationDetail(p
                 testID="action-operation-detail"
                 size="dialog"
                 bodyStyle={styles.body}
-                footer={<DetailFooter terminal={true} onClose={props.onClose} />}
+                footer={<ActionOperationDetailFooter terminal={true} onClose={props.onClose} />}
             >
                 <View style={styles.header}>
                     <Icon name="warning" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />
@@ -141,7 +141,7 @@ export const ActionOperationDetail = React.memo(function ActionOperationDetail(p
             bodyScroll="auto"
             bodyStyle={styles.body}
             footer={(
-                <DetailFooter
+                <ActionOperationDetailFooter
                     terminal={presentation.terminal}
                     canCancel={!presentation.terminal && props.operation.cancellation === 'supported'}
                     cancelPending={props.cancelPending}
@@ -206,7 +206,7 @@ export const ActionOperationDetail = React.memo(function ActionOperationDetail(p
     );
 });
 
-function DetailFooter(props: Readonly<{
+export function ActionOperationDetailFooter(props: Readonly<{
     terminal: boolean;
     canCancel?: boolean;
     cancelPending?: boolean;

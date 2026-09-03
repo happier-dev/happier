@@ -14,7 +14,12 @@ import {
 export type ActionOperationReentryTarget =
     | Readonly<{ kind: 'new_session'; draftScope: ServerAccountScope; draftId: string; operationId: string }>
     | Readonly<{ kind: 'session'; sessionId: string; serverId: string | null }>
+    | Readonly<{ kind: 'origin'; open: () => void }>
     | Readonly<{ kind: 'detail' }>;
+
+export type ActionOperationReentryOrigin = Readonly<{
+    resolve: (snapshot: ActionOperationSnapshotV1) => (() => void) | null;
+}>;
 
 export type ActionOperationLocalPresentation = Readonly<{
     kind: 'setup_needs_attention';
@@ -113,6 +118,7 @@ export function resolvePersistedNewSessionOperationIdentity(params: Readonly<{
 export function createActionOperationReentryRegistry(options?: Readonly<{ maxEntries?: number }>) {
     const maxEntries = Math.max(1, Math.trunc(options?.maxEntries ?? DEFAULT_MAX_REENTRY_ENTRIES));
     const entries = new Map<string, NewSessionReentryEntry>();
+    const origins = new Map<string, ActionOperationReentryOrigin>();
     const listeners = new Set<() => void>();
     let revision = 0;
 
@@ -132,7 +138,25 @@ export function createActionOperationReentryRegistry(options?: Readonly<{ maxEnt
         publish();
     };
 
+    const retainOrigin = (requestId: string, origin: ActionOperationReentryOrigin): void => {
+        origins.delete(requestId);
+        origins.set(requestId, origin);
+        while (origins.size > maxEntries) {
+            const oldest = origins.keys().next().value;
+            if (typeof oldest !== 'string') break;
+            origins.delete(oldest);
+        }
+    };
+
     return {
+        registerOrigin(params: Readonly<{
+            requestId: string;
+            origin: ActionOperationReentryOrigin;
+        }>): void {
+            const requestId = params.requestId.trim();
+            if (!requestId) return;
+            retainOrigin(requestId, params.origin);
+        },
         registerNewSession(params: Readonly<{
             requestId: string;
             draftScope: ServerAccountScope;
@@ -186,6 +210,9 @@ export function createActionOperationReentryRegistry(options?: Readonly<{ maxEnt
             snapshot: ActionOperationSnapshotV1,
             deps?: Readonly<{ hasDraft?: (scope: ServerAccountScope, draftId: string) => boolean }>,
         ): ActionOperationReentryTarget {
+            const requestId = snapshotRequestId(snapshot);
+            const openOrigin = requestId ? origins.get(requestId)?.resolve(snapshot) ?? null : null;
+            if (openOrigin) return { kind: 'origin', open: openOrigin };
             if (snapshot.actionId === 'session.fork') {
                 if (snapshot.state !== 'succeeded') return { kind: 'detail' };
                 const childSessionId = readStringField(snapshot.result, 'childSessionId');
@@ -201,7 +228,6 @@ export function createActionOperationReentryRegistry(options?: Readonly<{ maxEnt
                     : { kind: 'detail' };
             }
             if (snapshot.actionId !== 'session.spawn_new') return { kind: 'detail' };
-            const requestId = snapshotRequestId(snapshot);
             const entry = requestId ? entries.get(entryKey(snapshot.scope.accountId, requestId)) : null;
             if (!entry) return { kind: 'detail' };
             if (entry.workflow === 'complete' && entry.createdSessionId) {

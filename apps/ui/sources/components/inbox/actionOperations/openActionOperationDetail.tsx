@@ -20,7 +20,7 @@ import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperat
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 import { ActionOperationDetail } from './ActionOperationDetail';
-import { requestActionOperationStop } from './requestActionOperationStop';
+import { useActionOperationStopControl } from './useActionOperationStopControl';
 
 export type ActionOperationDetailModalProps = CustomModalInjectedProps & Readonly<{
     operationId: string;
@@ -58,25 +58,16 @@ function ObservedActionOperationDetail(props: Readonly<{
 }>) {
     const navigateToSession = useNavigateToSession();
     const observation = useActionOperationObservationForOperation(props.operation);
-    const [cancelPending, setCancelPending] = React.useState(false);
-    const [cancelFailed, setCancelFailed] = React.useState(false);
-    const requestCancel = React.useCallback(() => {
-        if (cancelPending) return;
-        setCancelPending(true);
-        setCancelFailed(false);
-        void requestActionOperationStop(props.operation)
-            .catch(() => setCancelFailed(true))
-            .finally(() => setCancelPending(false));
-    }, [cancelPending, props.operation]);
+    const stopControl = useActionOperationStopControl(props.operation);
 
     return (
         <ActionOperationDetail
             operation={props.operation}
             observation={observation}
             onClose={props.onClose}
-            onCancel={requestCancel}
-            cancelPending={cancelPending}
-            cancelFailed={cancelFailed}
+            onCancel={stopControl.requestStop}
+            cancelPending={stopControl.pending}
+            cancelFailed={stopControl.failed}
             onOpenSession={(sessionId) => { void navigateToSession(sessionId); }}
         />
     );
@@ -112,6 +103,10 @@ export function openActionOperationDetail(operationId: string): string | null {
     const operation = actionOperationStore.getState().operationsById.get(operationId);
     if (operation) {
         const target = actionOperationReentry.resolve(operation);
+        if (target.kind === 'origin') {
+            target.open();
+            return null;
+        }
         if (target.kind === 'new_session') {
             router.push({
                 pathname: '/new',

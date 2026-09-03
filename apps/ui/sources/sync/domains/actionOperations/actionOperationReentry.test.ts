@@ -245,13 +245,20 @@ describe('action operation state-aware re-entry', () => {
 
     it('keeps an actionable handoff in operation detail and opens its session after success', () => {
         const registry = createActionOperationReentryRegistry();
+        const openProgress = () => {};
+        registry.registerOrigin({
+            requestId: 'spawn-1',
+            origin: {
+                resolve: (snapshot) => snapshot.state === 'running' ? openProgress : null,
+            },
+        });
         const running = {
             ...operation('running'),
             actionId: 'session.handoff',
             scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'handoff-session' },
         };
 
-        expect(registry.resolve(running)).toEqual({ kind: 'detail' });
+        expect(registry.resolve(running)).toEqual({ kind: 'origin', open: openProgress });
         expect(registry.resolve({
             ...running,
             state: 'succeeded',
