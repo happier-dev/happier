@@ -6,25 +6,6 @@ import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daem
 import type { HappyProcessInfo } from '@/daemon/doctor';
 import { isDaemonProcessForCurrentRuntimeRoot } from './evaluateCurrentDaemonOwner';
 
-function mockCurrentProcessAsDaemonLifecycleOwner(): void {
-    vi.doMock('@/daemon/doctor', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('@/daemon/doctor')>();
-        return {
-            ...actual,
-            classifyDaemonLifecycleProcessByPid: async (pid: number) => pid === process.pid
-                ? {
-                    kind: 'daemon' as const,
-                    process: {
-                        pid,
-                        command: `${process.execPath} ${process.cwd()}/src/index.ts daemon start-sync`,
-                        type: 'dev-daemon',
-                    },
-                }
-                : await actual.classifyDaemonLifecycleProcessByPid(pid),
-        };
-    });
-}
-
 describe('isDaemonProcessForCurrentRuntimeRoot', () => {
     const runtimeRoot = '/users/test/dev/happier/apps/cli';
     const otherPid = process.pid + 1;

@@ -11,25 +11,6 @@ function writeDaemonStateFixture(path: string, serializedState: string, encoding
   writeJsonAtomicSync(path, JSON.parse(serializedState));
 }
 
-function mockCurrentProcessAsDaemonLifecycleOwner(): void {
-  vi.doMock('@/daemon/doctor', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/daemon/doctor')>();
-    return {
-      ...actual,
-      classifyDaemonLifecycleProcessByPid: async (pid: number) => pid === process.pid
-        ? {
-            kind: 'daemon' as const,
-            process: {
-              pid,
-              command: `${process.execPath} ${process.cwd()}/src/index.ts daemon start-sync`,
-              type: 'dev-daemon',
-            },
-          }
-        : await actual.classifyDaemonLifecycleProcessByPid(pid),
-    };
-  });
-}
-
 describe.sequential('daemon control client PID safety', () => {
   let envScope = createEnvKeyScope([
     'HAPPIER_HOME_DIR',
