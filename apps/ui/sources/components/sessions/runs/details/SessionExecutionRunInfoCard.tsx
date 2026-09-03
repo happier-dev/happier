@@ -106,12 +106,30 @@ function resolveTitle(run: ExecutionRunPublicState): string {
     return t('executionRuns.details.titles.executionRun');
 }
 
+function resolveLaunchOriginLabel(run: ExecutionRunPublicState, hostSessionId: string | null | undefined): string | null {
+    const origin = run.launchOrigin;
+    if (!origin) return t('executionRuns.details.launchOrigin.legacyUnknown');
+    if (origin.kind === 'session') {
+        if (hostSessionId && origin.sessionId === hostSessionId) return null;
+        return t('executionRuns.details.launchOrigin.crossSession', { sessionId: origin.sessionId });
+    }
+    if (origin.source === 'cli') return t('executionRuns.details.launchOrigin.externalCli');
+    if (origin.source === 'mcp') return t('executionRuns.details.launchOrigin.externalMcp');
+    if (origin.source === 'action') return t('executionRuns.details.launchOrigin.externalAction');
+    return t('executionRuns.details.launchOrigin.externalUnknown');
+}
+
 export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     run: ExecutionRunPublicState;
+    hostSessionId?: string | null;
     daemonProcessLine?: string | null;
 }>) => {
     const styles = stylesheet;
     const facts = React.useMemo(() => buildFacts(props.run), [props.run]);
+    const launchOriginLabel = React.useMemo(
+        () => resolveLaunchOriginLabel(props.run, props.hostSessionId),
+        [props.hostSessionId, props.run],
+    );
 
     return (
         <View style={styles.card}>
@@ -121,6 +139,7 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
                     <Text style={styles.subtitle}>
                         {t('executionRuns.details.labels.runId', { value: props.run.runId })}
                     </Text>
+                    {launchOriginLabel ? <Text style={styles.subtitle}>{launchOriginLabel}</Text> : null}
                     {props.daemonProcessLine ? <Text style={styles.subtitle}>{props.daemonProcessLine}</Text> : null}
                 </View>
                 <View style={styles.statusPill}>

@@ -128,6 +128,31 @@ describe('deriveExecutionRunSubagents — terminal status truthfulness (D-1)', (
         expect(publicState).not.toBeNull();
         expect(publicState?.status).toBe('timeout');
     });
+
+    it('carries launch origin through the transcript projection without changing status', () => {
+        const messages = [
+            createSubAgentRunMessage({
+                state: 'running',
+                input: {
+                    intent: 'review',
+                    backendId: 'claude',
+                    runClass: 'bounded',
+                    ioMode: 'request_response',
+                    launchOrigin: { kind: 'session', sessionId: 'session_initiator' },
+                },
+                result: { runId: RUN_ID, sidechainId: 'sidechain_1' },
+            }),
+        ];
+
+        const transcriptState = findTranscriptExecutionRunState(messages, RUN_ID);
+        expect(transcriptState).not.toBeNull();
+        const publicState = buildExecutionRunPublicStateFromTranscriptState(transcriptState!);
+
+        expect(publicState).toMatchObject({
+            status: 'running',
+            launchOrigin: { kind: 'session', sessionId: 'session_initiator' },
+        });
+    });
 });
 
 describe('deriveExecutionRunSubagents — status comes from the structured payload only (D-3)', () => {

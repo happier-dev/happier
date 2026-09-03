@@ -123,6 +123,30 @@ export class ExecutionRunManager {
     }
   }
 
+  resolveStartRequest(params: Readonly<{
+    startRequestId?: string | null;
+    startRequestFingerprint?: string | null;
+  }>): ExecutionRunStartResult | null {
+    const startRequestId = params.startRequestId?.trim() ?? '';
+    if (!startRequestId) return null;
+    const existing = Array.from(this.runs.values()).find((run) => run.startRequestId === startRequestId);
+    if (!existing) return null;
+    if (
+      !params.startRequestFingerprint
+      || !existing.startRequestFingerprint
+      || params.startRequestFingerprint !== existing.startRequestFingerprint
+    ) {
+      const error = new Error('Execution run start request conflicts with an existing accepted start');
+      Object.assign(error, { code: 'execution_run_start_conflict' });
+      throw error;
+    }
+    return {
+      runId: existing.runId,
+      callId: existing.callId,
+      sidechainId: existing.sidechainId,
+    };
+  }
+
   private enqueueMarkerWrite(runId: string, write: () => Promise<void>): Promise<void> {
     return enqueueExecutionRunMarkerWrite({ markerWriteChains: this.markerWriteChains, runId, write });
   }
@@ -360,6 +384,7 @@ export class ExecutionRunManager {
       intent: run.intent,
       backendTarget: run.backendTarget,
       ...(run.display ? { display: run.display } : {}),
+      ...(run.launch?.launchOrigin ? { launchOrigin: run.launch.launchOrigin } : {}),
       permissionMode: run.permissionMode,
       retentionPolicy: run.retentionPolicy,
       runClass: run.runClass,
@@ -387,6 +412,7 @@ export class ExecutionRunManager {
         intent: run.intent,
         backendTarget: run.backendTarget,
         ...(run.display ? { display: run.display } : {}),
+        ...(run.launch?.launchOrigin ? { launchOrigin: run.launch.launchOrigin } : {}),
         permissionMode: run.permissionMode,
         retentionPolicy: run.retentionPolicy,
         runClass: run.runClass,
@@ -465,6 +491,8 @@ export class ExecutionRunManager {
   }
 
   async start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult> {
+    const existing = this.resolveStartRequest(params);
+    if (existing) return existing;
     const started = await startExecutionRun({
       params,
       parentProvider: this.parentProvider,

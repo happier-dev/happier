@@ -73,6 +73,31 @@ describe('executionRuns protocol', () => {
     expect(parsed.intent).toBe('review');
   });
 
+  it('preserves additive privacy-bounded launch origin while accepting legacy absence', () => {
+    const base = {
+      intent: 'delegate' as const,
+      backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral' as const,
+      runClass: 'bounded' as const,
+      ioMode: 'request_response' as const,
+    };
+
+    expect(ExecutionRunStartRequestSchema.parse({
+      ...base,
+      launchOrigin: { kind: 'session', sessionId: 'session_initiator' },
+    }).launchOrigin).toEqual({ kind: 'session', sessionId: 'session_initiator' });
+    expect(ExecutionRunStartRequestSchema.parse({
+      ...base,
+      launchOrigin: { kind: 'external' },
+    }).launchOrigin).toEqual({ kind: 'external' });
+    expect(ExecutionRunStartRequestSchema.parse(base).launchOrigin).toBeUndefined();
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...base,
+      launchOrigin: { kind: 'session', sessionId: 'session_initiator', token: 'secret' },
+    }).success).toBe(false);
+  });
+
   it('validates optional per-target connected-services selection on start requests', () => {
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'delegate',

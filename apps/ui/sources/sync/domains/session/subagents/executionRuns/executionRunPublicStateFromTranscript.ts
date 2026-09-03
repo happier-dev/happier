@@ -78,6 +78,7 @@ export function buildExecutionRunPublicStateFromTranscriptState(
         intent,
         backendTarget,
         ...(state.displayLabel ? { display: { title: state.displayLabel } } : {}),
+        ...(state.launchOrigin ? { launchOrigin: state.launchOrigin } : {}),
         permissionMode,
         retentionPolicy,
         runClass,

@@ -142,4 +142,47 @@ describe('settleExecutionRunControllerOccurrence', () => {
     expect(successorResolveTerminal).not.toHaveBeenCalled();
     expect(controllers.get(runId)).toBe(successor);
   });
+
+  it('stopping during bounded provisioning cancels and disposes a late-created backend session without sending work', async () => {
+    const provision = createDeferred<{ sessionId: SessionId }>();
+    const cancel = vi.fn(async () => {});
+    const dispose = vi.fn(async () => {});
+    const sendPrompt = vi.fn(async () => {});
+    const backend: AgentBackend = {
+      startSession: () => provision.promise,
+      sendPrompt,
+      cancel,
+      onMessage() {},
+      dispose,
+      async waitForResponseComplete() {},
+    };
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: () => {},
+    });
+
+    const started = await manager.start({
+      sessionId: 'session-1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Do work.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true });
+
+    provision.resolve({ sessionId: 'late-child-session' as SessionId });
+    for (let attempt = 0; attempt < 50 && cancel.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(manager.get(started.runId)?.status).toBe('cancelled');
+    expect(sendPrompt).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledWith('late-child-session');
+    expect(dispose).toHaveBeenCalled();
+  });
 });

@@ -31,6 +31,11 @@ installSessionExecutionRunDetailsCommonModuleMocks({
                 if (key === 'executionRuns.details.labels.mode' && values?.value) return `Mode: ${String(values.value)}`;
                 if (key === 'executionRuns.details.labels.runId' && values?.value) return `Run ID: ${String(values.value)}`;
                 if (key === 'executionRuns.details.labels.statusValue' && values?.value) return `Status: ${String(values.value)}`;
+                if (key === 'executionRuns.details.launchOrigin.crossSession' && values?.sessionId) {
+                    return `Started from session ${String(values.sessionId)}`;
+                }
+                if (key === 'executionRuns.details.launchOrigin.externalUnknown') return 'Started externally (origin unknown)';
+                if (key === 'executionRuns.details.launchOrigin.legacyUnknown') return 'Launch origin unknown';
                 if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
                     return `${String(values.intent)} Subagent`;
                 }
@@ -65,22 +70,26 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('SessionExecutionRunInfoCard', () => {
+    const run = {
+        runId: 'run_1',
+        callId: 'toolu_1',
+        sidechainId: 'toolu_1',
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        permissionMode: 'safe_yolo',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'streaming',
+        status: 'running',
+        startedAtMs: 1,
+    } as const;
+
     it('renders a user-facing title and labeled facts instead of a raw run-id header', async () => {
         const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
         const tree = (await renderScreen(
             <SessionExecutionRunInfoCard
-                run={{
-                    runId: 'run_1',
-                    callId: 'toolu_1',
-                    sidechainId: 'toolu_1',
-                    intent: 'review',
-                    backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-                    permissionMode: 'safe_yolo',
-                    runClass: 'bounded',
-                    ioMode: 'streaming',
-                    status: 'running',
-                    startedAtMs: 1,
-                } as any}
+                run={run as any}
+                hostSessionId="session_host"
                 daemonProcessLine="pid 123"
             />,
         )).tree;
@@ -92,5 +101,47 @@ describe('SessionExecutionRunInfoCard', () => {
         expect(text).toContain('Permissions: safe_yolo');
         expect(text).toContain('Mode: bounded · streaming');
         expect(text).toContain('Status: running');
+    });
+
+    it('keeps same-session agent launches quiet', async () => {
+        const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
+        const tree = (await renderScreen(
+            <SessionExecutionRunInfoCard
+                run={{ ...run, launchOrigin: { kind: 'session', sessionId: 'session_host' } } as any}
+                hostSessionId="session_host"
+            />,
+        )).tree;
+
+        const text = JSON.stringify(tree!.toJSON());
+        expect(text).not.toContain('Started from session');
+        expect(text).not.toContain('Launch origin unknown');
+    });
+
+    it('identifies a known cross-session launch', async () => {
+        const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
+        const tree = (await renderScreen(
+            <SessionExecutionRunInfoCard
+                run={{ ...run, launchOrigin: { kind: 'session', sessionId: 'session_initiator' } } as any}
+                hostSessionId="session_host"
+            />,
+        )).tree;
+
+        expect(JSON.stringify(tree!.toJSON())).toContain('Started from session session_initiator');
+    });
+
+    it('labels unknown external and legacy-absent origins without attributing them to the host agent', async () => {
+        const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
+        const external = (await renderScreen(
+            <SessionExecutionRunInfoCard
+                run={{ ...run, launchOrigin: { kind: 'external' } } as any}
+                hostSessionId="session_host"
+            />,
+        )).tree;
+        const legacy = (await renderScreen(
+            <SessionExecutionRunInfoCard run={run as any} hostSessionId="session_host" />,
+        )).tree;
+
+        expect(JSON.stringify(external!.toJSON())).toContain('Started externally (origin unknown)');
+        expect(JSON.stringify(legacy!.toJSON())).toContain('Launch origin unknown');
     });
 });

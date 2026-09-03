@@ -229,7 +229,11 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         <View style={{ gap: 10 }}>
             <View style={{ gap: 4 }}>
                 {props.showInfoCard === false ? null : (
-                    <SessionExecutionRunInfoCard run={state.run} daemonProcessLine={daemonProcessLine} />
+                    <SessionExecutionRunInfoCard
+                        run={state.run}
+                        hostSessionId={props.sessionId}
+                        daemonProcessLine={daemonProcessLine}
+                    />
                 )}
                 {!transcriptMessage && transcriptToolRouteId ? (
                     <Pressable

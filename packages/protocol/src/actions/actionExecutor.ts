@@ -528,6 +528,20 @@ function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
 }
 
+function resolveExecutionRunLaunchOrigin(ctx: ActionExecutorContext): Readonly<
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'external'; source?: 'cli' | 'mcp' | 'action' }
+> {
+  if (ctx.surface === 'session_agent') {
+    const sessionId = normalizeId(ctx.approvalOrigin?.sessionId) || normalizeId(ctx.defaultSessionId);
+    return sessionId ? { kind: 'session', sessionId } : { kind: 'external' };
+  }
+  if (ctx.surface === 'cli' || ctx.surface === 'mcp') {
+    return { kind: 'external', source: ctx.surface };
+  }
+  return ctx.surface ? { kind: 'external', source: 'action' } : { kind: 'external' };
+}
+
 function readOpaqueIdentifier(raw: unknown): string {
   return typeof raw === 'string' && raw.trim().length > 0 ? raw : '';
 }
@@ -643,7 +657,7 @@ function resolveSessionAgentPermission(
   if (!isSessionAgentCaller(ctx)) return null;
   return resolveNearestPermissionModeAtOrBelow({
     requestedMode,
-    callerMode: ctx.callerPermissionMode ?? 'default',
+    callerMode: ctx.callerPermissionMode,
     supportedModes,
   });
 }
@@ -1107,6 +1121,57 @@ async function fanoutStarts(params: Readonly<{
     }),
   );
   return results;
+}
+
+async function composeExecutionRunStartResult(params: Readonly<{
+  rawStart: unknown;
+  sessionId: string;
+  permissionMode: string;
+  waitForCompletion: boolean;
+  waitTimeoutSeconds?: number;
+  opts?: Readonly<{ serverId?: string | null }>;
+  deps: ActionExecutorDeps;
+}>): Promise<unknown> {
+  const start = normalizeSuccessfulFanoutStartResult(params.rawStart);
+  if (
+    !start
+    || typeof start !== 'object'
+    || (start as any).ok === false
+    || typeof (start as any).runId !== 'string'
+  ) {
+    return params.rawStart;
+  }
+
+  let wait: unknown;
+  if (params.waitForCompletion) {
+    try {
+      wait = await params.deps.executionRunWait(params.sessionId, {
+        runId: (start as any).runId,
+        ...(typeof params.waitTimeoutSeconds === 'number'
+          ? { timeoutSeconds: params.waitTimeoutSeconds }
+          : {}),
+      }, params.opts);
+    } catch (error) {
+      const failure = normalizeActionExecutorThrownError(error);
+      wait = { ok: false, code: failure.errorCode, message: failure.error };
+    }
+  }
+
+  const enrichedStart = {
+    ...(start as Record<string, unknown>),
+    permissionMode: params.permissionMode,
+    ...(params.waitForCompletion ? { wait } : {}),
+  };
+  if (
+    params.rawStart
+    && typeof params.rawStart === 'object'
+    && (params.rawStart as any).ok === true
+    && (params.rawStart as any).data
+    && typeof (params.rawStart as any).data === 'object'
+  ) {
+    return { ...(params.rawStart as Record<string, unknown>), data: enrichedStart };
+  }
+  return enrichedStart;
 }
 
 function buildApprovalDecisionResult(request: ApprovalRequestV1): ActionExecuteResult {
@@ -1583,6 +1648,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 runClass: 'bounded',
                 // Reviews should stream sidechain progress (and tool traffic) into the parent session.
                 ioMode: 'streaming',
+                launchOrigin: resolveExecutionRunLaunchOrigin(ctx),
                 intentInput: { ...intentInputBase, engineId },
               },
               opts,
@@ -1605,7 +1671,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const intent: 'plan' | 'delegate' | 'voice_agent' =
           actionId === 'subagents.plan.start' ? 'plan' : actionId === 'subagents.delegate.start' ? 'delegate' : 'voice_agent';
         const permissionModeDefault = intent === 'delegate' ? 'workspace_write' : 'read_only';
-        const requestedPermissionMode = (parsed.data as any).permissionMode ?? permissionModeDefault;
+        const requestedPermissionMode = (parsed.data as any).permissionMode;
         const permissionDecision = resolveSessionAgentPermission(
           ctx,
           requestedPermissionMode,
@@ -1616,7 +1682,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const permissionMode = permissionDecision?.ok === true
           ? permissionDecision.requestedMode
-          : requestedPermissionMode;
+          : requestedPermissionMode ?? permissionModeDefault;
 
         // Connected-services selection: a per-target override wins over the blanket selection.
         // Normalize the simple/object forms to canonical bindings at this ONE boundary; a malformed
@@ -1653,6 +1719,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!runOptions.ok) {
           return { ok: false, errorCode: 'invalid_parameters', error: runOptions.error };
         }
+        const {
+          waitForCompletion: _waitForCompletion,
+          waitTimeoutSeconds: _waitTimeoutSeconds,
+          ...intentInput
+        } = parsed.data as any;
 
         const results = await fanoutStarts({
           keys: backendTargetKeys,
@@ -1660,16 +1731,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const targetSelection = connectedServicesByTarget.get(backendTargetKey);
             const connectedServices = targetSelection?.bindings;
             const connectedServicesDefaultServiceIds = targetSelection?.defaultServiceIds ?? [];
-            return deps.executionRunStart(
+            const rawStart = await deps.executionRunStart(
               sessionId,
               {
                 intent,
+                ...(ctx.actionRequestId
+                  ? { startRequestId: `${ctx.actionRequestId}:${backendTargetKey}` }
+                  : {}),
                 backendTarget: parseBackendTargetKey(backendTargetKey),
                 instructions,
                 permissionMode,
                 retentionPolicy: (parsed.data as any).retentionPolicy ?? 'ephemeral',
                 runClass: (parsed.data as any).runClass ?? 'bounded',
                 ioMode: (parsed.data as any).ioMode ?? 'request_response',
+                launchOrigin: resolveExecutionRunLaunchOrigin(ctx),
                 ...(connectedServices ? { connectedServices } : {}),
                 ...(connectedServicesDefaultServiceIds.length > 0
                   ? { connectedServicesDefaultServiceIds }
@@ -1678,10 +1753,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ...(runOptions.sessionConfigOptionOverrides
                   ? { sessionConfigOptionOverrides: runOptions.sessionConfigOptionOverrides }
                   : {}),
-                intentInput: { ...(parsed.data as any), backendTargetKey },
+                intentInput: { ...intentInput, backendTargetKey },
               },
               opts,
             );
+            return await composeExecutionRunStartResult({
+              rawStart,
+              sessionId,
+              permissionMode,
+              waitForCompletion: (parsed.data as any).waitForCompletion === true,
+              ...(typeof (parsed.data as any).waitTimeoutSeconds === 'number'
+                ? { waitTimeoutSeconds: (parsed.data as any).waitTimeoutSeconds }
+                : {}),
+              opts,
+              deps,
+            });
           },
         });
 
@@ -1754,11 +1840,33 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
 
+          const draftInput = (parsed.data as any).draftInput;
+          const dependencyInput: Record<string, unknown> = draftInput && typeof draftInput === 'object' && !Array.isArray(draftInput)
+            ? { ...(draftInput as Record<string, unknown>), ...(parsed.data as Record<string, unknown>) }
+            : parsed.data as Record<string, unknown>;
+          if (!dependencyInput.backendTargetKey && Array.isArray(dependencyInput.backendTargetKeys) && dependencyInput.backendTargetKeys.length === 1) {
+            dependencyInput.backendTargetKey = dependencyInput.backendTargetKeys[0];
+          }
+          const requiresRunBackendDependency = (
+            (actionIdRaw === 'subagents.plan.start' || actionIdRaw === 'subagents.delegate.start')
+            && fieldPath === 'modelId'
+          );
+          if (requiresRunBackendDependency && !dependencyInput.backendTargetKey) {
+            return {
+              ok: false,
+              errorCode: 'missing_option_dependency',
+              error: 'Select one backend target in draftInput before resolving dependent options.',
+              details: {
+                requiredDraftPath: 'backendTargetKeys',
+                example: { draftInput: { backendTargetKeys: ['agent:pi'] } },
+              },
+            };
+          }
           const dynamic = await resolveDynamicActionOptions({
             deps,
             ctx,
             optionsSourceId,
-            input: parsed.data as Record<string, unknown>,
+            input: dependencyInput,
           });
           if (!dynamic.ok) return dynamic;
 
@@ -1782,7 +1890,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const opts = serverId ? { serverId } : undefined;
 
-          const { sessionId: _ignored, ...request } = parsed.data as any;
+          const {
+            sessionId: _ignored,
+            waitForCompletion,
+            waitTimeoutSeconds,
+            ...request
+          } = parsed.data as any;
+          request.launchOrigin = resolveExecutionRunLaunchOrigin(ctx);
           // Model + config-option (reasoning effort) selection: merge the `configOptions` shorthand
           // into the canonical `sessionConfigOptionOverrides` using the SAME owner as session spawn.
           // A conflicting shorthand/canonical value is a typed rejection.
@@ -1832,8 +1946,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (permissionDecision?.ok === true) {
             request.permissionMode = permissionDecision.requestedMode;
           }
-          const res = await deps.executionRunStart(sessionId, request, opts);
-          return { ok: true, result: res };
+          if (ctx.actionRequestId) {
+            request.startRequestId = ctx.actionRequestId;
+          }
+          const rawStart = await deps.executionRunStart(sessionId, request, opts);
+          const result = await composeExecutionRunStartResult({
+            rawStart,
+            sessionId,
+            permissionMode: request.permissionMode,
+            waitForCompletion: waitForCompletion === true,
+            ...(typeof waitTimeoutSeconds === 'number' ? { waitTimeoutSeconds } : {}),
+            opts,
+            deps,
+          });
+          return { ok: true, result };
         }
 
         if (actionId === 'execution.run.list') {

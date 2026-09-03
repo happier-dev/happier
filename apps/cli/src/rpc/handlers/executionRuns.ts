@@ -1,4 +1,5 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { createHash } from 'node:crypto';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
@@ -59,6 +60,21 @@ function executionRunNotAllowedError(error: unknown): { ok: false; error: string
     error: error instanceof Error ? error.message : 'Execution run not allowed',
     errorCode: 'execution_run_not_allowed',
   };
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== 'startRequestId' && key !== 'startRequestFingerprint')
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, stableJsonValue(entry)]),
+  );
+}
+
+function fingerprintExecutionRunStartRequest(request: unknown): string {
+  return createHash('sha256').update(JSON.stringify(stableJsonValue(request))).digest('hex');
 }
 
 export function registerExecutionRunHandlers(
@@ -164,6 +180,22 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
+    const startRequestFingerprint = parsed.data.startRequestId
+      ? fingerprintExecutionRunStartRequest(parsed.data)
+      : undefined;
+    try {
+      const existing = manager.resolveStartRequest({
+        startRequestId: parsed.data.startRequestId,
+        startRequestFingerprint,
+      });
+      if (existing) return { ok: true, ...existing };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Execution run start request conflict',
+        errorCode: 'execution_run_start_conflict',
+      };
+    }
     const backendId = resolveExecutionRunRuntimeBackendId(parsed.data.backendTarget);
     let normalizedReviewIntentInput: unknown;
     let hasNormalizedReviewIntentInput = false;
@@ -259,6 +291,7 @@ export function registerExecutionRunHandlers(
       const accountSettings = await ctx.resolveAccountSettings?.() ?? null;
       const startParams: any = {
         ...(parsed.data as any),
+        ...(startRequestFingerprint ? { startRequestFingerprint } : {}),
         ...(hasNormalizedReviewIntentInput ? { intentInput: normalizedReviewIntentInput } : {}),
       };
 
@@ -363,6 +396,9 @@ export function registerExecutionRunHandlers(
       const code = (error as any)?.code;
       if (code === 'execution_run_budget_exceeded') {
         return { ok: false, error: 'Execution run budget exceeded', errorCode: 'execution_run_budget_exceeded' };
+      }
+      if (code === 'execution_run_start_conflict') {
+        return { ok: false, error: 'Execution run start request conflict', errorCode: 'execution_run_start_conflict' };
       }
       if (error instanceof VoiceAgentError) {
         return { ok: false, error: error.message, errorCode: error.code };

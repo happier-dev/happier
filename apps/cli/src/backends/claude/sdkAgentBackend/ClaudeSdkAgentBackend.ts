@@ -125,6 +125,11 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         cwd: this.opts.cwd,
         model: model ?? undefined,
         executable: runtimeExecutable,
+        // Execution runs are noninteractive and their admitted permission mode is enforced by
+        // canCallTool. Pin Claude's outer mode so an ambient bypass default cannot open a blocking
+        // safety-confirmation dialog before the stdio permission owner becomes usable.
+        permissionMode: 'default',
+        forcePermissionMode: true,
         canCallTool,
         settingsPath: this.opts.settingsPath,
         env: this.env,

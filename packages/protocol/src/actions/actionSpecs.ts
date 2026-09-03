@@ -354,7 +354,15 @@ export const SessionEventsGetInputSchema = z.object({
   includeRaw: z.boolean().optional(),
   maxTextChars: z.number().int().min(0).max(4000).optional(),
   maxPayloadChars: z.number().int().min(0).max(32768).optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (value.sidechainId && value.scope !== 'sidechain') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'scope must be sidechain when sidechainId is provided',
+      path: ['scope'],
+    });
+  }
+});
 export type SessionEventsGetInput = z.infer<typeof SessionEventsGetInputSchema>;
 export type SessionEventsGetItem = Readonly<{
   id: string;
@@ -439,6 +447,8 @@ const IntentStartCommonSchema = z.object({
   // Optional per-target override keyed by backend target key (e.g. { "agent:codex": "openai-codex:team" }).
   // A per-target entry wins over the blanket `connectedServices` for that target.
   connectedServicesByBackendTargetKey: z.record(z.string().min(1), z.unknown()).optional(),
+  waitForCompletion: z.boolean().optional(),
+  waitTimeoutSeconds: z.number().int().min(1).optional(),
 }).passthrough();
 
 const PlanStartInputSchema = IntentStartCommonSchema.extend({
@@ -449,7 +459,7 @@ const PlanStartInputSchema = IntentStartCommonSchema.extend({
 }).passthrough();
 
 const DelegateStartInputSchema = IntentStartCommonSchema.extend({
-  permissionMode: ExecutionRunActionPermissionModeSchema.default('workspace_write'),
+  permissionMode: ExecutionRunActionPermissionModeSchema.optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
@@ -495,6 +505,8 @@ const ExecutionRunStartInputSchema = z.object({
   // at the action boundary. Omit to use the account's configured default exactly as stored (literal:
   // a profile default binds to that profile, a pool default binds to that pool — no silent upgrade).
   connectedServices: z.unknown().optional(),
+  waitForCompletion: z.boolean().optional(),
+  waitTimeoutSeconds: z.number().int().min(1).optional(),
 }).passthrough();
 
 const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
@@ -834,6 +846,7 @@ const ActionOptionsResolveInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
   query: z.string().trim().optional(),
+  draftInput: z.record(z.string(), z.unknown()).optional(),
 }).passthrough().superRefine((value, ctx) => {
   const actionId = typeof value.actionId === 'string' ? value.actionId.trim() : '';
   const fieldPath = typeof value.fieldPath === 'string' ? value.fieldPath.trim() : '';
@@ -1155,7 +1168,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'actionId', title: 'Action id', description: 'Optional when optionsSourceId is provided directly.', widget: 'text' },
         { path: 'fieldPath', title: 'Field path', description: 'Dot-path for the action input field.', widget: 'text' },
         { path: 'optionsSourceId', title: 'Options source id', description: 'Direct options source lookup when known.', widget: 'text' },
-        { path: 'sessionId', title: 'Session id', description: 'Needed for session-scoped option sources.', widget: 'text' },
+        { path: 'sessionId', title: 'Session id', description: 'Omit to use the current invoking session.', widget: 'text' },
+        { path: 'draftInput', title: 'Partial action input', description: 'Partial input for dependent options, for example { "backendTargetKeys": ["agent:pi"] } when resolving a model.', widget: 'textarea' },
         { path: 'query', title: 'Query filter', description: 'Optional search text to filter the returned options.', widget: 'text' },
         { path: 'limit', title: 'Limit', description: 'Maximum number of options to return.', widget: 'text' },
       ],
@@ -1241,7 +1255,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","engineIds":["codex"],"instructions":"Review this.","changeType":"uncommitted","base":{"kind":"none"}}' },
+      voice: { argsExample: '{"engineIds":["codex"],"instructions":"Review this.","changeType":"uncommitted","base":{"kind":"none"}}' },
     },
     surfaces: {
       ui_button: true,
@@ -1312,7 +1326,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Plan the changes."}' },
+      voice: { argsExample: '{"backendTargetKeys":["agent:codex"],"instructions":"Plan the changes."}' },
     },
 	    surfaces: {
 	      ui_button: true,
@@ -1390,7 +1404,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Delegate the task."}' },
+      voice: { argsExample: '{"backendTargetKeys":["agent:codex"],"instructions":"Delegate the task."}' },
     },
 	    surfaces: {
 	      ui_button: true,
@@ -1447,7 +1461,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Start the voice assistant for this workspace."}' },
+      voice: { argsExample: '{"backendTargetKeys":["agent:codex"],"instructions":"Start the voice assistant for this workspace."}' },
     },
     surfaces: {
       ui_button: false,
@@ -1470,7 +1484,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     bindings: { mcpToolName: 'execution_run_start' },
     examples: {
       mcp: {
-        argsExample: '{"sessionId":"{{sessionId}}","intent":"voice_agent","backendTarget":{"kind":"builtInAgent","agentId":"codex"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
+        argsExample: '{"intent":"voice_agent","backendTarget":{"kind":"builtInAgent","agentId":"codex"},"instructions":"Summarize recent changes.","permissionMode":"read_only","retentionPolicy":"ephemeral","runClass":"bounded","ioMode":"request_response"}',
       },
     },
     surfaces: {
@@ -1585,7 +1599,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ui_slash_command: false,
       voice_tool: true,
       voice_action_block: true,
-      session_agent: false,
+      session_agent: true,
       mcp: true,
       cli: true,
     },

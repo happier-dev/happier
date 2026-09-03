@@ -164,6 +164,7 @@ export async function startExecutionRun(args: Readonly<{
   getDepthByCallId: (callId: string) => number | null;
   onPublicStateUpdated?: (runId: string) => void;
 }>): Promise<ExecutionRunStartResult> {
+  const startRequestId = typeof args.params.startRequestId === 'string' ? args.params.startRequestId.trim() : '';
   const profile = resolveExecutionRunIntentProfile(args.params.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
@@ -198,6 +199,7 @@ export async function startExecutionRun(args: Readonly<{
   // backend with the SAME model, config overrides, and connected-service account (fail-closed) rather
   // than ambient auth + default model. Safe inputs only — no credentials/env values/closures.
   const launch = {
+    ...(args.params.launchOrigin ? { launchOrigin: args.params.launchOrigin } : {}),
     ...(args.params.modelId ? { modelId: args.params.modelId } : {}),
     ...(args.params.sessionConfigOptionOverrides
       ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
@@ -214,6 +216,8 @@ export async function startExecutionRun(args: Readonly<{
     callId,
     sidechainId,
     sessionId: args.params.sessionId,
+    ...(startRequestId ? { startRequestId } : {}),
+    ...(args.params.startRequestFingerprint ? { startRequestFingerprint: args.params.startRequestFingerprint } : {}),
     depth,
     intent: args.params.intent,
     backendTarget: args.params.backendTarget,
@@ -250,9 +254,12 @@ export async function startExecutionRun(args: Readonly<{
     runId,
     callId,
     sidechainId,
+    ...(startRequestId ? { startRequestId } : {}),
+    ...(args.params.startRequestFingerprint ? { startRequestFingerprint: args.params.startRequestFingerprint } : {}),
     intent: args.params.intent,
     backendTarget: args.params.backendTarget,
     ...(args.params.display ? { display: args.params.display } : {}),
+    ...(args.params.launchOrigin ? { launchOrigin: args.params.launchOrigin } : {}),
     permissionMode: args.params.permissionMode,
     runClass: args.params.runClass,
     ioMode: args.params.ioMode,
@@ -282,6 +289,7 @@ export async function startExecutionRun(args: Readonly<{
         instructions: args.params.instructions ?? '',
         ...(typeof args.params.intentInput !== 'undefined' ? { intentInput: args.params.intentInput } : {}),
         ...(args.params.display ? { display: args.params.display } : {}),
+        ...(args.params.launchOrigin ? { launchOrigin: args.params.launchOrigin } : {}),
         permissionMode: args.params.permissionMode,
         retentionPolicy: args.params.retentionPolicy,
         runClass: args.params.runClass,
@@ -490,6 +498,20 @@ export async function startExecutionRun(args: Readonly<{
             const started = await backend.startSession();
             return started.sessionId;
           })(), backendId);
+          if (ctrl.cancelled || args.controllers.get(runId) !== ctrl) {
+            try {
+              await backend.cancel(childSessionId);
+            } catch {
+              // Best effort: dispose below remains the authoritative backend teardown.
+            }
+            try {
+              await backend.dispose();
+            } catch {
+              // Best effort
+            }
+            settleExecutionRunControllerOccurrence(args.controllers, runId, ctrl);
+            return;
+          }
           ctrl.childSessionId = childSessionId;
 
           const existing = args.runs.get(runId);

@@ -74,7 +74,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     );
   });
 
-  it('rejects delegate default workspace_write above a default session-agent caller', async () => {
+  it('selects the nearest non-escalating delegate permission when permissionMode is omitted', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
@@ -84,16 +84,97 @@ describe('createActionExecutor (inventory/discovery)', () => {
       instructions: 'Delegate this task.',
     }, { surface: 'session_agent', callerPermissionMode: 'default' } as any);
 
+    expect(res.ok).toBe(true);
+    expect(deps.executionRunStart).toHaveBeenCalledWith(
+      'session_1',
+      expect.objectContaining({ permissionMode: 'default' }),
+      undefined,
+    );
+  });
+
+  it('rejects an explicit delegate permission above the caller ceiling', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('subagents.delegate.start', {
+      sessionId: 'session_1',
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Delegate this task.',
+      permissionMode: 'workspace_write',
+    }, { surface: 'session_agent', callerPermissionMode: 'default' } as any);
+
     expect(res).toMatchObject({
       ok: false,
       errorCode: 'permission_escalation_denied',
       details: {
-        surface: 'session_agent',
         requestedMode: 'workspace_write',
+        requestedOrdinal: 2,
         callerMode: 'default',
+        callerOrdinal: 1,
       },
     });
     expect(deps.executionRunStart).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when session-agent caller permission authority is malformed', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('subagents.delegate.start', {
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Delegate this task.',
+    }, { defaultSessionId: 'session_current', surface: 'session_agent', callerPermissionMode: 'not-a-mode' } as any);
+
+    expect(res).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(deps.executionRunStart).not.toHaveBeenCalled();
+  });
+
+  it('uses the invoking session when omitted and preserves an explicit cross-session target', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    await executor.execute('subagents.delegate.start', {
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Current.',
+    }, { defaultSessionId: 'session_current', surface: 'session_agent', callerPermissionMode: 'workspace_write' });
+    await executor.execute('subagents.delegate.start', {
+      sessionId: 'session_other',
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Other.',
+    }, { defaultSessionId: 'session_current', surface: 'session_agent', callerPermissionMode: 'workspace_write' });
+    await executor.execute('execution.run.start', {
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Direct current.',
+      permissionMode: 'default',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    }, { defaultSessionId: 'session_current', surface: 'session_agent', callerPermissionMode: 'workspace_write' });
+
+    await executor.execute('execution.run.start', {
+      sessionId: 'session_other',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'External start.',
+      permissionMode: 'default',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    }, { defaultSessionId: 'session_current', surface: 'cli' });
+
+    expect(deps.executionRunStart).toHaveBeenNthCalledWith(1, 'session_current', expect.objectContaining({
+      launchOrigin: { kind: 'session', sessionId: 'session_current' },
+    }), undefined);
+    expect(deps.executionRunStart).toHaveBeenNthCalledWith(2, 'session_other', expect.objectContaining({
+      launchOrigin: { kind: 'session', sessionId: 'session_current' },
+    }), undefined);
+    expect(deps.executionRunStart).toHaveBeenNthCalledWith(3, 'session_current', expect.objectContaining({
+      launchOrigin: { kind: 'session', sessionId: 'session_current' },
+    }), undefined);
+    expect(deps.executionRunStart).toHaveBeenNthCalledWith(4, 'session_other', expect.objectContaining({
+      launchOrigin: { kind: 'external', source: 'cli' },
+    }), undefined);
   });
 
   it('rejects execution.run.start permission above a default session-agent caller before deps.executionRunStart runs', async () => {
@@ -154,11 +235,133 @@ describe('createActionExecutor (inventory/discovery)', () => {
               runId: 'run_1',
               callId: 'call_1',
               sidechainId: 'side_1',
+              permissionMode: 'read_only',
             },
           },
         ],
       },
     });
+  });
+
+  it('composes delegate start with terminal wait and exposes the admitted permission', async () => {
+    const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({
+      ok: true,
+      data: { runId: 'run_1', callId: 'call_1', sidechainId: 'side_1' },
+    }));
+    deps.executionRunWait = vi.fn(async () => ({
+      ok: true,
+      status: 'succeeded',
+      result: { run: { runId: 'run_1', status: 'succeeded' } },
+    }));
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('subagents.delegate.start', {
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Delegate.',
+      waitForCompletion: true,
+      waitTimeoutSeconds: 12,
+    }, {
+      defaultSessionId: 'session_1',
+      surface: 'session_agent',
+      callerPermissionMode: 'default',
+    });
+
+    expect(deps.executionRunWait).toHaveBeenCalledWith(
+      'session_1',
+      { runId: 'run_1', timeoutSeconds: 12 },
+      undefined,
+    );
+    const startRequest = (deps.executionRunStart as any).mock.calls[0][1];
+    expect(startRequest).not.toHaveProperty('waitForCompletion');
+    expect(startRequest).not.toHaveProperty('waitTimeoutSeconds');
+    expect(startRequest.intentInput).not.toHaveProperty('waitForCompletion');
+    expect(startRequest.intentInput).not.toHaveProperty('waitTimeoutSeconds');
+    expect(res).toMatchObject({
+      ok: true,
+      result: {
+        results: [{
+          key: 'agent:claude',
+          ok: true,
+          result: {
+            runId: 'run_1',
+            permissionMode: 'default',
+            wait: { ok: true, status: 'succeeded' },
+          },
+        }],
+      },
+    });
+  });
+
+  it.each([
+    {
+      name: 'observation timeout',
+      wait: {
+        ok: true,
+        status: 'running',
+        disposition: 'observation_timeout',
+        runId: 'run_1',
+        timeoutMs: 1000,
+        observedAtMs: 2000,
+        deadlineAtMs: 2000,
+      },
+    },
+    {
+      name: 'true waiter failure',
+      wait: { ok: false, code: 'execution_run_target_unavailable', message: 'offline' },
+    },
+  ])('retains direct start identity when nested wait observes $name', async ({ wait }) => {
+    const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({
+      ok: true,
+      data: { runId: 'run_1', callId: 'call_1', sidechainId: 'side_1' },
+    }));
+    deps.executionRunWait = vi.fn(async () => wait);
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('execution.run.start', {
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      waitForCompletion: true,
+      waitTimeoutSeconds: 1,
+    }, { defaultSessionId: 'session_1', surface: 'session_agent', callerPermissionMode: 'default' });
+
+    expect(res).toMatchObject({
+      ok: true,
+      result: {
+        ok: true,
+        data: {
+          runId: 'run_1',
+          permissionMode: 'default',
+          wait,
+        },
+      },
+    });
+  });
+
+  it('does not call the waiter when start-and-wait is omitted', async () => {
+    const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({
+      ok: true,
+      data: { runId: 'run_1', callId: 'call_1', sidechainId: 'side_1' },
+    }));
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('execution.run.start', {
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    }, { defaultSessionId: 'session_1', surface: 'session_agent', callerPermissionMode: 'default' });
+
+    expect(deps.executionRunWait).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ result: { data: { runId: 'run_1', permissionMode: 'default' } } });
   });
 
   it('preserves failed execution-run service envelope codes and messages in fanout results', async () => {
@@ -944,6 +1147,41 @@ describe('createActionExecutor (inventory/discovery)', () => {
         { value: 'agent:codex', label: 'Codex' },
         { value: 'agent:claude', label: 'Claude' },
       ],
+    });
+  });
+
+  it('resolves dependent model options from the canonical draftInput shape', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('action.options.resolve', {
+      actionId: 'subagents.delegate.start',
+      fieldPath: 'modelId',
+      draftInput: { backendTargetKeys: ['agent:pi'] },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.agentsModelsList).toHaveBeenCalledWith({
+      agentId: 'pi',
+      backendTargetKey: 'agent:pi',
+      machineId: undefined,
+      limit: undefined,
+    });
+  });
+
+  it('returns a typed missing dependency when dependent model options lack a backend target', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('action.options.resolve', {
+      actionId: 'subagents.delegate.start',
+      fieldPath: 'modelId',
+    });
+
+    expect(res).toMatchObject({
+      ok: false,
+      errorCode: 'missing_option_dependency',
+      details: { requiredDraftPath: 'backendTargetKeys' },
     });
   });
 

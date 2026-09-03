@@ -29,7 +29,7 @@ export type PermissionEscalationDecision =
       requestedMode: string;
       requestedOrdinal: null;
       callerMode: string;
-      callerOrdinal: PermissionPrivilegeOrdinal;
+      callerOrdinal: PermissionPrivilegeOrdinal | null;
     }>;
 
 function parsePermissionModeForPrivilege(raw: unknown): SessionPermissionMode | null {
@@ -87,8 +87,9 @@ function parseCallerPermission(rawMode: unknown): Readonly<{
   mode: string;
   normalizedMode: SessionPermissionMode;
   ordinal: PermissionPrivilegeOrdinal;
-}> {
-  const normalizedMode = parsePermissionModeForPrivilege(rawMode) ?? 'default';
+}> | null {
+  const normalizedMode = parsePermissionModeForPrivilege(rawMode);
+  if (!normalizedMode) return null;
   return {
     mode: normalizedMode,
     normalizedMode,
@@ -109,14 +110,14 @@ export function assertNonEscalatingPermissionMode(params: Readonly<{
   const caller = parseCallerPermission(params.callerMode);
   const requestedRaw = typeof params.requestedMode === 'string' ? params.requestedMode.trim() : '';
   const requestedMode = parsePermissionModeForPrivilege(params.requestedMode);
-  if (!requestedRaw || !requestedMode) {
+  if (!caller || !requestedRaw || !requestedMode) {
     return {
       ok: false,
       reason: 'invalid_parameters',
       requestedMode: requestedRaw,
       requestedOrdinal: null,
-      callerMode: caller.mode,
-      callerOrdinal: caller.ordinal,
+      callerMode: typeof params.callerMode === 'string' ? params.callerMode.trim() : '',
+      callerOrdinal: caller?.ordinal ?? null,
     };
   }
 
@@ -158,6 +159,16 @@ export function resolveNearestPermissionModeAtOrBelow(params: Readonly<{
   }
 
   const caller = parseCallerPermission(params.callerMode);
+  if (!caller) {
+    return {
+      ok: false,
+      reason: 'invalid_parameters',
+      requestedMode: '',
+      requestedOrdinal: null,
+      callerMode: typeof params.callerMode === 'string' ? params.callerMode.trim() : '',
+      callerOrdinal: null,
+    };
+  }
   const selected = normalizeSupportedModes(params.supportedModes)
     .filter((mode) => mode.ordinal <= caller.ordinal)
     .sort((a, b) => b.ordinal - a.ordinal)[0];

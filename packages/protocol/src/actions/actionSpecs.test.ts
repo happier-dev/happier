@@ -97,7 +97,6 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
 
 const EXTERNALLY_CONTROLLABLE_SESSION_AGENT_UNSUPPORTED_ACTIONS = {
   'voice_agent.start': 'voice-agent launches are a separate user-facing runtime surface, not an in-session self-control primitive.',
-  'execution.run.get': 'execution run reads are available through session-scoped run list/wait/status paths; direct external get remains outside session-agent by policy.',
   'session.spawn_picker': 'the interactive spawn picker remains UI/external-client only; in-session agents use session.spawn_new.',
   'session.terminalComposer.clear': 'clearing a human terminal composer is an explicit human/UI decision.',
   'session.pendingInput.interruptAndRun': 'interrupting a human-visible live provider turn is an explicit human/UI decision.',
@@ -111,6 +110,19 @@ function sorted(values: readonly string[]): string[] {
 }
 
 describe('Action Spec Registry', () => {
+  it('recommends current-session omission in execution-run start examples', () => {
+    for (const actionId of [
+      'review.start',
+      'subagents.plan.start',
+      'subagents.delegate.start',
+      'voice_agent.start',
+      'execution.run.start',
+    ] as const) {
+      const example = getActionSpec(actionId).examples;
+      expect(JSON.stringify(example)).not.toContain('sessionId');
+    }
+  });
+
   it('supports session_agent as an action surface', () => {
     const parsed = ActionSurfaceSchema.parse({
       ui_button: false,
@@ -541,6 +553,15 @@ describe('Action Spec Registry', () => {
     expect(recent.description).toContain('DEPRECATED: use session_transcript_get. Returns semantic transcript items with cleaner pagination.');
   });
 
+  it('requires sidechain scope when session events specify a sidechain id', () => {
+    const schema = getActionSpec('session.events.get').inputSchema;
+    expect(() => schema.parse({ sessionId: 'session_1', sidechainId: 'side_1' })).toThrow();
+    expect(schema.parse({ sessionId: 'session_1', scope: 'sidechain', sidechainId: 'side_1' })).toMatchObject({
+      scope: 'sidechain',
+      sidechainId: 'side_1',
+    });
+  });
+
   it('registers work-state, goal, vendor plugin, and skill catalog actions', () => {
     expect(getActionSpec('session.work_state.get' as any).bindings?.mcpToolName).toBe('session_work_state_get');
     expect(getActionSpec('session.goal.get' as any).approval).toEqual({ result: 'required' });
@@ -616,6 +637,16 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('execution.run.start' as any);
     expect(spec.surfaces.cli).toBe(true);
     expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.inputSchema.parse({
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      waitForCompletion: true,
+      waitTimeoutSeconds: 5,
+    })).toMatchObject({ waitForCompletion: true, waitTimeoutSeconds: 5 });
   });
 
   it('exposes execution.run.wait for cli and external mcp surfaces', () => {
@@ -632,6 +663,12 @@ describe('Action Spec Registry', () => {
       runId: 'run_1',
       timeoutSeconds: 7_200,
     });
+  });
+
+  it('keeps the execution-run observation/control surface coherent for session agents', () => {
+    for (const id of ['execution.run.start', 'execution.run.list', 'execution.run.get', 'execution.run.wait', 'execution.run.stop', 'execution.run.send'] as const) {
+      expect(getActionSpec(id).surfaces.session_agent, id).toBe(true);
+    }
   });
 
   it('exposes session.spawn_new as an MCP tool', () => {
@@ -1170,13 +1207,13 @@ describe('Action Spec Registry', () => {
     expect(instructionsField?.required).not.toBe(true);
   });
 
-  it('defaults delegate start permission mode to workspace_write', () => {
+  it('preserves omitted delegate permission mode for causal admission', () => {
     const spec = getActionSpec('subagents.delegate.start');
     const parsed = (spec.inputSchema as any).parse({
       backendTargetKeys: ['agent:codex'],
       instructions: 'Do it.',
     });
-    expect(parsed.permissionMode).toBe('workspace_write');
+    expect(parsed.permissionMode).toBeUndefined();
   });
 
   it('advertises and validates the canonical delegate permission modes at the tool boundary', () => {

@@ -52,6 +52,7 @@ function createMarker(params: Readonly<{
     status: 'running' | 'succeeded';
     startedAtMs: number;
     agentId?: 'claude' | 'opencode';
+    startRequestId?: string;
 }>) {
     return {
         happySessionId: 'sess-1',
@@ -66,6 +67,7 @@ function createMarker(params: Readonly<{
         ioMode: 'request_response',
         status: params.status,
         startedAtMs: params.startedAtMs,
+        ...(params.startRequestId ? { startRequestId: params.startRequestId } : {}),
         ...(params.status === 'succeeded' ? { finishedAtMs: params.startedAtMs + 1 } : {}),
     };
 }
@@ -566,6 +568,7 @@ describe('normalizeExecutionRunRpcPayload', () => {
 describe('startExecutionRun', () => {
     beforeEach(() => {
         callSessionRpc.mockReset();
+        listExecutionRunMarkers.mockReset();
     });
 
     it('reports protocol unsupported when a live runtime lacks the start method', async () => {
@@ -581,6 +584,79 @@ describe('startExecutionRun', () => {
             code: 'execution_run_protocol_unsupported',
             message: 'RPC method not available',
         });
+    });
+
+    it('recovers the exact accepted start from its correlated marker after an rpc observation timeout', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC call timeout'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({
+                runId: 'run-correlated',
+                status: 'running',
+                startedAtMs: 20,
+                startRequestId: 'action-request-1',
+            }),
+        ]);
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: {
+                intent: 'plan',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                permissionMode: 'workspace_write',
+                retentionPolicy: 'ephemeral',
+                runClass: 'bounded',
+                ioMode: 'request_response',
+                startRequestId: 'action-request-1',
+            },
+        })).resolves.toEqual({
+            ok: true,
+            data: {
+                runId: 'run-correlated',
+                callId: 'run-correlated-call',
+                sidechainId: 'run-correlated-sidechain',
+                intent: 'plan',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                permissionMode: 'workspace_write',
+                retentionPolicy: 'ephemeral',
+                runClass: 'bounded',
+                ioMode: 'request_response',
+                startDisposition: 'recovered_after_observation_timeout',
+            },
+        });
+    });
+
+    it('reports an uncorrelated rpc timeout as ambiguous rather than target unavailable', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC call timeout'));
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { intent: 'review' },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'execution_run_start_ambiguous',
+            message: 'RPC call timeout',
+        });
+        expect(listExecutionRunMarkers).not.toHaveBeenCalled();
+    });
+
+    it('keeps pre-acceptance connection failures distinct from ambiguous observation timeouts', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('Socket connect timeout'));
+
+        await expect(startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { intent: 'review', startRequestId: 'action-request-2' },
+        })).resolves.toEqual({
+            ok: false,
+            code: 'execution_run_target_unavailable',
+            message: 'Socket connect timeout',
+        });
+        expect(listExecutionRunMarkers).not.toHaveBeenCalled();
     });
 });
 
@@ -872,9 +948,12 @@ describe('waitForExecutionRun', () => {
             pollIntervalMs: 1,
         });
 
-        await expect(waitPromise).resolves.toEqual({
-            ok: false,
-            code: 'timeout',
+        await expect(waitPromise).resolves.toMatchObject({
+            ok: true,
+            status: 'running',
+            disposition: 'observation_timeout',
+            runId: 'run_1',
+            timeoutMs: 100,
         });
         expect(callSessionRpc).toHaveBeenCalledTimes(1);
     });

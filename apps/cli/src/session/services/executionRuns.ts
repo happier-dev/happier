@@ -39,13 +39,22 @@ type ExecutionRunRpcContext = Readonly<{
 export type ExecutionRunTerminalStatus = 'succeeded' | 'failed' | 'cancelled' | 'timeout';
 export type ExecutionRunServiceResult<T> =
     | Readonly<{ ok: true; data: T }>
-    | Readonly<{ ok: false; code: string; message?: string }>;
+    | Readonly<{ ok: false; code: string; message?: string; details?: unknown }>;
 
 export type WaitForExecutionRunResult =
     | {
           ok: true;
           status: ExecutionRunTerminalStatus;
           result: unknown;
+      }
+    | {
+          ok: true;
+          status: 'running';
+          disposition: 'observation_timeout';
+          runId: string;
+          timeoutMs: number;
+          observedAtMs: number;
+          deadlineAtMs: number;
       }
     | {
           ok: false;
@@ -86,6 +95,55 @@ function classifyExecutionRunRpcFallback(error: unknown): ExecutionRunFallbackEx
     return null;
 }
 
+function isExecutionRunStartObservationTimeout(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? '');
+    return message.toLowerCase().includes('rpc call timeout');
+}
+
+async function recoverCorrelatedExecutionRunStart(params: Readonly<{
+    sessionId: string;
+    request: unknown;
+}>): Promise<ExecutionRunServiceResult<unknown> | null> {
+    if (!isRecord(params.request)) return null;
+    const startRequestId = typeof params.request.startRequestId === 'string'
+        ? params.request.startRequestId.trim()
+        : '';
+    if (!startRequestId) return null;
+
+    let markers;
+    try {
+        markers = await listExecutionRunMarkers();
+    } catch {
+        return null;
+    }
+    const matches = markers.filter((marker) => (
+        marker.happySessionId === params.sessionId
+        && (marker as ExecutionRunMarkerRecord).startRequestId === startRequestId
+    ));
+    if (matches.length !== 1) return null;
+    const marker = matches[0] as ExecutionRunMarkerRecord;
+    const runId = typeof marker.runId === 'string' ? marker.runId : '';
+    const callId = typeof marker.callId === 'string' ? marker.callId : '';
+    const sidechainId = typeof marker.sidechainId === 'string' ? marker.sidechainId : '';
+    if (!runId || !callId || !sidechainId) return null;
+
+    return {
+        ok: true,
+        data: {
+            runId,
+            callId,
+            sidechainId,
+            intent: marker.intent,
+            backendTarget: marker.backendTarget,
+            permissionMode: marker.permissionMode,
+            retentionPolicy: marker.retentionPolicy,
+            runClass: marker.runClass,
+            ioMode: marker.ioMode,
+            startDisposition: 'recovered_after_observation_timeout',
+        },
+    };
+}
+
 function isFallbackSafeExecutionRunServiceError(result: Readonly<{ code: string; message?: string }>): boolean {
     return result.code === 'execution_run_not_found' || classifyExecutionRunServiceFallback(result) !== null;
 }
@@ -121,6 +179,7 @@ function toExecutionRunPublicState(marker: ExecutionRunMarkerRecord): ExecutionR
         intent: marker.intent,
         backendTarget: marker.backendTarget,
         ...(marker.display !== undefined ? { display: marker.display } : {}),
+        ...(marker.launchOrigin !== undefined ? { launchOrigin: marker.launchOrigin } : {}),
         permissionMode,
         retentionPolicy: marker.retentionPolicy,
         runClass: marker.runClass,
@@ -369,6 +428,30 @@ export async function startExecutionRun(
         }
         return result;
     } catch (error) {
+        if (isExecutionRunStartObservationTimeout(error)) {
+            const recovered = await recoverCorrelatedExecutionRunStart({
+                sessionId: params.sessionId,
+                request: params.request,
+            });
+            if (recovered) return recovered;
+            const startRequestId = isRecord(params.request) && typeof params.request.startRequestId === 'string'
+                ? params.request.startRequestId.trim()
+                : '';
+            return {
+                ok: false,
+                code: 'execution_run_start_ambiguous',
+                message: error instanceof Error ? error.message : String(error ?? ''),
+                ...(startRequestId
+                    ? {
+                        details: {
+                            startRequestId,
+                            retrySafe: true,
+                            reconcileVia: 'retry_execution_run_start',
+                        },
+                    }
+                    : {}),
+            };
+        }
         const fallbackCode = classifyExecutionRunRpcFallback(error);
         if (!fallbackCode) throw error;
         return toExecutionRunFallbackExhaustedError(error, fallbackCode);
@@ -606,8 +689,14 @@ export async function waitForExecutionRun(
         await delay(pollIntervalMs);
     }
 
+    const observedAtMs = Date.now();
     return {
-        ok: false,
-        code: 'timeout',
+        ok: true,
+        status: 'running',
+        disposition: 'observation_timeout',
+        runId: params.runId,
+        timeoutMs: timeoutMs!,
+        observedAtMs,
+        deadlineAtMs: deadlineMs!,
     };
 }

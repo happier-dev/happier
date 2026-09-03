@@ -25,6 +25,13 @@ describe('createExecutionRunPermissionHandler', () => {
     });
   });
 
+  it('fails closed for write-like tools in the admitted default mode', async () => {
+    const handler = createExecutionRunPermissionHandler({ backendId: 'codex', permissionMode: 'default' });
+    await expect(handler.handleToolCall('tool-default', 'bash', { command: 'echo write' })).resolves.toEqual({
+      decision: 'denied',
+    });
+  });
+
   it('auto-approves read-like ACP tools for read-only execution runs', async () => {
     const handler = createExecutionRunPermissionHandler({
       backendId: 'opencode',

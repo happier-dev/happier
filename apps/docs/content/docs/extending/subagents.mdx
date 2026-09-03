@@ -18,13 +18,19 @@ where all of that becomes visible in one place.
 
 In one session, you can have:
 
-- **Subagents**: review, plan, and delegate runs started by Happier
+- **Happier-managed Subagents**: review, plan, and delegate runs started by Happier
 - **Claude team agents**: Claude teammates created inside a Claude team
 - **Provider-backed agent threads**: monitor-only task/agent sidechains emitted by providers
 
 The **Agents** surface is the place to launch them, watch their status, reopen their transcript, and take actions when the runtime supports them.
 
-This page describes Happier-managed agent work. Some providers also expose their own native subagent or delegation tools to the session agent. When you explicitly want provider-native subagents, use those provider-native tools when they are available. Happier review, plan, and delegate actions create product-managed execution runs that Happier can list, route, approve, and reopen consistently.
+There are three distinct ways to start more agent work:
+
+- **Provider-native subagents** use the current Agent's own delegation or parallel-agent facility. They are the default for an ordinary request to delegate work when the Agent supports them.
+- **Happier-managed execution runs and subagents** include review, plan, and delegate runs that Happier can list, route, approve, reopen, and control.
+- **Independent Happier sessions** are separate top-level sessions. Creating one is not routine delegation.
+
+Use a Happier-managed run when the user explicitly asks for a Happier-managed run, Happier delegation run, or Happier subagent; asks for another Agent backend, model provider, model, account, or service that the native facility cannot satisfy; or has enabled a custom rule that requires Happier. The presence of a discoverable Happier action does not by itself choose this route.
 
 ## Plan run vs plan mode
 
@@ -91,7 +97,7 @@ Current presets are:
 - **Plan**
 - **Delegate**
 
-Use them when you want Happier to create a bounded or long-lived subagent that works inside the current session’s context.
+Use them when one of the Happier-routing conditions above applies and you want a bounded or long-lived run associated with a Happier session.
 
 What each one is for:
 
@@ -166,12 +172,11 @@ The launcher supports:
 - instructions
 - an **Advanced…** path when you need the full launcher/details flow
 
-Backend selection here uses the same backend catalog as the rest of Happier. That means the launcher can target:
+Backend selection uses the same current Agent catalog and launch options as the rest of Happier. Inspect the action spec and resolve its options at launch time for the accepted targets, models, configuration, accounts, connected services, and field names. Do not rely on a fixed provider/model recipe from documentation.
 
-- built-in providers such as Claude, Codex, Gemini, or Kiro
-- configured **Custom ACP** backends that you added in **ACP Backends**
+For an in-session agent or action start, omit `sessionId` to host the run in the invoking session. An explicit `sessionId` remains supported when you deliberately target another authorized session. To create a separate top-level session instead, use `session.spawn_new`; that is an independent workflow, not routine delegation.
 
-Backend selection chooses the provider/backend that should run the Happier-managed execution run. Selecting multiple different backend targets intentionally starts one run for each selected provider/backend. It is not a capacity pool or a requirement for parallelism; for homogeneous parallel work, start multiple runs with the same backend or use provider-native subagent tooling when that is what you want.
+You can observe a run with a bounded wait. A wait timeout is nonterminal: the run may still be active, and the timeout does not stop or fail it. Retry a start only when the returned provider evidence marks the cause as retryable, such as a typed transient rate limit; other backend failures need their reported remedy rather than an assumed retry or backend switch.
 
 If the session already has agents, the launch section stays collapsed by default so the roster remains visible first.
 
@@ -187,18 +192,6 @@ Use them to:
 When a Claude team already exists in the session, the team group in the Agents roster also exposes a direct **Launch teammate** action for that existing team.
 
 This avoids forcing you back through a generic global launcher when you already know which team you want to extend.
-
-## Backend-aware launch defaults
-
-Because launchers now operate on real backend choices rather than only built-in provider ids, backend-aware defaults can follow the selected target more precisely.
-
-That includes things like:
-
-- compatible profiles
-- default permission mode
-- default model or mode where supported
-
-This is especially useful when you use multiple configured ACP backends that represent different agent roles on top of the same underlying CLI.
 
 ## Opening an agent
 
@@ -334,13 +327,13 @@ Once the direct session is locally controlled again, those controls become avail
 
 ## Recommended workflows
 
-### I want a quick parallel review from the current session
+### I want a Happier-managed parallel review from the current session
 
 Open **Agents** → **Launch Subagents** → **Review**.
 
 Use this when you want a bounded review pass without losing the main session context.
 
-### I want a long-running helper that I can steer
+### I want a Happier-managed helper that I can steer
 
 Start a delegate-style Subagent, then keep using the row or details pane to steer it while it runs.
 

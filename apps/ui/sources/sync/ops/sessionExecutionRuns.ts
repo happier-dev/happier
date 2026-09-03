@@ -102,7 +102,10 @@ export async function sessionExecutionRunStart(
             sessionId,
             serverId,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
-            payload: request,
+            payload: {
+                ...request,
+                launchOrigin: { kind: 'external', source: 'action' },
+            },
         });
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;

@@ -16,6 +16,7 @@ import {
 
 export const actionSpecSearchSchema = z.object({
   query: z.string().optional(),
+  draftInput: z.record(z.string(), z.unknown()).optional(),
   limit: z.number().int().positive().max(100).optional(),
 }).passthrough();
 
@@ -79,6 +80,7 @@ type ResolveActionOptions = (args: Readonly<{
   sessionId: string | null;
   limit: number | null;
   query: string | null;
+  draftInput?: Readonly<Record<string, unknown>> | null;
 }>) => Promise<ActionSpecDiscoveryResult<ResolveActionOptionsPayload> | null>;
 
 type SearchActionSpecsPayload = Readonly<{
@@ -218,6 +220,7 @@ export async function resolveActionOptionsForSurface(
       sessionId: typeof parsed.data.sessionId === 'string' ? parsed.data.sessionId : null,
       limit: typeof parsed.data.limit === 'number' ? parsed.data.limit : null,
       query: typeof parsed.data.query === 'string' ? parsed.data.query : null,
+      draftInput: (parsed.data.draftInput as Readonly<Record<string, unknown>> | undefined) ?? null,
     });
   } catch {
     return { ok: false, errorCode: 'action_options_resolve_failed', error: 'Options source resolution failed' };

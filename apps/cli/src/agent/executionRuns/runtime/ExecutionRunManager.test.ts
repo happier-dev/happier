@@ -75,6 +75,63 @@ function createDelayedJsonBackend(responseText: string, delayMs: number): AgentB
   };
 }
 
+describe('ExecutionRunManager start request idempotency', () => {
+  it('returns the same run handle for the same correlated start without creating a duplicate backend', async () => {
+    const createBackend = vi.fn(() => createStaticJsonBackend('{"summary":"ok","findings":[]}'));
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend,
+      sendAcp: () => {},
+    });
+    const request = {
+      sessionId: 'parent_session_1',
+      intent: 'review' as const,
+      backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral' as const,
+      runClass: 'bounded' as const,
+      ioMode: 'request_response' as const,
+      startRequestId: 'action-request-1',
+      startRequestFingerprint: 'fingerprint-1',
+    };
+
+    const first = await manager.start(request);
+    const retry = await manager.start(request);
+
+    expect(retry).toEqual(first);
+    expect(createBackend).toHaveBeenCalledOnce();
+  });
+
+  it('rejects conflicting reuse of a correlated start request id', async () => {
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => createStaticJsonBackend('{"summary":"ok","findings":[]}'),
+      sendAcp: () => {},
+    });
+    const base = {
+      sessionId: 'parent_session_1',
+      intent: 'review' as const,
+      backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' },
+      instructions: 'Review this repo.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral' as const,
+      runClass: 'bounded' as const,
+      ioMode: 'request_response' as const,
+      startRequestId: 'action-request-1',
+    };
+    await manager.start({ ...base, startRequestFingerprint: 'fingerprint-1' });
+
+    await expect(manager.start({
+      ...base,
+      instructions: 'Different work.',
+      startRequestFingerprint: 'fingerprint-2',
+    })).rejects.toMatchObject({ code: 'execution_run_start_conflict' });
+  });
+});
+
 function createReviewResumeBackend(): Readonly<{
   backend: AgentBackend;
   prompts: string[];
@@ -210,6 +267,7 @@ describe('ExecutionRunManager (review intent)', () => {
 
     const started = await manager.start({
       sessionId: 'parent_session_1',
+      launchOrigin: { kind: 'session', sessionId: 'initiating_session_2' },
       intent: 'review',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review this repo.',
@@ -226,6 +284,10 @@ describe('ExecutionRunManager (review intent)', () => {
     await manager.waitForTerminal(started.runId);
     const final = manager.get(started.runId);
     expect(final?.status).toBe('succeeded');
+    expect(manager.getPublic(started.runId)).toMatchObject({
+      status: 'succeeded',
+      launchOrigin: { kind: 'session', sessionId: 'initiating_session_2' },
+    });
     // Prompt contract: review runs must include a strict JSON output schema.
     expect(lastPrompt).toContain('"findings"');
 
@@ -233,6 +295,10 @@ describe('ExecutionRunManager (review intent)', () => {
     expect(toolCall).toBeTruthy();
     expect((toolCall?.body as any).name).toBe('SubAgentRun');
     expect((toolCall?.body as any)?.input?.runId).toBe(started.runId);
+    expect((toolCall?.body as any)?.input?.launchOrigin).toEqual({
+      kind: 'session',
+      sessionId: 'initiating_session_2',
+    });
 
     const sidechainToolCall = sent.find((m) => (m.body as any)?.type === 'tool-call' && (m.body as any)?.name === 'read_file');
     expect(sidechainToolCall).toBeTruthy();

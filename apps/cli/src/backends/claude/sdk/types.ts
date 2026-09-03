@@ -199,6 +199,8 @@ export interface QueryOptions {
     maxTurns?: number
     pathToClaudeCodeExecutable?: string
     permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'
+    /** Emit even the default mode explicitly so ambient Claude settings cannot change this launch. */
+    forcePermissionMode?: boolean
     continue?: boolean
     resume?: string
     model?: string

@@ -1,10 +1,13 @@
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV1, ExecutionRunDisplay, ExecutionRunIntent, ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV1, ExecutionRunDisplay, ExecutionRunIntent, ExecutionRunLaunchOrigin, ExecutionRunResumeHandle } from '@happier-dev/protocol';
 
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ExecutionRunConnectedServiceRegistrationV1 } from '@/daemon/connectedServices/runsBridge/contract';
 
 export type ExecutionRunManagerStartParams = Readonly<{
   sessionId: string;
+  startRequestId?: string;
+  /** Host-computed digest of the effective wire start request; never supplied by callers directly. */
+  startRequestFingerprint?: string;
   intent: ExecutionRunIntent;
   backendTarget: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -26,6 +29,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
    */
   intentInput?: unknown;
   display?: ExecutionRunDisplay;
+  launchOrigin?: ExecutionRunLaunchOrigin;
   permissionMode: string;
   retentionPolicy: 'ephemeral' | 'resumable';
   runClass: 'bounded' | 'long_lived';
@@ -76,6 +80,8 @@ export type ExecutionRunState = Readonly<{
   callId: string;
   sidechainId: string;
   sessionId: string;
+  startRequestId?: string;
+  startRequestFingerprint?: string;
   depth: number;
   intent: ExecutionRunManagerStartParams['intent'];
   backendTarget: BackendTargetRefV1;
@@ -100,6 +106,7 @@ export type ExecutionRunState = Readonly<{
    * re-resolvable inputs — NEVER raw credentials, materialized env values, or closures.
    */
   launch?: Readonly<{
+    launchOrigin?: ExecutionRunLaunchOrigin;
     modelId?: string;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     connectedServicesSelection?: ConnectedServiceBindingsV1 | null;

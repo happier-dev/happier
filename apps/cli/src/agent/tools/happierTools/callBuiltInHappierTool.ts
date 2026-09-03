@@ -119,13 +119,18 @@ export async function callBuiltInHappierTool(params: Readonly<{
         surface,
         resolveCallerPermissionMode: () => callerPermissionMode,
       }),
-      startExecutionRun: async (sessionId, request) => {
+      startExecutionRun: async (hostSessionId, request) => {
         const result = await startExecutionRun({
           token: params.credentials.token,
-          sessionId,
+          sessionId: hostSessionId,
           mode,
           ctx,
-          request,
+          request: {
+            ...request,
+            launchOrigin: surface === 'session_agent'
+              ? { kind: 'session', sessionId }
+              : { kind: 'external', source: 'cli' },
+          },
         });
         return normalizeExecutionRunToolResult(result);
       },

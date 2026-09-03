@@ -57,6 +57,10 @@ export function resolveExecutionRunPermissionDecision(args: Readonly<{
     return isExecutionRunWriteLikeToolName(args.toolName) ? 'denied' : 'approved_for_session';
   }
 
+  if (normalizedMode === 'default') {
+    return isExecutionRunWriteLikeToolName(args.toolName) ? 'denied' : 'approved_for_session';
+  }
+
   // Execution runs are non-interactive. Once the user starts an autonomous run in any
   // non-read-only mode, residual ACP permission prompts must resolve deterministically
   // instead of cancelling the run.

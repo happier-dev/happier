@@ -112,6 +112,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
     sessionId: string | null;
     limit: number | null;
     query: string | null;
+    draftInput?: Readonly<Record<string, unknown>> | null;
   }>, defaultSessionId: string) => Promise<DynamicActionOptionsBridgeResult | null>;
   isActionEnabled: (id: ActionId) => boolean;
 }> {
@@ -177,6 +178,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
       if (args.sessionId) input.sessionId = args.sessionId;
       if (typeof args.limit === 'number') input.limit = args.limit;
       if (typeof args.query === 'string') input.query = args.query;
+      if (args.draftInput) input.draftInput = args.draftInput;
 
       const result = await params.executor.execute(
         'action.options.resolve',

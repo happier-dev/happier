@@ -170,6 +170,22 @@ This reduces prompt overload and keeps the available tool surface aligned with t
 
 This is the default posture for in-session agents. Happier-managed review, plan, delegate, and execution-run launch actions stay discoverable, but they are not promoted into the session agent’s direct tool list unless the default or your settings make them direct. External MCP clients and CLI workflows keep direct named tools by default where those tools are configured, so existing automations can continue to use them.
 
+Discoverability is not authorization to choose Happier-managed delegation. For an ordinary request to delegate work, use the current Agent's native subagent or parallel-agent facility when it has one. Discover and start a Happier-managed run only when the user explicitly asks for a Happier run, Happier delegation run, or Happier subagent; asks for another Agent backend, model provider, model, account, or service that the native facility cannot satisfy; or has enabled a custom rule that requires Happier.
+
+These choices create different things:
+
+- **Provider-native subagents** stay inside the current Agent's own delegation system and are the normal choice for ordinary parallel work.
+- **Happier-managed execution runs** include Happier review, plan, and delegate subagents. Happier owns their launch, lifecycle, transcript access, and controls.
+- **Independent Happier sessions** are top-level sessions created with `session.spawn_new`. They are not routine delegation and do not replace a subagent run.
+
+### Starting and observing a Happier-managed run
+
+For an action invoked by an agent inside a session, `sessionId` is optional. Omit it to host the run in the invoking session. Supply an explicit `sessionId` only when deliberately targeting another authorized session; explicit cross-session hosting remains supported.
+
+Before starting a run, inspect its current action spec, then resolve selectable fields through the action-options flow. The spec and option resolver are the source of truth for current Agent targets, models, configuration, accounts, connected services, and accepted input shapes. This avoids depending on recipes or option-source names that may no longer match the installed build.
+
+Waiting is only observation. If a bounded wait times out, the run may still be active; the timeout does not stop it or turn it into a failed run. Retry only when the returned provider evidence classifies the failure as retryable, such as a typed transient rate limit. Do not treat every backend failure as transient or silently switch to another backend.
+
 ## Hot-path actions
 
 Happier still keeps a small dynamic hot path for common actions.
@@ -267,8 +283,6 @@ Use a plan subagent only when you want parallel planning work rather than changi
 Configure the tool once in Happier.
 
 If the provider supports native MCP, Happier uses that. If not, Happier uses the shell bridge automatically when supported.
-
-If you are asking an agent for provider-native parallel subagents, use the provider-native subagent/delegation tools when that provider exposes them. Happier review, plan, and delegate actions are Happier-managed execution runs; they are available through the action catalog and can be surfaced directly when that is the intended product workflow.
 
 ### I want voice to do structured work reliably
 

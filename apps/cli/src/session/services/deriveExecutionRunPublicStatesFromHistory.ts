@@ -1,6 +1,8 @@
 import { AGENT_IDS } from '@happier-dev/agents';
 import {
     ExecutionRunPublicStateSchema,
+    ExecutionRunLaunchOriginSchema,
+    type ExecutionRunLaunchOrigin,
     type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
 
@@ -13,6 +15,7 @@ type TranscriptExecutionRunState = Readonly<{
     intent: string | null;
     backendTarget: Record<string, unknown> | null;
     displayTitle: string | null;
+    launchOrigin: ExecutionRunLaunchOrigin | null;
     permissionMode: string | null;
     retentionPolicy: string | null;
     runClass: string | null;
@@ -36,6 +39,11 @@ function readString(record: Record<string, unknown> | null, key: string): string
 function readNumber(record: Record<string, unknown> | null, key: string): number | null {
     const value = record?.[key];
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readLaunchOrigin(record: Record<string, unknown> | null): ExecutionRunLaunchOrigin | null {
+    const parsed = ExecutionRunLaunchOriginSchema.safeParse(record?.launchOrigin);
+    return parsed.success ? parsed.data : null;
 }
 
 function minNumber(values: ReadonlyArray<number | null | undefined>): number | null {
@@ -101,6 +109,7 @@ function toExecutionRunPublicState(state: TranscriptExecutionRunState): Executio
         intent: state.intent,
         backendTarget: state.backendTarget,
         ...(state.displayTitle ? { display: { title: state.displayTitle } } : {}),
+        ...(state.launchOrigin ? { launchOrigin: state.launchOrigin } : {}),
         permissionMode: state.permissionMode ?? 'unknown',
         retentionPolicy,
         runClass,
@@ -142,6 +151,7 @@ export function listExecutionRunPublicStatesFromHistoryRows(rows: readonly RawHi
             intent: readString(input, 'intent') ?? readString(output, 'intent') ?? current?.intent ?? null,
             backendTarget: readBackendTarget(input, output) ?? current?.backendTarget ?? null,
             displayTitle: readString(input, 'label') ?? readString(output, 'label') ?? current?.displayTitle ?? null,
+            launchOrigin: readLaunchOrigin(input) ?? readLaunchOrigin(output) ?? current?.launchOrigin ?? null,
             permissionMode: readString(input, 'permissionMode') ?? readString(output, 'permissionMode') ?? current?.permissionMode ?? null,
             retentionPolicy: readString(input, 'retentionPolicy') ?? readString(output, 'retentionPolicy') ?? current?.retentionPolicy ?? null,
             runClass: readString(input, 'runClass') ?? readString(output, 'runClass') ?? current?.runClass ?? null,

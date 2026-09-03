@@ -70,6 +70,28 @@ describe('ClaudeSdkAgentBackend runtime bootstrap', () => {
     );
   });
 
+  it('forces Claude default permission mode for noninteractive execution runs instead of inheriting bypass mode', async () => {
+    const { ClaudeSdkAgentBackend } = await import('./ClaudeSdkAgentBackend');
+    const backend = new ClaudeSdkAgentBackend({
+      cwd: '/tmp',
+      modelId: 'default',
+      permissionHandler: noToolsPermissionHandler(),
+    });
+
+    try {
+      await backend.startSession();
+    } finally {
+      await backend.dispose();
+    }
+
+    expect(queryMock).toHaveBeenCalledWith(expect.objectContaining({
+      options: expect.objectContaining({
+        permissionMode: 'default',
+        forcePermissionMode: true,
+      }),
+    }));
+  });
+
   it('prefers query.stopTask(taskId) over query.interrupt() when cancelling a turn with an active task id', async () => {
     const taskStartedProcessed = createDeferred<void>();
     const stopTask = vi.fn(async (_taskId: string) => {});
