@@ -1988,6 +1988,20 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return turnId ?? null;
     };
 
+    const waitForSteerableActiveTurnId = async (candidate: PendingTurn): Promise<string | null> => {
+        // Only explicit prompt starts have a provider-acknowledgement gap that can become
+        // steerable. Native reviews and compaction turns are intentionally non-steerable.
+        if (!candidate.providerPrompt) return null;
+        const waitStartedAt = Date.now();
+        while (pendingTurn?.promise === candidate.promise) {
+            const turnId = pendingTurn.turnId ?? latestPendingTurnId;
+            if (turnId && canSteerPrompt()) return turnId;
+            if (Date.now() - waitStartedAt >= turnIdWaitTimeoutMs) return null;
+            await delay(turnIdWaitPollMs);
+        }
+        return null;
+    };
+
     const publishThreadId = (): void => {
         void publishCodexSessionIdMetadata({
             session: params.session,
@@ -4705,7 +4719,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             }
             assertConnectedServiceAuthGroupAvailable();
             const client = await ensureClient();
-            const expectedTurnId = (activeTurn.turnId ?? latestPendingTurnId) ?? (await waitForActiveTurnId());
+            const expectedTurnId = await waitForSteerableActiveTurnId(activeTurn);
             if (pendingTurn?.promise !== activeTurn.promise || !canSteerPrompt()) {
                 throw new Error('Codex app-server active turn is not steerable');
             }
