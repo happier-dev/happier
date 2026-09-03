@@ -7924,6 +7924,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       serviceId: 'openai-codex',
       fetch: vi.fn(async () => null),
     };
+    const recordDiagnostic = vi.fn();
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getAccountEncryptionModeUncached: vi.fn(async () => 'plain' as const),
@@ -7941,6 +7942,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length: number) => randomBytes(length),
       discoveryEnabled: false,
       runtimeQuotaSnapshots,
+      recordDiagnostic,
     });
     const probe = coordinator.probeGroupQuotaSnapshots as unknown as (input: Readonly<{
       serviceId: 'openai-codex';
@@ -7973,9 +7975,16 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       completedProfileIds: [],
       reason: 'deadline_exceeded',
     });
-    expect(getConnectedServiceCredentialPlain).toHaveBeenCalledTimes(1);
-    expect(getConnectedServiceCredentialPlain.mock.calls[0]?.[0].signal?.aborted).toBe(true);
+    expect(getConnectedServiceCredentialPlain).toHaveBeenCalledTimes(2);
+    expect(getConnectedServiceCredentialPlain.mock.calls.every(
+      ([input]) => input.signal?.aborted === true,
+    )).toBe(true);
     expect(fetcher.fetch).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'probe_group',
+      probeOutcome: 'incomplete',
+      incompleteProfileIds: ['primary', 'backup'],
+    }));
   });
 
   it('settles an aggregate group probe when refresh-lease acquisition exceeds its deadline', async () => {
@@ -8038,6 +8047,150 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       });
       expect(acquireConnectedServiceRefreshLease.mock.calls[0]?.[0].signal?.aborted).toBe(true);
       expect(fetcher.fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('completes a large group probe within one shared deadline using bounded concurrency', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    try {
+      const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+      const credentials: Credentials = {
+        token: 'happy-token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      };
+      const profileIds = Array.from({ length: 13 }, (_, index) => `profile-${index + 1}`);
+      const records = new Map(profileIds.map((profileId) => [
+        profileId,
+        buildConnectedServiceCredentialRecord({
+          now: Date.now(),
+          serviceId: 'openai-codex',
+          profileId,
+          kind: 'oauth',
+          expiresAt: Date.now() + 60_000,
+          oauth: {
+            accessToken: `${profileId}-access`,
+            refreshToken: `${profileId}-refresh`,
+            idToken: null,
+            scope: null,
+            tokenType: null,
+            providerAccountId: `${profileId}-account`,
+            providerEmail: `${profileId}@example.com`,
+          },
+        }),
+      ]));
+      let activeFetches = 0;
+      let maxActiveFetches = 0;
+      const fetcher: ConnectedServiceQuotaFetcher = {
+        serviceId: 'openai-codex',
+        fetch: vi.fn(async ({ record }): Promise<ConnectedServiceQuotaSnapshotV1> => {
+          activeFetches += 1;
+          maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+          try {
+            await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+          } finally {
+            activeFetches -= 1;
+          }
+          return {
+            v: 1,
+            serviceId: 'openai-codex',
+            profileId: record.profileId,
+            fetchedAt: Date.now(),
+            staleAfterMs: 300_000,
+            planLabel: 'Pro',
+            accountLabel: null,
+            meters: [{
+              meterId: 'weekly',
+              label: 'Weekly',
+              used: null,
+              limit: null,
+              unit: 'unknown',
+              utilizationPct: 20,
+              remainingPct: 80,
+              resetsAt: Date.now() + 60_000,
+              status: 'ok',
+              details: {},
+            }],
+          };
+        }),
+      };
+      const api = {
+        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+        getAccountEncryptionModeUncached: vi.fn(async () => 'plain' as const),
+        getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+        getConnectedServiceCredentialPlain: vi.fn(async ({ profileId }: { profileId: string }) => ({
+          content: { t: 'plain' as const, v: records.get(profileId) ?? null },
+        })),
+        getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+        getConnectedServiceCredentialSealed: vi.fn(async () => null),
+        getConnectedServiceAuthGroup: vi.fn(async () => ({
+          v: 1,
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          displayName: 'Team',
+          activeProfileId: profileIds[0],
+          generation: 4,
+          runtimeStateRevision: 0,
+          policy: {
+            ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+            autoSwitch: true,
+            strategy: 'priority',
+          },
+          state: { v: 1 },
+          members: profileIds.map((profileId, index) => ({
+            v: 1,
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            profileId,
+            priority: index,
+            enabled: true,
+            state: {},
+            createdAt: index + 1,
+            updatedAt: index + 1,
+          })),
+          createdAt: 1,
+          updatedAt: 2,
+        })),
+      } as unknown as QuotaApi;
+      const recordDiagnostic = vi.fn();
+      const coordinator = new ConnectedServiceQuotasCoordinator({
+        api,
+        credentials,
+        quotaFetchers: [fetcher],
+        now: () => Date.now(),
+        randomBytes: (length: number) => randomBytes(length),
+        discoveryEnabled: false,
+        runtimeQuotaSnapshots,
+        recordDiagnostic,
+      });
+
+      const probePromise = coordinator.probeGroupQuotaSnapshots({
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileIds,
+        deadlineAtMs: Date.now() + 15_000,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(probePromise).resolves.toEqual({
+        status: 'complete',
+        requestedProfileCount: 13,
+        completedProfileCount: 13,
+        completedProfileIds: profileIds,
+      });
+      expect(fetcher.fetch).toHaveBeenCalledTimes(13);
+      expect(maxActiveFetches).toBeGreaterThan(1);
+      expect(maxActiveFetches).toBeLessThanOrEqual(4);
+      expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'probe_group',
+        probeOutcome: 'complete',
+        activeProfileId: profileIds[0],
+        sourceProfileId: profileIds[0],
+        sourceRemainingPercent: 80,
+      }));
     } finally {
       vi.useRealTimers();
     }

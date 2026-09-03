@@ -380,6 +380,7 @@ export type ConnectedServiceQuotaCoordinatorDiagnostic = Readonly<{
   selectedRemainingPercent?: number | null;
   targetCount?: number;
   completedTargetCount?: number;
+  incompleteProfileIds?: ReadonlyArray<string>;
   allowedTargetCount?: number;
   durationMs?: number;
   probeOutcome?: 'complete' | 'incomplete';
