@@ -1671,18 +1671,11 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       statePath,
       installServerBinaryPath,
       join(defaults.binDir, serverBinaryName),
-      defaults.installRoot,
-      defaults.configDir,
-      defaults.dataDir,
       defaults.logDir,
     ];
 
     for (const path of cleanupTargets) {
       await rm(path, { force: true, recursive: true }).catch(() => undefined);
-    }
-
-    if (existsSync(defaults.installRoot)) {
-      await rm(defaults.installRoot, { force: true, recursive: true }).catch(() => undefined);
     }
 
     if (existsSync(statePath)) {
