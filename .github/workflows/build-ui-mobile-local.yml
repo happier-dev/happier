@@ -54,13 +54,14 @@ on:
           - cloud
           - local
       action:
-        description: "Build native binaries, submit store builds, resume TestFlight distribution, or publish OTA"
+        description: "Build native binaries, submit/resubmit store builds, resume TestFlight distribution, or publish OTA"
         required: true
         type: choice
         default: build_only
         options:
           - build_only
           - build_and_submit
+          - retry_android_store_submit
           - retry_testflight_distribution
           - ota
       publish_apk_release:
@@ -84,6 +85,16 @@ on:
         type: string
       retry_testflight_app_version:
         description: "TestFlight retry — Existing App Store Connect app version (no IPA rebuild)"
+        required: false
+        default: ""
+        type: string
+      retry_store_run_id:
+        description: "Android submit retry — Origin GitHub Actions run containing the preserved AAB"
+        required: false
+        default: ""
+        type: string
+      retry_store_source_sha:
+        description: "Android submit retry — Exact source SHA bound to the preserved AAB"
         required: false
         default: ""
         type: string
@@ -135,6 +146,14 @@ on:
         default: ""
         type: string
       retry_testflight_app_version:
+        required: false
+        default: ""
+        type: string
+      retry_store_run_id:
+        required: false
+        default: ""
+        type: string
+      retry_store_source_sha:
         required: false
         default: ""
         type: string
@@ -213,7 +232,7 @@ jobs:
 
   validate_expo_token:
     name: Validate EXPO_TOKEN
-    if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && (inputs.action == 'ota' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && (inputs.action == 'ota' || inputs.action == 'retry_android_store_submit' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: release-shared
@@ -245,7 +264,7 @@ jobs:
 
   build_android:
     name: Build (android)
-    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -315,6 +334,26 @@ jobs:
             --publish-apk-release false \
             --release-message "${{ inputs.release_message }}" \
             --secrets-source env
+
+      - name: Persist Android candidate identity for recovery
+        if: ${{ always() }}
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+          APP_VERSION: ${{ steps.candidate.outputs.app_version }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/ui-mobile
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            writeFileSync("dist/ui-mobile/candidate-identity.json", `${JSON.stringify({
+              schemaVersion: 1,
+              candidateSha: process.env.CANDIDATE_SHA,
+              appVersion: process.env.APP_VERSION,
+              environment: process.env.RELEASE_ENVIRONMENT,
+              platform: "android",
+            }, null, 2)}\n`);
+          '
 
       - name: Locate built APK candidate
         id: apk
@@ -400,7 +439,7 @@ jobs:
 
   build_ios:
     name: Build (ios)
-    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: macos-26
     timeout-minutes: 180
@@ -479,6 +518,87 @@ jobs:
           name: ui-mobile-${{ inputs.environment }}-ios
           path: dist/ui-mobile/**
           retention-days: 7
+
+  retry_android_store_submit:
+    name: Resume Android store submission (preserved AAB)
+    if: ${{ inputs.action == 'retry_android_store_submit' }}
+    needs: [release_actor_guard, validate_expo_token]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Bind origin run and source identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETRY_STORE_RUN_ID: ${{ inputs.retry_store_run_id }}
+          RETRY_STORE_SOURCE_SHA: ${{ inputs.retry_store_source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RETRY_STORE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "retry_store_run_id must be a positive integer." >&2; exit 1; }
+          [[ "$RETRY_STORE_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "retry_store_source_sha must be an exact lowercase commit SHA." >&2; exit 1; }
+          origin_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RETRY_STORE_RUN_ID}" --jq .status)"
+          origin_head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RETRY_STORE_RUN_ID}" --jq .head_sha)"
+          [ "$origin_status" = completed ] || { echo "Origin run $RETRY_STORE_RUN_ID is not completed." >&2; exit 1; }
+          printf 'ORIGIN_HEAD_SHA=%s\n' "$origin_head_sha" >> "$GITHUB_ENV"
+
+      - name: Download preserved Android build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.retry_store_run_id }}
+          name: ui-mobile-${{ inputs.environment }}-android
+          path: retry-artifact
+
+      - name: Verify candidate identity and resubmit exact AAB
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_CLI_VERSION: 18.0.1
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+          RETRY_STORE_SOURCE_SHA: ${{ inputs.retry_store_source_sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t aabs < <(find retry-artifact -type f -name '*.aab' -print)
+          if [ "${#aabs[@]}" -ne 1 ]; then
+            echo "Expected exactly one preserved Android AAB; found ${#aabs[@]}." >&2
+            exit 1
+          fi
+          if [ -f retry-artifact/candidate-identity.json ]; then
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const identity = JSON.parse(readFileSync("retry-artifact/candidate-identity.json", "utf8"));
+              if (identity.schemaVersion !== 1 || identity.candidateSha !== process.env.RETRY_STORE_SOURCE_SHA || identity.environment !== process.env.RELEASE_ENVIRONMENT || identity.platform !== "android") {
+                throw new Error("Preserved Android artifact identity does not match the authorized retry inputs.");
+              }
+            '
+          elif [ "$ORIGIN_HEAD_SHA" != "$RETRY_STORE_SOURCE_SHA" ]; then
+            echo "Legacy artifact has no candidate identity and its origin run SHA does not match retry_store_source_sha." >&2
+            exit 1
+          fi
+          aab="${aabs[0]}"
+          node scripts/pipeline/expo/submit.mjs \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --platform android \
+            --profile "$RELEASE_PROFILE" \
+            --path "$aab" \
+            --wait false \
+            --android-release-status draft
 
   retry_testflight_distribution:
     name: Resume TestFlight distribution (existing build)
