@@ -38,6 +38,9 @@ import {
     upsertSessionLabel as upsertSessionOrganizationLabel,
 } from '@/sync/ops/sessionOrganization';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { HappyError } from '@/utils/errors/errors';
 
 import {
     countCollapsedSessionListGroups,
@@ -226,7 +229,12 @@ export function useSessionListViewState({
     }, [activeOrganizationServerId]);
 
     const runOrganizationMutation = React.useCallback((mutation: () => Promise<void>) => {
-        void mutation().catch(() => undefined);
+        void mutation().catch((error: unknown) => {
+            Modal.alert(
+                t('common.error'),
+                error instanceof HappyError ? error.message : t('errors.unknownError'),
+            );
+        });
     }, []);
 
     const setPinnedSessionKeysV1 = React.useCallback((nextKeysRaw: readonly string[]) => {

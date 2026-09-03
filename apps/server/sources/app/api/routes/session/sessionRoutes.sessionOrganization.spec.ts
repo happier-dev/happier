@@ -568,6 +568,28 @@ describe("session organization routes", () => {
         expect(markAccountChanged).not.toHaveBeenCalled();
     });
 
+    it("allows adding a pin after the previous 500-session ceiling", async () => {
+        sessionFindFirst.mockResolvedValue({ id: "s501" });
+        txSessionFindFirst.mockResolvedValue({ id: "s501" });
+        txSessionPinFindUnique.mockResolvedValue(null);
+        txSessionPinCount.mockResolvedValue(500);
+        txSessionPinUpsert.mockResolvedValue({
+            sessionId: "s501",
+            sortKey: null,
+            pinnedAt: organizationDate(4_000),
+        });
+
+        const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/pins/:sessionId");
+        const { response, reply } = await route.invoke({
+            params: { sessionId: "s501" },
+            body: { pinned: true },
+        });
+
+        expect(reply.code).not.toHaveBeenCalledWith(409);
+        expect(response).toEqual({ pin: { sessionId: "s501", sortKey: null, pinnedAt: 4_000 } });
+        expect(txSessionPinUpsert).toHaveBeenCalledTimes(1);
+    });
+
     it("enforces the product maximum when adding a new pin", async () => {
         sessionFindFirst.mockResolvedValue({ id: "s-overflow" });
         txSessionFindFirst.mockResolvedValue({ id: "s-overflow" });

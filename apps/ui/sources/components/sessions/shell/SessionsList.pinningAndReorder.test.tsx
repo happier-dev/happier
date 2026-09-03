@@ -11,12 +11,14 @@ import {
 } from '@/dev/testkit';
 import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization/types';
+import { HappyError } from '@/utils/errors/errors';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedRootFlatListProps: any | null = null;
 const routerPushSpy = vi.fn();
+const modalAlertSpy = vi.hoisted(() => vi.fn());
 
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
@@ -102,7 +104,9 @@ installSessionShellCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module,
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+        spies: { alert: modalAlertSpy },
+    }).module,
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
@@ -422,6 +426,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         setSessionTagsV1.mockClear();
         setWorkspaceLabelsV1.mockClear();
         Object.values(sessionOrganizationOps).forEach((spy) => spy.mockClear());
+        modalAlertSpy.mockClear();
         tokenStorageMocks.getCredentialsForServerUrl.mockClear();
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
@@ -703,6 +708,26 @@ describe('SessionsList pinning + per-group ordering', () => {
             pinned: true,
             sortKey: undefined,
         });
+    });
+
+    it('shows actionable pin errors instead of silently rolling the row back', async () => {
+        sessionOrganizationOps.setSessionPin.mockRejectedValueOnce(new HappyError(
+            'You can pin up to 1,000 sessions. Unpin another session and try again.',
+            false,
+        ));
+        const screen = await renderSessionsList();
+        const row = expectPresent(findSessionItem(screen, 'sess_a'), 'expected sess_a session row');
+
+        await act(async () => {
+            invokeTestInstanceHandler(row, 'onTogglePinned', undefined, 'expected sess_a session row');
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith(
+            'common.error',
+            'You can pin up to 1,000 sessions. Unpin another session and try again.',
+        );
     });
 
     it('renders project headers and keeps path/machine subtitles available on project rows', async () => {

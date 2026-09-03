@@ -1,6 +1,10 @@
+import { SESSION_ORGANIZATION_MAX_PINNED_SESSIONS } from '@happier-dev/protocol';
+
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionPin as setSessionPinApi } from '@/sync/api/session/sessionOrganizationApi';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { t } from '@/text';
+import { HappyError } from '@/utils/errors/errors';
 
 export async function setSessionPin(params: Readonly<{
     credentials: AuthCredentials;
@@ -26,6 +30,13 @@ export async function setSessionPin(params: Readonly<{
         getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
     } catch (error) {
         getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
+        if (error instanceof HappyError && error.message === 'session-pin-limit-exceeded') {
+            throw new HappyError(
+                t('sessionInfo.pinLimitExceeded', { count: SESSION_ORGANIZATION_MAX_PINNED_SESSIONS }),
+                false,
+                { status: error.status, kind: error.kind, code: 'session-pin-limit-exceeded' },
+            );
+        }
         throw error;
     }
 }

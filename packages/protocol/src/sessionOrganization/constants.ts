@@ -6,7 +6,7 @@ export const SESSION_ORGANIZATION_MAX_KEY_LENGTH = 10_000;
 export const SESSION_ORGANIZATION_MAX_ID_LENGTH = 191;
 export const SESSION_ORGANIZATION_MAX_SORT_KEY_LENGTH = 191;
 
-export const SESSION_ORGANIZATION_MAX_PINNED_SESSIONS = 500;
+export const SESSION_ORGANIZATION_MAX_PINNED_SESSIONS = 1_000;
 // Attention standing stores an explicit boolean per session, so a "remove from Needs attention"
 // against a true account default persists a row just like a "keep" does. The snapshot is the
 // first-paint payload every list refresh parses on the JS thread, so the collection is bounded like
