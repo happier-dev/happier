@@ -1970,9 +1970,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
     };
 
     const waitForSteerableActiveTurnId = async (candidate: PendingTurn): Promise<string | null> => {
-        // Only explicit prompt starts have a provider-acknowledgement gap that can become
-        // steerable. Native reviews and compaction turns are intentionally non-steerable.
-        if (!candidate.providerPrompt) return null;
+        // Explicit prompt starts may still be waiting for provider acknowledgement. Provider-
+        // originated regular turns (including goal successors) have no providerPrompt but are
+        // already marked steerable; native reviews and compaction have neither signal.
+        if (!candidate.providerPrompt && !activeTurnAcceptsSteer) return null;
         const waitStartedAt = Date.now();
         while (pendingTurn?.promise === candidate.promise) {
             const turnId = pendingTurn.turnId ?? latestPendingTurnId;
