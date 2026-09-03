@@ -51,6 +51,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '.*.__sync_backup__.*',
     '.tmp.*',
     '.backup.*',
+    'packages/plugin-sdk/.example-builds',
     '.project',
     '.happier',
     'coverage',

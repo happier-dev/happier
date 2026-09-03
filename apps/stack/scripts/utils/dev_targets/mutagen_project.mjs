@@ -11,6 +11,7 @@ const DEFAULT_IGNORES = [
   '.*.__sync_backup__.*',
   '.tmp.*',
   '.backup.*',
+  'packages/plugin-sdk/.example-builds',
   '.project',
   '.happier',
   '.happier-stack',

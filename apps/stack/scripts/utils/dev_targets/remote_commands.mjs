@@ -253,6 +253,7 @@ function resolveRemoteStackInvocation(target, {
   stackName,
   remoteServerPort = null,
   remoteExpoPort = null,
+  expoPublicPort = null,
   expoPublicUrl = '',
   startMobile = false,
   resolveServerPublicUrlOnTarget = false,
@@ -274,6 +275,9 @@ function resolveRemoteStackInvocation(target, {
   const expoPort = normalizedServices.expo
     ? requireServicePort(remoteExpoPort, 'remote Expo port')
     : null;
+  const stablePublicExpoPort = normalizedServices.expo && resolveExpoPublicUrlOnTarget
+    ? requireServicePort(expoPublicPort, 'public Expo port')
+    : null;
   const serverRuntimeConfig = normalizedServices.server
     ? normalizeRemoteServerRuntimeConfig(remoteServerRuntimeConfig)
     : null;
@@ -293,6 +297,7 @@ function resolveRemoteStackInvocation(target, {
       'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY=stable',
       'HAPPIER_STACK_EXPO_HOST=localhost',
     ]),
+    ...(stablePublicExpoPort == null ? [] : [`HAPPIER_STACK_EXPO_PUBLIC_PORT=${stablePublicExpoPort}`]),
     ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
     'HAPPIER_CLI_PKGROLL_TIMEOUT_MS=1800000',
     ...(normalizedServices.daemon && deferDaemonStartUntilCredentials

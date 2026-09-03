@@ -241,7 +241,8 @@ test('remote target resolves automatically detected mobile public addresses at i
     activeServerId: 'stack_repo__id_default',
     stackName: 'repo-local-dev',
     remoteServerPort: 52753,
-    remoteExpoPort: 18829,
+    remoteExpoPort: 30685,
+    expoPublicPort: 18829,
     expoPublicUrl: 'http://192.168.5.15:18829',
     startMobile: true,
     resolveServerPublicUrlOnTarget: true,
@@ -258,6 +259,8 @@ test('remote target resolves automatically detected mobile public addresses at i
 
   assert.match(command, /--mobile/);
   assert.match(command, /HAPPIER_STACK_EXPO_HOST=localhost/);
+  assert.match(command, /HAPPIER_STACK_EXPO_PUBLIC_PORT=18829/);
+  assert.match(command, /HAPPIER_STACK_EXPO_DEV_PORT=30685/);
   assert.doesNotMatch(command, /EXPO_PACKAGER_PROXY_URL=/);
   assert.doesNotMatch(command, /--server-public-url=/);
   assert.doesNotMatch(command, /192\.168\.5\.15/);

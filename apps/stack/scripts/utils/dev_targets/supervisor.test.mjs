@@ -259,6 +259,11 @@ test('authoritative Mac server forwards its target-owned Expo through the guest 
     assert.ok(tunnel?.args.some((arg) => String(arg).startsWith('*:18081:localhost:')));
     const worker = calls.find((call) => call.kind === 'spawn' && call.command === 'ssh' && !call.args.includes('-N'));
     assert.match(worker?.args.at(-1) ?? '', /HAPPIER_STACK_EXPO_DEV_PORT=/);
+    assert.match(
+      worker?.args.at(-1) ?? '',
+      /HAPPIER_STACK_EXPO_PUBLIC_PORT=18081/,
+      'the target must publish the stable outer port while resolving its own reachable host',
+    );
     assert.doesNotMatch(
       worker?.args.at(-1) ?? '',
       /EXPO_PACKAGER_PROXY_URL=|--server-public-url=|192\.168\.1\.20/,

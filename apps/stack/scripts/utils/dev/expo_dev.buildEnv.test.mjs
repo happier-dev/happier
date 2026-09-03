@@ -74,6 +74,20 @@ test('buildExpoDevEnv uses the Tailscale IP for dev-client local API URLs when p
   assert.equal(env.EXPO_PUBLIC_SERVER_URL, 'http://100.64.0.10:3013');
 });
 
+test('buildExpoDevEnv publishes a remote target through its stable outer Expo port', () => {
+  const env = buildExpoDevEnv({
+    baseEnv: { HAPPIER_STACK_EXPO_PUBLIC_PORT: '18829' },
+    apiServerUrl: 'http://localhost:52753',
+    wantDevClient: true,
+    wantWeb: true,
+    stackMode: true,
+    stackName: 'qa-agent-remote',
+    expoPublicHost: '100.79.179.31',
+  });
+
+  assert.equal(env.EXPO_PACKAGER_PROXY_URL, 'http://100.79.179.31:18829');
+});
+
 test('buildExpoDevEnv does not set EXPO_APP_SLUG in dev-client mode (slug must match EAS project)', () => {
   const baseEnv = {
     ...process.env,

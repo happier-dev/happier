@@ -347,6 +347,7 @@ export function buildExpoDevEnv({
   stackMode,
   stackName,
   expoTailscaleIp = '',
+  expoPublicHost = '',
 } = {}) {
   const env = { ...(baseEnv || process.env) };
   delete env.CI;
@@ -370,6 +371,23 @@ export function buildExpoDevEnv({
   env.EXPO_PUBLIC_HAPPIER_SERVER_URL = effectiveApiServerUrl;
   env.EXPO_PUBLIC_HAPPY_SERVER_URL = effectiveApiServerUrl;
   env.EXPO_PUBLIC_SERVER_URL = effectiveApiServerUrl;
+  const publicExpoPort = Number(env.HAPPIER_STACK_EXPO_PUBLIC_PORT);
+  if (
+    wantDevClient
+    && !String(env.EXPO_PACKAGER_PROXY_URL ?? '').trim()
+    && Number.isInteger(publicExpoPort)
+    && publicExpoPort > 0
+  ) {
+    const localPublicUrl = `http://localhost:${publicExpoPort}`;
+    const reachablePublicUrl = resolveMobileReachableServerUrl({
+      env,
+      serverUrl: localPublicUrl,
+      preferredHost: expoPublicHost,
+    });
+    if (reachablePublicUrl && reachablePublicUrl !== localPublicUrl) {
+      env.EXPO_PACKAGER_PROXY_URL = reachablePublicUrl;
+    }
+  }
   if (stackMode) {
     env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
   }
@@ -434,7 +452,11 @@ export async function ensureDevExpoServer({
   }
 
   const wantTailscale = resolveExpoTailscaleEnabled({ env: baseEnv, expoTailscale });
-  const tailscaleStatus = wantTailscale ? await getTailscaleStatus({ env: baseEnv }) : null;
+  const publicExpoPort = Number(baseEnv?.HAPPIER_STACK_EXPO_PUBLIC_PORT);
+  const needsPublicExpoHost = wantDevClient && Number.isInteger(publicExpoPort) && publicExpoPort > 0;
+  const tailscaleStatus = wantTailscale || needsPublicExpoHost
+    ? await getTailscaleStatus({ env: baseEnv })
+    : null;
   const expoTailscaleIp = tailscaleStatus?.available && tailscaleStatus?.ip ? tailscaleStatus.ip : '';
 
   const env = buildExpoDevEnv({
@@ -445,6 +467,7 @@ export async function ensureDevExpoServer({
     stackMode,
     stackName,
     expoTailscaleIp,
+    expoPublicHost: expoTailscaleIp,
   });
 
   // Mobile config is needed for `--scheme` and for the app's environment.

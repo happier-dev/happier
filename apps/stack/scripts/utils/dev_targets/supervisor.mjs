@@ -476,6 +476,7 @@ export async function startStackDevTargets(
           stackName,
           remoteServerPort,
           remoteExpoPort,
+          expoPublicPort: localExpoPort,
           expoPublicUrl,
           resolveServerPublicUrlOnTarget: Boolean(resolveMobilePublicUrlsOnTarget && services.server),
           resolveExpoPublicUrlOnTarget: Boolean(resolveMobilePublicUrlsOnTarget && services.expo),
