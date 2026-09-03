@@ -13,10 +13,10 @@ function readRepoFile(relativePath) {
 
 test('public release skills bootstrap the private release authority instead of retaining an independent policy', () => {
   for (const skillPath of [
-    'skills/happier-release/SKILL.md',
-    'skills/happier-release-promote/SKILL.md',
-    'skills/happier-release-validation/SKILL.md',
-    'skills/happier-release-validation-review/SKILL.md',
+    '.agents/skills/happier-release/SKILL.md',
+    '.agents/skills/happier-release-promote/SKILL.md',
+    '.agents/skills/happier-release-validation/SKILL.md',
+    '.agents/skills/happier-release-validation-review/SKILL.md',
   ]) {
     const skill = readRepoFile(skillPath);
     assert.match(skill, /hmaint release bootstrap --repo <absolute checkout> --json/);
