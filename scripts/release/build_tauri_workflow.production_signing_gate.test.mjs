@@ -309,6 +309,22 @@ test('build-tauri Linux jobs free unused hosted-runner disk before dependency in
   assert.match(runScript, /df -h \//, 'cleanup should report available root filesystem space');
 });
 
+test('build-tauri retries transient rustup toolchain downloads in build and finalizer jobs', async () => {
+  const workflow = parse(await readFile(workflowPath, 'utf8'));
+
+  for (const jobName of ['build', 'finalize']) {
+    const steps = workflow?.jobs?.[jobName]?.steps;
+    assert.ok(Array.isArray(steps), `build-tauri workflow should define jobs.${jobName}.steps`);
+    const rustStep = steps.find((step) => step?.name === 'Setup Rust toolchain');
+    assert.ok(rustStep, `${jobName} should setup Rust`);
+    assert.equal(
+      String(rustStep?.env?.RUSTUP_MAX_RETRIES ?? ''),
+      '10',
+      `${jobName} should tolerate transient static.rust-lang.org resets`,
+    );
+  }
+});
+
 test('Tauri build and trusted finalizer share the complete Linux bundling dependency owner', async () => {
   const workflow = parse(await readFile(workflowPath, 'utf8'));
   const actionPath = './.github/actions/install-tauri-linux-dependencies';
