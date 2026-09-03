@@ -57,7 +57,7 @@ export function Hero() {
                     </div>
 
                     <div className="mt-4">
-                        <DownloadStats />
+                        <Island name="download-stats" component={DownloadStats} />
                     </div>
                 </div>
 

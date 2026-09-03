@@ -1,6 +1,7 @@
 import { lazyIsland, type IslandMap } from '../islands';
 
 import { DownloadBadges } from '../components/DownloadBadges';
+import { DownloadStats } from '../components/DownloadStats';
 import { HandoffToComputer } from '../components/HandoffToComputer';
 import { InstallCommand } from '../components/InstallCommand';
 import { ProviderMarkRow } from '../components/ProviderMarkRow';
@@ -42,6 +43,7 @@ export const ISLANDS: IslandMap = {
     'install-command': InstallCommand,
     'handoff-to-computer': HandoffToComputer,
     'download-badges': DownloadBadges,
+    'download-stats': DownloadStats,
     'provider-mark-row': ProviderMarkRow,
     'hero-backdrop': HeroBackdrop,
 
