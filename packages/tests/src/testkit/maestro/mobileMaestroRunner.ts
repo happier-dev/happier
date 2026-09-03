@@ -166,6 +166,20 @@ type AndroidLogcatCapture = Readonly<{
   stop: () => Promise<void>;
 }>;
 
+type CapturedLogDiagnosticStream = Readonly<{
+  destroyed: boolean;
+  writableEnded: boolean;
+  write: (chunk: string) => unknown;
+}>;
+
+export function writeCapturedLogDiagnostic(
+  logStream: CapturedLogDiagnosticStream,
+  message: string,
+): void {
+  if (logStream.destroyed || logStream.writableEnded) return;
+  logStream.write(message);
+}
+
 async function stopCapturedLogProcess(params: Readonly<{
   child: ReturnType<typeof spawn>;
   closeSignal: Promise<void>;
@@ -245,10 +259,10 @@ function startAndroidLogcatCapture(params: Readonly<{
   const logStream = createWriteStream(logPath, { flags: 'a' });
   child.stdout?.pipe(logStream, { end: false });
   child.stderr?.on('data', (chunk: Buffer | string) => {
-    logStream.write(`[logcat-stderr] ${String(chunk)}`);
+    writeCapturedLogDiagnostic(logStream, `[logcat-stderr] ${String(chunk)}`);
   });
   child.on('error', (error) => {
-    logStream.write(`[logcat-error] ${error instanceof Error ? error.message : String(error)}\n`);
+    writeCapturedLogDiagnostic(logStream, `[logcat-error] ${error instanceof Error ? error.message : String(error)}\n`);
   });
 
   let stopped = false;
@@ -316,10 +330,10 @@ function startIosSimulatorLogCapture(params: Readonly<{
   const logStream = createWriteStream(logPath, { flags: 'a' });
   child.stdout?.pipe(logStream, { end: false });
   child.stderr?.on('data', (chunk: Buffer | string) => {
-    logStream.write(`[simulator-log-stderr] ${String(chunk)}`);
+    writeCapturedLogDiagnostic(logStream, `[simulator-log-stderr] ${String(chunk)}`);
   });
   child.on('error', (error) => {
-    logStream.write(`[simulator-log-error] ${error instanceof Error ? error.message : String(error)}\n`);
+    writeCapturedLogDiagnostic(logStream, `[simulator-log-error] ${error instanceof Error ? error.message : String(error)}\n`);
   });
 
   let stopped = false;
