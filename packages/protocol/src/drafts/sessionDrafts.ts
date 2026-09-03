@@ -90,7 +90,25 @@ const ComposerSchema = z.object({
   attachments: z.object({ mutationId: z.string().uuid(), value: semanticArraySchema }).strict(),
 }).strict();
 
-const SyncedAuthoringFieldsSchema = z.partialRecord(SyncedSessionAuthoringFieldIdV1Schema, DraftFieldV1Schema)
+/**
+ * Reader-only fields written by the 0.3 successor while 0.2/0.3 persisted
+ * Session drafts can coexist. 0.2 preserves them but never projects them into
+ * its authoring catalog, so accepting them grants no execution authority.
+ * Remove only after 0.2 readers are outside the supported coexistence window.
+ */
+const SuccessorSessionDraftAuthoringFieldIdV1Schema = z.enum([
+  'executionTarget',
+  'organizationPlacement',
+  'agentTarget',
+  'modelSelection',
+  'runtimeDescriptorV1',
+]);
+const AcceptedSessionDraftAuthoringFieldIdV1Schema = z.union([
+  SyncedSessionAuthoringFieldIdV1Schema,
+  SuccessorSessionDraftAuthoringFieldIdV1Schema,
+]);
+
+const SyncedAuthoringFieldsSchema = z.partialRecord(AcceptedSessionDraftAuthoringFieldIdV1Schema, DraftFieldV1Schema)
   .superRefine((fields, ctx) => {
     for (const [fieldId, field] of Object.entries(fields as Record<string, { value: unknown }>)) {
       const fieldSchema = (SyncedSessionAuthoringValueV1Schema.shape as Record<string, z.ZodTypeAny>)[fieldId];

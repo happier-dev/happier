@@ -76,6 +76,25 @@ describe('session draft protocol', () => {
     expect(parsed.composer.text).not.toHaveProperty('v');
   });
 
+  it('reads and preserves the 0.3 successor authoring fields without treating them as 0.2 write fields', () => {
+    const successorAuthoring = {
+      executionTarget: { mutationId, value: { serverId: 'server-1', machineId: 'machine-1' } },
+      organizationPlacement: { mutationId, value: { folderId: null, tagIds: ['tag-1'] } },
+      agentTarget: {
+        mutationId,
+        value: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      },
+      modelSelection: { mutationId, value: null },
+      runtimeDescriptorV1: { mutationId, value: null },
+    };
+    const parsed = SessionDraftDocumentV1Schema.parse({
+      ...newSessionDocument(),
+      target: { kind: 'newSession', authoring: successorAuthoring },
+    });
+
+    expect(parsed.target).toEqual({ kind: 'newSession', authoring: successorAuthoring });
+  });
+
   it('shares the recipient semantic while leaving the stored JSON carrier forward-compatible', () => {
     expect(SessionDraftRecipientValueV1Schema.parse(null)).toBeNull();
     expect(SessionDraftRecipientValueV1Schema.parse({

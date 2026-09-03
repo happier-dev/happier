@@ -123,6 +123,16 @@ after the corresponding canonical record is durably acknowledged, so an interrup
 recoverable. The legacy readers are migration adapters, not parallel writers, and may be removed
 when supported persisted local state no longer requires them.
 
+During supported 0.2/0.3 coexistence, the draft authoring map remains closed except for explicitly
+enumerated compatibility keys. The 0.2 reader accepts and preserves the 0.3 `executionTarget`,
+`organizationPlacement`, `agentTarget`, `modelSelection`, and `runtimeDescriptorV1` fields but does
+not treat them as 0.2 execution authority. The 0.3 reader validates and preserves the published 0.2
+`machineId`, `serverId`, `agentId`, `backendTarget`, `modelId`, and `codexBackendMode` fields; its UI
+projects only exact safe equivalents into canonical execution, Agent, and native-model selections.
+Canonical 0.3 fields, including explicit clears, win over predecessor values, and each version's
+writers continue to emit only their native catalog. Remove these reader bridges only after
+0.2/0.3 coexistence and persisted drafts from the other catalog are no longer supported inputs.
+
 Draft documents preserve unknown extension fields as JSON. This lets a client without a newer
 composer contribution edit fields it understands without deleting newer semantic data; it does not
 authorize that client to execute the unknown contribution. Raw files, handles, secrets, and other
