@@ -300,6 +300,7 @@ import { useSessionResumeRequestListener } from '@/components/sessions/model/ses
 import { resolveSessionResumeMachineTarget } from './sessionResumeMachineTarget';
 import { useDirectSessionTakeover } from '@/components/sessions/model/useDirectSessionTakeover';
 import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
+import { SessionDirectSessionRuntimeProvider } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { SessionWarningActionBanner } from './SessionWarningActionBanner';
 import { ComposerAuxiliaryFrame } from './view/ComposerAuxiliaryFrame';
 import {
@@ -1857,6 +1858,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         ))
         : null;
     return (
+        <SessionDirectSessionRuntimeProvider value={directSessionRuntime}>
         <SessionScreenTestIdsProvider enabled={surfaceFocused}>
             {session && shouldRenderSessionSurface && props.contentOverride == null ? (
                 <SessionPendingMessagesRefresh sessionId={sessionId} />
@@ -1938,6 +1940,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
                   ) : normalSessionContent}
             </View>
         </SessionScreenTestIdsProvider>
+        </SessionDirectSessionRuntimeProvider>
     );
 });
 

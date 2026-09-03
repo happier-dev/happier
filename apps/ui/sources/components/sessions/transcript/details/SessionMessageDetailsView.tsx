@@ -8,7 +8,7 @@ import { useSessionAgentInputRoutingControls } from '@/components/sessions/agent
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { Deferred } from '@/components/ui/forms/Deferred';
 import { Text } from '@/components/ui/text/Text';
-import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
+import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionRunningExecutionRuns } from '@/hooks/session/useSessionRunningExecutionRuns';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -174,7 +174,7 @@ function ToolCallDetailsView(props: Readonly<{
         enabled: executionRunPollingEnabled,
         refreshKey: executionRunPollingRefreshKey,
     });
-    const directSessionRuntime = useDirectSessionRuntime({
+    const directSessionRuntime = useSessionDirectSessionRuntime({
         sessionId: props.sessionId,
         metadata: props.session.metadata,
     });

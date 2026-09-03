@@ -719,7 +719,11 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
 });
 
 describe('SessionView (direct sessions)', () => {
-  async function renderSessionView(props: { sessionId?: string; routeServerId?: string } = {}) {
+  async function renderSessionView(props: {
+    sessionId?: string;
+    routeServerId?: string;
+    contentOverride?: React.ReactNode;
+  } = {}) {
     const sessionId = props.sessionId ?? 's1';
     const routeServerId = props.routeServerId?.trim();
     const sessions = storageState.sessions as Record<string, any>;
@@ -732,12 +736,20 @@ describe('SessionView (direct sessions)', () => {
     const { SessionView } = await import('./SessionView');
     return renderScreen(
       <AppPaneProvider>
-        <SessionView id={sessionId} routeServerId={props.routeServerId} />
+        <SessionView
+          id={sessionId}
+          routeServerId={props.routeServerId}
+          contentOverride={props.contentOverride}
+        />
       </AppPaneProvider>,
     );
   }
 
-  async function renderSessionViewAndSettle(props: { sessionId?: string; routeServerId?: string } = {}) {
+  async function renderSessionViewAndSettle(props: {
+    sessionId?: string;
+    routeServerId?: string;
+    contentOverride?: React.ReactNode;
+  } = {}) {
     const screen = await renderSessionView(props);
     await settleDirectSessionView();
     return screen;
@@ -3745,6 +3757,24 @@ describe('SessionView (direct sessions)', () => {
 
     expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
     expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares the session surface direct runtime with nested details consumers', async () => {
+    const { useSessionDirectSessionRuntime } = await import('../model/useSessionDirectSessionRuntime');
+    let nestedRuntimeStatus: ReturnType<typeof useSessionDirectSessionRuntime>['status'] = null;
+    const NestedDetailsConsumer = () => {
+      nestedRuntimeStatus = useSessionDirectSessionRuntime({
+        sessionId: 's1',
+        metadata: storageState.sessions.s1.metadata,
+      }).status;
+      return null;
+    };
+
+    await renderSessionViewAndSettle({ contentOverride: <NestedDetailsConsumer /> });
+
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledTimes(1);
+    expect(nestedRuntimeStatus).toMatchObject({ machineOnline: true, activity: 'running' });
   });
 
   it('polls direct session status and transcript refreshes using the active cadence while the session view is open', async () => {
