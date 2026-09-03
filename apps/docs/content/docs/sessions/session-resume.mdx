@@ -5,6 +5,10 @@ description: Resume an inactive Happier session from the app, web UI, or CLI wit
 
 Session resume lets you continue an **inactive Happier session** by asking the provider backend to reopen the same provider session, then reconnecting that provider session to the same Happier session.
 
+<Callout type="info">
+  Sending to a resumable inactive session while its machine is offline is currently available in development builds and is not yet a released contract.
+</Callout>
+
 This is different from:
 
 - **Attach**: reconnecting to a session that is still running locally through its live terminal/provider host
@@ -44,11 +48,13 @@ In the app or web UI, an inactive session can still accept input **only if it is
 
 Typical behavior:
 
-- **Inactive + resumable + machine reachable**: you can send a message and Happier resumes the session first
+- **Inactive + resumable + machine reachable**: you can send a message; Happier either attempts to resume it or leaves it queued according to your automatic-resume policy
+- **Inactive + resumable + machine offline**: you can still send; Happier keeps the message in the Pending queue and starts it after reconnect only if that send has been authorized for processing when available
 - **Inactive + not resumable**: input is disabled
-- **Inactive + machine offline**: input is disabled until the owning machine is reachable again
 
-This is why some inactive sessions still look “ready”, while others show a blocked or offline state.
+The session continues to show **offline** while its machine is unavailable. A banner above the composer explains whether a queued message is waiting for automatic resume, has been left queued by your preference, or needs an explicit retry after a start failure.
+
+Under **Settings → Session → Message sending**, **Automatic resume after sending** controls future sends to inactive sessions. The default, **Only if machine is online**, makes one immediate attempt when the machine is reachable but never parks authorization for a later restart. You can instead choose **Now or when machine returns** or **Never automatically**. Changing the setting does not cancel a resume already requested by an earlier send.
 
 ## CLI behavior
 
@@ -179,10 +185,9 @@ If a session does not resume, check:
 - for Codex, is the selected resume path available (App Server by default, or ACP when explicitly selected)?
 - is the owning machine online and reachable from Happier?
 
-## Related guides
+## Related
 
 - [Attach to a running session](/sessions/attach-to-session)
-- [Continuing a session](/sessions/continuing-a-session)
 - [Continuing a session](/sessions/continuing-a-session)
 - [CLI](/apps/cli)
 - [Codex](/agents/codex)

@@ -84,7 +84,9 @@ launch, steering and send, stop and cancel.
 
 An inactive **Happier** session is a different case again. If it is resumable and
 its machine is reachable, Happier can resume it first and then give you those
-controls.
+controls. In development builds, its composer also remains available while the
+machine is offline: Happier queues what you send and can resume the session after
+its owning daemon returns.
 
 ## When the machine is offline
 
@@ -92,7 +94,11 @@ For a **direct** session, the transcript cannot refresh, live following stops,
 and takeover waits until the machine reconnects.
 
 For a **Happier** session, the transcript is already in Happier, so it stays
-readable and stays in your list.
+readable and stays in your list. In development builds, resumable sessions also
+remain composable. The session still shows as offline, and a composer banner
+explains that the queued message is parked until the machine returns. You can
+keep it queued instead or disable automatic resume for future sends in Session
+settings.
 
 ## What each agent supports
 

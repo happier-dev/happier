@@ -16,6 +16,10 @@ Pending messages are:
 
 Pending messages **do not affect “unread”** indicators. Instead, you’ll see a separate **pending count badge**.
 
+<Callout type="info">
+  Offline composer activation is currently available in development builds and is not yet a released contract.
+</Callout>
+
 ## Where you’ll see it
 
 ### Session list badge
@@ -25,6 +29,15 @@ In the session list, sessions with pending messages show a **pending count** bad
 ### In the session view
 
 When a session has pending messages, a **“Pending (N)”** indicator appears in the session view. Tap it to open the **Pending messages** sheet.
+
+For a resumable inactive session, the composer stays available even when its machine is offline. Sending stores the message durably in this queue instead of pretending the session is online. A composer banner then shows the recovery state:
+
+- waiting for the machine to reconnect under the selected automatic-resume policy,
+- reachable and waiting for the daemon to start the session,
+- kept queued for manual resume, or
+- unable to start, with an explicit retry action.
+
+For a manually queued offline message, **Process when online** authorizes automatic processing for that exact message without changing the account setting. The banner also lets you keep the exact message queued or open **Auto-resume options**. A start failure is not retried indefinitely; reconnecting alone does not restart a failed request.
 
 ## Managing pending messages (UI)
 
@@ -52,6 +65,16 @@ From Discarded messages you can:
 ## Message sending settings
 
 Go to **Settings → Session → Message sending**.
+
+### Automatic resume after sending
+
+This setting applies when you send to a resumable inactive session:
+
+- **Now or when machine returns:** Happier queues the message and authorizes the owning daemon to resume that session. If the machine is offline, the request remains parked until its daemon reconnects.
+- **Only if machine is online (default):** Happier makes one resume attempt when you send and only if the exact machine is currently reachable. If the machine is unavailable or the attempt races with a disconnect, the message stays queued and does not authorize a later automatic start.
+- **Never automatically:** Happier queues the message without requesting a session start. You can resume it explicitly from the composer banner later.
+
+Changing the setting affects future sends only. It does not silently cancel or create a start request for messages already queued. The banner’s **Process when online** action applies only to the exact queued message shown.
 
 ### Queue in agent (current)
 
@@ -106,6 +129,8 @@ The pending queue feature requires support from both:
 - the **agent/CLI** that processes sessions (must know how to materialize pending into the transcript).
 
 If your setup doesn’t support pending queues, the app will fall back to the normal message sending behavior and you won’t be able to rely on pending queue actions.
+
+Automatic reconnect resume additionally requires a current server and the daemon on the session's exact owning machine. With an older server or daemon, Happier keeps the existing direct-resume compatibility behavior instead of assuming that unattended activation is available.
 
 ## Tips
 

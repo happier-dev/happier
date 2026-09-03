@@ -1,5 +1,21 @@
 # Pending delivery architecture
 
+## Current Queue V2 activation ownership
+
+Pending Queue V2 remains the sole durable owner of message custody, ordering, and exact-row actions. An inactive-session start request is a small session-level authorization for the current eligible `send_now` row; it is not another message-delivery state machine.
+
+- The server transaction that mutates Pending rows is the only writer of the current activation authorization. It arms one exact request, clears only that request when its row no longer asks to send now, and never silently retargets older queued input.
+- `Session.lastActiveAt` is the lifecycle fence. An authorization at or before that value is stale and is not projected. Publisher activity therefore invalidates an old start request without a second client-owned timestamp.
+- The Pending activation hint is lossy notification only. The authorization persisted on `Session` is authoritative.
+- The daemon on the session's exact owning machine is the only unattended starter. It consumes live hints and one finite reconnect scan through the same activator, re-reads the session and exact Pending row, and then uses the existing inactive-session resume path.
+- Machine unreachability leaves the request in `waiting`. A genuine terminal inability to start records `failed`; it is not retried merely because a daemon reconnects. Explicit retry reuses the existing Pending `send_now` action.
+- Current clients delegate unattended starts only when the server advertises Pending Input V2 and the exact target machine advertises daemon activation support. Otherwise they retain the released direct-resume compatibility path.
+- The account preference has one three-state owner. `when_available` persists `send_now` and therefore authorizes the daemon; `online_only` persists `enqueue` and makes at most one user-present UI resume attempt when the exact machine is currently reachable; `manual` only persists `enqueue`. The default is `online_only`.
+- The `online_only` attempt never delegates to the daemon and never changes the row to `send_now`. If reachability changes or the attempt fails, Pending custody remains without authorization for a later unattended start.
+- The banner action **Process when online** reuses the exact-row Pending `send_now` mutation for the displayed message. It does not change the account preference or create a second activation path.
+
+This design intentionally has no polling loop, lease, generation, retry counter, or client-side activation clock. Pending owns the payload; the server owns activation intent; session activity fences staleness; and the daemon owns process start.
+
 > **Superseded attempt-design record (2026-07-14).** Queue V2 is the only active pending-delivery system. `attempt_v1` will not be activated: its runtime/protocol branches are removed after the live exact-selector contract is extracted, and its schema/migrations are squashed or forward-contracted from bounded persistence evidence. Current authority and markers: `.project/plans/pending-delivery-attempt-v1-and-session-lifecycle-reliability-unification.md`. Everything below this notice is historical design evidence, not implementation or cutover instruction.
 
 ## Historical attempt design
