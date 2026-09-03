@@ -22,4 +22,13 @@ describe('initialMachineMetadata', () => {
       daemonSessionGoalControlsSupported: true,
     });
   });
+
+  it('returns the existing metadata object when every daemon-owned field is current', () => {
+    const current = {
+      ...initialMachineMetadata,
+      displayName: 'Build box',
+    };
+
+    expect(refreshMachineMetadataForCurrentDaemon(current, current.host)).toBe(current);
+  });
 });
