@@ -221,6 +221,7 @@ export async function buildDoctorRepairReport(params: Readonly<{
       hasCredentials: s.hasCredentials,
       isExpired: s.isExpired,
       machineRegistered: s.machineRegistered,
+      credentialEvidence: s.credentialEvidence,
       isActive: s.isActive,
       reachability: s.reachability,
     })),

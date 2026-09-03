@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  AuthExpiredForActiveProfile,
+  AuthMissingForProfile,
   AutomaticStartupEntry,
   AutomaticStartupLaneMismatch,
   AutomaticStartupLegacyPinnedCurrentServer,
 } from '@/diagnostics/doctorRepair';
 
 import {
+  copyAuthExpiredForActiveProfile,
+  copyAuthMissingForProfile,
   copyLaneMismatch,
   copyLegacyPinnedCurrentServer,
+  copyNoServersConfigured,
 } from './_copy';
 
 function makeEntry(
@@ -67,5 +72,44 @@ describe('serviceRepair prompt copy', () => {
     expect(copy.body).toContain("whichever server you're using, so you don't have to reinstall it when you switch servers.");
     expect(copy.body).toContain('CLI you just installed:      dev • 0.2.6-dev.2.1');
     expect(copy.body).toContain('Auto-starting service is on: preview • 0.2.6-preview.1.1');
+  });
+
+  it('prints an executable sign-in command for an expired active profile', () => {
+    const finding: AuthExpiredForActiveProfile = {
+      kind: 'auth_expired_for_active_profile',
+      severity: 'warning',
+      autoApplyWithoutPrompt: false,
+      serverId: 'cloud',
+      serverName: 'Cloud',
+      serverUrl: 'https://api.happier.dev',
+    };
+    const copy = copyAuthExpiredForActiveProfile(finding, 'hdev');
+
+    // `happier auth` alone only prints help; the remedy must be the parsed
+    // `auth login` form so the printed command actually runs.
+    expect(copy).toContain('  hdev auth login');
+    expect(copy).not.toContain('  hdev auth\n');
+  });
+
+  it('prints the same executable sign-in command the doctor report renders', () => {
+    const finding: AuthMissingForProfile = {
+      kind: 'auth_missing_for_profile',
+      severity: 'warning',
+      autoApplyWithoutPrompt: false,
+      serverId: 'company',
+      serverName: 'Company',
+      serverUrl: 'https://relay.company.test',
+    };
+    const copy = copyAuthMissingForProfile(finding, 'hdev');
+
+    expect(copy).toContain('  hdev auth login --server company');
+    expect(copy).not.toContain('hdev auth --server company');
+  });
+
+  it('names the parsed sign-in command when no server profile exists yet', () => {
+    const copy = copyNoServersConfigured('hdev');
+
+    expect(copy).toContain('  hdev auth login');
+    expect(copy.join('\n')).not.toMatch(/^\s*hdev auth\s*$/m);
   });
 });

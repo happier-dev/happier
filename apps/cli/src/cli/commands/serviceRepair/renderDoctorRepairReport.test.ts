@@ -10,6 +10,7 @@ import type {
 } from '@/diagnostics/doctorRepair';
 
 import { renderDoctorRepairReport } from './renderDoctorRepairReport';
+import { renderAuthentication } from './sections/renderAuthentication';
 
 const cli: CurrentCliInfo = {
   releaseChannel: 'dev',
@@ -213,5 +214,80 @@ describe('renderDoctorRepairReport — card layout', () => {
     };
     const out = renderDoctorRepairReport(makeReport({ findings: [finding] })).join('\n');
     expect(out).toContain('●');
+  });
+});
+
+describe('renderDoctorRepairReport — authentication evidence', () => {
+  it('does not call an unreachable active credential signed in', () => {
+    const out = renderAuthentication(
+      [
+        {
+          serverId: 'cloud', serverName: 'Cloud', serverUrl: 'https://api.happier.dev',
+          hasCredentials: true, isExpired: false, machineRegistered: true,
+          credentialEvidence: 'active-store',
+          isActive: true, reachability: 'unreachable',
+        },
+      ],
+      true,
+      'hdev',
+    ).join('\n');
+
+    expect(out).toContain('credential could not be verified');
+    expect(out).not.toContain('signed in');
+  });
+
+  it.each([
+    { hasCredentials: true, expected: 'sign-in recorded · not verified', rejected: 'signed in' },
+    { hasCredentials: false, expected: 'no recorded sign-in', rejected: 'not signed in' },
+  ])('keeps scoped inactive-profile evidence historical when hasCredentials=$hasCredentials', ({ hasCredentials, expected, rejected }) => {
+    const out = renderAuthentication(
+      [
+        {
+          serverId: 'old-profile', serverName: 'Old profile', serverUrl: 'https://old.example.test',
+          hasCredentials, isExpired: false, machineRegistered: true,
+          credentialEvidence: 'historical-record',
+          isActive: true, reachability: 'not-probed',
+        },
+      ],
+      true,
+      'hdev',
+    ).join('\n');
+
+    expect(out).toContain(expected);
+    expect(out).not.toContain(rejected);
+  });
+
+  it('renders inactive historical metadata as unverified and prints executable login remedies', () => {
+    const out = renderAuthentication(
+      [
+        {
+          serverId: 'cloud', serverName: 'Cloud', serverUrl: 'https://api.happier.dev',
+          hasCredentials: true, isExpired: false, machineRegistered: true,
+          credentialEvidence: 'active-store',
+          isActive: true, reachability: 'verified',
+        },
+        {
+          serverId: 'old-profile', serverName: 'Old profile', serverUrl: 'https://old.example.test',
+          hasCredentials: false, isExpired: false, machineRegistered: false,
+          credentialEvidence: 'historical-record',
+          isActive: false, reachability: 'not-probed',
+        },
+      ],
+      true,
+      'hdev',
+    ).join('\n');
+
+    expect(out).toContain('no recorded sign-in');
+    expect(out).toContain('hdev auth login --server old-profile');
+    expect(out).not.toContain('hdev auth --server old-profile');
+  });
+
+  it('offers an executable sign-in command when no profiles are configured', () => {
+    const out = renderAuthentication([], false, 'hdev').join('\n');
+
+    // `happier auth` alone only prints help; the remedy must be the parsed
+    // `auth login` form so the printed command actually runs.
+    expect(out).toContain('hdev auth login');
+    expect(out).not.toMatch(/^\s*hdev auth\s*$/m);
   });
 });

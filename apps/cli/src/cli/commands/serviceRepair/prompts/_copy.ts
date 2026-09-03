@@ -12,6 +12,8 @@ import chalk from 'chalk';
 
 import { cleanRelayRuntimeVersion } from '@/ui/format/styles';
 
+import { authSignInCommand } from '../authSignInCommand';
+
 import type {
   AuthExpiredForActiveProfile,
   AuthMissingForProfile,
@@ -816,7 +818,7 @@ export function copyNoServersConfigured(invoker: string = 'happier'): readonly s
     'You need at least one server profile to connect to.',
     '',
     'Sign in to Happier cloud with:',
-    `  ${invoker} auth`,
+    `  ${authSignInCommand(invoker)}`,
     '',
     'Or connect to a self-hosted server with:',
     `  ${invoker} server add <url>`,
@@ -846,14 +848,14 @@ export function copyServerProfileMissing(_finding: ServerProfileMissing, invoker
 export function copyAuthMissingForProfile(finding: AuthMissingForProfile, invoker: string = 'happier'): readonly string[] {
   return [
     'Sign in with:',
-    `  ${invoker} auth --server ${finding.serverId}`,
+    `  ${authSignInCommand(invoker, finding.serverId)}`,
   ];
 }
 
 export function copyAuthExpiredForActiveProfile(_finding: AuthExpiredForActiveProfile, invoker: string = 'happier'): readonly string[] {
   return [
     'Sign in again with:',
-    `  ${invoker} auth`,
+    `  ${authSignInCommand(invoker)}`,
   ];
 }
 

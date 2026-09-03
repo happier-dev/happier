@@ -10,6 +10,7 @@ function makeSignal(overrides: Partial<AuthSignalsForProfile>): AuthSignalsForPr
     hasCredentials: true,
     isExpired: false,
     machineRegistered: true,
+    credentialEvidence: 'active-store',
     isActive: true,
     reachability: 'verified',
     ...overrides,
@@ -56,7 +57,7 @@ describe('classifyAuth', () => {
     expect(findings.map((f) => f.kind)).toEqual(['machine_not_registered_for_profile']);
   });
 
-  it('also surfaces missing credentials for non-active profiles (lower severity)', () => {
+  it('does not turn missing historical metadata for an inactive profile into a sign-in finding', () => {
     const findings = classifyAuth({
       hasAnyServerProfile: true,
       signals: [
@@ -64,9 +65,20 @@ describe('classifyAuth', () => {
         makeSignal({ serverId: 'company', isActive: false, hasCredentials: false, serverName: 'Company' }),
       ],
     });
-    expect(findings).toHaveLength(1);
-    expect(findings[0].kind).toBe('auth_missing_for_profile');
-    expect(findings[0].severity).toBe('info'); // lower severity for non-active
+    expect(findings).toEqual([]);
+  });
+
+  it.each([true, false])('does not turn scoped historical evidence into a current sign-in finding when hasCredentials=%s', (hasCredentials) => {
+    const findings = classifyAuth({
+      hasAnyServerProfile: true,
+      signals: [makeSignal({
+        credentialEvidence: 'historical-record',
+        hasCredentials,
+        isActive: true,
+      })],
+    });
+
+    expect(findings).toEqual([]);
   });
 
   it('only emits the active-profile finding even when multiple non-active profiles are also missing', () => {
@@ -83,8 +95,7 @@ describe('classifyAuth', () => {
     );
     expect(activeFindings).toHaveLength(1);
     expect(activeFindings[0].severity).toBe('warning');
-    // Other two profiles still flagged separately
-    expect(findings.filter((f) => f.kind === 'auth_missing_for_profile')).toHaveLength(3);
+    expect(findings.filter((f) => f.kind === 'auth_missing_for_profile')).toHaveLength(1);
   });
 
   it('falls back gracefully when there are no signals but profiles are configured', () => {

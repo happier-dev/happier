@@ -21,6 +21,8 @@ export type AuthSignalsForProfile = Readonly<{
   isExpired: boolean;
   /** True if a machine id has been confirmed for this profile. */
   machineRegistered: boolean;
+  /** Whether credential presence came from the active store or historical profile metadata. */
+  credentialEvidence: 'active-store' | 'historical-record';
   /** True if this profile is the currently active one. */
   isActive: boolean;
   /**
@@ -67,7 +69,7 @@ export function classifyAuth(params: Readonly<{
 
   const active = params.signals.find((s) => s.isActive) ?? null;
 
-  if (active) {
+  if (active?.credentialEvidence === 'active-store') {
     if (!active.hasCredentials) {
       const finding: AuthMissingForProfile = {
         kind: 'auth_missing_for_profile',
@@ -101,19 +103,9 @@ export function classifyAuth(params: Readonly<{
     }
   }
 
-  for (const s of params.signals) {
-    if (s.isActive) continue;                 // already handled above
-    if (s.hasCredentials) continue;
-    const finding: AuthMissingForProfile = {
-      kind: 'auth_missing_for_profile',
-      severity: 'info',
-      autoApplyWithoutPrompt: false,
-      serverId: s.serverId,
-      serverName: s.serverName,
-      serverUrl: s.serverUrl,
-    };
-    findings.push(finding);
-  }
+  // Inactive profiles are deliberately not probed. Historical subject metadata
+  // is rendered in the Authentication section as recorded/unverified context;
+  // its absence is not enough evidence for a definitive repair finding.
 
   return findings;
 }

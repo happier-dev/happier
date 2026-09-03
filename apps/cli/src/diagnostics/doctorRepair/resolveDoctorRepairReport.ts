@@ -445,7 +445,7 @@ async function resolveAuthContext(params: Readonly<{
   const activeToken = String(credentials?.token ?? '').trim();
   let activeExpired = false;
   let activeReachability: 'verified' | 'unreachable' | 'not-probed' = 'not-probed';
-  if (activeProfile && activeToken) {
+  if (activeProfile && activeProfile.id === settingsActiveServerId && activeToken) {
     const result = await checkAuthLive({
       serverUrl: activeProfile.serverUrl,
       token: activeToken,
@@ -462,9 +462,10 @@ async function resolveAuthContext(params: Readonly<{
     // the user has ever authenticated there. New profiles or replaced homes
     // get no sub until first login.
     const lastSub = String(lastTokenSubByServerId[profile.id] ?? '').trim();
-    const hasCredentials = lastSub.length > 0;
     const machineId = String(machineIdByServerId[profile.id] ?? '').trim();
     const isActive = profile.id === effectiveActiveServerId;
+    const isPersistedActiveProfile = profile.id === settingsActiveServerId;
+    const hasCredentials = isPersistedActiveProfile ? activeToken.length > 0 : lastSub.length > 0;
     return {
       serverId: profile.id,
       serverName: profile.name || profile.id,
@@ -472,6 +473,7 @@ async function resolveAuthContext(params: Readonly<{
       hasCredentials,
       isExpired: isActive ? activeExpired : false,
       machineRegistered: machineId.length > 0,
+      credentialEvidence: isPersistedActiveProfile ? 'active-store' : 'historical-record',
       isActive,
       reachability: isActive ? activeReachability : 'not-probed',
     };

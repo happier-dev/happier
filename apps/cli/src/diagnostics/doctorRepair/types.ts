@@ -34,6 +34,8 @@ export type AuthProfileSnapshot = Readonly<{
   hasCredentials: boolean;
   isExpired: boolean;
   machineRegistered: boolean;
+  /** Historical profile metadata is never proof of a current sign-in. */
+  credentialEvidence: 'active-store' | 'historical-record';
   isActive: boolean;
   /**
    * Verification state for the section renderer:

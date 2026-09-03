@@ -611,7 +611,7 @@ Users who want to opt into enforcement during the expansion phase can require th
 authenticated protocol locally:
 
 ```bash
-HAPPIER_TERMINAL_PAIRING_REQUIRE=v3 happier auth
+HAPPIER_TERMINAL_PAIRING_REQUIRE=v3 happier auth login
 ```
 
 `v3` is a minimum accepted pairing-protocol requirement: legacy v1/v2 responses are rejected, and
