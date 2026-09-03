@@ -867,11 +867,6 @@ function mergeSparseCodexSnapshotUpdate(previous: unknown, next: unknown): unkno
 
 const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
     'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
-// Emitted ONLY when Happier intentionally invalidates the connected-service auth transports to
-// apply an account switch (NOT on the real native account-changed error, which defers to the
-// prompt loop). The copy must describe the deliberate switch/restart, never "refused to continue".
-const CODEX_APP_SERVER_CONNECTED_SERVICE_SWITCH_RESTART_STATUS_MESSAGE =
-    'Happier is applying a connected-service account switch and restarting the Codex runtime...';
 const CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS = [
     'codex ran out of room',
     'context window',
@@ -913,19 +908,6 @@ class CodexAppServerTurnFailure extends Error {
         this.isTemporaryRecoverableTurnFailure = options.isTemporaryRecoverableTurnFailure;
         this.runtimeAuthClassification = options.runtimeAuthClassification;
     }
-}
-
-class CodexAppServerConnectedServiceAuthTransportInvalidatedTurn extends Error {
-    constructor() {
-        super('Codex app-server connected-service auth transport invalidated the active turn');
-        this.name = 'CodexAppServerConnectedServiceAuthTransportInvalidatedTurn';
-    }
-}
-
-function isCodexAppServerConnectedServiceAuthTransportInvalidatedTurn(
-    error: unknown,
-): error is CodexAppServerConnectedServiceAuthTransportInvalidatedTurn {
-    return error instanceof CodexAppServerConnectedServiceAuthTransportInvalidatedTurn;
 }
 
 function readModelId(value: unknown): string | null {
@@ -1355,7 +1337,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
     };
     let clientPromise: Promise<DisposableCodexAppServerClient> | null = null;
-    let connectedServiceAuthTransportInvalidationRecoveryPromise: Promise<void> | null = null;
     let currentModeId: string | null = null;
     let currentModelId: string | null = null;
     let currentReasoningEffort: string | null = null;
@@ -3652,8 +3633,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
         });
     };
 
-    const ensureClient = async (): Promise<DisposableCodexAppServerClient> => {
+    const ensureClient = async (options: Readonly<{
+        reattachRetainedThread?: boolean;
+    }> = {}): Promise<DisposableCodexAppServerClient> => {
         if (!clientPromise) {
+            const retainedThreadId = options.reattachRetainedThread === false ? null : threadId;
             historyBoundary.beginHydration();
             clientPromise = createCodexAppServerClient({
                 cwd: params.directory,
@@ -3919,7 +3903,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                     }
                                 }
                                 if (terminalNotificationMatchesPendingTurn(notificationParams, terminalTurnId)) {
-                                    await settleTerminalPendingTurn(method, notificationParams, terminalTurnId);
+                                    await settleTerminalPendingTurn(
+                                        method,
+                                        notificationParams,
+                                        terminalTurnId,
+                                    );
                                     return;
                                 }
                                 // No pending turn to settle: nothing owns this completion.
@@ -3950,6 +3938,18 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     };
                     registerTerminalHandler('turn/completed');
                     registerTerminalHandler('turn/interrupted');
+                    if (retainedThreadId) {
+                        return resumeThread(client, retainedThreadId, {
+                            preserveRequestedThreadId: true,
+                        }).then(async (resumedThread) => {
+                            await applyStartOrLoadResponse(
+                                client,
+                                resumedThread.nextThreadId,
+                                resumedThread.response,
+                            );
+                            return client;
+                        });
+                    }
                     return client;
                 })
                 .catch((error) => {
@@ -4170,7 +4170,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         let stateRuntimeRetryDelayMs = CODEX_APP_SERVER_STATE_RUNTIME_RETRY_INITIAL_DELAY_MS;
         while (true) {
             try {
-                client = await ensureClient();
+                client = await ensureClient({ reattachRetainedThread: false });
                 startOrLoadResult = await (async (): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
                     const importHistory = options.importHistory === true;
                     if (resumeId) {
@@ -4361,51 +4361,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
             '[codex-app-server] Codex context-window recovery failed; surfacing original turn failure',
             recoveryError,
         );
-    };
-
-    const waitForConnectedServiceAuthTransportInvalidationRecovery = async (): Promise<void> => {
-        const recovery = connectedServiceAuthTransportInvalidationRecoveryPromise;
-        if (recovery) {
-            await recovery;
-        }
-    };
-
-    const restartCodexRuntimeForConnectedServiceSwitch = async (activeThreadId: string): Promise<void> => {
-        if (connectedServiceAuthTransportInvalidationRecoveryPromise) {
-            await connectedServiceAuthTransportInvalidationRecoveryPromise;
-            return;
-        }
-        params.session.sendSessionEvent({
-            type: 'message',
-            message: CODEX_APP_SERVER_CONNECTED_SERVICE_SWITCH_RESTART_STATUS_MESSAGE,
-        });
-        logger.debug('[codex-app-server] restarting process after Codex auth account changed', {
-            threadId: activeThreadId,
-        });
-        const recovery = (async () => {
-            const pendingTurnError = new CodexAppServerConnectedServiceAuthTransportInvalidatedTurn();
-            await disposeClient({
-                emitUndeliverablePrompts: false,
-                pendingTurnError,
-            });
-            const resumedClient = await ensureClient();
-            const resumedThread = await resumeThread(resumedClient, activeThreadId, {
-                preserveRequestedThreadId: true,
-            });
-            await applyStartOrLoadResponse(
-                resumedClient,
-                resumedThread.nextThreadId,
-                resumedThread.response,
-            );
-        })();
-        connectedServiceAuthTransportInvalidationRecoveryPromise = recovery;
-        try {
-            await recovery;
-        } finally {
-            if (connectedServiceAuthTransportInvalidationRecoveryPromise === recovery) {
-                connectedServiceAuthTransportInvalidationRecoveryPromise = null;
-            }
-        }
     };
 
     const beginPendingTurnForThread = async (
@@ -4949,21 +4904,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 } catch (error) {
                     const failure = error instanceof Error ? error : new Error(String(error));
                     const failedTurnHadMeaningfulActivity = activeTurnHasMeaningfulContextWindowRecoveryActivity;
-                    const isConnectedServiceAuthTransportInvalidation =
-                        isCodexAppServerConnectedServiceAuthTransportInvalidatedTurn(failure);
                     await finishPendingTurn({
                         error: failure,
-                        emitUndeliverablePrompt: isConnectedServiceAuthTransportInvalidation ? false : undefined,
                         flushReason: 'abort',
                     });
-                    if (isConnectedServiceAuthTransportInvalidation) {
-                        await waitForConnectedServiceAuthTransportInvalidationRecovery();
-                        if (failedTurnHadMeaningfulActivity) {
-                            promptForAttempt = contextWindowRecoveryConfig.continuationPrompt;
-                            optionsForAttempt = buildCodexAppServerRetryDeliveryIdentityOptions(pendingProviderPrompt);
-                        }
-                        continue;
-                    }
                     if (isCodexAppServerTemporaryRecoverableTurnFailureError(failure)) {
                         const originalFailure: Error = originalTemporaryRecoverableTurnFailure ?? failure;
                         originalTemporaryRecoverableTurnFailure = originalFailure;
@@ -5184,7 +5128,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             verification: buildDirectLiveExactVerification(partialAppliedIdentity),
                         }
                         : {}),
-                    ...(applied.recovery ? { recovery: applied.recovery } : {}),
                 };
             }
             const appliedRuntimeIdentity = buildAppliedRuntimeIdentity(applied.activeAccountId, null);
@@ -5198,7 +5141,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     appliedVia: applied.appliedVia,
                     activeAccountId: applied.activeAccountId,
                     partialState: 'runtime_auth_applied',
-                    recovery: 'restart_resume',
                     verification: buildDirectLiveExactVerification(appliedRuntimeIdentity),
                     durability: applied.durability,
                 };
@@ -5314,13 +5256,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
             };
         },
         invalidateConnectedServiceAuthTransports: async () => {
-            const activeThreadId = threadId;
-            if (!activeThreadId) {
-                // A completed/idle app-server session has no thread-local transports to reset.
-                return { ok: true };
-            }
-            await restartCodexRuntimeForConnectedServiceSwitch(activeThreadId);
-            return { ok: true };
+            // Kept only as a tolerant RPC seam for older callers. Codex applies connected-service
+            // credentials through account/login/start; restarting the app-server would interrupt
+            // an active turn and create a second, competing auth-application path.
+            return unsupportedSessionRuntimeMethod(
+                SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS,
+            );
         },
         refreshGoal: async () => {
             const activeThreadId = threadId;
