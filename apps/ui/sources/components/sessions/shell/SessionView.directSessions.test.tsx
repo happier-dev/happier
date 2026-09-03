@@ -132,6 +132,7 @@ const modalAlertSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
 const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
+const chatHeaderHarnessState = vi.hoisted(() => ({ renderRightElement: false }));
 const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
 const showDirectSessionTakeoverDialogSpy = vi.hoisted(() =>
   vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
@@ -447,7 +448,7 @@ vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
   ChatHeaderView: (props: any) => {
     chatHeaderPropsSpy(props);
-    return null;
+    return chatHeaderHarnessState.renderRightElement ? props.rightElement ?? null : null;
   },
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
@@ -1045,6 +1046,7 @@ describe('SessionView (direct sessions)', () => {
     sessionRunnerRuntimeStatusRetention.clear();
     chatListPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
+    chatHeaderHarnessState.renderRightElement = false;
     voiceSurfacePropsSpy.mockReset();
     featureEnabledState.voice = false;
     featureEnabledState['files.reviewComments'] = false;
@@ -3735,6 +3737,14 @@ describe('SessionView (direct sessions)', () => {
     expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
       badges: ['sessionsList.storageDirectTab', 'agentInput.agent.codex · happy-host'],
     }));
+  });
+
+  it('owns one direct-session status and transcript poller for the mounted session surface', async () => {
+    chatHeaderHarnessState.renderRightElement = true;
+    await renderSessionViewAndSettle();
+
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledTimes(1);
   });
 
   it('polls direct session status and transcript refreshes using the active cadence while the session view is open', async () => {

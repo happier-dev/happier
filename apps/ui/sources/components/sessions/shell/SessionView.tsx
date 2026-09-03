@@ -857,7 +857,6 @@ type SessionViewLoadedProps = Readonly<{
 type SessionViewLoadedWithPendingMessagesProps = Omit<
     SessionViewLoadedProps,
     'agentActivityCounts'
-    | 'directSessionRuntime'
     | 'participantTargets'
     | 'pendingMessages'
 >;
@@ -868,10 +867,6 @@ const SessionViewLoadedWithPendingMessages = React.memo(function SessionViewLoad
     props: SessionViewLoadedWithPendingMessagesProps,
 ) {
     const { messages: pendingMessages } = useSessionPendingMessages(props.sessionId);
-    const directSessionRuntime = useDirectSessionRuntime({
-        sessionId: props.sessionId,
-        metadata: props.session.metadata ?? null,
-    });
     // One roster derivation for this subtree. The composer badge needs a count and the routing
     // controls need the recipient targets, and both come out of the same merged activity — deriving
     // the roster twice here would double the work `useSessionSubagents` does on every subagent-
@@ -882,7 +877,7 @@ const SessionViewLoadedWithPendingMessages = React.memo(function SessionViewLoad
     // transcript enrichment is the Agents pane's cost to pay, not the composer's.
     const agentActivity = useSessionAgentActivity({
         sessionId: props.sessionId,
-        directSessionRuntime,
+        directSessionRuntime: props.directSessionRuntime,
     });
     const derivedParticipantTargets = React.useMemo(
         () => deriveSessionSubagentRecipients(agentActivity.subagents),
@@ -895,7 +890,6 @@ const SessionViewLoadedWithPendingMessages = React.memo(function SessionViewLoad
             <MemoizedSessionViewLoaded
                 {...props}
                 agentActivityCounts={agentActivity.counts}
-                directSessionRuntime={directSessionRuntime}
                 participantTargets={participantTargets}
                 pendingMessages={pendingMessages}
             />
@@ -910,6 +904,7 @@ function readParticipantTargetKey(target: SessionParticipantTarget): string {
 type SessionHeaderRightElementProps = Readonly<{
     sessionId: string;
     session: Session;
+    directSessionRuntime: ReturnType<typeof useDirectSessionRuntime>;
     paneScopeId: string;
     currentSessionRouteServerId: string;
     mobileWorkspaceExperienceToggleActionId: string;
@@ -938,16 +933,12 @@ const SessionHeaderRightElement = React.memo(function SessionHeaderRightElement(
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(props.sessionId, {
         serverId: props.currentSessionRouteServerId,
     });
-    const directSessionRuntime = useDirectSessionRuntime({
-        sessionId: props.sessionId,
-        metadata: props.session.metadata ?? null,
-    });
     // R-8: the header count reads the unified activity model, not a private tally over the raw
     // roster. It is the same `counts` object the composer badge and the Agents pane use, so the
     // glyph beside the composer and the list it opens cannot report different numbers.
     const { counts: agentActivityCounts } = useSessionAgentActivity({
         sessionId: props.sessionId,
-        directSessionRuntime,
+        directSessionRuntime: props.directSessionRuntime,
     });
     // The icon is a live indicator: work that is still open, which includes an agent stopped on a
     // permission prompt. The overflow menu is a destination, so it stays available whenever there is
@@ -1591,6 +1582,11 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         : isOwnedSessionRoutePathname(anchorPathname, sessionId);
     const shouldRenderSessionSurface = surfaceFocused || isRouteAnchor;
     const shouldRetainSessionSurface = Platform.OS === 'web' ? shouldRenderSessionSurface : true;
+    const directSessionRuntime = useDirectSessionRuntime({
+        sessionId,
+        metadata: session?.metadata ?? null,
+        enabled: Boolean(session && shouldRenderSessionSurface),
+    });
     const sessionRunnerRuntimeStatusRetention = useSessionRunnerRuntimeStatusRetention({
         enabled: Boolean(session && shouldRenderSessionSurface),
         serverId: currentSessionRouteServerId,
@@ -1788,6 +1784,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
             <SessionHeaderRightElement
                 sessionId={sessionId}
                 session={headerSession}
+                directSessionRuntime={directSessionRuntime}
                 paneScopeId={paneScopeId}
                 currentSessionRouteServerId={currentSessionRouteServerId}
                 mobileWorkspaceExperienceToggleActionId={mobileWorkspaceExperienceToggleActionId}
@@ -1813,6 +1810,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
 	            flavor: headerSession.metadata?.flavor || null,
 	        };
 	    }, [
+        directSessionRuntime,
         handleToggleWorkspaceExperience,
         isDataReady,
         mobileWorkspaceExperienceState.showWorkspaceExperienceToggle,
@@ -1839,6 +1837,7 @@ export const SessionView = React.memo((props: SessionViewProps) => {
                 sessionId={sessionId}
                 routeServerId={currentSessionRouteServerId}
                 session={stableSessionForLoadedView ?? session}
+                directSessionRuntime={directSessionRuntime}
                 onBackPress={handleBackPress}
                 isEncryptedSessionLocked={isEncryptedSessionLocked}
                 executionRunsEnabled={executionRunsEnabled}
