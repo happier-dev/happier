@@ -55,6 +55,7 @@ test('build-ui-mobile-local can resubmit a preserved Android store artifact with
   assert.match(retryJob, /prepare-static-submit-workspace\.mjs/);
   assert.match(retryJob, /--project-dir "\$submit_workspace"/);
   assert.match(retryJob, /--path "\$aab"/);
+  assert.match(retryJob, /--wait true/, 'recovery must report the terminal EAS submission result');
   assert.doesNotMatch(retryJob, /Install dependencies|native-build\.mjs|ui-mobile-release/);
 
   const androidJob = src.slice(src.indexOf('  build_android:'), src.indexOf('  publish_android_apk:'));

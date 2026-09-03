@@ -604,7 +604,7 @@ jobs:
             --profile "$RELEASE_PROFILE" \
             --project-dir "$submit_workspace" \
             --path "$aab" \
-            --wait false \
+            --wait true \
             --android-release-status draft
 
   retry_testflight_distribution:
