@@ -134,4 +134,81 @@ describe('RelayHostEngine remote installation ownership', () => {
       mode: 'user',
     })).rejects.toThrow('predecessor recovery could not be verified');
   });
+
+  it('delegates remote uninstall to the installed CLI without emitting deletion commands', async () => {
+    const commands: string[] = [];
+    const engine = createRelayHostEngine({
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async () => {
+        throw new Error('Remote uninstall must not install components.');
+      },
+      runRemoteText: async ({ remoteCommand }) => {
+        commands.push(remoteCommand);
+        return {
+          status: 0,
+          stdout: `${JSON.stringify({
+            v: 1,
+            ok: true,
+            kind: 'relay_host_uninstall',
+            data: { ok: true },
+          })}\n`,
+          stderr: '',
+        };
+      },
+    });
+
+    await expect(engine.control({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'preview',
+      mode: 'system',
+      action: 'uninstall',
+    })).resolves.toBeUndefined();
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain('$HOME/.happier/cli-preview/current/happier relay host uninstall');
+    expect(commands[0]).toContain('--channel \'preview\'');
+    expect(commands[0]).toContain('--mode system');
+    expect(commands[0]).toContain('--yes');
+    expect(commands[0]).toContain('--json');
+    expect(commands[0]).toMatch(/^sudo -n /u);
+    expect(commands[0]).not.toContain('rm ');
+    expect(commands[0]).not.toContain('systemctl');
+    expect(commands[0]).not.toContain('dataDir');
+  });
+
+  it('fails remote uninstall closed when the installed CLI does not return its exact success envelope', async () => {
+    const commands: string[] = [];
+    const engine = createRelayHostEngine({
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async () => {
+        throw new Error('Remote uninstall must not install components.');
+      },
+      runRemoteText: async ({ remoteCommand }) => {
+        commands.push(remoteCommand);
+        return {
+          status: 0,
+          stdout: `${JSON.stringify({
+            v: 1,
+            ok: true,
+            kind: 'relay_host_uninstall',
+            data: { ok: true },
+            unexpected: 'must-not-be-accepted',
+          })}\n`,
+          stderr: '',
+        };
+      },
+    });
+
+    await expect(engine.control({
+      target: { kind: 'ssh', ssh: { target: 'dev@example.test', auth: 'agent' } },
+      channel: 'stable',
+      mode: 'user',
+      action: 'uninstall',
+    })).rejects.toThrow('did not report success');
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).not.toContain('rm ');
+  });
 });

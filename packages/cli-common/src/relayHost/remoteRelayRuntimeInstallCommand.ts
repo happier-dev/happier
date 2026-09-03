@@ -36,3 +36,20 @@ export function buildRemoteRelayRuntimeInstallCommand(params: Readonly<{
     '--json',
   ].join(' ');
 }
+
+export function buildRemoteRelayRuntimeUninstallCommand(params: Readonly<{
+  cliBinaryPath: string;
+  channel: 'stable' | 'preview' | 'dev';
+  mode: 'user' | 'system';
+}>): string {
+  const cliInvocation = params.mode === 'system'
+    ? `sudo -n ${params.cliBinaryPath}`
+    : params.cliBinaryPath;
+  return [
+    `${cliInvocation} relay host uninstall`,
+    `--channel ${quoteShellArg(params.channel)}`,
+    `--mode ${params.mode}`,
+    '--yes',
+    '--json',
+  ].join(' ');
+}
