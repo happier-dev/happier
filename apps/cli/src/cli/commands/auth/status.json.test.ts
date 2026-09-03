@@ -60,7 +60,7 @@ describe('happier auth status --json', () => {
     }
   });
 
-  it('prints an auth_status JSON envelope without including the bearer token', async () => {
+  it('reports unavailable validation without calling stored credentials authenticated or exposing the token', async () => {
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
     try {
@@ -92,14 +92,16 @@ describe('happier auth status --json', () => {
             ok: boolean;
             kind: string;
             data?: { authenticated?: boolean; machineId?: string; token?: string };
+            error?: { code?: string; machineRegistered?: boolean; machineId?: string };
           };
-          expect(parsed.ok).toBe(true);
+          expect(parsed.ok).toBe(false);
           expect(parsed.kind).toBe('auth_status');
-          expect(parsed.data?.authenticated).toBe(true);
-          expect(parsed.data?.machineId).toBe('mid_123');
+          expect(parsed.error?.code).toBe('auth_unavailable');
+          expect(parsed.error?.machineRegistered).toBe(true);
+          expect(parsed.error?.machineId).toBe('mid_123');
           expect(parsed.data?.token).toBeUndefined();
           expect(raw).not.toContain('token_super_secret');
-          expect(process.exitCode).toBe(0);
+          expect(process.exitCode).toBe(1);
         } finally {
           output.restore();
         }

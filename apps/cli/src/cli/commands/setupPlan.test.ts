@@ -1,11 +1,15 @@
 import type { TailscaleStatusSnapshot } from '@happier-dev/cli-common/tailscale';
 import { describe, expect, it } from 'vitest';
 
-import { buildSetupPlan, parseSetupArgs, type SetupAutonomy } from './setupPlan';
+import { buildSetupPlan, parseSetupArgs, type SetupAuthReadiness, type SetupAutonomy } from './setupPlan';
 
 const base = {
   autonomy: 'interactive' as SetupAutonomy,
-  auth: { authenticated: false, machineRegistered: false },
+  auth: {
+    authenticated: false,
+    credentialState: 'missing',
+    machineRegistered: false,
+  } as SetupAuthReadiness,
   activeRelayUrl: null,
   relaySelection: null,
   installedAgentIds: ['claude'] as readonly string[],
@@ -39,7 +43,7 @@ describe('buildSetupPlan', () => {
   it('is a no-op for a machine that is already set up', () => {
     const plan = buildSetupPlan({
       ...base,
-      auth: { authenticated: true, machineRegistered: true },
+      auth: { authenticated: true, credentialState: 'valid', machineRegistered: true },
       activeRelayUrl: 'https://api.happier.dev',
       autonomy: 'createNothing',
     });
@@ -90,7 +94,7 @@ describe('buildSetupPlan', () => {
   it('re-signs in when a relay is chosen that differs from the active one', () => {
     const plan = buildSetupPlan({
       ...base,
-      auth: { authenticated: true, machineRegistered: true },
+      auth: { authenticated: true, credentialState: 'valid', machineRegistered: true },
       activeRelayUrl: 'https://api.happier.dev',
       relaySelection: { kind: 'existing', url: 'https://relay.example.com' },
     });
@@ -209,13 +213,31 @@ describe('buildSetupPlan — choosing Happier Cloud', () => {
 });
 
 describe('buildSetupPlan — readiness is more than credential bytes', () => {
+  it('keeps an unavailable active relay selected instead of starting another sign-in', () => {
+    const unavailableAuth = {
+      authenticated: false,
+      machineRegistered: true,
+      credentialState: 'unknown' as const,
+    };
+    const plan = buildSetupPlan({
+      ...base,
+      auth: unavailableAuth,
+      activeRelayUrl: 'https://temporarily-unavailable.example.com',
+    });
+
+    expect(plan.steps).toEqual([]);
+    expect(plan.stop?.reason).toBe('relay-unavailable');
+    expect(plan.stop?.detail).toContain('temporarily-unavailable.example.com');
+    expect(plan.stop?.detail).toContain('happier setup --cloud');
+  });
+
   it('does not call a machine whose credentials the relay rejected already set up', () => {
     // The installer hands off to setup precisely when something is wrong. Setup
     // seeing credential bytes and answering "already configured" is how a
     // rejected token survives a re-install.
     const plan = buildSetupPlan({
       ...base,
-      auth: { authenticated: false, machineRegistered: true },
+      auth: { authenticated: false, credentialState: 'rejected', machineRegistered: true },
       activeRelayUrl: 'https://api.happier.dev',
     });
 
@@ -226,7 +248,7 @@ describe('buildSetupPlan — readiness is more than credential bytes', () => {
   it('does not call a machine without a registered machine identity already set up', () => {
     const plan = buildSetupPlan({
       ...base,
-      auth: { authenticated: true, machineRegistered: false },
+      auth: { authenticated: true, credentialState: 'valid', machineRegistered: false },
       activeRelayUrl: 'https://api.happier.dev',
     });
 
@@ -237,7 +259,7 @@ describe('buildSetupPlan — readiness is more than credential bytes', () => {
   it('is a no-op only when the relay accepted the credentials and the machine is registered', () => {
     const plan = buildSetupPlan({
       ...base,
-      auth: { authenticated: true, machineRegistered: true },
+      auth: { authenticated: true, credentialState: 'valid', machineRegistered: true },
       activeRelayUrl: 'https://api.happier.dev',
     });
 
@@ -344,7 +366,7 @@ describe('buildSetupPlan — unattended runs (--yes)', () => {
     const plan = buildSetupPlan({
       ...base,
       autonomy: 'unattended',
-      auth: { authenticated: true, machineRegistered: true },
+      auth: { authenticated: true, credentialState: 'valid', machineRegistered: true },
       activeRelayUrl: 'https://api.happier.dev',
     });
 

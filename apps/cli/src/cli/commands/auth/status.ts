@@ -40,6 +40,26 @@ export async function handleAuthStatus(argv: string[] = []): Promise<void> {
     return;
   }
 
+  if (readiness.credentialState === 'unknown') {
+    if (json) {
+      await printJsonEnvelope({
+        ok: false,
+        kind: 'auth_status',
+        error: {
+          code: 'auth_unavailable',
+          message: 'The selected relay did not answer; stored credentials were kept.',
+          machineRegistered: readiness.machineRegistered,
+          ...(readiness.machineRegistered && readiness.machineId ? { machineId: readiness.machineId } : {}),
+        },
+      });
+      return;
+    }
+
+    console.log(chalk.yellow('⚠️  Authentication could not be verified because the selected relay did not answer'));
+    console.log(chalk.gray('  Stored credentials were kept unchanged. Retry when the relay is available.'));
+    return;
+  }
+
   const { machineId, machineRegistered } = readiness;
 
   let daemonRunning = false;

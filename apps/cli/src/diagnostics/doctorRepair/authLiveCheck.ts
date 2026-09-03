@@ -10,6 +10,8 @@
  *   - anything else (timeout, 5xx, DNS fail) → `unknown`
  */
 
+import { validateStoredAuthTokenAgainstServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
+
 export type LiveAuthResult = 'ok' | 'expired' | 'unknown';
 
 const DEFAULT_TIMEOUT_MS = 3_000;
@@ -26,23 +28,11 @@ export async function checkAuthLive(params: Readonly<{
   const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = params.fetchImpl ?? fetch;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(`${url.replace(/\/+$/, '')}/v1/account/profile`, {
-      method: 'GET',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'user-agent': 'happier-cli/doctor-repair',
-      },
-      signal: controller.signal,
-    });
-    if (response.ok) return 'ok';
-    if (response.status === 401 || response.status === 403) return 'expired';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  } finally {
-    clearTimeout(timer);
-  }
+  const result = await validateStoredAuthTokenAgainstServer({
+    token,
+    serverUrl: url,
+    timeoutMs,
+    fetchImpl,
+  });
+  return result.state === 'valid' ? 'ok' : result.state === 'invalid' ? 'expired' : 'unknown';
 }

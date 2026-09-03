@@ -213,30 +213,12 @@ async function offerTailscaleSetup(): Promise<void> {
 const AUTH_WAIT_TIMEOUT_SECONDS = 300;
 
 /**
- * The sign-in command for the relay this computer actually ended up on.
- *
- * Read after the relay steps rather than planned with them, because a relay
- * hosted here only settles its address during `relay host install`.
- *
- * A loopback relay makes the normal recommendation wrong rather than merely
- * inconvenient: terminal links deliberately strip an address no other device can
- * reach, so the phone that scans the QR code is left pointing at whichever relay
- * it already had. The web app served by this relay is on the same machine, so it
- * is the one route that can reach it — and it is the route setup asks for.
+ * Setup bounds how long its child may occupy the terminal. Authentication owns
+ * method selection because only it knows whether this invocation creates a new
+ * request or merely repairs machine registration from an existing credential.
  */
-async function resolveAuthLoginArgv(): Promise<readonly string[]> {
-    const bounded = ['auth', 'login', '--wait-timeout', String(AUTH_WAIT_TIMEOUT_SECONDS)];
-    const relayUrl = await readActiveRelayUrl();
-    if (!relayUrl || !isLoopbackServerHost(relayUrl)) return bounded;
-
-    console.log('');
-    console.log('Your phone cannot reach this relay yet, so signing in from the Happier app is not');
-    console.log("an option here. Signing in from this computer's browser instead.");
-    console.log('');
-    console.log('Once the relay has an address your phone can reach — `tailscale up`, then');
-    console.log('`happier relay host install` — `happier auth login` offers both routes again.');
-    console.log('');
-    return [...bounded, '--method', 'web'];
+function resolveAuthLoginArgv(): readonly string[] {
+    return ['auth', 'login', '--wait-timeout', String(AUTH_WAIT_TIMEOUT_SECONDS)];
 }
 
 async function runCliStep(
@@ -331,7 +313,7 @@ async function runStep(step: SetupStep, unattended: boolean): Promise<boolean> {
                 deferServerSelectionFollowUp: true,
             })) === 0;
         case 'authLogin':
-            return (await runCliStep(await resolveAuthLoginArgv(), { unattended })) === 0;
+            return (await runCliStep(resolveAuthLoginArgv(), { unattended })) === 0;
         case 'warnNoAgent':
             console.log('');
             console.log('No coding agent found on this computer.');
@@ -401,7 +383,11 @@ export async function handleSetupCliCommand(context: CommandContext): Promise<vo
 
     const planFor = async (selection: SetupRelaySelection | null) => buildSetupPlan({
         autonomy,
-        auth: { authenticated: auth.authenticated, machineRegistered: auth.machineRegistered },
+        auth: {
+            authenticated: auth.authenticated,
+            credentialState: auth.credentialState,
+            machineRegistered: auth.machineRegistered,
+        },
         activeRelayUrl: activeProfile?.serverUrl ?? null,
         relaySelection: selection,
         installedAgentIds,

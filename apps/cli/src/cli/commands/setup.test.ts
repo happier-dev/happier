@@ -24,7 +24,11 @@ const spawnedEnvs: (NodeJS.ProcessEnv | undefined)[] = [];
 let installedServices: readonly import('@/daemon/service/cli').DaemonServiceListEntry[] = [];
 let exitCodeByCommand = new Map<string, number>();
 let activeProfile: { serverUrl: string } | null = null;
-let readiness = { authenticated: false, machineRegistered: false };
+let readiness: {
+  authenticated: boolean;
+  machineRegistered: boolean;
+  credentialState: 'missing' | 'rejected' | 'valid' | 'unknown';
+} = { authenticated: false, machineRegistered: false, credentialState: 'missing' };
 let interactive = true;
 let relayInstallResultUrl: string | null = null;
 let tailscaleStatus: import('@happier-dev/cli-common/tailscale').TailscaleStatusSnapshot | null = null;
@@ -54,7 +58,12 @@ vi.mock('@/auth/resolveActiveServerAuthReadiness', () => ({
   resolveActiveServerAuthReadiness: async () => ({
     credentials: readiness.authenticated ? { token: 't' } : null,
     authenticated: readiness.authenticated,
-    unusableReason: readiness.authenticated ? null : 'credentials-rejected',
+    credentialState: readiness.credentialState,
+    unusableReason: readiness.credentialState === 'missing'
+      ? 'no-credentials'
+      : readiness.credentialState === 'rejected'
+        ? 'credentials-rejected'
+        : null,
     machineId: readiness.machineRegistered ? 'machine-1' : null,
     machineRegistered: readiness.machineRegistered,
   }),
@@ -117,7 +126,7 @@ beforeEach(() => {
   promptInputAnswers.length = 0;
   exitCodeByCommand = new Map();
   activeProfile = null;
-  readiness = { authenticated: false, machineRegistered: false };
+  readiness = { authenticated: false, machineRegistered: false, credentialState: 'missing' };
   interactive = true;
   relayInstallResultUrl = null;
   tailscaleStatus = null;
@@ -174,7 +183,7 @@ describe('happier setup — choosing a relay', () => {
 describe('happier setup — readiness', () => {
   it('leaves a fully configured machine alone', async () => {
     activeProfile = { serverUrl: 'https://api.happier.dev' };
-    readiness = { authenticated: true, machineRegistered: true };
+    readiness = { authenticated: true, machineRegistered: true, credentialState: 'valid' };
 
     await handleSetupCliCommand(context([]));
 
@@ -184,7 +193,7 @@ describe('happier setup — readiness', () => {
 
   it('does not call a machine with rejected credentials already set up', async () => {
     activeProfile = { serverUrl: 'https://api.happier.dev' };
-    readiness = { authenticated: false, machineRegistered: true };
+    readiness = { authenticated: false, machineRegistered: true, credentialState: 'rejected' };
     multipleChoiceAnswers.push('cloud');
 
     await handleSetupCliCommand(context([]));
@@ -195,13 +204,36 @@ describe('happier setup — readiness', () => {
 
   it('does not call a machine with no registered machine identity already set up', async () => {
     activeProfile = { serverUrl: 'https://api.happier.dev' };
-    readiness = { authenticated: true, machineRegistered: false };
+    readiness = { authenticated: true, machineRegistered: false, credentialState: 'valid' };
 
     await handleSetupCliCommand(context([]));
 
     expect(output.text()).not.toContain('already set up');
     expect(commandsRun()).toHaveLength(1);
     expect(commandsRun()[0]).toMatch(/^auth login/);
+  });
+
+  it('keeps an unavailable relay and stored credentials without starting another sign-in', async () => {
+    activeProfile = { serverUrl: 'https://temporarily-unavailable.example.com' };
+    readiness = { authenticated: false, machineRegistered: true, credentialState: 'unknown' };
+
+    await handleSetupCliCommand(context([]));
+
+    expect(commandsRun()).toEqual([]);
+    expect(output.text()).toContain('temporarily-unavailable.example.com');
+    expect(output.text()).toContain('happier setup --cloud');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('repairs a loopback profile with valid credentials without claiming browser or Tailscale work', async () => {
+    activeProfile = { serverUrl: 'http://127.0.0.1:52753' };
+    readiness = { authenticated: true, machineRegistered: false, credentialState: 'valid' };
+
+    await handleSetupCliCommand(context([]));
+
+    expect(commandsRun()).toEqual(['auth login --wait-timeout 300']);
+    expect(output.text().toLowerCase()).not.toContain('browser');
+    expect(output.text().toLowerCase()).not.toContain('tailscale');
   });
 });
 
@@ -225,16 +257,14 @@ describe('happier setup — a relay only this computer can reach', () => {
     expect(output.text()).not.toContain('Your phone reaches this relay');
   });
 
-  it('signs in from this computer instead of recommending the phone', async () => {
-    // Mobile links deliberately drop a loopback relay address, so the mobile
-    // route the auth selector recommends cannot reach this relay at all.
+  it('lets the auth owner choose and explain the usable sign-in route', async () => {
     relayInstallResultUrl = 'http://127.0.0.1:3005';
 
     await handleSetupCliCommand(context(['--this-computer']));
 
     const authCommand = commandsRun().find((command) => command.startsWith('auth login'));
-    expect(authCommand).toContain('--method web');
-    expect(output.text().toLowerCase()).toContain('cannot reach this relay');
+    expect(authCommand).not.toContain('--method');
+    expect(output.text().toLowerCase()).not.toContain('signing in from');
   });
 
   it('leaves the choice of sign-in route open once the relay is reachable', async () => {

@@ -7,6 +7,8 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
+import { configuration } from '@/configuration';
+import { isLoopbackServerHost } from '@/server/serverUrlClassification';
 import { reconcileDefaultFollowingBackgroundServicesAfterAuthentication } from '../backgroundServiceFollowUp';
 
 import { resolveAuthMethodFlag } from './methodFlag';
@@ -106,7 +108,17 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
       existingCreds = null;
     }
 
-    if (existingCreds && readiness.machineRegistered) {
+    if (existingCreds && readiness.credentialState === 'unknown') {
+      console.log(chalk.yellow('⚠️  The selected relay did not answer, so the stored sign-in could not be verified'));
+      console.log(chalk.gray('  Stored credentials were kept unchanged.'));
+      if (readiness.machineRegistered) {
+        console.log(chalk.gray('  Retry this command when the relay is available.'));
+        return;
+      }
+      console.log(chalk.gray('  Machine registration will be retried with the stored credential.\n'));
+    }
+
+    if (existingCreds && readiness.credentialState === 'valid' && readiness.machineRegistered) {
       console.log(chalk.green('✓ Already authenticated'));
       console.log(chalk.gray(`  Machine ID: ${readiness.machineId}`));
       console.log(chalk.gray(`  Host: ${os.hostname()}`));
@@ -119,6 +131,16 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
       console.log(chalk.gray('  This can happen if --auth flag was used previously'));
       console.log(chalk.gray('  Fixing by setting up machine...\n'));
     }
+
+    if (!existingCreds && !method && isLoopbackServerHost(configuration.serverUrl)) {
+      process.env.HAPPIER_AUTH_METHOD = 'web';
+      console.log(chalk.yellow(`The selected relay (${configuration.serverUrl}) is only reachable from this computer.`));
+      console.log(chalk.gray("Using this computer's browser for the new sign-in request.\n"));
+    }
+  } else if (!method && isLoopbackServerHost(configuration.serverUrl)) {
+    process.env.HAPPIER_AUTH_METHOD = 'web';
+    console.log(chalk.yellow(`The selected relay (${configuration.serverUrl}) is only reachable from this computer.`));
+    console.log(chalk.gray("Using this computer's browser for the new sign-in request.\n"));
   }
 
   try {

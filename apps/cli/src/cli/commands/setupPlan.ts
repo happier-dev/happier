@@ -60,7 +60,7 @@ export type SetupAutonomy = 'interactive' | 'unattended' | 'createNothing';
  * approved on a phone or in a browser, so it is the one step no flag can
  * authorise on the user's behalf.
  */
-export type SetupStopReason = 'needs-interactive' | 'needs-relay-choice' | 'needs-sign-in';
+export type SetupStopReason = 'needs-interactive' | 'needs-relay-choice' | 'needs-sign-in' | 'relay-unavailable';
 
 export type SetupStop = Readonly<{
   reason: SetupStopReason;
@@ -78,8 +78,9 @@ export type SetupStop = Readonly<{
  * exists to repair.
  */
 export type SetupAuthReadiness = Readonly<{
-  /** Credentials exist and the active relay did not reject them. */
+  /** Credentials exist and the active relay positively accepted them. */
   authenticated: boolean;
+  credentialState: 'missing' | 'rejected' | 'valid' | 'unknown';
   /** A machine identity is registered for the active relay. */
   machineRegistered: boolean;
 }>;
@@ -258,6 +259,22 @@ export function buildSetupPlan(params: BuildSetupPlanParams): SetupPlan {
   const activeRelayUrl = params.activeRelayUrl ? normalizeUrl(params.activeRelayUrl) : null;
   const configured = params.auth.authenticated && params.auth.machineRegistered && Boolean(activeRelayUrl);
   const selection = params.relaySelection;
+
+  if (!selection && params.auth.credentialState === 'unknown' && activeRelayUrl) {
+    return {
+      steps: [],
+      stop: {
+        reason: 'relay-unavailable',
+        detail: [
+          `The selected relay (${activeRelayUrl}) did not answer, so its stored sign-in could not be verified.`,
+          'Your relay selection and credentials were kept unchanged.',
+          '',
+          'Retry: `happier setup`',
+          'Choose another relay explicitly: `happier setup --cloud` or `happier setup --relay <url>`',
+        ].join('\n'),
+      },
+    };
+  }
 
   // Nothing to do: this machine already has credentials against a relay and the
   // user has not asked to move to a different one.

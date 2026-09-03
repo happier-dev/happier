@@ -6,6 +6,9 @@ function fakeFetch(response: Partial<Response> & { status: number; ok?: boolean 
   return (async () => ({
     ok: response.ok ?? (response.status >= 200 && response.status < 300),
     status: response.status,
+    text: async () => response.status >= 200 && response.status < 300
+      ? JSON.stringify({ id: 'account-1' })
+      : JSON.stringify({ code: `http-${response.status}` }),
   } as Response)) as typeof fetch;
 }
 

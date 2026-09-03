@@ -19,11 +19,14 @@ import { readCredentials, readSettings, type Credentials } from '@/persistence';
 import { validateStoredAuthTokenAgainstActiveServer } from './validateStoredAuthTokenAgainstActiveServer';
 
 export type ActiveServerAuthUnusableReason = 'no-credentials' | 'credentials-rejected';
+export type ActiveServerCredentialState = 'missing' | 'rejected' | 'valid' | 'unknown';
 
 export type ActiveServerAuthReadiness = Readonly<{
   credentials: Credentials | null;
-  /** Credentials exist and the active relay did not reject them. */
+  /** Credentials exist and the active relay positively accepted them. */
   authenticated: boolean;
+  /** The exact validation fact. `unknown` retains credentials without calling them authenticated. */
+  credentialState: ActiveServerCredentialState;
   /** Why the stored sign-in cannot be used, when it cannot. */
   unusableReason: ActiveServerAuthUnusableReason | null;
   machineId: string | null;
@@ -45,6 +48,7 @@ export async function resolveActiveServerAuthReadiness(): Promise<ActiveServerAu
     return {
       credentials: null,
       authenticated: false,
+      credentialState: 'missing',
       unusableReason: 'no-credentials',
       machineId,
       machineRegistered: machineId !== null,
@@ -52,12 +56,15 @@ export async function resolveActiveServerAuthReadiness(): Promise<ActiveServerAu
   }
 
   const validation = await validateStoredAuthTokenAgainstActiveServer(credentials.token);
-  const rejected = validation.state === 'invalid';
+  const credentialState: ActiveServerCredentialState = validation.state === 'invalid'
+    ? 'rejected'
+    : validation.state;
 
   return {
     credentials,
-    authenticated: !rejected,
-    unusableReason: rejected ? 'credentials-rejected' : null,
+    authenticated: credentialState === 'valid',
+    credentialState,
+    unusableReason: credentialState === 'rejected' ? 'credentials-rejected' : null,
     machineId,
     machineRegistered: machineId !== null,
   };

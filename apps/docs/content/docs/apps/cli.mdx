@@ -132,7 +132,11 @@ points this computer at it, and runs the sign-in. It leaves an already-finished
 computer alone only when a relay is selected, the relay still accepts the stored
 sign-in, and this machine is registered against it. Credentials the relay has
 since rejected, or credentials with no registered machine behind them, are what
-setup exists to repair, so they do not count as configured.
+setup exists to repair, so they do not count as configured. When the selected
+relay does not answer, nothing can be verified: setup keeps your relay choice
+and stored sign-in exactly as they are, says it could not check them, and offers
+retry or explicitly choosing another relay — an unreachable relay is never
+treated as a rejected sign-in or a reason to sign in somewhere else.
 
 | Flag | Effect |
 | --- | --- |
@@ -172,11 +176,14 @@ stores, is saved nowhere else, and cannot be regenerated — keep it with your
 backup of the relay's database.
 
 When the relay ends up reachable from this computer only — no Tailscale, or a
-loopback address — setup signs in through this computer's browser rather than
-offering the app. Terminal links deliberately drop an address no other device can
-reach, so the phone would be left pointing at whichever relay it already had.
-Once the relay has an address your phone can reach, `happier auth login` offers
-both routes again.
+loopback address — the sign-in step says so and signs in through this computer's
+browser rather than offering the app. Terminal links deliberately drop an
+address no other device can reach, so the phone would be left pointing at
+whichever relay it already had. Only a sign-in that actually starts a new
+request makes that choice: setup runs `happier auth login` either way, and when
+your stored sign-in is still accepted it just repairs the machine registration
+without opening a browser. Once the relay has an address your phone can reach,
+`happier auth login` offers both routes again.
 
 Setup finishes by checking for an installed coding agent. Finding none is a
 warning, not a failure — you can finish setup and install one afterwards.

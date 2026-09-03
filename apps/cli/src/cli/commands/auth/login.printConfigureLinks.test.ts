@@ -164,4 +164,44 @@ describe('happier auth login --print-configure-links', () => {
       consoleSpy.mockRestore();
     }
   });
+
+  it('selects same-machine web auth for a new login to a loopback relay and names the target', async () => {
+    readCredentialsMock.mockResolvedValue(null);
+    vi.stubEnv('HAPPIER_SERVER_URL', 'http://127.0.0.1:52753');
+    vi.stubEnv('HAPPIER_ACTIVE_SERVER_ID', '127.0.0.1-52753');
+    delete process.env.HAPPIER_AUTH_METHOD;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin([]);
+
+      expect(process.env.HAPPIER_AUTH_METHOD).toBe('web');
+      expect(consoleSpy.mock.calls.flat().join('\n')).toContain('http://127.0.0.1:52753');
+    } finally {
+      consoleSpy.mockRestore();
+      delete process.env.HAPPIER_AUTH_METHOD;
+    }
+  });
+
+  it('repairs a missing machine ID without announcing browser or phone reachability', async () => {
+    readCredentialsMock.mockResolvedValue({
+      token: 'valid-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+    readSettingsMock.mockResolvedValue({});
+    vi.stubEnv('HAPPIER_SERVER_URL', 'http://127.0.0.1:52753');
+    delete process.env.HAPPIER_AUTH_METHOD;
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin([]);
+
+      const text = consoleSpy.mock.calls.flat().join('\n').toLowerCase();
+      expect(process.env.HAPPIER_AUTH_METHOD).toBeUndefined();
+      expect(text).not.toContain('browser');
+      expect(text).not.toContain('phone cannot');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
 });
