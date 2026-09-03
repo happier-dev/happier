@@ -15,6 +15,14 @@ import { AcpPromptSubmissionPhaseError } from '@/agent/acp/AcpBackend';
 import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
 import { PiRpcBackend } from '@/backends/pi/rpc/PiRpcBackend';
 
+function createDeferred(): Readonly<{ promise: Promise<void>; resolve: () => void }> {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 describe('createAcpRuntime (status error surfacing)', () => {
   afterEach(() => {
     delete process.env.HAPPIER_ACP_FAILURE_TRACE;
@@ -515,7 +523,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
 
     expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('OpenCode session aborted'))).toBe(false);
     expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('at Object.cancel'))).toBe(false);
-    expect(sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
+    await expect.poll(() => sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
   });
 
   it('opens and fails a lifecycle turn when status:error arrives before task_started', async () => {
@@ -566,5 +574,204 @@ describe('createAcpRuntime (status error surfacing)', () => {
         }),
       }),
     ]);
+  });
+
+  it('terminalizes the failed turn before a delayed transcript flush can admit the next turn', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const mutations: SessionTurnMutationV1[] = [];
+    const committed: ACPMessageData[] = [];
+    const delayedAssistantCommit = createDeferred();
+    let nextTurnId = 0;
+    const sessionTurnLifecycle = createSessionTurnLifecycle({
+      sessionId: 'happy-session-1',
+      createId: () => `turn-${++nextTurnId}`,
+      now: () => 123,
+      enqueueSessionTurn: async (mutation) => {
+        mutations.push(mutation);
+      },
+    });
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessage: (provider, body) => {
+        const observed = sessionTurnLifecycle.observeAcpLifecycleMarker({ provider, body });
+        void observed.pendingWrite;
+      },
+      sendAgentMessageCommitted: async (_provider, body) => {
+        committed.push(body);
+        if (body.type === 'message' && body.message === 'turn one output') {
+          await delayedAssistantCommit.promise;
+        }
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session: { ...session, sessionTurnLifecycle },
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', textDelta: 'turn one output' } satisfies AgentMessage);
+    backend.emit({ type: 'status', status: 'error', detail: 'Provider failed.' } satisfies AgentMessage);
+    await expect.poll(() => committed.some((body) => body.type === 'message')).toBe(true);
+
+    await runtime.flushTurn();
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
+    delayedAssistantCommit.resolve();
+
+    await expect.poll(() => mutations.map((mutation) => mutation.action)).toEqual([
+      'begin',
+      'fail',
+      'begin',
+    ]);
+    expect(mutations[0]?.turnId).toBe('session-turn:turn-1');
+    expect(mutations[1]?.turnId).toBe('session-turn:turn-1');
+    expect(mutations[2]?.turnId).toBe('session-turn:turn-2');
+    expect(sessionTurnLifecycle.getActiveTurnId()).toBe('session-turn:turn-2');
+    await expect.poll(() => committed.find((body) => body.type === 'turn_failed')).toEqual(expect.objectContaining({
+      type: 'turn_failed',
+      id: mutations[0]?.providerTurnId,
+    }));
+  });
+
+  it('terminalizes an aborted turn before a delayed transcript flush can admit the next turn', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const mutations: SessionTurnMutationV1[] = [];
+    const committed: ACPMessageData[] = [];
+    const delayedAssistantCommit = createDeferred();
+    let nextTurnId = 0;
+    const sessionTurnLifecycle = createSessionTurnLifecycle({
+      sessionId: 'happy-session-1',
+      createId: () => `turn-${++nextTurnId}`,
+      now: () => 123,
+      enqueueSessionTurn: async (mutation) => {
+        mutations.push(mutation);
+      },
+    });
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessage: (provider, body) => {
+        const observed = sessionTurnLifecycle.observeAcpLifecycleMarker({ provider, body });
+        void observed.pendingWrite;
+      },
+      sendAgentMessageCommitted: async (_provider, body) => {
+        committed.push(body);
+        if (body.type === 'message' && body.message === 'turn one output') {
+          await delayedAssistantCommit.promise;
+        }
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'opencode',
+      directory: '/tmp',
+      session: { ...session, sessionTurnLifecycle },
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', textDelta: 'turn one output' } satisfies AgentMessage);
+    backend.emit({
+      type: 'status',
+      status: 'error',
+      detail: 'Error: OpenCode session aborted\n    at Object.cancel (/tmp/runtime.ts:10:1)',
+    } satisfies AgentMessage);
+    await expect.poll(() => committed.some((body) => body.type === 'message')).toBe(true);
+
+    await runtime.flushTurn();
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
+    delayedAssistantCommit.resolve();
+
+    await expect.poll(() => mutations.map((mutation) => mutation.action)).toEqual([
+      'begin',
+      'cancel',
+      'begin',
+    ]);
+    expect(mutations[0]?.turnId).toBe('session-turn:turn-1');
+    expect(mutations[1]?.turnId).toBe('session-turn:turn-1');
+    expect(mutations[2]?.turnId).toBe('session-turn:turn-2');
+    expect(sessionTurnLifecycle.getActiveTurnId()).toBe('session-turn:turn-2');
+    await expect.poll(() => committed.find((body) => body.type === 'turn_aborted')).toEqual({
+      type: 'turn_aborted',
+      id: mutations[0]?.providerTurnId,
+    });
+  });
+
+  it('terminalizes a prompt failure before a delayed transcript flush can admit the next turn', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const mutations: SessionTurnMutationV1[] = [];
+    const committed: ACPMessageData[] = [];
+    const delayedAssistantCommit = createDeferred();
+    let nextTurnId = 0;
+    const sessionTurnLifecycle = createSessionTurnLifecycle({
+      sessionId: 'happy-session-1',
+      createId: () => `turn-${++nextTurnId}`,
+      now: () => 123,
+      enqueueSessionTurn: async (mutation) => {
+        mutations.push(mutation);
+      },
+    });
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessage: (provider, body) => {
+        const observed = sessionTurnLifecycle.observeAcpLifecycleMarker({ provider, body });
+        void observed.pendingWrite;
+      },
+      sendAgentMessageCommitted: async (_provider, body) => {
+        committed.push(body);
+        if (body.type === 'message' && body.message === 'turn one output') {
+          await delayedAssistantCommit.promise;
+        }
+      },
+    });
+
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      session: { ...session, sessionTurnLifecycle },
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', textDelta: 'turn one output' } satisfies AgentMessage);
+    const failure = runtime.failTurn(new Error('Provider session failed'));
+    await expect.poll(() => committed.some((body) => body.type === 'message')).toBe(true);
+
+    runtime.beginTurn();
+    backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
+    delayedAssistantCommit.resolve();
+    await failure;
+
+    expect(mutations.map((mutation) => mutation.action)).toEqual([
+      'begin',
+      'fail',
+      'begin',
+    ]);
+    expect(mutations[0]?.turnId).toBe('session-turn:turn-1');
+    expect(mutations[1]?.turnId).toBe('session-turn:turn-1');
+    expect(mutations[2]?.turnId).toBe('session-turn:turn-2');
+    expect(sessionTurnLifecycle.getActiveTurnId()).toBe('session-turn:turn-2');
+    expect(committed).toContainEqual(expect.objectContaining({
+      type: 'turn_failed',
+      id: mutations[0]?.providerTurnId,
+    }));
   });
 });
