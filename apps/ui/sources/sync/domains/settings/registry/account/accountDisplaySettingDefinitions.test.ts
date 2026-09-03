@@ -8,6 +8,13 @@ import {
 import { ACCOUNT_DISPLAY_SETTING_DEFINITIONS } from './accountDisplaySettingDefinitions';
 
 describe('ACCOUNT_DISPLAY_SETTING_DEFINITIONS', () => {
+    it('defaults Happier run instructions on while preserving an explicit opt-out', () => {
+        const definition = ACCOUNT_DISPLAY_SETTING_DEFINITIONS.executionRunsGuidanceEnabled;
+
+        expect(definition.default).toBe(true);
+        expect(definition.schema.parse(false)).toBe(false);
+    });
+
     it('enables cockpit lateral session swiping by default as a synced account setting', () => {
         const definition = ACCOUNT_DISPLAY_SETTING_DEFINITIONS.sessionCockpitSwipeNavigationEnabled;
 

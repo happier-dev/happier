@@ -53,6 +53,11 @@ describe('settings', () => {
             expect(settingsParse({})).toEqual(parsedSettingsDefaults);
         });
 
+        it('defaults Happier run instructions on while retaining an explicit false', () => {
+            expect(settingsParse({}).executionRunsGuidanceEnabled).toBe(true);
+            expect(settingsParse({ executionRunsGuidanceEnabled: false }).executionRunsGuidanceEnabled).toBe(false);
+        });
+
         it('defaults session list presentation to narrow agent logos with activity-and-attention active color', () => {
             const settings = settingsParse({});
             expect((settings as any).sessionListDensity).toBe('narrow');

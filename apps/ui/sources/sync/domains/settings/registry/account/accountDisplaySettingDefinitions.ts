@@ -102,15 +102,15 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     executionRunsGuidanceEnabled: {
         schema: z.boolean(),
-        default: false,
-        description: 'Enable execution-run guidance injection into the session system prompt',
+        default: true,
+        description: 'Include native-first routing and Happier run mechanics in coding-agent system prompts',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     executionRunsGuidanceMaxChars: {
         schema: z.number(),
         default: 4_000,
-        description: 'Max character budget for execution-run guidance injection',
+        description: 'Max character budget for custom execution-run rules',
         storageScope: 'account',
         analytics: {
             trackCurrentState: true,

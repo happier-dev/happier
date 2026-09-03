@@ -25,6 +25,17 @@ export function normalizeExecutionRunsGuidanceFingerprintV1(entry: ExecutionRuns
   return `${description}|${intent}|${backend}|${model}`;
 }
 
+const BUILT_IN_EXECUTION_RUNS_GUIDANCE_V1 = `# Happier-Managed Runs
+
+Use the current backend's native subagent facility by default. Treat generic requests for a subagent, delegation, or parallel agents as native-subagent requests. Use Happier-managed execution or delegation runs only when the user explicitly requests a Happier-managed run, delegation, or subagent, or explicitly requests a subagent on another backend, provider, model, account, or service that native subagents cannot satisfy. Do not silently change backend or execution topology when native subagents fail or are unavailable.
+
+- Explicit Happier wording includes “Happier subagent,” “Happier delegation run,” and “Happier execution run.” Only then discover actions with \`action_spec_search\` or \`action_spec_get\` and invoke them with \`action_execute\`.
+- Prefer \`subagents.delegate.start\` for bounded delegation and \`execution.run.start\` for lower-level control. Do not use \`session.spawn_new\` for routine delegation.
+- In a session-agent call, omit \`sessionId\` to use the current invoking session. Supply it only for an intentional explicit cross-session target.
+- Resolve dependent values through \`action_options_resolve\` (the \`action.options.resolve\` action) with the partial action draft. Backend targets select provider/backend implementations, not parallelism slots. Respect the requested backend, model, account, and service.
+- A typed retryable rate limit may be retried; backend substitution requires authorization.
+- Use start-and-wait or \`execution.run.wait\` for bounded observation. A wait timeout means the run may still be active.`;
+
 export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
   entries: readonly ExecutionRunsGuidanceEntryV1[];
   maxChars: number;
@@ -34,10 +45,7 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
   remainingCount: number;
 }> {
   const maxChars = Number.isFinite(params.maxChars) ? Math.max(0, Math.floor(params.maxChars)) : 0;
-  if (maxChars < 1) return { text: '', includedCount: 0, remainingCount: 0 };
-
   const enabled = params.entries.filter((e) => e && e.enabled !== false);
-  if (enabled.length === 0) return { text: '', includedCount: 0, remainingCount: 0 };
 
   const seen = new Set<string>();
   const unique: ExecutionRunsGuidanceEntryV1[] = [];
@@ -47,12 +55,18 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
     seen.add(fingerprint);
     unique.push(entry);
   }
-  if (unique.length === 0) return { text: '', includedCount: 0, remainingCount: 0 };
+  if (unique.length === 0 || maxChars < 1) {
+    return {
+      text: BUILT_IN_EXECUTION_RUNS_GUIDANCE_V1,
+      includedCount: 0,
+      remainingCount: unique.length,
+    };
+  }
 
   const lines: string[] = [];
-  lines.push('# Execution Runs Guidance');
+  lines.push('# Custom Execution-Run Rules');
   lines.push('');
-  lines.push('These are user-configured guidance rules. Follow them when deciding whether/how to launch execution runs.');
+  lines.push('These user-configured rules may also require a Happier-managed run.');
   lines.push('');
 
   let usedChars = lines.join('\n').length;
@@ -84,8 +98,7 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
 
   const remaining = unique.length - included;
   if (included === 0) {
-    // If nothing fits, avoid injecting a mostly-empty guidance block.
-    return { text: '', includedCount: 0, remainingCount: unique.length };
+    return { text: BUILT_IN_EXECUTION_RUNS_GUIDANCE_V1, includedCount: 0, remainingCount: unique.length };
   }
 
   if (remaining > 0) {
@@ -142,30 +155,9 @@ export function buildExecutionRunsGuidanceBlockV1(params: Readonly<{
     }
   }
 
-  // Best-effort: include execution-run mechanics so the agent knows how to act on the rules.
-  // Skip if it doesn't fit the character budget.
-  const delegationLines = [
-    '',
-    '## Happier-Managed Execution Runs',
-    'Use Happier execution runs when the user explicitly asks for Happier-managed reviews, plans, delegates, or voice agents, or when a configured rule above requires them.',
-    '- Prefer provider-native subagent/delegation tools for native subagent work when those tools are available and the user did not ask for Happier-managed runs.',
-    '- Backend targets choose agent provider/backend implementations; they are not parallelism slots or capacity controls.',
-    '- Discover Happier run actions with `action_spec_search` or `action_spec_get`, resolve dynamic fields with `action_options_resolve`, then invoke the chosen action with `action_execute`.',
-  ];
-  {
-    const snapshot = { usedChars, linesLen: lines.length };
-    let ok = true;
-    for (const line of delegationLines) {
-      if (!tryPush(line)) {
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) {
-      lines.splice(snapshot.linesLen, lines.length - snapshot.linesLen);
-      usedChars = snapshot.usedChars;
-    }
-  }
-
-  return { text: lines.join('\n').trim(), includedCount: included, remainingCount: remaining };
+  return {
+    text: `${BUILT_IN_EXECUTION_RUNS_GUIDANCE_V1}\n\n${lines.join('\n').trim()}`,
+    includedCount: included,
+    remainingCount: remaining,
+  };
 }

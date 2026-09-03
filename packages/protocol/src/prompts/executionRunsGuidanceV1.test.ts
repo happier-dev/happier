@@ -3,6 +3,31 @@ import { describe, expect, it } from 'vitest';
 import { buildExecutionRunsGuidanceBlockV1, normalizeExecutionRunsGuidanceFingerprintV1 } from './executionRunsGuidanceV1.js';
 
 describe('executionRunsGuidanceV1', () => {
+  it('always emits the fixed native-first guidance independently of custom rules', () => {
+    const result = buildExecutionRunsGuidanceBlockV1({ entries: [], maxChars: 0 });
+
+    expect(result.text).toContain("current backend's native subagent facility by default");
+    expect(result.text).toContain('Happier subagent');
+    expect(result.text).toContain('Happier delegation run');
+    expect(result.text).toContain('Happier execution run');
+    expect(result.text).toContain('omit `sessionId`');
+    expect(result.text).toContain('intentional explicit cross-session target');
+    expect(result.text.toLowerCase()).not.toContain('custom rule');
+    expect(result.text).not.toContain('another host');
+  });
+
+  it('keeps the fixed guidance when the custom-rule budget is too small', () => {
+    const result = buildExecutionRunsGuidanceBlockV1({
+      entries: [{ id: '1', description: 'Use a Happier review run' }],
+      maxChars: 1,
+    });
+
+    expect(result.text).toContain("current backend's native subagent facility by default");
+    expect(result.text).not.toContain('Use a Happier review run');
+    expect(result.includedCount).toBe(0);
+    expect(result.remainingCount).toBe(1);
+  });
+
   it('does not dedupe entries that share description but differ in suggested backend/model', () => {
     const result = buildExecutionRunsGuidanceBlockV1({
       entries: [
@@ -48,7 +73,8 @@ describe('executionRunsGuidanceV1', () => {
     const entry2 = { id: '2', description: 'Rule two is intentionally longer than the overflow note' };
 
     const full = buildExecutionRunsGuidanceBlockV1({ entries: [entry1, entry2], maxChars: 10_000 });
-    const ruleTwoStart = full.text.indexOf('\n- Rule two');
+    const customBlock = full.text.slice(full.text.indexOf('# Custom Execution-Run Rules'));
+    const ruleTwoStart = customBlock.indexOf('\n- Rule two');
     expect(ruleTwoStart).toBeGreaterThan(0);
 
     const overflowNote = '- (+1 more rules in settings)';
@@ -61,7 +87,8 @@ describe('executionRunsGuidanceV1', () => {
     expect(capped.includedCount).toBe(1);
     expect(capped.remainingCount).toBe(1);
     expect(capped.text).toContain(overflowNote);
-    expect(capped.text.length).toBeLessThanOrEqual(ruleTwoStart + 1 + overflowNote.length);
+    const cappedCustomBlock = capped.text.slice(capped.text.indexOf('# Custom Execution-Run Rules'));
+    expect(cappedCustomBlock.length).toBeLessThanOrEqual(ruleTwoStart + 1 + overflowNote.length);
   });
 
   it('omits the rules overflow note when it would exceed the max char budget', () => {
@@ -69,7 +96,8 @@ describe('executionRunsGuidanceV1', () => {
     const entry2 = { id: '2', description: 'Rule two' };
 
     const full = buildExecutionRunsGuidanceBlockV1({ entries: [entry1, entry2], maxChars: 10_000 });
-    const ruleTwoStart = full.text.indexOf('\n- Rule two');
+    const customBlock = full.text.slice(full.text.indexOf('# Custom Execution-Run Rules'));
+    const ruleTwoStart = customBlock.indexOf('\n- Rule two');
     expect(ruleTwoStart).toBeGreaterThan(0);
 
     const capped = buildExecutionRunsGuidanceBlockV1({
@@ -80,7 +108,8 @@ describe('executionRunsGuidanceV1', () => {
     expect(capped.includedCount).toBe(1);
     expect(capped.remainingCount).toBe(1);
     expect(capped.text).not.toContain('more rules in settings');
-    expect(capped.text.length).toBeLessThanOrEqual(ruleTwoStart);
+    const cappedCustomBlock = capped.text.slice(capped.text.indexOf('# Custom Execution-Run Rules'));
+    expect(cappedCustomBlock.length).toBeLessThanOrEqual(ruleTwoStart);
   });
 
   it('excludes disabled entries', () => {
@@ -125,7 +154,8 @@ describe('executionRunsGuidanceV1', () => {
       maxChars: 10_000,
     });
 
-    expect(result.text).toContain('Happier-Managed Execution Runs');
+    expect(result.text).toContain('Happier-Managed Runs');
+    expect(result.text).toContain('Custom Execution-Run Rules');
     expect(result.text).toContain('action_spec_search');
     expect(result.text).toContain('action_spec_get');
     expect(result.text).toContain('action_options_resolve');

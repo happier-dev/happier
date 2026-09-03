@@ -95,7 +95,7 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   if (!args.executionRunsFeatureEnabled) {
     return buildPromptPlanV1({ modality: 'coding', blocks });
   }
-  if (settings?.executionRunsGuidanceEnabled !== true) {
+  if (settings?.executionRunsGuidanceEnabled === false) {
     return buildPromptPlanV1({ modality: 'coding', blocks });
   }
 

@@ -203,11 +203,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                     >
                         <Item
                             title={t('subAgentGuidance.settings.enableInjection.title')}
-                            subtitle={
-                                enabled === true
-                                    ? t('subAgentGuidance.ruleEditor.enabledState.enabled')
-                                    : t('subAgentGuidance.ruleEditor.enabledState.disabled')
-                            }
+                            subtitle={t('subAgentGuidance.settings.enableInjection.subtitle')}
                             icon={<Icon name="sparkle" size={29} color={theme.colors.accent.orange} />}
                             rightElement={<Switch value={enabled === true} onValueChange={(v) => setEnabled(v as any)} />}
                             showChevron={false}

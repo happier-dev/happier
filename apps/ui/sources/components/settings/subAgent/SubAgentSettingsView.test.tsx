@@ -179,6 +179,17 @@ describe('SubAgentSettingsView', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/features');
     });
 
+    it('explains that disabling Happier run instructions removes routing and mechanics', async () => {
+        executionRunsEnabledState = true;
+        guidanceEnabledState = true;
+        const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
+
+        const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
+        const guidanceItem = screen.findRowByTitle('subAgentGuidance.settings.enableInjection.title');
+
+        expect(guidanceItem?.props.subtitle).toBe('subAgentGuidance.settings.enableInjection.subtitle');
+    });
+
     it('renders related subagent settings links and routes to Session settings', async () => {
         executionRunsEnabledState = true;
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');

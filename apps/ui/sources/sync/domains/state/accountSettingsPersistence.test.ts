@@ -103,6 +103,18 @@ describe('accountSettingsPersistence', () => {
         expect(mod.loadPendingAccountSettings(sameServerDifferentAccount)).toEqual({});
     });
 
+    it('keeps the guidance default absent from pending deltas and persists an explicit opt-out', async () => {
+        const mod = await loadAccountSettingsPersistenceModule();
+        expect(mod, 'account settings persistence module should exist').not.toBeNull();
+        if (!mod) return;
+
+        mod.savePendingAccountSettings(scopeA, {});
+        expect(mod.loadPendingAccountSettings(scopeA)).toEqual({});
+
+        mod.savePendingAccountSettings(scopeA, { executionRunsGuidanceEnabled: false });
+        expect(mod.loadPendingAccountSettings(scopeA)).toEqual({ executionRunsGuidanceEnabled: false });
+    });
+
     it('migrates legacy pending settings into the first activated account scope before deleting the legacy key', async () => {
         const mod = await loadAccountSettingsPersistenceModule();
         expect(mod, 'account settings persistence module should exist').not.toBeNull();

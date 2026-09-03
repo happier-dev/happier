@@ -5,10 +5,47 @@ import { buildAppendSystemPromptBaseV1 } from './buildAppendSystemPromptBaseV1.j
 describe('buildAppendSystemPromptBaseV1', () => {
   it('returns the base prompt when execution runs guidance is disabled', () => {
     expect(buildAppendSystemPromptBaseV1({
-      settings: { executionRunsGuidanceEnabled: true },
+      settings: {},
       base: 'BASE',
       executionRunsFeatureEnabled: false,
     })).toBe('BASE');
+  });
+
+  it('uses the enabled default when the guidance setting is absent', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {},
+      base: 'BASE',
+      executionRunsFeatureEnabled: true,
+    });
+
+    expect(out).toContain('current backend\'s native subagent facility by default');
+    expect(out).toContain('Happier subagent');
+    expect(out).toContain('Happier delegation run');
+  });
+
+  it('honors an explicit guidance opt-out', () => {
+    expect(buildAppendSystemPromptBaseV1({
+      settings: { executionRunsGuidanceEnabled: false },
+      base: 'BASE',
+      executionRunsFeatureEnabled: true,
+    })).toBe('BASE');
+  });
+
+  it('does not mention custom rules when no valid enabled rules exist', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {
+        executionRunsGuidanceEntries: [
+          { id: 'disabled', description: 'Disabled custom rule', enabled: false },
+          { id: 'invalid', description: '   ', enabled: true },
+        ],
+      },
+      base: 'BASE',
+      executionRunsFeatureEnabled: true,
+    });
+
+    expect(out).toContain('current backend\'s native subagent facility by default');
+    expect(out.toLowerCase()).not.toContain('custom rule');
+    expect(out).not.toContain('Disabled custom rule');
   });
 
   it('appends execution runs guidance when enabled', () => {
@@ -29,9 +66,10 @@ describe('buildAppendSystemPromptBaseV1', () => {
     });
 
     expect(out).toContain('BASE');
-    expect(out).toContain('Execution Runs Guidance');
+    expect(out).toContain('Happier-Managed Runs');
     expect(out).toContain('Always use execution runs for code reviews.');
     expect(out).toContain('backend=agent:claude');
+    expect(out.indexOf('Happier-Managed Runs')).toBeLessThan(out.indexOf('Custom Execution-Run Rules'));
   });
 
   it('appends memory recall guidance only when explicitly enabled', () => {
