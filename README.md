@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/.github/hero.jpg" title="Happier Dev" alt="Happier Dev - Mobile, Web and Desktop client for Claude Code, Codex, OpenCode, Pi, Cursor" width="850" />
+  <img src="/.github/hero.png" title="Happier Dev" alt="Happier Dev - Mobile, Web and Desktop client for Claude Code, Codex, OpenCode, Pi, Cursor" width="850" />
 
   ### Mobile, Web and Desktop client for Claude Code, Codex, OpenCode, Pi, Cursor, ...
   
