@@ -1099,9 +1099,9 @@ jobs:
 
   release-contracts:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_release_contracts) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_release_contracts == 'true') }}
-    needs: [ci_plan]
+    needs: [ci_plan, trusted_ref_guard]
     name: Release Contracts
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 20
     steps:
       - name: Checkout

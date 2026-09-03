@@ -400,7 +400,10 @@ async function main() {
 
   let buildNumber = String(values['build-number'] ?? '').trim();
   let appVersion = String(values['app-version'] ?? '').trim();
-  const buildJsonDetails = values['build-json'] ? readBuildJsonDetails(String(values['build-json'])) : null;
+  const buildJsonPath = String(values['build-json'] ?? '').trim();
+  // Native-build dry-runs do not guarantee an output file. Ignore any pre-existing file too:
+  // it may belong to an earlier build and must not decide whether this dry-run is valid.
+  const buildJsonDetails = buildJsonPath && !dryRun ? readBuildJsonDetails(buildJsonPath) : null;
   const easBuildId = String(values['eas-build-id'] ?? '').trim() || String(buildJsonDetails?.easBuildId ?? '').trim();
   const artifactPath = String(buildJsonDetails?.artifactPath ?? '').trim();
   const easCliVersion =

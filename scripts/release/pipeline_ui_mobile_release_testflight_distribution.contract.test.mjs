@@ -1,11 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
-test('ui-mobile-release native_submit auto-distributes preview iOS builds to configured external TestFlight groups', () => {
+function createBuildJsonPath(t) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-ui-mobile-testflight-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  return path.join(tmpDir, 'eas_build.json');
+}
+
+test('ui-mobile-release native_submit dry-run plans preview TestFlight distribution without cloud build metadata', (t) => {
+  const buildJsonPath = createBuildJsonPath(t);
   const out = execFileSync(
     process.execPath,
     [
@@ -19,10 +28,8 @@ test('ui-mobile-release native_submit auto-distributes preview iOS builds to con
       'ios',
       '--profile',
       'preview',
-      '--native-build-mode',
-      'local',
       '--build-json',
-      '/tmp/eas_build.json',
+      buildJsonPath,
       '--dry-run',
       '--secrets-source',
       'env',
@@ -42,14 +49,16 @@ test('ui-mobile-release native_submit auto-distributes preview iOS builds to con
   );
 
   assert.match(out, /\[pipeline\] ui-mobile release: environment=preview action=native_submit platform=ios/);
-  assert.match(out, /scripts\/pipeline\/expo\/submit\.mjs/);
   assert.match(out, /scripts\/pipeline\/expo\/testflight-distribute\.mjs/);
   assert.match(out, /--environment"\s+"preview"/);
   assert.match(out, /--external-groups"\s+"preview-group-id"/);
-  assert.match(out, /--build-json"\s+"\/tmp\/eas_build\.json"/);
+  assert.ok(out.includes(buildJsonPath));
+  assert.equal(fs.existsSync(buildJsonPath), false);
 });
 
-test('ui-mobile-release native_submit auto-distributes dev iOS builds using the publicdev external TestFlight config', () => {
+test('ui-mobile-release native_submit auto-distributes dev iOS builds using the publicdev external TestFlight config', (t) => {
+  const buildJsonPath = createBuildJsonPath(t);
+  const iosBuildJsonPath = buildJsonPath.replace(/\.json$/, '.ios.json');
   const out = execFileSync(
     process.execPath,
     [
@@ -66,7 +75,7 @@ test('ui-mobile-release native_submit auto-distributes dev iOS builds using the 
       '--native-build-mode',
       'local',
       '--build-json',
-      '/tmp/eas_build.json',
+      buildJsonPath,
       '--dry-run',
       '--secrets-source',
       'env',
@@ -90,7 +99,7 @@ test('ui-mobile-release native_submit auto-distributes dev iOS builds using the 
   assert.match(out, /scripts\/pipeline\/expo\/testflight-distribute\.mjs/);
   assert.match(out, /--environment"\s+"dev"/);
   assert.match(out, /--external-groups"\s+"dev-group-id"/);
-  assert.match(out, /--build-json"\s+"\/tmp\/eas_build\.ios\.json"/);
+  assert.ok(out.includes(iosBuildJsonPath));
 });
 
 test('ui-mobile-release can validate TestFlight groups without starting a native build', () => {

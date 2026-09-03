@@ -12,7 +12,6 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 import {
   finalizeDarwinReleaseArchive,
@@ -657,22 +656,16 @@ test('local payload repair signs every nested Mach-O while preserving executable
   const workDir = mkdtempSync(path.join(os.tmpdir(), 'happier-payload-adhoc-signature-'));
   const payloadDir = path.join(workDir, 'happier-v0.0.0-darwin-local');
   const binaryPath = path.join(payloadDir, 'happier');
-  const nestedBinaryPath = path.join(payloadDir, 'tools', 'nested-bun');
+  const nestedBinaryPath = path.join(payloadDir, 'tools', 'nested-binary');
   const scriptPath = path.join(payloadDir, 'scripts', 'run.sh');
   try {
-    const bunTarget = process.arch === 'x64' ? 'bun-darwin-x64' : 'bun-darwin-arm64';
     mkdirSync(path.dirname(nestedBinaryPath), { recursive: true });
     mkdirSync(path.dirname(scriptPath), { recursive: true });
     for (const outputPath of [binaryPath, nestedBinaryPath]) {
-      execFileSync('bun', [
-        'build',
-        '--compile',
-        '--no-cache',
-        `--target=${bunTarget}`,
-        fileURLToPath(new URL('./notarize-standalone-binary.mjs', import.meta.url)),
-        '--outfile',
-        outputPath,
-      ], { stdio: 'pipe' });
+      execFileSync('xcrun', ['clang', '-x', 'c', '-', '-o', outputPath], {
+        input: 'int main(void) { return 0; }\n',
+        stdio: 'pipe',
+      });
     }
     writeFileSync(scriptPath, '#!/bin/sh\nexit 0\n', 'utf8');
     chmodSync(scriptPath, 0o755);
@@ -683,7 +676,7 @@ test('local payload repair signs every nested Mach-O while preserving executable
     assert.equal(evidence.signatureType, 'adhoc');
     assert.equal(evidence.payload, path.basename(payloadDir));
     assert.deepEqual(evidence.machO.map((entry) => entry.path), [
-      'tools/nested-bun',
+      'tools/nested-binary',
       'happier',
     ]);
     for (const outputPath of [binaryPath, nestedBinaryPath]) {
