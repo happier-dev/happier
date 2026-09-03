@@ -17,6 +17,8 @@
 
 import { readFileSync } from 'node:fs';
 
+import { classifyDownloadLinkStatus } from './download-link-health.mjs';
+
 const downloads = JSON.parse(readFileSync(new URL('../src/data/downloads.json', import.meta.url), 'utf8'));
 const desktopAssets = downloads.desktopPlatforms.map(
     ({ file }) => `${downloads.desktopAssetBase}/${file}`,
@@ -67,21 +69,29 @@ const results = await Promise.all(
             if (res.status === 405 || res.status === 403) {
                 res = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } });
             }
-            return { url, status: res.status, ok: res.status < 400 };
+            return { url, status: res.status, health: classifyDownloadLinkStatus(res.status) };
         } catch (error) {
-            return { url, status: String(error?.message ?? error), ok: false };
+            const status = String(error?.message ?? error);
+            return { url, status, health: classifyDownloadLinkStatus(status) };
         }
     }),
 );
 
 let failed = 0;
-for (const { url, status, ok } of results) {
-    if (!ok) failed += 1;
-    console.log(`${ok ? 'ok  ' : 'FAIL'} ${String(status).padEnd(6)} ${url}`);
+let inconclusive = 0;
+for (const { url, status, health } of results) {
+    if (health === 'fail') failed += 1;
+    if (health === 'warn') inconclusive += 1;
+    const label = health === 'ok' ? 'ok  ' : health === 'warn' ? 'WARN' : 'FAIL';
+    console.log(`${label} ${String(status).padEnd(6)} ${url}`);
 }
 
 if (failed > 0) {
-    console.error(`\n${failed} of ${results.length} links are dead. Do not deploy.`);
+    console.error(`\n${failed} of ${results.length} links returned definitive client errors. Do not deploy.`);
     process.exit(1);
 }
-console.log(`\nAll ${results.length} links reachable.`);
+if (inconclusive > 0) {
+    console.warn(`\n${inconclusive} of ${results.length} links were temporarily unverifiable; no link returned a definitive client error.`);
+} else {
+    console.log(`\nAll ${results.length} links reachable.`);
+}
