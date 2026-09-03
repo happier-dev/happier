@@ -56,6 +56,7 @@ vi.mock('@/sync/ops/machineDirectSessions', () => ({
 
 import { storage } from './domains/state/storage';
 import type { Session } from './domains/state/storageTypes';
+import type { NormalizedMessage } from './typesRaw';
 import { markSessionVisible } from '@/sync/domains/session/activeViewingSession';
 
 type SyncCatchUpTestAccess = {
@@ -87,6 +88,18 @@ function createSession(sessionId: string, seq: number): Session {
         thinkingAt: 0,
         presence: 'online',
         optimisticThinkingAt: null,
+    };
+}
+
+function buildMessage(id: string, seq: number): NormalizedMessage {
+    return {
+        id,
+        localId: null,
+        createdAt: seq,
+        role: 'user',
+        content: { type: 'text', text: id },
+        seq,
+        isSidechain: false,
     };
 }
 
@@ -129,11 +142,18 @@ function catchUpInFlight(): number {
     return storage.getState().sessionCatchUpNewerInFlight[SESSION_ID] ?? 0;
 }
 
-async function seedLoadedSession(materializedMaxSeq: number, sessionSeq: number): Promise<void> {
+async function seedLoadedSession(
+    materializedMaxSeq: number,
+    sessionSeq: number,
+    options: Readonly<{ withMaterializedMessage?: boolean }> = {},
+): Promise<void> {
     const { sync } = await import('./sync');
     const t = sync as unknown as SyncCatchUpTestAccess;
     sync.disconnectServer();
     storage.getState().applySessions([createSession(SESSION_ID, sessionSeq)]);
+    if (options.withMaterializedMessage !== false && materializedMaxSeq > 0) {
+        storage.getState().applyMessages(SESSION_ID, [buildMessage(`m${materializedMaxSeq}`, materializedMaxSeq)]);
+    }
     storage.getState().applyMessagesLoaded(SESSION_ID);
     t.encryption = { getSessionEncryption: () => null };
     t.activeServerSessionIds = new Set<string>([SESSION_ID]);
@@ -195,6 +215,22 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
         // The snapshot is in flight, but the catch-up signal must stay clear.
         expect(catchUpInFlight()).toBe(0);
         expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(false);
+
+        deferred.resolve();
+        await refresh;
+        expect(catchUpInFlight()).toBe(0);
+    });
+
+    it('flips the signal when a previously loaded empty transcript catches up its first durable activity', async () => {
+        await seedLoadedSession(0, 1, { withMaterializedMessage: false });
+        const { sync } = await import('./sync');
+        const deferred = deferMessagesFetch();
+
+        const refresh = sync.refreshSessionMessages(SESSION_ID);
+        await waitFor(() => deferred.wasIssued());
+
+        expect(catchUpInFlight()).toBeGreaterThan(0);
+        expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(true);
 
         deferred.resolve();
         await refresh;
@@ -274,6 +310,25 @@ describe('§13 catch-up-newer signal and the direct-session tail poll', () => {
         // being caught up, so the reader must not be told that anything is.
         expect(catchUpInFlight()).toBe(0);
         expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(false);
+
+        tail.resolve({ ok: true, items: [], nextCursor: 'c-1', truncated: false });
+        await refresh;
+        expect(catchUpInFlight()).toBe(0);
+    });
+
+    it('raises the signal for the explicit tail probe requested when a loaded direct session is reopened', async () => {
+        await seedLoadedDirectSession();
+        const { sync } = await import('./sync');
+
+        const tail = deferredResponse<unknown>();
+        directTailReadMock.mockReturnValue(tail.promise);
+
+        sync.onSessionVisible(SESSION_ID);
+        const refresh = sync.refreshSessionMessages(SESSION_ID);
+        await waitFor(() => directTailReadMock.mock.calls.length > 0);
+
+        expect(catchUpInFlight()).toBeGreaterThan(0);
+        expect(storage.getState().isSessionCatchingUpNewer(SESSION_ID)).toBe(true);
 
         tail.resolve({ ok: true, items: [], nextCursor: 'c-1', truncated: false });
         await refresh;

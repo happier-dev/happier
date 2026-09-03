@@ -5393,18 +5393,21 @@ class Sync {
                   return;
               }
 
-              await this.catchUpDirectSessionMessages(sessionId, directSessionLink);
+              await this.catchUpDirectSessionMessages(sessionId, directSessionLink, {
+                  surfaceCatchUp: hasExplicitTailProbe,
+              });
               this.explicitSessionTailProbeIds.delete(sessionId);
               return;
           }
 
           const loadedTranscript = storage.getState().sessionMessages[sessionId];
           const hasMaterializedMessages = Object.keys(loadedTranscript?.messagesById ?? {}).length > 0;
-          // A previous interrupted open can leave a non-empty session hint with a loaded,
-          // zero-row cache. Treat that as cold so catch-up does not preserve the blank projection.
-          if (!hasLoadedMessages || (!hasMaterializedMessages && sessionSeqHint > 0)) {
+          // A previous empty or interrupted open can leave a non-empty session hint with a loaded,
+          // zero-row cache. Recover with a snapshot so catch-up does not preserve the blank projection.
+          const needsSnapshotLoad = !hasLoadedMessages || (!hasMaterializedMessages && sessionSeqHint > 0);
+          if (needsSnapshotLoad) {
               this.deferredForwardLoadingSessions.delete(sessionId);
-              await fetchAndApplyMessages({
+              const fetchSnapshot = () => fetchAndApplyMessages({
                   sessionId,
                   sessionEncryptionMode,
                   limit: Platform.OS === 'web'
@@ -5423,6 +5426,15 @@ class Sync {
                   ...this.getMessageDecryptBatchOptions(),
                   log,
               });
+              // A loaded zero-row transcript is warm state, not a first-ever load. When the
+              // session shell now reports durable activity, this snapshot is the on-open catch-up
+              // operation and must share the same canonical signal as every other newer repair.
+              await (hasLoadedMessages
+                  ? this.withSessionCatchUpNewer(sessionId, fetchSnapshot)
+                  : fetchSnapshot());
+              if (hasExplicitTailProbe) {
+                  this.explicitSessionTailProbeIds.delete(sessionId);
+              }
               return;
           }
 
@@ -7196,6 +7208,8 @@ class Sync {
                         planned,
                         credentials: this.credentials,
                         isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+                        shouldCatchUpSessionMessages: (sessionId) =>
+                            resolveSessionLiveConsumption(sessionId).isFullContentConsumer,
                         getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
                         invalidate: {
                             settings: () => this.settingsSync.invalidateAndAwait(),
