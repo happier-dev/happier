@@ -90,6 +90,9 @@ Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.
 - The server entrypoint (`apps/server/scripts/run-server.sh`) runs `prisma migrate deploy` on startup by default (set `RUN_MIGRATIONS=0` to disable). On Postgres, it retries on advisory-lock contention.
+- Health-managed and multi-replica deployments should run `run-server --migrate-only` as a single pre-deploy operation, then start API and worker replicas with `RUN_MIGRATIONS=0`. The migration command exits before server startup and explicitly overrides `RUN_MIGRATIONS=0`.
+- PostgreSQL advisory locks serialize concurrent migrators but cannot preserve a migration when the owning container is terminated. The pre-deploy operation's lifetime and timeout must be independent from application startup health checks.
+- If the platform cannot block application rollout on a pre-deploy operation, use exactly one API migration owner (`RUN_MIGRATIONS=1`), disable migrations on all workers and other replicas, and configure start-first rollout, rollback on failure, and a health startup grace long enough for the largest expected migration. Separate auto-deploy webhooks are not an ordering mechanism.
 
 ## Kubernetes manifests
 Example manifests live in `apps/server/deploy`:

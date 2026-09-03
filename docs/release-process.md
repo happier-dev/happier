@@ -256,6 +256,8 @@ The reset option exists for rare cases where you intentionally want `target` to 
 
 For the server, database migrations should be automated as part of the deployment runtime:
 
-- Run `prisma migrate deploy` at container startup (entrypoint) or via an explicit platform “pre-deploy” hook.
-- Running migrations from *both* API and worker is acceptable as long as you expect contention and handle it (Prisma uses a DB lock to serialize migrations; the non-holder should wait/retry).
+- For a single unmanaged container, the default entrypoint may run `prisma migrate deploy` before server startup.
+- For health-managed or multi-replica deployments, run `run-server --migrate-only` once in an explicit platform pre-deploy operation. Start API and worker replicas with `RUN_MIGRATIONS=0` only after that operation succeeds.
+- When an application platform cannot run and await a blocking pre-deploy operation, designate exactly one API service as the migration owner and set `RUN_MIGRATIONS=0` on workers and all other replicas. Protect that owner with start-first rollout, rollback on failure, and sufficient health-check startup grace; webhook acceptance alone does not prove migration or deployment completion.
+- Do not rely on API and worker startup races as migration ownership. Prisma's database lock serializes contenders, but it cannot preserve the winning migration when an orchestrator terminates that container for missing its startup-health window.
 - Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.
