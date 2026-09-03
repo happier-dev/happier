@@ -187,7 +187,6 @@ export const SessionConnectedServiceAuthApplyGenerationRequestV1Schema = z
   .object({
     serviceId: ConnectedServiceRuntimeControlServiceIdV1Schema,
     reason: SessionConnectedServiceAuthApplyGenerationReasonV1Schema,
-    requireDirectLiveHotApply: z.boolean().optional(),
     applicationSettled: z.literal(true).optional(),
     expected: ConnectedServiceRuntimeControlExpectedV1Schema.optional(),
     authGeneration: z.union([
