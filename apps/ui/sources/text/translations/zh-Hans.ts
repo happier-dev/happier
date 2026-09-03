@@ -1784,13 +1784,14 @@ export const zhHans: TranslationStructure = {
         backendsSubtitle: "已配置后端和自定义启动目标。",
       },
       enableInjection: {
-        title: "启用指引注入",
+        title: "Happier 运行指令",
+        subtitle: "关闭后，编码代理的系统提示词中将移除原生优先路由说明和 Happier 运行机制。",
       },
       characterBudget: {
-        title: "字符上限",
+        title: "自定义规则字符上限",
         subtitle: ({ value }: { value: string }) => `${value} 个字符`,
-        promptTitle: "字符上限",
-        promptBody: "注入到系统提示词中的最大字符数。",
+        promptTitle: "自定义规则字符上限",
+        promptBody: "系统提示词中自定义运行规则的最大字符数。",
       },
       rules: {
         groupTitle: "指引规则",
@@ -5105,10 +5106,15 @@ export const zhHans: TranslationStructure = {
 	    },
 	    resuming: "正在恢复...",
 	    resumeFailed: "恢复会话失败",
-	    pendingQueuedResumeFailedTitle: "消息已排队",
-	    pendingQueuedResumeFailedBody:
-	      "你的消息已保存到待处理队列，但 Happier 无法恢复此会话。请重试以启动它。",
-	    composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: '消息已加入此机器的队列', body: '这台机器及其守护进程恢复在线后，消息将被处理。' },
+            waiting: { title: '等待恢复', body: '守护进程恢复此会话时，你的消息会安全地保留在队列中。' },
+            failed: { title: '无法恢复会话', body: '你的消息仍安全地保留在队列中。准备好后请重试。' },
+            queued: { title: '消息已加入队列', body: '此非活动会话有一条排队消息。准备好后请恢复会话。' },
+            queued_offline: { title: '消息等待手动恢复', body: '在你恢复此会话之前，消息会一直留在队列中。' },
+            actions: { retry: '重试', resume: '恢复', process_when_online: '在线后处理', keepQueued: '保留在队列中', autoResumeOptions: '自动恢复选项' },
+        },
+        composerBanners: {
             showBannerAction: '显示横幅',
             hideBannerAction: '隐藏横幅',
 	    },
@@ -5160,7 +5166,7 @@ export const zhHans: TranslationStructure = {
       `此会话已结束，且由于 ${provider} 不支持在此处恢复其上下文，因此无法恢复。请开始新会话以继续。`,
     machineOfflineNoticeTitle: "机器离线",
       machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-        `“${machine}” 处于离线状态，因此 Happier 目前无法恢复此会话。请将机器恢复在线后继续。`,
+        `“${machine}” 处于离线状态。你现在可以将消息加入队列；机器恢复在线后，Happier 将继续处理。`,
     machineOfflineCannotResume: "机器离线。请将其恢复在线后再恢复此会话。",
       openRuns: "打开会话运行",
       openAutomations: "打开会话自动化",
@@ -6137,7 +6143,8 @@ export const zhHans: TranslationStructure = {
     viewSessionLogTitle: "查看会话日志",
     viewSessionLogSubtitle: "打开此会话的实时日志尾部",
     pinSession: "置顶会话",
-    unpinSession: "取消置顶",
+        unpinSession: "取消置顶",
+        pinLimitExceeded: ({ count }: { count: number }) => `最多可置顶 ${count.toLocaleString()} 个会话。请取消置顶另一个会话后重试。`,
     copyResumeCommand: "复制恢复命令",
     resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
     viewMachine: "查看设备",
@@ -7371,6 +7378,14 @@ export const zhHans: TranslationStructure = {
         runClass: "运行类别",
         ioMode: "I/O 模式",
       },
+      launchOrigin: {
+        crossSession: ({ sessionId }: { sessionId: string }) => `由会话 ${sessionId} 启动`,
+        externalCli: "由 CLI 从外部启动",
+        externalMcp: "通过 MCP 从外部启动",
+        externalAction: "通过 Happier 操作从外部启动",
+        externalUnknown: "从外部启动（来源未知）",
+        legacyUnknown: "启动来源未知",
+      },
       timestamps: {
         started: "开始",
         finished: "完成",
@@ -7738,6 +7753,16 @@ settingsSession: {
         title: '高级',
     },
     messageSending: {
+      inactiveResumePolicyTitle: "发送后自动恢复",
+      inactiveResumePolicySubtitle: "选择向非活动会话发送消息后 Happier 应执行的操作。",
+      inactiveResumePolicy: {
+        whenAvailableTitle: "立即或机器恢复时",
+        whenAvailableSubtitle: "可连接时立即恢复；否则在守护进程重新连接后处理。",
+        onlineOnlyTitle: "仅当机器在线时",
+        onlineOnlySubtitle: "发送时只尝试一次。若不可用，则将消息保留在队列中。",
+        manualTitle: "永不自动恢复",
+        manualSubtitle: "始终将消息保留在队列中，直到你恢复会话。",
+      },
       title: "消息发送",
       footer:
         "控制在代理运行时你发送消息会发生什么。",

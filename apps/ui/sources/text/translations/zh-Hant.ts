@@ -2088,13 +2088,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         backendsSubtitle: "已設定的後端與自訂啟動目標。",
       },
       enableInjection: {
-        title: "啟用指引注入",
+        title: "Happier 執行指示",
+        subtitle: "關閉後，編碼代理的系統提示詞中將移除原生優先路由說明與 Happier 執行機制。",
       },
       characterBudget: {
-        title: "字元上限",
+        title: "自訂規則字元上限",
         subtitle: ({ value }: { value: string }) => `${value} 個字元`,
-        promptTitle: "字元上限",
-        promptBody: "可注入到系統提示詞中的最大字元數。",
+        promptTitle: "自訂規則字元上限",
+        promptBody: "系統提示詞中自訂執行規則的最大字元數。",
       },
       rules: {
         groupTitle: "指引規則",
@@ -4619,10 +4620,15 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             resuming: '正在恢復...',
             resumeFailed: '無法恢復工作階段',
-            pendingQueuedResumeFailedTitle: '訊息已排入佇列',
-            pendingQueuedResumeFailedBody:
-                '你的訊息已儲存到待傳送佇列，但 Happier 無法恢復此工作階段。請重試以啟動它。',
-            composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: '訊息已加入此機器的佇列', body: '這台機器及其背景服務重新上線後，訊息將被處理。' },
+            waiting: { title: '等待恢復', body: '背景服務恢復此工作階段時，你的訊息會安全地保留在佇列中。' },
+            failed: { title: '無法恢復工作階段', body: '你的訊息仍安全地保留在佇列中。準備好後請重試。' },
+            queued: { title: '訊息已加入佇列', body: '此非作用中工作階段有一則排隊訊息。準備好後請恢復工作階段。' },
+            queued_offline: { title: '訊息等待手動恢復', body: '在你恢復此工作階段之前，訊息會一直留在佇列中。' },
+            actions: { retry: '重試', resume: '恢復', process_when_online: '上線後處理', keepQueued: '保留在佇列中', autoResumeOptions: '自動恢復選項' },
+        },
+        composerBanners: {
                 showBannerAction: '顯示橫幅',
                 hideBannerAction: '隱藏橫幅',
             },
@@ -5356,6 +5362,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         viewSessionLogSubtitle: '開啟此工作階段的即時日誌尾端',
         pinSession: '釘選工作階段',
         unpinSession: '取消釘選',
+        pinLimitExceeded: ({ count }: { count: number }) => `最多可釘選 ${count.toLocaleString()} 個工作階段。請取消釘選另一個工作階段後再試一次。`,
         viewMachine: '查看裝置',
         viewMachineSubtitle: '查看裝置詳情和工作階段',
         killSessionSubtitle: '立即終止工作階段',
@@ -6366,6 +6373,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 runClass: '執行類別',
                 ioMode: 'I/O 模式',
             },
+            launchOrigin: {
+                crossSession: ({ sessionId }: { sessionId: string }) => `由工作階段 ${sessionId} 啟動`,
+                externalCli: '由 CLI 從外部啟動',
+                externalMcp: '透過 MCP 從外部啟動',
+                externalAction: '透過 Happier 動作從外部啟動',
+                externalUnknown: '從外部啟動（來源不明）',
+                legacyUnknown: '啟動來源不明',
+            },
             timestamps: {
                 started: '開始',
                 finished: '完成',
@@ -6707,6 +6722,16 @@ settingsSession: {
             title: '進階',
         },
         messageSending: {
+            inactiveResumePolicyTitle: '傳送後自動恢復',
+            inactiveResumePolicySubtitle: '選擇向非作用中工作階段傳送訊息後 Happier 應執行的操作。',
+            inactiveResumePolicy: {
+                whenAvailableTitle: '立即或機器恢復時',
+                whenAvailableSubtitle: '可連線時立即恢復；否則在背景服務重新連線後處理。',
+                onlineOnlyTitle: '僅當機器在線上時',
+                onlineOnlySubtitle: '傳送時只嘗試一次。若無法使用，則將訊息保留在佇列中。',
+                manualTitle: '永不自動恢復',
+                manualSubtitle: '始終將訊息保留在佇列中，直到你恢復工作階段。',
+            },
             title: '訊息送出',
             footer: '控制代理執行中送出訊息時的行為。',
             queueInAgentTitle: '在代理中排隊（目前）',

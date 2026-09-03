@@ -1659,13 +1659,14 @@ export const fr: TranslationStructure = {
                   backendsSubtitle: 'Backends configurés et cibles de lancement personnalisées.',
               },
               enableInjection: {
-                  title: 'Activer l’injection des règles',
+                  title: 'Instructions des exécutions Happier',
+                  subtitle: 'La désactivation retire le routage natif prioritaire et les mécanismes d’exécution Happier des prompts système des agents de code.',
               },
               characterBudget: {
-                  title: 'Budget de caractères',
+                  title: 'Budget des règles personnalisées',
                   subtitle: ({ value }: { value: string }) => `${value} caractères`,
-                  promptTitle: 'Budget de caractères',
-                  promptBody: 'Nombre max de caractères à injecter dans le system prompt.',
+                  promptTitle: 'Budget des règles personnalisées',
+                  promptBody: 'Nombre maximal de caractères pour les règles d’exécution personnalisées dans le prompt système.',
               },
               rules: {
                   groupTitle: 'Règles de délégation',
@@ -4939,9 +4940,14 @@ export const fr: TranslationStructure = {
         },
         resuming: 'Reprise…',
         resumeFailed: 'Échec de la reprise de la session',
-        pendingQueuedResumeFailedTitle: 'Message mis en file',
-        pendingQueuedResumeFailedBody:
-            'Ton message a été enregistré dans la file d’attente, mais Happier n’a pas pu reprendre cette session. Réessaie pour la démarrer.',
+        pendingActivation: {
+            waiting_offline: { title: 'Message en attente pour cette machine', body: 'Il sera traité lorsque cette machine et son daemon seront de nouveau en ligne.' },
+            waiting: { title: 'En attente de reprise', body: 'Ton message est bien en attente pendant que le daemon reprend cette session.' },
+            failed: { title: 'Impossible de reprendre la session', body: 'Ton message est toujours en attente. Réessaie quand tu le souhaites.' },
+            queued: { title: 'Message en attente', body: 'Cette session inactive contient un message en attente. Reprends-la quand tu le souhaites.' },
+            queued_offline: { title: 'Message en attente d’une reprise manuelle', body: 'Il restera en attente jusqu’à ce que tu reprennes cette session.' },
+            actions: { retry: 'Réessayer', resume: 'Reprendre', process_when_online: 'Traiter une fois en ligne', keepQueued: 'Garder en attente', autoResumeOptions: 'Options de reprise automatique' },
+        },
         composerBanners: {
             showBannerAction: 'Afficher la bannière',
             hideBannerAction: 'Masquer la bannière',
@@ -4993,7 +4999,7 @@ export const fr: TranslationStructure = {
             `Cette session est terminée et ne peut pas être reprise, car ${provider} ne prend pas en charge la restauration de son contexte ici. Démarre une nouvelle session pour continuer.`,
         machineOfflineNoticeTitle: 'La machine est hors ligne',
         machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-            `“${machine}” est hors ligne, Happier ne peut donc pas encore reprendre cette session. Remets-la en ligne pour continuer.`,
+            `“${machine}” est hors ligne. Tu peux mettre un message en attente maintenant ; Happier continuera quand la machine sera de nouveau en ligne.`,
         machineOfflineCannotResume: 'La machine est hors ligne. Remets-la en ligne pour reprendre cette session.',
         openRuns: 'Ouvrir les runs de la session',
         openAutomations: 'Ouvrir les automatisations de la session',
@@ -5952,6 +5958,7 @@ export const fr: TranslationStructure = {
         viewSessionLogSubtitle: 'Ouvrir le suivi du log en direct pour cette session',
         pinSession: 'Épingler la session',
         unpinSession: 'Désépingler la session',
+        pinLimitExceeded: ({ count }: { count: number }) => `Vous pouvez épingler jusqu’à ${count.toLocaleString()} sessions. Désépinglez-en une autre, puis réessayez.`,
         copyResumeCommand: 'Copier la commande de reprise',
         resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
         viewMachine: 'Voir la machine',
@@ -7104,6 +7111,14 @@ export const fr: TranslationStructure = {
                 runClass: 'Classe de run',
                 ioMode: 'Mode E/S',
             },
+            launchOrigin: {
+                crossSession: ({ sessionId }: { sessionId: string }) => `Démarré depuis la session ${sessionId}`,
+                externalCli: 'Démarré depuis la CLI',
+                externalMcp: 'Démarré via MCP',
+                externalAction: 'Démarré via une action Happier',
+                externalUnknown: 'Démarré de l’extérieur (origine inconnue)',
+                legacyUnknown: 'Origine du démarrage inconnue',
+            },
             timestamps: {
                 started: 'Démarré',
                 finished: 'Terminé',
@@ -7524,6 +7539,16 @@ settingsSession: {
               title: 'Avancé',
           },
           messageSending: {
+              inactiveResumePolicyTitle: 'Reprise automatique après l’envoi',
+              inactiveResumePolicySubtitle: 'Choisis ce que Happier doit faire après un envoi à une session inactive.',
+              inactiveResumePolicy: {
+                  whenAvailableTitle: 'Maintenant ou au retour de la machine',
+                  whenAvailableSubtitle: 'Reprendre immédiatement si elle est joignable, sinon traiter au retour du daemon.',
+                  onlineOnlyTitle: 'Seulement si la machine est en ligne',
+                  onlineOnlySubtitle: 'Essayer une fois à l’envoi. Si elle est indisponible, garder le message en attente.',
+                  manualTitle: 'Jamais automatiquement',
+                  manualSubtitle: 'Toujours garder les messages en attente jusqu’à la reprise de la session.',
+              },
               title: 'Envoi des messages',
               footer: 'Contrôle ce qui se passe quand tu envoies un message pendant que l’agent tourne.',
               queueInAgentTitle: 'Mettre en file dans l’agent (actuel)',

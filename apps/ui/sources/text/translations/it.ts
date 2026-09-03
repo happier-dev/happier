@@ -2172,14 +2172,15 @@ export const it: TranslationStructure = {
             backendsSubtitle: "Backend configurati e obiettivi di avvio personalizzati.",
           },
           enableInjection: {
-            title: "Abilita iniezione guida",
+            title: "Istruzioni per le esecuzioni Happier",
+            subtitle: "Disattivandole, il routing nativo prioritario e i meccanismi delle esecuzioni Happier vengono rimossi dai prompt di sistema degli agenti di coding.",
           },
           characterBudget: {
-            title: "Limite caratteri",
+            title: "Limite regole personalizzate",
             subtitle: ({ value }: { value: string }) => `${value} caratteri`,
-            promptTitle: "Limite caratteri",
+            promptTitle: "Limite regole personalizzate",
             promptBody:
-              "Numero massimo di caratteri da inserire nel prompt di sistema.",
+              "Numero massimo di caratteri per le regole di esecuzione personalizzate nel prompt di sistema.",
           },
           rules: {
             groupTitle: "Regole di guida",
@@ -5628,10 +5629,15 @@ export const it: TranslationStructure = {
 	    },
 	    resuming: "Ripresa in corso...",
 	    resumeFailed: "Impossibile riprendere la sessione",
-	    pendingQueuedResumeFailedTitle: "Messaggio in coda",
-	    pendingQueuedResumeFailedBody:
-	      "Il tuo messaggio è stato salvato nella coda dei messaggi in sospeso, ma Happier non è riuscito a riprendere questa sessione. Riprova per avviarla.",
-	    composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: 'Messaggio in coda per questa macchina', body: 'Verrà elaborato quando questa macchina e il relativo daemon torneranno online.' },
+            waiting: { title: 'In attesa di ripresa', body: 'Il messaggio è al sicuro nella coda mentre il daemon riprende questa sessione.' },
+            failed: { title: 'Impossibile riprendere la sessione', body: 'Il messaggio è ancora al sicuro nella coda. Riprova quando vuoi.' },
+            queued: { title: 'Messaggio in coda', body: 'Questa sessione inattiva ha un messaggio in coda. Riprendila quando vuoi.' },
+            queued_offline: { title: 'Messaggio in attesa di ripresa manuale', body: 'Resterà in coda finché non riprenderai questa sessione.' },
+            actions: { retry: 'Riprova', resume: 'Riprendi', process_when_online: 'Elabora quando online', keepQueued: 'Mantieni in coda', autoResumeOptions: 'Opzioni di ripresa automatica' },
+        },
+        composerBanners: {
             showBannerAction: 'Mostra banner',
             hideBannerAction: 'Nascondi banner',
 	    },
@@ -5684,7 +5690,7 @@ export const it: TranslationStructure = {
       `Questa sessione è terminata e non può essere ripresa perché ${provider} non supporta il ripristino del contesto qui. Avvia una nuova sessione per continuare.`,
     machineOfflineNoticeTitle: "La macchina è offline",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-      `“${machine}” è offline, quindi Happier non può ancora riprendere questa sessione. Riporta la macchina online per continuare.`,
+      `“${machine}” è offline. Puoi mettere in coda un messaggio ora; Happier continuerà quando la macchina tornerà online.`,
       machineOfflineCannotResume:
         "La macchina è offline. Riportala online per riprendere questa sessione.",
           openRuns: "Apri esecuzioni della sessione",
@@ -6680,7 +6686,8 @@ export const it: TranslationStructure = {
     viewSessionLogTitle: "Visualizza log della sessione",
     viewSessionLogSubtitle: "Apri la coda del log in tempo reale per questa sessione",
     pinSession: "Fissa sessione",
-    unpinSession: "Rimuovi fissaggio",
+        unpinSession: "Rimuovi fissaggio",
+        pinLimitExceeded: ({ count }: { count: number }) => `Puoi fissare fino a ${count.toLocaleString()} sessioni. Rimuovi il fissaggio da un’altra sessione e riprova.`,
     copyResumeCommand: "Copia comando di ripresa",
     resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
     viewMachine: "Visualizza macchina",
@@ -7946,6 +7953,14 @@ export const it: TranslationStructure = {
         runClass: "Classe esecuzione",
         ioMode: "Modalità I/O",
       },
+      launchOrigin: {
+        crossSession: ({ sessionId }: { sessionId: string }) => `Avviato dalla sessione ${sessionId}`,
+        externalCli: "Avviato esternamente dalla CLI",
+        externalMcp: "Avviato esternamente tramite MCP",
+        externalAction: "Avviato esternamente tramite un'azione Happier",
+        externalUnknown: "Avviato esternamente (origine sconosciuta)",
+        legacyUnknown: "Origine di avvio sconosciuta",
+      },
       timestamps: {
         started: "Avviato",
         finished: "Terminato",
@@ -8295,6 +8310,16 @@ settingsSession: {
           title: 'Avanzate',
       },
       messageSending: {
+        inactiveResumePolicyTitle: "Ripresa automatica dopo l'invio",
+        inactiveResumePolicySubtitle: "Scegli cosa deve fare Happier dopo l'invio a una sessione inattiva.",
+        inactiveResumePolicy: {
+          whenAvailableTitle: "Ora o quando la macchina torna disponibile",
+          whenAvailableSubtitle: "Riprendi subito se raggiungibile; altrimenti elabora alla riconnessione del daemon.",
+          onlineOnlyTitle: "Solo se la macchina è online",
+          onlineOnlySubtitle: "Prova una volta all'invio. Se non disponibile, mantieni il messaggio in coda.",
+          manualTitle: "Mai automaticamente",
+          manualSubtitle: "Mantieni sempre i messaggi in coda finché non riprendi la sessione.",
+        },
         title: "Invio messaggi",
         footer:
           "Controlla cosa succede quando invii un messaggio mentre l'agente è in esecuzione.",

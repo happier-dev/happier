@@ -1959,13 +1959,14 @@ export const pt: TranslationStructure = {
         backendsSubtitle: "Backends configurados e alvos de inicialização personalizados.",
       },
       enableInjection: {
-        title: "Ativar injeção de orientação",
+        title: "Instruções de execuções do Happier",
+        subtitle: "Desativar remove o roteamento nativo primeiro e a mecânica de execuções do Happier dos prompts de sistema dos agentes de código.",
       },
       characterBudget: {
-        title: "Limite de caracteres",
+        title: "Limite de regras personalizadas",
         subtitle: ({ value }: { value: string }) => `${value} caracteres`,
-        promptTitle: "Limite de caracteres",
-        promptBody: "Máximo de caracteres a injetar no prompt do sistema.",
+        promptTitle: "Limite de regras personalizadas",
+        promptBody: "Máximo de caracteres para regras de execução personalizadas no prompt do sistema.",
       },
       rules: {
         groupTitle: "Regras de orientação",
@@ -5406,10 +5407,15 @@ export const pt: TranslationStructure = {
 	    },
 	    resuming: "Retomando...",
 	    resumeFailed: "Falha ao retomar a sessão",
-	    pendingQueuedResumeFailedTitle: "Mensagem na fila",
-	    pendingQueuedResumeFailedBody:
-	      "Sua mensagem foi salva na fila de pendentes, mas o Happier não conseguiu retomar esta sessão. Tente novamente para iniciá-la.",
-	    composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: 'Mensagem na fila para esta máquina', body: 'Ela será processada quando esta máquina e o daemon voltarem a ficar online.' },
+            waiting: { title: 'Aguardando retomada', body: 'Sua mensagem está segura na fila enquanto o daemon retoma esta sessão.' },
+            failed: { title: 'Não foi possível retomar a sessão', body: 'Sua mensagem continua segura na fila. Tente novamente quando quiser.' },
+            queued: { title: 'Mensagem na fila', body: 'Esta sessão inativa tem uma mensagem na fila. Retome-a quando quiser.' },
+            queued_offline: { title: 'Mensagem aguardando retomada manual', body: 'Ela ficará na fila até você retomar esta sessão.' },
+            actions: { retry: 'Tentar novamente', resume: 'Retomar', process_when_online: 'Processar quando online', keepQueued: 'Manter na fila', autoResumeOptions: 'Opções de retomada automática' },
+        },
+        composerBanners: {
             showBannerAction: 'Mostrar aviso',
             hideBannerAction: 'Ocultar aviso',
 	    },
@@ -5462,7 +5468,7 @@ export const pt: TranslationStructure = {
       `Esta sessão terminou e não pode ser retomada porque ${provider} não oferece suporte para restaurar o contexto aqui. Inicie uma nova sessão para continuar.`,
     machineOfflineNoticeTitle: "A máquina está offline",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-      `“${machine}” está offline, então o Happier ainda não consegue retomar esta sessão. Traga a máquina de volta online para continuar.`,
+      `“${machine}” está offline. Você pode colocar uma mensagem na fila agora; o Happier continuará quando a máquina voltar a ficar online.`,
       machineOfflineCannotResume:
         "A máquina está offline. Traga-a de volta online para retomar esta sessão.",
         openRuns: "Abrir execuções da sessão",
@@ -6471,7 +6477,8 @@ export const pt: TranslationStructure = {
     viewSessionLogTitle: "Ver log da sessão",
     viewSessionLogSubtitle: "Abrir a cauda do log ao vivo para esta sessão",
     pinSession: "Fixar sessão",
-    unpinSession: "Desafixar sessão",
+        unpinSession: "Desafixar sessão",
+        pinLimitExceeded: ({ count }: { count: number }) => `Pode fixar até ${count.toLocaleString()} sessões. Desafixe outra sessão e tente novamente.`,
     copyResumeCommand: "Copiar comando de retomada",
     resumeCommand: ({ sessionId }: { sessionId: string }) =>
       `happier resume ${sessionId}`,
@@ -7740,6 +7747,14 @@ export const pt: TranslationStructure = {
         runClass: "Classe de execução",
         ioMode: "Modo de E/S",
       },
+      launchOrigin: {
+        crossSession: ({ sessionId }: { sessionId: string }) => `Iniciado da sessão ${sessionId}`,
+        externalCli: "Iniciado externamente pela CLI",
+        externalMcp: "Iniciado externamente via MCP",
+        externalAction: "Iniciado externamente por uma ação do Happier",
+        externalUnknown: "Iniciado externamente (origem desconhecida)",
+        legacyUnknown: "Origem de início desconhecida",
+      },
       timestamps: {
         started: "Iniciado",
         finished: "Finalizado",
@@ -8089,6 +8104,16 @@ settingsSession: {
           title: 'Avançado',
       },
       messageSending: {
+        inactiveResumePolicyTitle: "Retomada automática após o envio",
+        inactiveResumePolicySubtitle: "Escolha o que o Happier deve fazer após enviar para uma sessão inativa.",
+        inactiveResumePolicy: {
+          whenAvailableTitle: "Agora ou quando a máquina voltar",
+          whenAvailableSubtitle: "Retomar imediatamente se estiver acessível; caso contrário, processar quando o daemon se reconectar.",
+          onlineOnlyTitle: "Somente se a máquina estiver online",
+          onlineOnlySubtitle: "Tentar uma vez ao enviar. Se indisponível, manter a mensagem na fila.",
+          manualTitle: "Nunca automaticamente",
+          manualSubtitle: "Sempre manter as mensagens na fila até você retomar a sessão.",
+        },
         title: "Envio de mensagens",
         footer:
           "Controla o que acontece quando você envia uma mensagem enquanto o agente está em execução.",

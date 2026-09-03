@@ -1807,14 +1807,15 @@ export const ru: TranslationStructure = {
           backendsSubtitle: "Настроенные серверные части и пользовательские цели запуска.",
         },
         enableInjection: {
-          title: "Включить внедрение подсказок",
+          title: "Инструкции для запусков Happier",
+          subtitle: "Отключение удаляет приоритет нативной маршрутизации и механику запусков Happier из системных промптов агентов программирования.",
         },
         characterBudget: {
-          title: "Лимит символов",
+          title: "Лимит пользовательских правил",
           subtitle: ({ value }: { value: string }) => `${value} символов`,
-          promptTitle: "Лимит символов",
+          promptTitle: "Лимит пользовательских правил",
           promptBody:
-            "Максимум символов, которые будут добавлены в системный промпт.",
+            "Максимум символов для пользовательских правил запуска в системном промпте.",
         },
         rules: {
           groupTitle: "Правила подсказок",
@@ -5335,7 +5336,8 @@ export const ru: TranslationStructure = {
     viewSessionLogTitle: "Открыть лог сессии",
     viewSessionLogSubtitle: "Открыть хвост лога в реальном времени для этой сессии",
     pinSession: "Закрепить сессию",
-    unpinSession: "Открепить сессию",
+        unpinSession: "Открепить сессию",
+        pinLimitExceeded: ({ count }: { count: number }) => `Можно закрепить до ${count.toLocaleString()} сеансов. Открепите другой сеанс и повторите попытку.`,
     copyResumeCommand: "Скопировать команду возобновления",
     resumeCommand: ({ sessionId }: { sessionId: string }) =>
       `happier resume ${sessionId}`,
@@ -5781,10 +5783,15 @@ export const ru: TranslationStructure = {
 	    },
 	    resuming: "Возобновление...",
 	    resumeFailed: "Не удалось возобновить сессию",
-	    pendingQueuedResumeFailedTitle: "Сообщение поставлено в очередь",
-	    pendingQueuedResumeFailedBody:
-	      "Ваше сообщение сохранено в очереди ожидания, но Happier не смог возобновить эту сессию. Нажмите «Повторить», чтобы запустить её.",
-	    composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: 'Сообщение в очереди для этой машины', body: 'Оно будет обработано, когда эта машина и её daemon снова будут онлайн.' },
+            waiting: { title: 'Ожидание возобновления', body: 'Ваше сообщение сохранено в очереди, пока daemon возобновляет эту сессию.' },
+            failed: { title: 'Не удалось возобновить сессию', body: 'Ваше сообщение по-прежнему сохранено в очереди. Повторите попытку, когда будете готовы.' },
+            queued: { title: 'Сообщение в очереди', body: 'В этой неактивной сессии есть сообщение в очереди. Возобновите её, когда будете готовы.' },
+            queued_offline: { title: 'Сообщение ожидает ручного возобновления', body: 'Оно останется в очереди, пока вы не возобновите эту сессию.' },
+            actions: { retry: 'Повторить', resume: 'Возобновить', process_when_online: 'Обработать после подключения', keepQueued: 'Оставить в очереди', autoResumeOptions: 'Параметры автовозобновления' },
+        },
+        composerBanners: {
             showBannerAction: 'Показать баннер',
             hideBannerAction: 'Скрыть баннер',
 	    },
@@ -5837,7 +5844,7 @@ export const ru: TranslationStructure = {
       `Эта сессия завершена и не может быть возобновлена, потому что ${provider} не поддерживает восстановление контекста здесь. Начните новую сессию, чтобы продолжить.`,
     machineOfflineNoticeTitle: "Машина не в сети",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-      `“${machine}” не в сети, поэтому Happier пока не может возобновить эту сессию. Подключите машину, чтобы продолжить.`,
+      `“${machine}” не в сети. Сообщение можно поставить в очередь сейчас; Happier продолжит, когда компьютер снова подключится.`,
         machineOfflineCannotResume:
           "Машина не в сети. Подключите её, чтобы возобновить эту сессию.",
         openRuns: "Открыть запуски сессии",
@@ -7605,6 +7612,14 @@ export const ru: TranslationStructure = {
         runClass: "Класс запуска",
         ioMode: "Режим ввода/вывода",
       },
+      launchOrigin: {
+        crossSession: ({ sessionId }: { sessionId: string }) => `Запущено из сессии ${sessionId}`,
+        externalCli: "Запущено извне через CLI",
+        externalMcp: "Запущено извне через MCP",
+        externalAction: "Запущено извне через действие Happier",
+        externalUnknown: "Запущено извне (источник неизвестен)",
+        legacyUnknown: "Источник запуска неизвестен",
+      },
       timestamps: {
         started: "Начато",
         finished: "Завершено",
@@ -7954,6 +7969,16 @@ settingsSession: {
         title: 'Дополнительно',
     },
     messageSending: {
+      inactiveResumePolicyTitle: "Автоматическое возобновление после отправки",
+      inactiveResumePolicySubtitle: "Выберите, что Happier должен делать после отправки в неактивную сессию.",
+      inactiveResumePolicy: {
+        whenAvailableTitle: "Сейчас или после возвращения машины",
+        whenAvailableSubtitle: "Возобновить сразу, если доступна; иначе обработать после переподключения daemon.",
+        onlineOnlyTitle: "Только если машина онлайн",
+        onlineOnlySubtitle: "Попробовать один раз при отправке. Если недоступна, оставить сообщение в очереди.",
+        manualTitle: "Никогда автоматически",
+        manualSubtitle: "Всегда оставлять сообщения в очереди до ручного возобновления сессии.",
+      },
       title: "Отправка сообщений",
       footer:
         "Определяет, что происходит при отправке сообщения, пока агент работает.",

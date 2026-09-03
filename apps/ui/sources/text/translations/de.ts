@@ -1659,13 +1659,14 @@ export const de: TranslationStructure = {
                   backendsSubtitle: 'Konfigurierte Backends und eigene Startziele.',
               },
               enableInjection: {
-                  title: 'Einspielen von Hinweisen aktivieren',
+                  title: 'Anweisungen für Happier-Ausführungen',
+                  subtitle: 'Beim Deaktivieren werden Native-first-Routing und Happier-Ausführungsmechanik aus System-Prompts für Coding-Agenten entfernt.',
               },
               characterBudget: {
-                  title: 'Zeichenbudget',
+                  title: 'Budget für benutzerdefinierte Regeln',
                   subtitle: ({ value }: { value: string }) => `${value} Zeichen`,
-                  promptTitle: 'Zeichenbudget',
-                  promptBody: 'Maximale Zeichenzahl, die in den System-Prompt eingespielt wird.',
+                  promptTitle: 'Budget für benutzerdefinierte Regeln',
+                  promptBody: 'Maximale Zeichenzahl für benutzerdefinierte Ausführungsregeln im System-Prompt.',
               },
               rules: {
                   groupTitle: 'Hinweisregeln',
@@ -4952,9 +4953,14 @@ export const de: TranslationStructure = {
         },
         resuming: 'Wird fortgesetzt…',
         resumeFailed: 'Die Session ließ sich nicht fortsetzen',
-        pendingQueuedResumeFailedTitle: 'Nachricht eingereiht',
-        pendingQueuedResumeFailedBody:
-            'Deine Nachricht wurde in die Warteschlange gelegt, aber Happier konnte diese Session nicht fortsetzen. Versuch es erneut, um sie zu starten.',
+        pendingActivation: {
+            waiting_offline: { title: 'Nachricht für diesen Computer eingereiht', body: 'Sie wird verarbeitet, sobald dieser Computer und sein Daemon wieder online sind.' },
+            waiting: { title: 'Warten auf Fortsetzung', body: 'Deine Nachricht ist sicher eingereiht, während der Daemon diese Session fortsetzt.' },
+            failed: { title: 'Session konnte nicht fortgesetzt werden', body: 'Deine Nachricht ist weiterhin sicher eingereiht. Versuche es erneut, wenn du bereit bist.' },
+            queued: { title: 'Nachricht eingereiht', body: 'Für diese inaktive Session liegt eine Nachricht in der Warteschlange. Setze sie fort, wenn du bereit bist.' },
+            queued_offline: { title: 'Nachricht wartet auf manuelles Fortsetzen', body: 'Sie bleibt eingereiht, bis du diese Session fortsetzt.' },
+            actions: { retry: 'Erneut versuchen', resume: 'Fortsetzen', process_when_online: 'Verarbeiten, sobald online', keepQueued: 'Eingereiht lassen', autoResumeOptions: 'Optionen für automatisches Fortsetzen' },
+        },
         composerBanners: {
             showBannerAction: 'Banner zeigen',
             hideBannerAction: 'Banner ausblenden',
@@ -5006,7 +5012,7 @@ export const de: TranslationStructure = {
             `Diese Session ist beendet und lässt sich nicht fortsetzen, weil ${provider} das Wiederherstellen des Kontexts hier nicht unterstützt. Starte eine neue Session, um weiterzumachen.`,
         machineOfflineNoticeTitle: 'Rechner ist offline',
         machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-            `“${machine}“ ist offline, deshalb kann Happier diese Session noch nicht fortsetzen. Bring ihn online, um weiterzumachen.`,
+            `“${machine}“ ist offline. Du kannst jetzt eine Nachricht einreihen; Happier macht weiter, sobald der Rechner wieder online ist.`,
         machineOfflineCannotResume: 'Der Rechner ist offline. Bring ihn online, um diese Session fortzusetzen.',
         openRuns: 'Session-Runs öffnen',
         openAutomations: 'Session-Automationen öffnen',
@@ -5965,6 +5971,7 @@ export const de: TranslationStructure = {
         viewSessionLogSubtitle: 'Das laufende Log-Ende dieser Session öffnen',
         pinSession: 'Session anheften',
         unpinSession: 'Session lösen',
+        pinLimitExceeded: ({ count }: { count: number }) => `Du kannst bis zu ${count.toLocaleString()} Sitzungen anheften. Löse eine andere und versuche es erneut.`,
         copyResumeCommand: 'Befehl zum Fortsetzen kopieren',
         resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
         viewMachine: 'Rechner ansehen',
@@ -7117,6 +7124,14 @@ export const de: TranslationStructure = {
                 runClass: 'Run-Klasse',
                 ioMode: 'I/O-Modus',
             },
+            launchOrigin: {
+                crossSession: ({ sessionId }: { sessionId: string }) => `Von Sitzung ${sessionId} gestartet`,
+                externalCli: 'Extern über die CLI gestartet',
+                externalMcp: 'Extern über MCP gestartet',
+                externalAction: 'Extern über eine Happier-Aktion gestartet',
+                externalUnknown: 'Extern gestartet (Ursprung unbekannt)',
+                legacyUnknown: 'Startursprung unbekannt',
+            },
             timestamps: {
                 started: 'Gestartet',
                 finished: 'Fertig',
@@ -7537,6 +7552,16 @@ settingsSession: {
               title: 'Erweitert',
           },
           messageSending: {
+              inactiveResumePolicyTitle: 'Automatisch fortsetzen nach dem Senden',
+              inactiveResumePolicySubtitle: 'Lege fest, was Happier nach dem Senden an eine inaktive Session tun soll.',
+              inactiveResumePolicy: {
+                  whenAvailableTitle: 'Jetzt oder wenn der Computer zurückkehrt',
+                  whenAvailableSubtitle: 'Sofort fortsetzen, wenn erreichbar; andernfalls beim erneuten Verbinden des Daemons verarbeiten.',
+                  onlineOnlyTitle: 'Nur wenn der Computer online ist',
+                  onlineOnlySubtitle: 'Beim Senden einmal versuchen. Falls nicht erreichbar, bleibt die Nachricht eingereiht.',
+                  manualTitle: 'Nie automatisch',
+                  manualSubtitle: 'Nachrichten bleiben immer eingereiht, bis du die Session fortsetzt.',
+              },
               title: 'Nachrichten senden',
               footer: 'Steuert, was passiert, wenn du eine Nachricht sendest, während der Agent läuft.',
               queueInAgentTitle: 'Im Agent einreihen (aktuell)',

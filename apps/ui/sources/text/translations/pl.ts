@@ -1867,14 +1867,15 @@ export const pl: TranslationStructure = {
             backendsSubtitle: "Skonfigurowane backendy i niestandardowe cele uruchamiania.",
           },
           enableInjection: {
-            title: "Włącz wstrzykiwanie wskazówek",
+            title: "Instrukcje uruchomień Happier",
+            subtitle: "Wyłączenie usuwa routing z priorytetem natywnym i mechanikę uruchomień Happier z promptów systemowych agentów kodujących.",
           },
           characterBudget: {
-            title: "Limit znaków",
+            title: "Limit reguł niestandardowych",
             subtitle: ({ value }: { value: string }) => `${value} znaków`,
-            promptTitle: "Limit znaków",
+            promptTitle: "Limit reguł niestandardowych",
             promptBody:
-              "Maksymalna liczba znaków do wstrzyknięcia do promptu systemowego.",
+              "Maksymalna liczba znaków dla niestandardowych reguł uruchamiania w prompcie systemowym.",
           },
           rules: {
             groupTitle: "Reguły wskazówek",
@@ -5307,10 +5308,15 @@ export const pl: TranslationStructure = {
 	    },
 	    resuming: "Wznawianie...",
 	    resumeFailed: "Nie udało się wznowić sesji",
-	    pendingQueuedResumeFailedTitle: "Wiadomość w kolejce",
-	    pendingQueuedResumeFailedBody:
-	      "Twoja wiadomość została zapisana w kolejce oczekujących, ale Happier nie mógł wznowić tej sesji. Spróbuj ponownie, aby ją uruchomić.",
-	    composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: 'Wiadomość w kolejce dla tej maszyny', body: 'Zostanie przetworzona, gdy ta maszyna i jej daemon znów będą online.' },
+            waiting: { title: 'Oczekiwanie na wznowienie', body: 'Wiadomość jest bezpiecznie w kolejce, gdy daemon wznawia tę sesję.' },
+            failed: { title: 'Nie udało się wznowić sesji', body: 'Wiadomość nadal jest bezpiecznie w kolejce. Spróbuj ponownie, gdy chcesz.' },
+            queued: { title: 'Wiadomość w kolejce', body: 'Ta nieaktywna sesja ma wiadomość w kolejce. Wznów ją, gdy chcesz.' },
+            queued_offline: { title: 'Wiadomość czeka na ręczne wznowienie', body: 'Pozostanie w kolejce, dopóki nie wznowisz tej sesji.' },
+            actions: { retry: 'Spróbuj ponownie', resume: 'Wznów', process_when_online: 'Przetwórz po powrocie online', keepQueued: 'Pozostaw w kolejce', autoResumeOptions: 'Opcje automatycznego wznawiania' },
+        },
+        composerBanners: {
             showBannerAction: 'Pokaż baner',
             hideBannerAction: 'Ukryj baner',
 	    },
@@ -5363,7 +5369,7 @@ export const pl: TranslationStructure = {
       `Ta sesja została zakończona i nie można jej wznowić, ponieważ ${provider} nie obsługuje przywracania kontekstu tutaj. Rozpocznij nową sesję, aby kontynuować.`,
     machineOfflineNoticeTitle: "Maszyna jest offline",
     machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-      `“${machine}” jest offline, więc Happier nie może jeszcze wznowić tej sesji. Przywróć maszynę online, aby kontynuować.`,
+      `“${machine}” jest offline. Możesz teraz dodać wiadomość do kolejki; Happier będzie kontynuować, gdy maszyna wróci online.`,
       machineOfflineCannotResume:
         "Maszyna jest offline. Przywróć ją online, aby wznowić tę sesję.",
         openRuns: "Otwórz uruchomienia sesji",
@@ -6358,7 +6364,8 @@ export const pl: TranslationStructure = {
     viewSessionLogTitle: "Zobacz log sesji",
     viewSessionLogSubtitle: "Otwórz podgląd końcówki logu na żywo dla tej sesji",
     pinSession: "Przypnij sesję",
-    unpinSession: "Odepnij sesję",
+        unpinSession: "Odepnij sesję",
+        pinLimitExceeded: ({ count }: { count: number }) => `Możesz przypiąć maksymalnie ${count.toLocaleString()} sesji. Odepnij inną sesję i spróbuj ponownie.`,
     copyResumeCommand: "Kopiuj komendę wznowienia",
     resumeCommand: ({ sessionId }: { sessionId: string }) =>
       `happier resume ${sessionId}`,
@@ -7621,6 +7628,14 @@ export const pl: TranslationStructure = {
         runClass: "Klasa uruchomienia",
         ioMode: "Tryb I/O",
       },
+      launchOrigin: {
+        crossSession: ({ sessionId }: { sessionId: string }) => `Uruchomiono z sesji ${sessionId}`,
+        externalCli: "Uruchomiono zewnętrznie z CLI",
+        externalMcp: "Uruchomiono zewnętrznie przez MCP",
+        externalAction: "Uruchomiono zewnętrznie przez akcję Happier",
+        externalUnknown: "Uruchomiono zewnętrznie (nieznane źródło)",
+        legacyUnknown: "Nieznane źródło uruchomienia",
+      },
       timestamps: {
         started: "Rozpoczęto",
         finished: "Zakończono",
@@ -7970,6 +7985,16 @@ settingsSession: {
           title: 'Zaawansowane',
       },
       messageSending: {
+        inactiveResumePolicyTitle: "Automatyczne wznawianie po wysłaniu",
+        inactiveResumePolicySubtitle: "Wybierz, co Happier ma zrobić po wysłaniu do nieaktywnej sesji.",
+        inactiveResumePolicy: {
+          whenAvailableTitle: "Teraz lub po powrocie maszyny",
+          whenAvailableSubtitle: "Wznów od razu, jeśli jest dostępna; w przeciwnym razie przetwórz po ponownym połączeniu daemona.",
+          onlineOnlyTitle: "Tylko gdy maszyna jest online",
+          onlineOnlySubtitle: "Spróbuj raz podczas wysyłania. Jeśli jest niedostępna, pozostaw wiadomość w kolejce.",
+          manualTitle: "Nigdy automatycznie",
+          manualSubtitle: "Zawsze pozostawiaj wiadomości w kolejce do ręcznego wznowienia sesji.",
+        },
         title: "Wysyłanie wiadomości",
         footer:
           "Określa, co dzieje się, gdy wysyłasz wiadomość, gdy agent pracuje.",

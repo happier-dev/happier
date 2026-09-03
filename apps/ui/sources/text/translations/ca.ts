@@ -1736,13 +1736,14 @@ export const ca: TranslationStructure = {
                 backendsSubtitle: 'Backends configurats i destinacions d’inici personalitzades.',
             },
             enableInjection: {
-                title: 'Activa la injecció de guia',
+                title: 'Instruccions de les execucions de Happier',
+                subtitle: 'Desactivar-les elimina l’encaminament natiu prioritari i la mecànica d’execucions de Happier dels prompts del sistema dels agents de codi.',
             },
             characterBudget: {
-                title: 'Límit de caràcters',
+                title: 'Límit de regles personalitzades',
                 subtitle: ({ value }: { value: string }) => `${value} caràcters`,
-                promptTitle: 'Límit de caràcters',
-                promptBody: 'Màxim de caràcters per afegir al prompt del sistema.',
+                promptTitle: 'Límit de regles personalitzades',
+                promptBody: 'Màxim de caràcters per a regles d’execució personalitzades al prompt del sistema.',
             },
             rules: {
                 groupTitle: 'Regles de guia',
@@ -4955,10 +4956,15 @@ deps: {
 	        },
 	        resuming: 'Reprenent...',
 	        resumeFailed: 'No s’ha pogut reprendre la sessió',
-	        pendingQueuedResumeFailedTitle: 'Missatge en cua',
-	        pendingQueuedResumeFailedBody:
-	            'El teu missatge s’ha desat a la cua pendent, però Happier no ha pogut reprendre aquesta sessió. Torna-ho a provar per iniciar-la.',
-	        composerBanners: {
+        pendingActivation: {
+            waiting_offline: { title: 'Missatge en cua per a aquesta màquina', body: 'Es processarà quan aquesta màquina i el seu dimoni tornin a estar en línia.' },
+            waiting: { title: 'Esperant per reprendre', body: 'El missatge és segur a la cua mentre el dimoni reprèn aquesta sessió.' },
+            failed: { title: 'No s’ha pogut reprendre la sessió', body: 'El missatge continua segur a la cua. Torna-ho a provar quan vulguis.' },
+            queued: { title: 'Missatge en cua', body: 'Aquesta sessió inactiva té un missatge en cua. Reprèn-la quan vulguis.' },
+            queued_offline: { title: 'Missatge pendent de represa manual', body: 'Continuarà en cua fins que reprenguis aquesta sessió.' },
+            actions: { retry: 'Torna-ho a provar', resume: 'Reprèn', process_when_online: 'Processa quan estigui en línia', keepQueued: 'Mantén en cua', autoResumeOptions: 'Opcions de represa automàtica' },
+        },
+        composerBanners: {
             showBannerAction: 'Mostra el bàner',
             hideBannerAction: 'Amaga el bàner',
 	        },
@@ -5009,7 +5015,7 @@ deps: {
             `Aquesta sessió ha finalitzat i no es pot reprendre perquè ${provider} no admet restaurar el seu context aquí. Inicia una sessió nova per continuar.`,
         machineOfflineNoticeTitle: 'La màquina està fora de línia',
           machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-              `“${machine}” està fora de línia, així que Happier encara no pot reprendre aquesta sessió. Torna-la a posar en línia per continuar.`,
+              `“${machine}” està fora de línia. Pots posar un missatge a la cua ara; Happier continuarà quan la màquina torni a estar en línia.`,
             machineOfflineCannotResume: 'La màquina està fora de línia. Torna-la a posar en línia per reprendre aquesta sessió.',
                 openRuns: 'Obre les execucions de la sessió',
                 openAutomations: 'Obre les automatitzacions de la sessió',
@@ -5981,6 +5987,7 @@ deps: {
         viewSessionLogSubtitle: 'Obre el final del registre en viu per a aquesta sessió',
         pinSession: 'Fixar sessió',
         unpinSession: 'Desfixar sessió',
+        pinLimitExceeded: ({ count }: { count: number }) => `Pots fixar fins a ${count.toLocaleString()} sessions. Desfixa'n una altra i torna-ho a provar.`,
         copyResumeCommand: 'Copia l’ordre de reprendre',
         resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
         viewMachine: 'Veure la màquina',
@@ -7114,6 +7121,14 @@ deps: {
                 runClass: 'Classe d\'execució',
                 ioMode: 'Mode E/S',
             },
+            launchOrigin: {
+                crossSession: ({ sessionId }: { sessionId: string }) => `Iniciat des de la sessió ${sessionId}`,
+                externalCli: 'Iniciat externament des de la CLI',
+                externalMcp: 'Iniciat externament mitjançant MCP',
+                externalAction: 'Iniciat externament mitjançant una acció de Happier',
+                externalUnknown: 'Iniciat externament (origen desconegut)',
+                legacyUnknown: 'Origen d’inici desconegut',
+            },
             timestamps: {
                 started: 'Iniciat',
                 finished: 'Finalitzat',
@@ -7541,6 +7556,16 @@ settingsSession: {
                 title: 'Avançat',
             },
             messageSending: {
+                inactiveResumePolicyTitle: 'Represa automàtica després d’enviar',
+                inactiveResumePolicySubtitle: 'Tria què ha de fer Happier després d’enviar a una sessió inactiva.',
+                inactiveResumePolicy: {
+                    whenAvailableTitle: 'Ara o quan torni la màquina',
+                    whenAvailableSubtitle: 'Reprèn immediatament si és accessible; si no, processa quan el dimoni es reconnecti.',
+                    onlineOnlyTitle: 'Només si la màquina és en línia',
+                    onlineOnlySubtitle: 'Prova-ho una vegada en enviar. Si no està disponible, mantén el missatge en cua.',
+                    manualTitle: 'Mai automàticament',
+                    manualSubtitle: 'Mantén sempre els missatges en cua fins que reprenguis la sessió.',
+                },
                 title: 'Enviament de missatges',
                 footer: 'Controla què passa quan envies un missatge mentre l’agent s’està executant.',
               queueInAgentTitle: 'Posa a la cua de l’agent (actual)',

@@ -1657,13 +1657,14 @@ export const en = {
                   backendsSubtitle: 'Configured backends and custom launch targets.',
               },
               enableInjection: {
-                  title: 'Enable guidance injection',
+                  title: 'Happier run instructions',
+                  subtitle: 'Turning this off removes native-first routing and Happier run mechanics from coding-agent system prompts.',
               },
               characterBudget: {
-                  title: 'Character budget',
+                  title: 'Custom-rules budget',
                   subtitle: ({ value }: { value: string }) => `${value} chars`,
-                  promptTitle: 'Character budget',
-                  promptBody: 'Max characters to inject into the system prompt.',
+                  promptTitle: 'Custom-rules budget',
+                  promptBody: 'Maximum characters for custom execution-run rules in the system prompt.',
               },
               rules: {
                   groupTitle: 'Guidance rules',
@@ -4951,9 +4952,14 @@ export const en = {
         },
         resuming: 'Resuming...',
         resumeFailed: 'Failed to resume session',
-        pendingQueuedResumeFailedTitle: 'Message queued',
-        pendingQueuedResumeFailedBody:
-            'Your message was saved in the pending queue, but Happier couldn’t resume this session. Retry to start it.',
+        pendingActivation: {
+            waiting_offline: { title: 'Message queued for this machine', body: 'It will be processed when this machine and its daemon are back online.' },
+            waiting: { title: 'Waiting to resume', body: 'Your message is safely queued while the daemon resumes this session.' },
+            failed: { title: 'Could not resume session', body: 'Your message is still safely queued. Retry when you are ready.' },
+            queued: { title: 'Message queued', body: 'This inactive session has queued input. Resume it when you are ready.' },
+            queued_offline: { title: 'Message waiting for manual resume', body: 'It will stay queued until you resume this session.' },
+            actions: { retry: 'Retry', resume: 'Resume', process_when_online: 'Process when online', keepQueued: 'Keep queued', autoResumeOptions: 'Auto-resume options' },
+        },
         composerBanners: {
             showBannerAction: 'Show banner',
             hideBannerAction: 'Hide banner',
@@ -5005,7 +5011,7 @@ export const en = {
             `This session ended and can’t be resumed because ${provider} doesn’t support restoring its context here. Start a new session to continue.`,
         machineOfflineNoticeTitle: 'Machine is offline',
         machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-            `“${machine}” is offline, so Happier can’t resume this session yet. Bring it online to continue.`,
+            `“${machine}” is offline. You can queue a message now; Happier will continue when the machine comes back online.`,
         machineOfflineCannotResume: 'Machine is offline. Bring it online to resume this session.',
         openRuns: 'Open session runs',
         openAutomations: 'Open session automations',
@@ -5969,6 +5975,7 @@ export const en = {
         viewSessionLogSubtitle: 'Open live log tail for this session',
         pinSession: 'Pin session',
         unpinSession: 'Unpin session',
+        pinLimitExceeded: ({ count }: { count: number }) => `You can pin up to ${count.toLocaleString()} sessions. Unpin another session and try again.`,
         copyResumeCommand: 'Copy resume command',
         resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
         viewMachine: 'View Machine',
@@ -7121,6 +7128,14 @@ export const en = {
                 runClass: 'Run class',
                 ioMode: 'I/O mode',
             },
+            launchOrigin: {
+                crossSession: ({ sessionId }: { sessionId: string }) => `Started from session ${sessionId}`,
+                externalCli: 'Started externally from the CLI',
+                externalMcp: 'Started externally through MCP',
+                externalAction: 'Started externally through a Happier action',
+                externalUnknown: 'Started externally (origin unknown)',
+                legacyUnknown: 'Launch origin unknown',
+            },
             timestamps: {
                 started: 'Started',
                 finished: 'Finished',
@@ -7541,6 +7556,16 @@ settingsSession: {
               title: 'Advanced',
           },
           messageSending: {
+              inactiveResumePolicyTitle: 'Automatic resume after sending',
+              inactiveResumePolicySubtitle: 'Choose what Happier should do after you send to an inactive session.',
+              inactiveResumePolicy: {
+                  whenAvailableTitle: 'Now or when machine returns',
+                  whenAvailableSubtitle: 'Resume immediately if reachable; otherwise process when the daemon reconnects.',
+                  onlineOnlyTitle: 'Only if machine is online',
+                  onlineOnlySubtitle: 'Try once when you send. If unavailable, keep the message queued.',
+                  manualTitle: 'Never automatically',
+                  manualSubtitle: 'Always keep messages queued until you resume the session.',
+              },
               title: 'Message sending',
               footer: 'Controls what happens when you send a message while the agent is running.',
               queueInAgentTitle: 'Queue in agent (current)',
