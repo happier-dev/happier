@@ -195,6 +195,7 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
     'package.json',
     'yarn.lock',
     '.github/actions/enable-corepack-yarn/**',
+    'scripts/ci/corepack-prepare-yarn-with-retry.sh',
     '.github/actions/install-yarn-dependencies/**',
     'scripts/workspaces/**',
   ]) {
