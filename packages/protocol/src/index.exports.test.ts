@@ -29,6 +29,7 @@ describe('protocol package root exports', () => {
     it('exports independent session capability thresholds', () => {
         expect(protocol.SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY).toBe(2);
         expect(protocol.PENDING_INPUT_PROTOCOL_VERSION_V1).toBe(1);
+        expect(protocol.PENDING_INPUT_PROTOCOL_VERSION_V2).toBe(2);
         expect(protocol.CLIENT_UPGRADE_REQUIRED_HTTP_STATUS).toBe(426);
     });
 

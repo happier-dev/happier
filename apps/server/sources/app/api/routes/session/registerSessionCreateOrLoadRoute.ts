@@ -19,6 +19,7 @@ import {
 } from "@happier-dev/protocol";
 import { resolveRequestedSessionModeRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { mapStoredSessionRuntimeActivityProjection } from "./v2SessionListRows";
+import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
 import { type Fastify } from "../../types";
 
@@ -255,6 +256,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 pendingCount: resolvedSession.pendingCount,
                 pendingBlockedCount: resolvedSession.pendingBlockedCount,
                 pendingVersion: resolvedSession.pendingVersion,
+                pendingActivationAuthorization: mapPendingActivationAuthorization(resolvedSession),
                 ...mapStoredSessionRuntimeActivityProjection(resolvedSession),
                 active: resolvedSession.active,
                 activeAt: resolvedSession.lastActiveAt.getTime(),

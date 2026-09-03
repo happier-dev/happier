@@ -17,9 +17,9 @@ import { findV2SessionListRows, mapV2SessionListRows, V2_SESSION_LIST_ORDER_BY }
  * fallback re-issued the same `where` on the legacy attempt, so the retry failed identically and the
  * whole `GET /v2/sessions?includeAttention=true` request failed on a pre-migration schema.
  *
- * These tests run against a real SQLite database with **both** materialized attention columns
- * physically absent — `Session.needsAttention` and `Session.unreadSince` — which is the oldest
- * schema the single legacy projection has to answer for.
+ * These tests run against a real SQLite database with the materialized attention columns and the
+ * Pending activation authorization columns physically absent, which is the oldest schema the
+ * single legacy projection has to answer for.
  */
 describe("session list on a pre-migration schema (SQLite integration)", () => {
     let harness: LightSqliteHarness;
@@ -89,6 +89,10 @@ describe("session list on a pre-migration schema (SQLite integration)", () => {
         await db.$executeRawUnsafe(`DROP INDEX IF EXISTS "Session_accountId_needsAttention_meaningfulActivityAt_id_idx"`);
         await db.$executeRawUnsafe(`ALTER TABLE "Session" DROP COLUMN "needsAttention"`);
         await db.$executeRawUnsafe(`ALTER TABLE "Session" DROP COLUMN "unreadSince"`);
+        await db.$executeRawUnsafe(`ALTER TABLE "Session" DROP COLUMN "pendingActivationRequestId"`);
+        await db.$executeRawUnsafe(`ALTER TABLE "Session" DROP COLUMN "pendingActivationRequestedAt"`);
+        await db.$executeRawUnsafe(`ALTER TABLE "Session" DROP COLUMN "pendingActivationStatus"`);
+        await db.$executeRawUnsafe(`ALTER TABLE "Session" DROP COLUMN "pendingActivationFailureCode"`);
     }, 180_000);
 
     beforeEach(() => harness.resetEnv());
@@ -97,7 +101,7 @@ describe("session list on a pre-migration schema (SQLite integration)", () => {
         await harness.close();
     });
 
-    it("fixture control: the database really cannot answer a query that names either materialized column", async () => {
+    it("fixture control: the database cannot answer a query that names an intentionally absent column", async () => {
         // Anti-vacuity for every other test in this file: if either of these ever starts succeeding,
         // the fixture stopped reproducing a pre-migration schema and the rest proves nothing.
         await expect(db.session.findMany({
@@ -108,6 +112,10 @@ describe("session list on a pre-migration schema (SQLite integration)", () => {
             where: { accountId: ownerId, unreadSince: { not: null } },
             select: { id: true },
         })).rejects.toThrow(/unreadSince/);
+        await expect(db.session.findMany({
+            where: { accountId: ownerId },
+            select: { pendingActivationRequestId: true },
+        })).rejects.toThrow(/pendingActivationRequestId/);
     });
 
     it("KEYSTONE: still answers the attention read, from the predecessor derived predicate", async () => {
@@ -148,5 +156,6 @@ describe("session list on a pre-migration schema (SQLite integration)", () => {
             readId,
         ]);
         expect(sessions.every((session) => session.unreadSince === null)).toBe(true);
+        expect(sessions.every((session) => session.pendingActivationAuthorization === undefined)).toBe(true);
     });
 });

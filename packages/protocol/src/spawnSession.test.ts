@@ -49,6 +49,30 @@ describe('spawn-session execution authorization', () => {
     })).toThrow();
   });
 
+  it('preserves an optional durable authorization timestamp without requiring it from older callers', () => {
+    expect(SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: 'pending-local-1',
+      requestedAt: 1_725_000_000_000,
+    })).toEqual({
+      provenance: 'user_request',
+      requestId: 'pending-local-1',
+      requestedAt: 1_725_000_000_000,
+    });
+    expect(SpawnSessionExecutionAuthorizationSchema.parse({
+      provenance: 'user_request',
+      requestId: 'legacy-request',
+    })).toEqual({
+      provenance: 'user_request',
+      requestId: 'legacy-request',
+    });
+    expect(SpawnSessionExecutionAuthorizationSchema.safeParse({
+      provenance: 'user_request',
+      requestId: 'pending-local-1',
+      requestedAt: -1,
+    }).success).toBe(false);
+  });
+
   it('rejects the removed pending delivery selector and command', () => {
     expect(() => SpawnSessionExecutionAuthorizationSchema.parse({
       provenance: 'user_request',

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PendingLocalIdSchema } from '../sessionMessages/pendingLocalId.js';
+import { PendingActivationAuthorizationV1Schema } from './pendingActivationAuthorizationV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 
 import {
@@ -221,6 +222,7 @@ export const SessionSummarySchema = z.object({
   runtimeActivityActiveCount: SessionRuntimeActivityActiveCountSchema.optional(),
   runtimeActivityObservedAt: z.number().int().nonnegative().nullable().optional(),
   runtimeActivityRevision: z.number().int().nonnegative().safe().optional(),
+  pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.optional(),
 }).passthrough().superRefine(refineRuntimeActivityProjectionFields);
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -347,6 +349,7 @@ export const V2SessionRecordSchema = z
     runtimeActivityActiveCount: SessionRuntimeActivityActiveCountSchema.optional(),
     runtimeActivityObservedAt: z.number().int().nonnegative().nullable().optional(),
     runtimeActivityRevision: z.number().int().nonnegative().safe().optional(),
+    pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.optional(),
   })
   .passthrough()
   .superRefine(refineRuntimeActivityProjectionFields);

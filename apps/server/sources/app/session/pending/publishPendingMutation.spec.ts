@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { eventRouter } from "@/app/events/eventRouter";
 import { emitPendingResolvedMessage } from "./publishPendingMutation";
 
+vi.mock("@/storage/db", () => ({
+    db: { session: { findUnique: vi.fn(async () => null) } },
+}));
+
 describe("emitPendingResolvedMessage", () => {
     afterEach(() => {
         vi.restoreAllMocks();

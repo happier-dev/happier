@@ -8,6 +8,7 @@ import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 import { warn } from "@/utils/logging/log";
 import { expireSessionPublisherCandidates } from "./sessionPublisherPresenceTimeout";
 import { publishSessionPublisherLifecycleUpdate } from "@/app/session/runtimeActivity/publishPublisherLifecycleUpdate";
+import { emitPendingActivationHint } from "@/app/session/pending/publishPendingMutation";
 
 export interface PresenceTimeoutConfig {
     sessionTimeoutMs: number;
@@ -106,6 +107,20 @@ export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfi
                 active: false,
                 activeAt: result.activeAt.getTime(),
             });
+            if (result.activationHint) {
+                await emitPendingActivationHint({
+                    sessionId: result.sessionId,
+                    changedByAccountId: result.activationHint.accountId,
+                    pendingCount: result.activationHint.pendingCount,
+                    pendingBlockedCount: result.activationHint.pendingBlockedCount,
+                    pendingVersion: result.activationHint.pendingVersion,
+                    participantCursors: [...result.participantCursors],
+                    activationTarget: {
+                        accountId: result.activationHint.accountId,
+                        requestId: result.activationHint.requestId,
+                    },
+                });
+            }
         }
     } catch (error) {
         if (!isRetryableSqliteWriteError(error)) throw error;

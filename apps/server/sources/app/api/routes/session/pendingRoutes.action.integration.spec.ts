@@ -4,11 +4,13 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 import { getRouteEntry } from "../../testkit/routeHarness";
 
 const updatePendingRequestedAction = vi.fn();
+const markPendingActivationFailed = vi.fn();
 const emitPendingChanged = vi.fn();
 const refreshSessionParticipantBadgePushes = vi.fn();
 
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
     updatePendingRequestedAction,
+    markPendingActivationFailed,
 }));
 vi.mock("@/app/session/pending/publishPendingMutation", () => ({
     emitPendingChanged,
@@ -29,12 +31,24 @@ async function createActionRoute() {
     });
 }
 
+async function createActivationFailureRoute() {
+    const { sessionPendingRoutes } = await import("./pendingRoutes");
+    return createRouteTestBuilder({
+        method: "POST",
+        path: "/v2/sessions/:sessionId/pending/activation/fail",
+        registerRoutes(app) {
+            sessionPendingRoutes(app as any);
+        },
+    });
+}
+
 describe("sessionPendingRoutes (requested action)", () => {
     beforeEach(() => {
         vi.resetModules();
         updatePendingRequestedAction.mockReset();
         emitPendingChanged.mockReset();
         refreshSessionParticipantBadgePushes.mockReset();
+        markPendingActivationFailed.mockReset();
     });
 
     it("rejects extra action-body keys at the route schema boundary", async () => {
@@ -92,5 +106,44 @@ describe("sessionPendingRoutes (requested action)", () => {
             didUpdate: true,
         });
         expect(emitPendingChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it("publishes the terminal authorization through the canonical pending-change event", async () => {
+        markPendingActivationFailed.mockResolvedValueOnce({
+            ok: true,
+            didFail: true,
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+            pendingVersion: 4,
+            participantCursors: [{ accountId: "actor", cursor: 8 }],
+        });
+        const route = await createActivationFailureRoute();
+
+        const { response } = await route.invoke({
+            userId: "actor",
+            params: { sessionId: "s1" },
+            body: {
+                requestId: "l1",
+                requestedAt: 101,
+                failureCode: "runtime_start_failed",
+            },
+        });
+
+        expect(response).toEqual({ ok: true, didFail: true });
+        expect(markPendingActivationFailed).toHaveBeenCalledWith({
+            actorUserId: "actor",
+            sessionId: "s1",
+            requestId: "l1",
+            requestedAt: 101,
+            failureCode: "runtime_start_failed",
+        });
+        expect(emitPendingChanged).toHaveBeenCalledWith({
+            sessionId: "s1",
+            changedByAccountId: "actor",
+            pendingCount: 1,
+            pendingBlockedCount: 0,
+            pendingVersion: 4,
+            participantCursors: [{ accountId: "actor", cursor: 8 }],
+        });
     });
 });

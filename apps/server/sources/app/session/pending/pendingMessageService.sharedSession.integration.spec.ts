@@ -2150,7 +2150,7 @@ describe("pendingMessageService (shared sessions)", () => {
             requestedAction: { v: 1, kind: "send_now" },
         })).resolves.toMatchObject({
             ok: true,
-            didUpdate: false,
+            didUpdate: true,
             pendingCount: 1,
             pendingBlockedCount: 0,
         });

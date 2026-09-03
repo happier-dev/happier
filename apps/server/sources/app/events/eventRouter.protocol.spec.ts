@@ -266,6 +266,11 @@ describe("eventRouter payloads (protocol container)", () => {
                 pendingCount: 1,
                 meaningfulActivityAt,
                 pendingActivationRequestId: "pending-local-1",
+                pendingActivationAuthorization: {
+                    requestId: "pending-local-1",
+                    requestedAt: meaningfulActivityAt.getTime() + 1,
+                    status: "waiting",
+                },
             },
             105,
             "upd-5",
@@ -276,6 +281,11 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).sessionId).toBe("s1");
         expect((payload.body as any).meaningfulActivityAt).toBe(meaningfulActivityAt.getTime());
         expect((payload.body as any).pendingActivationRequestId).toBe("pending-local-1");
+        expect((payload.body as any).pendingActivationAuthorization).toEqual({
+            requestId: "pending-local-1",
+            requestedAt: meaningfulActivityAt.getTime() + 1,
+            status: "waiting",
+        });
     });
 
     it("buildNewMachineUpdate emits a full container", () => {

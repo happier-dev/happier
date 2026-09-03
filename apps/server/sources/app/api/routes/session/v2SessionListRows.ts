@@ -5,6 +5,7 @@ import {
     type V2SessionRecord,
 } from "@happier-dev/protocol";
 import { normalizeStoredSessionRuntimeActivityProjection } from "@/app/session/runtimeActivity/projection";
+import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
 export function parseStoredSessionRuntimeIssue(value: string | null | undefined): V2SessionRecord["lastRuntimeIssue"] {
     if (!value) return null;
@@ -73,6 +74,10 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
     pendingCount: true,
     pendingBlockedCount: true,
     pendingVersion: true,
+    pendingActivationRequestId: true,
+    pendingActivationRequestedAt: true,
+    pendingActivationStatus: true,
+    pendingActivationFailureCode: true,
     dataEncryptionKey: true,
     active: true,
     lastActiveAt: true,
@@ -89,6 +94,10 @@ const {
     thinkingAt: _legacySelectThinkingAt,
     unreadSince: _legacySelectUnreadSince,
     needsAttention: _legacySelectNeedsAttention,
+    pendingActivationRequestId: _legacySelectPendingActivationRequestId,
+    pendingActivationRequestedAt: _legacySelectPendingActivationRequestedAt,
+    pendingActivationStatus: _legacySelectPendingActivationStatus,
+    pendingActivationFailureCode: _legacySelectPendingActivationFailureCode,
     ...V2_SESSION_LIST_ROW_LEGACY_SELECT
 } = V2_SESSION_LIST_ROW_BASE_SELECT;
 
@@ -268,6 +277,7 @@ export function mapV2SessionListRow(params: Readonly<{ row: V2SessionListRowComp
         pendingCount: row.pendingCount,
         pendingBlockedCount: row.pendingBlockedCount,
         pendingVersion: row.pendingVersion,
+        pendingActivationAuthorization: mapPendingActivationAuthorization(row),
         dataEncryptionKey: isOwner
             ? encodeSessionDataEncryptionKey(row.dataEncryptionKey)
             : (viewerShare?.encryptedDataKey ? Buffer.from(viewerShare.encryptedDataKey).toString("base64") : null),

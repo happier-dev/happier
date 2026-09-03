@@ -8,7 +8,7 @@ describe('session protocol capability payload', () => {
             capabilities: {
                 session: {
                     runtimeActivity: { protocolVersion: 2 },
-                    pendingInput: { protocolVersion: 1 },
+                    pendingInput: { protocolVersion: 2 },
                 },
             },
         });

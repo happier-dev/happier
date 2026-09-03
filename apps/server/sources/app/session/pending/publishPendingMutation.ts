@@ -9,6 +9,8 @@ import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publish
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import { SESSION_MESSAGE_USER_ATTENTION_IMPACT } from "@happier-dev/protocol";
+import { db } from "@/storage/db";
+import { mapPendingActivationAuthorization } from "@/app/session/pending/pendingActivationAuthorization";
 
 export async function emitPendingChanged(params: {
     sessionId: string;
@@ -20,6 +22,19 @@ export async function emitPendingChanged(params: {
     participantCursors: Array<{ accountId: string; cursor: number }>;
     activationTarget?: Readonly<{ accountId: string; requestId: string }>;
 }): Promise<void> {
+    const authorizationRow = await db.session.findUnique({
+        where: { id: params.sessionId },
+        select: {
+            lastActiveAt: true,
+            pendingActivationRequestId: true,
+            pendingActivationRequestedAt: true,
+            pendingActivationStatus: true,
+            pendingActivationFailureCode: true,
+        },
+    });
+    const pendingActivationAuthorization = authorizationRow
+        ? (mapPendingActivationAuthorization(authorizationRow) ?? null)
+        : null;
     const results = await Promise.allSettled(
         params.participantCursors.map(async ({ accountId, cursor }) => {
             const payload = buildPendingChangedUpdate(
@@ -30,6 +45,7 @@ export async function emitPendingChanged(params: {
                     pendingVersion: params.pendingVersion,
                     meaningfulActivityAt: params.meaningfulActivityAt,
                     changedByAccountId: params.changedByAccountId,
+                    pendingActivationAuthorization,
                 },
                 cursor,
                 randomKeyNaked(12),
@@ -51,32 +67,45 @@ export async function emitPendingChanged(params: {
         );
     });
     if (params.activationTarget) {
-        const ownerCursor = params.participantCursors.find(
-            ({ accountId }) => accountId === params.activationTarget!.accountId,
-        )?.cursor;
-        if (typeof ownerCursor === "number") {
-            const payload = buildPendingChangedUpdate(
-                {
-                    sessionId: params.sessionId,
-                    pendingCount: params.pendingCount,
-                    ...(typeof params.pendingBlockedCount === "number"
-                        ? { pendingBlockedCount: params.pendingBlockedCount }
-                        : {}),
-                    pendingVersion: params.pendingVersion,
-                    meaningfulActivityAt: params.meaningfulActivityAt,
-                    changedByAccountId: params.changedByAccountId,
-                    pendingActivationRequestId: params.activationTarget.requestId,
-                },
-                ownerCursor,
-                randomKeyNaked(12),
-            );
-            eventRouter.emitUpdate({
-                userId: params.activationTarget.accountId,
-                payload,
-                recipientFilter: { type: "user-machine-scoped-only" },
-            });
-        }
+        await emitPendingActivationHint({ ...params, activationTarget: params.activationTarget });
     }
+}
+
+/** Emits the lossy machine-scoped wake hint; durable Session authorization remains authoritative. */
+export async function emitPendingActivationHint(params: {
+    sessionId: string;
+    changedByAccountId: string;
+    pendingCount: number;
+    pendingBlockedCount?: number;
+    pendingVersion: number;
+    meaningfulActivityAt?: Date | null;
+    participantCursors: Array<{ accountId: string; cursor: number }>;
+    activationTarget: Readonly<{ accountId: string; requestId: string }>;
+}): Promise<void> {
+    const ownerCursor = params.participantCursors.find(
+        ({ accountId }) => accountId === params.activationTarget.accountId,
+    )?.cursor;
+    if (typeof ownerCursor !== "number") return;
+    const payload = buildPendingChangedUpdate(
+        {
+            sessionId: params.sessionId,
+            pendingCount: params.pendingCount,
+            ...(typeof params.pendingBlockedCount === "number"
+                ? { pendingBlockedCount: params.pendingBlockedCount }
+                : {}),
+            pendingVersion: params.pendingVersion,
+            meaningfulActivityAt: params.meaningfulActivityAt,
+            changedByAccountId: params.changedByAccountId,
+            pendingActivationRequestId: params.activationTarget.requestId,
+        },
+        ownerCursor,
+        randomKeyNaked(12),
+    );
+    eventRouter.emitUpdate({
+        userId: params.activationTarget.accountId,
+        payload,
+        recipientFilter: { type: "user-machine-scoped-only" },
+    });
 }
 
 type PendingResolvedMessage = Parameters<typeof buildNewMessageUpdate>[0];

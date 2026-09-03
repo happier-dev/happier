@@ -148,6 +148,25 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(mapped).not.toHaveProperty("runtimeActivitySourceClass");
     });
 
+    it("exposes only lifecycle-current durable pending activation authorization", () => {
+        const mapped = mapV2SessionListRow({
+            userId: "u1",
+            row: {
+                ...pagedSessionRow("s_activation", { lastActiveAt: new Date(1_000) }),
+                pendingActivationRequestId: "pending-1",
+                pendingActivationRequestedAt: new Date(1_001),
+                pendingActivationStatus: "waiting",
+                pendingActivationFailureCode: null,
+            } as any,
+        });
+
+        expect(mapped.pendingActivationAuthorization).toEqual({
+            requestId: "pending-1",
+            requestedAt: 1_001,
+            status: "waiting",
+        });
+    });
+
     it("preserves the target runtime activity projection without time-based reinterpretation", () => {
         const mapped = mapV2SessionListRow({
             userId: "u1",

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PendingActivationAuthorizationV1Schema } from './sessionControl/pendingActivationAuthorizationV1.js';
 import { AccountSettingsV2GetResponseSchema } from './account/settings/accountSettingsApiV2.js';
 import { DirectTranscriptRawMessageV1Schema } from './directSessions/daemonRpcV1.js';
 import { ExecutionRunPublicStateSchema } from './executionRuns.js';
@@ -127,6 +128,7 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     meaningfulActivityAt: TimestampMsSchema.optional(),
     changedByAccountId: z.string().optional(),
     pendingActivationRequestId: z.string().trim().min(1).optional(),
+    pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.nullable().optional(),
   }).passthrough(),
   z.object({
     t: z.literal('automation-upsert'),

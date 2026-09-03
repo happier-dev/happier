@@ -273,6 +273,7 @@ export function buildPendingChangedUpdate(
         meaningfulActivityAt?: Date | null;
         changedByAccountId?: string;
         pendingActivationRequestId?: string;
+        pendingActivationAuthorization?: import('@happier-dev/protocol').PendingActivationAuthorizationV1 | null;
     },
     updateSeq: number,
     updateId: string,
@@ -296,6 +297,9 @@ export function buildPendingChangedUpdate(
             ...(typeof data.changedByAccountId === "string" ? { changedByAccountId: data.changedByAccountId } : {}),
             ...(typeof data.pendingActivationRequestId === "string"
                 ? { pendingActivationRequestId: data.pendingActivationRequestId }
+                : {}),
+            ...(data.pendingActivationAuthorization !== undefined
+                ? { pendingActivationAuthorization: data.pendingActivationAuthorization }
                 : {}),
         },
         createdAt: Date.now(),

@@ -8,12 +8,13 @@ import {
   type ConnectedServiceUxDiagnosticV1,
 } from './connect/connectedServiceUxDiagnostics.js';
 
-/** Fresh execution authority is bound to the exact opaque user-message local id. */
+/** Fresh execution authority is bound to an exact user request and, when present, its durable revision. */
 export const SpawnSessionExecutionAuthorizationSchema = z.object({
   provenance: z.literal('user_request'),
   requestId: z.string().refine((value) => value.trim().length > 0, {
     message: 'Execution authorization request id must not be blank',
   }),
+  requestedAt: z.number().int().nonnegative().optional(),
 }).strict();
 export type SpawnSessionExecutionAuthorization = z.infer<typeof SpawnSessionExecutionAuthorizationSchema>;
 

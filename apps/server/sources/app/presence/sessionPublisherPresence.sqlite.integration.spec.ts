@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { clearSessionRelayAuthorizationCache } from "@/app/api/socket/sessionRelayAuthCache";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { eventRouter } from "@/app/events/eventRouter";
 
 import { createSessionPublisherPresence } from "./sessionPublisherPresence";
 import { expireSessionPublisherCandidates } from "./sessionPublisherPresenceTimeout";
@@ -771,6 +772,52 @@ describe("session publisher presence on SQLite", () => {
             orderBy: { id: "asc" },
         });
         expect(after).toEqual(before.map((account) => ({ ...account, seq: account.seq + 1 })));
+    });
+
+    it("re-emits the exact waiting activation hint after the active-to-inactive timeout CAS", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => new Date(seeded.fence.getTime() + 10) });
+        const registered = await presence.registerPublisher({
+            socket: {},
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "idle", activeCount: 0 },
+        });
+        if (registered.status !== "registered") throw new Error("expected registration");
+        const requestId = `pending-${randomUUID()}`;
+        const requestedAt = new Date(registered.committedFence.getTime() + 1);
+        await db.sessionPendingMessage.create({
+            data: {
+                sessionId: seeded.binding.sessionId,
+                localId: requestId,
+                messageRole: "user",
+                content: { t: "encrypted", c: "cipher" },
+                requestedAction: { v: 1, kind: "send_now" },
+                status: "queued",
+                position: 1,
+                authorAccountId: seeded.binding.accountId,
+            },
+        });
+        await db.session.update({
+            where: { id: seeded.binding.sessionId },
+            data: {
+                pendingCount: 1,
+                pendingVersion: 1,
+                pendingActivationRequestId: requestId,
+                pendingActivationRequestedAt: requestedAt,
+                pendingActivationStatus: "waiting",
+            },
+        });
+        const emitUpdate = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
+
+        await runPresenceTimeoutTick({ sessionTimeoutMs: 1, machineTimeoutMs: 600_000, tickMs: 1 });
+
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            userId: seeded.binding.accountId,
+            recipientFilter: { type: "user-machine-scoped-only" },
+            payload: expect.objectContaining({
+                body: expect.objectContaining({ pendingActivationRequestId: requestId }),
+            }),
+        }));
     });
 
     it("projects unknown only for the exact still-current disconnected registration", async () => {

@@ -132,6 +132,7 @@ export type UpdateEvent = {
     pendingBlockedCount?: number;
     meaningfulActivityAt?: number;
     changedByAccountId?: string;
+    pendingActivationAuthorization?: import('@happier-dev/protocol').PendingActivationAuthorizationV1 | null;
 } | {
     type: 'automation-upsert';
     automationId: string;

@@ -359,6 +359,10 @@ model Session {
     active            Boolean             @default(false)
     archivedAt        DateTime?
     lastActiveAt      DateTime            @default(now())
+    pendingActivationRequestId String?
+    pendingActivationRequestedAt DateTime?
+    pendingActivationStatus String?
+    pendingActivationFailureCode String?
     publisherGeneration             BigInt            @default(0)
     publisherGenerationLastActiveAt DateTime?
     createdAt         DateTime            @default(now())

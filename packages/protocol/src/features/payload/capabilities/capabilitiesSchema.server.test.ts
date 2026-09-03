@@ -10,13 +10,13 @@ describe('CapabilitiesSchema (server capabilities)', () => {
       session: {
         runtimeActivity: { protocolVersion: 2 },
         pendingInput: {
-          protocolVersion: 1,
+          protocolVersion: 2,
         },
       },
     });
 
     expect(parsed.session.runtimeActivity).toEqual({ protocolVersion: 2 });
-    expect(parsed.session.pendingInput).toEqual({ protocolVersion: 1 });
+    expect(parsed.session.pendingInput).toEqual({ protocolVersion: 2 });
     expect(CapabilitiesSchema.safeParse({
       server: {
         runtimeActivity: { protocolVersion: 2 },

@@ -58,6 +58,16 @@ export {
   type SessionPendingQueueWakeResponseV1,
 } from './sessionControl/sessionPendingQueueWakeV1.js';
 export {
+  PendingActivationAuthorizationV1Schema,
+  PendingActivationFailureCodeV1Schema,
+  PendingActivationFailureRequestV1Schema,
+  PendingActivationFailureResponseV1Schema,
+  type PendingActivationAuthorizationV1,
+  type PendingActivationFailureCodeV1,
+  type PendingActivationFailureRequestV1,
+  type PendingActivationFailureResponseV1,
+} from './sessionControl/pendingActivationAuthorizationV1.js';
+export {
   computeCanonicalDomainSeparatedDigest,
   encodeCanonicalLengthDelimited,
 } from './crypto/canonicalDigest.js';

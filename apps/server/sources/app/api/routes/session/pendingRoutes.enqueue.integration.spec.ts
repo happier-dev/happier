@@ -6,6 +6,7 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 const enqueuePendingMessage = vi.fn();
 const emitUpdate = vi.fn();
 const buildPendingChangedUpdate = vi.fn(() => ({ type: "pending-changed" }));
+const findSessionAuthorization = vi.fn(async () => null);
 
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
     enqueuePendingMessage,
@@ -15,6 +16,9 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildPendingChangedUpdate,
 }));
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: () => "update-id" }));
+vi.mock("@/storage/db", () => ({
+    db: { session: { findUnique: findSessionAuthorization } },
+}));
 
 describe("sessionPendingRoutes (enqueue)", () => {
     beforeEach(() => {
@@ -22,6 +26,7 @@ describe("sessionPendingRoutes (enqueue)", () => {
         enqueuePendingMessage.mockReset();
         emitUpdate.mockReset();
         buildPendingChangedUpdate.mockClear();
+        findSessionAuthorization.mockClear();
     });
 
     it("forwards the external handoff admission mode to enqueuePendingMessage", async () => {

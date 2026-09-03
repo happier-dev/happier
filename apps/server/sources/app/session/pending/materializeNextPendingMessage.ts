@@ -28,6 +28,7 @@ import {
     isTrustedPendingPublisherFenceCurrent,
     type TrustedPendingPublisherFence,
 } from "@/app/session/pending/pendingPublisherAuthority";
+import { reconcilePendingActivationAuthorizationForRemovedRequestInTx } from "@/app/session/pending/pendingActivationAuthorization";
 
 type ParticipantCursor = SessionParticipantCursor;
 class PublisherAuthorityLostError extends Error {}
@@ -654,6 +655,12 @@ async function materializeNextPendingMessageInTx(
                     } as const;
                 }
 
+                const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
+                    tx,
+                    sessionId,
+                    requestId: localId,
+                });
+
                 const pendingCount = await tx.sessionPendingMessage.count({
                     where: { sessionId, status: "queued" },
                 });
@@ -695,6 +702,7 @@ async function materializeNextPendingMessageInTx(
                     pendingVersion: session.pendingVersion,
                     pendingCount: session.pendingCount,
                     pendingBlockedCount: session.pendingBlockedCount,
+                    activationTarget,
                 });
 
                 return {
@@ -716,6 +724,7 @@ async function materializeNextPendingMessageInTx(
                     pendingCount: session.pendingCount,
                     pendingBlockedCount: session.pendingBlockedCount,
                     pendingVersion: session.pendingVersion,
+                    ...(activationTarget ? { activationTarget } : {}),
                     deliveryState: materializedDeliveryState,
                     badgeAttentionChanged: didSessionActivityBadgeContributionChange(
                         sessionBefore,

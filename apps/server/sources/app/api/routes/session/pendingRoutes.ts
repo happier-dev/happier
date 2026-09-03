@@ -11,6 +11,7 @@ import {
     enqueuePendingMessage,
     listPendingMessages,
     markPendingDeliveryHandled,
+    markPendingActivationFailed,
     reorderPendingMessages,
     sendPendingDeliveryAsNew,
     restorePendingMessage,
@@ -25,6 +26,7 @@ import {
     PendingDeliveryBlockedReasonSchema,
     PendingLocalIdSchema,
     PendingRequestedActionV1Schema,
+    PendingActivationFailureRequestV1Schema,
     SessionStoredMessageContentSchema,
 } from "@happier-dev/protocol";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -413,6 +415,7 @@ export function sessionPendingRoutes(app: Fastify) {
                     pendingBlockedCount: res.pendingBlockedCount,
                     pendingVersion: res.pendingVersion,
                     participantCursors: res.participantCursors,
+                    ...(res.activationTarget ? { activationTarget: res.activationTarget } : {}),
                 });
                 await refreshSessionParticipantBadgePushes({
                     badgeAttentionChanged: res.badgeAttentionChanged,
@@ -427,6 +430,46 @@ export function sessionPendingRoutes(app: Fastify) {
                 pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
             });
+        },
+    );
+
+    app.post(
+        "/v2/sessions/:sessionId/pending/activation/fail",
+        {
+            preHandler: app.authenticate,
+            schema: {
+                params: z.object({ sessionId: z.string() }),
+                body: PendingActivationFailureRequestV1Schema,
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
+            },
+        },
+        async (request, reply) => {
+            const res = await markPendingActivationFailed({
+                actorUserId: request.userId,
+                sessionId: request.params.sessionId,
+                requestId: request.body.requestId,
+                requestedAt: request.body.requestedAt,
+                failureCode: request.body.failureCode,
+            });
+            if (!res.ok) {
+                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
+                if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
+                return reply.code(500).send({ error: res.error });
+            }
+            if (res.didFail) {
+                await emitPendingChanged({
+                    sessionId: request.params.sessionId,
+                    changedByAccountId: request.userId,
+                    pendingCount: res.pendingCount,
+                    pendingBlockedCount: res.pendingBlockedCount,
+                    pendingVersion: res.pendingVersion,
+                    participantCursors: res.participantCursors,
+                });
+            }
+            return reply.send({ ok: true, didFail: res.didFail });
         },
     );
 

@@ -51,6 +51,12 @@ import {
     acquireTrustedPendingPublisherAuthority,
     type TrustedPendingPublisherFence,
 } from "@/app/session/pending/pendingPublisherAuthority";
+import {
+    armPendingActivationAuthorizationInTx,
+    markPendingActivationAuthorizationFailedInTx,
+    reconcilePendingActivationAuthorizationForRemovedRequestInTx,
+} from "@/app/session/pending/pendingActivationAuthorization";
+import type { PendingActivationFailureCodeV1 } from "@happier-dev/protocol";
 
 type ParticipantCursor = SessionParticipantCursor;
 type PendingServiceTx = Parameters<Parameters<typeof inTx>[0]>[0];
@@ -568,14 +574,9 @@ export async function enqueuePendingMessage(params: {
                 },
             });
 
-            const activationTarget =
-                requestedAction.kind === "send_now"
-                && session.active === false
-                    ? {
-                        accountId: session.accountId,
-                        requestId: localId,
-                    }
-                    : undefined;
+            const activationTarget = requestedAction.kind === "send_now"
+                ? await armPendingActivationAuthorizationInTx({ tx, sessionId, requestId: localId })
+                : undefined;
             const { pendingCount, pendingBlockedCount, pendingVersion, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
@@ -687,7 +688,7 @@ export async function updatePendingMessage(params: {
 }
 
 export type UpdatePendingRequestedActionResult =
-    | { ok: true; didUpdate: boolean; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean }
+    | { ok: true; didUpdate: boolean; pendingVersion: number; pendingCount: number; pendingBlockedCount: number; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; activationTarget?: PendingActivationTarget }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "not-found" | "action-conflict" | "internal" };
 
 export async function updatePendingRequestedAction(params: {
@@ -787,25 +788,33 @@ export async function updatePendingRequestedAction(params: {
                 if (retained === 0) {
                     return { ok: false, error: "action-conflict" } as const;
                 }
-                const session = await reconcileSessionPendingQueueStateInTx(tx, sessionId);
-                const participantCursors = session.didRepair
-                    ? await markPendingStateChangedParticipants({
-                        tx,
-                        sessionId,
+                if (requestedActionResult.data.kind !== "send_now") {
+                    const session = await reconcileSessionPendingQueueStateInTx(tx, sessionId);
+                    const participantCursors = session.didRepair
+                        ? await markPendingStateChangedParticipants({
+                            tx,
+                            sessionId,
+                            pendingCount: session.pendingCount,
+                            pendingBlockedCount: session.pendingBlockedCount,
+                            pendingVersion: session.pendingVersion,
+                        })
+                        : [];
+                    return {
+                        ok: true,
+                        didUpdate: false,
+                        pendingVersion: session.pendingVersion,
                         pendingCount: session.pendingCount,
                         pendingBlockedCount: session.pendingBlockedCount,
-                        pendingVersion: session.pendingVersion,
-                    })
-                    : [];
-                return {
-                    ok: true,
-                    didUpdate: false,
-                    pendingVersion: session.pendingVersion,
-                    pendingCount: session.pendingCount,
-                    pendingBlockedCount: session.pendingBlockedCount,
-                    participantCursors,
-                    badgeAttentionChanged: false,
-                } as const;
+                        participantCursors,
+                        badgeAttentionChanged: false,
+                    } as const;
+                }
+                // Preserve the existing idempotent-retry repair contract before the
+                // explicit send_now retry refreshes durable activation authorization.
+                await reconcileSessionPendingQueueStateInTx(tx, sessionId);
+                const activationTarget = await armPendingActivationAuthorizationInTx({ tx, sessionId, requestId: localId });
+                const state = await applyPendingSessionStateChange({ tx, sessionId, activationTarget });
+                return { ok: true, didUpdate: true, activationTarget, ...state } as const;
             }
 
             const updated = await tx.sessionPendingMessage.updateMany({
@@ -824,8 +833,11 @@ export async function updatePendingRequestedAction(params: {
             if (updated.count === 0) {
                 return { ok: false, error: "action-conflict" } as const;
             }
-            const state = await applyPendingSessionStateChange({ tx, sessionId });
-            return { ok: true, didUpdate: true, ...state } as const;
+            const activationTarget = requestedActionResult.data.kind === "send_now"
+                ? await armPendingActivationAuthorizationInTx({ tx, sessionId, requestId: localId })
+                : await reconcilePendingActivationAuthorizationForRemovedRequestInTx({ tx, sessionId, requestId: localId });
+            const state = await applyPendingSessionStateChange({ tx, sessionId, activationTarget });
+            return { ok: true, didUpdate: true, ...(activationTarget ? { activationTarget } : {}), ...state } as const;
         });
     } catch {
         return { ok: false, error: "internal" };
@@ -880,13 +892,20 @@ export async function deletePendingMessage(params: {
                 where: { sessionId_localId: { sessionId, localId } },
             });
 
+            const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
+                tx,
+                sessionId,
+                requestId: localId,
+            });
+
             const { pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: existing.status === "queued" ? -1 : 0,
                 pendingBlockedCountDelta: existing.status === "queued" && existing.deliveryState === "blocked" ? -1 : 0,
+                activationTarget,
             });
-            return { ok: true, pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged };
+            return { ok: true, pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged, ...(activationTarget ? { activationTarget } : {}) };
         });
     } catch (error) {
         if (isTransactionAcquisitionUnavailableError(error)) {
@@ -912,6 +931,52 @@ export async function deletePendingMessage(params: {
             diagnosticCorrelationId: params.diagnosticCorrelationId,
             error,
         }, "pending delivery operation failed");
+        return { ok: false, error: "internal" };
+    }
+}
+
+export type MarkPendingActivationFailedResult =
+    | { ok: true; didFail: boolean; pendingCount: number; pendingBlockedCount: number; pendingVersion: number; participantCursors: ParticipantCursor[] }
+    | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
+
+/** Marks only the exact current waiting activation terminal-failed; stale reports are no-ops. */
+export async function markPendingActivationFailed(params: Readonly<{
+    actorUserId: string;
+    sessionId: string;
+    requestId: string;
+    requestedAt: number;
+    failureCode: PendingActivationFailureCodeV1;
+}>): Promise<MarkPendingActivationFailedResult> {
+    if (!params.actorUserId || !params.sessionId || !params.requestId || !Number.isSafeInteger(params.requestedAt) || params.requestedAt < 0) {
+        return { ok: false, error: "invalid-params" };
+    }
+    const access = await resolveSessionPendingOwnerAccess(params.actorUserId, params.sessionId);
+    if (!access.ok) return { ok: false, error: access.error };
+    try {
+        return await inTx(async (tx) => {
+            const didFail = await markPendingActivationAuthorizationFailedInTx({
+                tx,
+                sessionId: params.sessionId,
+                requestId: params.requestId,
+                requestedAt: new Date(params.requestedAt),
+                failureCode: params.failureCode,
+            });
+            const session = await tx.session.findUniqueOrThrow({
+                where: { id: params.sessionId },
+                select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
+            });
+            const participantCursors = didFail
+                ? await markPendingStateChangedParticipants({
+                    tx,
+                    sessionId: params.sessionId,
+                    pendingCount: session.pendingCount,
+                    pendingBlockedCount: session.pendingBlockedCount,
+                    pendingVersion: session.pendingVersion,
+                })
+                : [];
+            return { ok: true, didFail, ...session, participantCursors } as const;
+        });
+    } catch {
         return { ok: false, error: "internal" };
     }
 }
@@ -1117,11 +1182,18 @@ async function commitResolvedPendingDelivery(
         where: { sessionId_localId: { sessionId: params.sessionId, localId: params.localId } },
     });
 
+    const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
+        tx,
+        sessionId: params.sessionId,
+        requestId: params.localId,
+    });
+
     const { pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
         tx,
         sessionId: params.sessionId,
         pendingCountDelta: params.existing.status === "queued" ? -1 : 0,
         pendingBlockedCountDelta: params.existing.status === "queued" && params.existing.deliveryState === "blocked" ? -1 : 0,
+        activationTarget,
     });
     const participantCursorsMessage = committed.didWrite || committed.didUpdate
         ? await markSessionParticipantsChanged({
@@ -1544,11 +1616,17 @@ export async function dismissPendingDelivery(params: {
                     discardedReason: "dismissed_uncertain",
                 },
             });
+            const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
+                tx,
+                sessionId,
+                requestId: localId,
+            });
             const state = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: -1,
                 pendingBlockedCountDelta: existing.deliveryState === "blocked" ? -1 : 0,
+                activationTarget,
             });
             return { ok: true, didDismiss: true, ...state } as const;
         }));
@@ -1727,11 +1805,18 @@ export async function discardPendingMessage(params: {
                 },
             });
 
+            const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
+                tx,
+                sessionId,
+                requestId: localId,
+            });
+
             const { pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
                 tx,
                 sessionId,
                 pendingCountDelta: -1,
                 pendingBlockedCountDelta: existing.deliveryState === "blocked" ? -1 : 0,
+                activationTarget,
             });
             return { ok: true, pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged };
         });

@@ -106,6 +106,26 @@ describe("session list projection fallback", () => {
         expect(safe.shares).toBe(primary.shares);
     });
 
+    it("drops every pending activation authorization column from the pre-migration projection", () => {
+        const authorizationColumns = [
+            "pendingActivationRequestId",
+            "pendingActivationRequestedAt",
+            "pendingActivationStatus",
+            "pendingActivationFailureCode",
+        ];
+        const primary = createV2SessionListRowSelect({ userId: "u1" }) as Record<string, unknown>;
+        const safe = omitSessionListProjectionFallbackColumns(primary) as Record<string, unknown>;
+
+        expect(SESSION_LIST_PROJECTION_FALLBACK_COLUMNS).toEqual(
+            expect.arrayContaining(authorizationColumns),
+        );
+        for (const column of authorizationColumns) {
+            expect(primary).toHaveProperty(column, true);
+            expect(safe).not.toHaveProperty(column);
+            expect(isMissingSessionProjectionColumnError(missingColumnError(column))).toBe(true);
+        }
+    });
+
     it("recognises a missing unreadSince column so a new binary on an old schema still serves the list", () => {
         expect(isMissingSessionProjectionColumnError(missingColumnError("unreadSince"))).toBe(true);
     });
