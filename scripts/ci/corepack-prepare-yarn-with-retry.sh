@@ -19,7 +19,7 @@ fi
 corepack enable
 
 is_transient_corepack_error() {
-  grep -Eqi 'Error when performing the request|HTTP[^0-9]*(408|429|5[0-9]{2})|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|network connection' "$1"
+  grep -Eqi 'Error when performing the request|HTTP[^0-9]*(408|429|5[0-9]{2})|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|network connection|AssertionError \[ERR_ASSERTION\]: assert\(!this\.paused\)' "$1"
 }
 
 for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do

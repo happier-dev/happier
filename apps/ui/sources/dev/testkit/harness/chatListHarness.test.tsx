@@ -205,6 +205,30 @@ describe('chatListHarness', () => {
         expect(overriddenTuning.transcriptMaxTurnEntriesPerListItem).toBe(defaults.transcriptMaxTurnEntriesPerListItem);
     });
 
+    it('supplies an empty remote user-message history page by default', async () => {
+        const harnessModule = await import('./chatListHarness');
+        const createFlashListChatListSyncModuleMock = Reflect.get(harnessModule, 'createFlashListChatListSyncModuleMock');
+
+        expect(typeof createFlashListChatListSyncModuleMock).toBe('function');
+        if (typeof createFlashListChatListSyncModuleMock !== 'function') {
+            return;
+        }
+
+        const syncModule = createFlashListChatListSyncModuleMock();
+        const fetchUserMessageHistoryPage = Reflect.get(syncModule.sync, 'fetchUserMessageHistoryPage');
+        expect(typeof fetchUserMessageHistoryPage).toBe('function');
+        if (typeof fetchUserMessageHistoryPage !== 'function') {
+            return;
+        }
+
+        await expect(fetchUserMessageHistoryPage('session-1', { limit: 40 })).resolves.toEqual({
+            status: 'loaded',
+            rows: [],
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
+    });
+
     it('creates reusable fake web elements for transcript DOM anchoring scenarios', async () => {
         const harnessModule = await import('./chatListHarness');
         const createFlashListChatListWebElement = Reflect.get(harnessModule, 'createFlashListChatListWebElement');

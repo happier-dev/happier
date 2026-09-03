@@ -1030,25 +1030,23 @@ function routeSessionViewportChangeIntoTestStore(
     );
 }
 
-vi.mock('@/sync/sync', () => {
+vi.mock('@/sync/sync', async () => {
     const loadNewerMessages = vi.fn();
-    return {
-            sync: {
-                loadOlderMessages: vi.fn(),
-                loadTargetWindowMessages: vi.fn(),
-                loadNewerMessages,
-                hasDeferredNewerMessages: (sessionId: string) => deferredNewerSessionIdsState.has(sessionId),
-                getSyncTuning: () => syncTuningState,
-                maybeDrainDeferredNewerMessages: maybeDrainDeferredNewerMessagesMock,
-                getSessionViewport: (sessionId: string) => sessionViewportByIdState.get(sessionId) ?? null,
-                getSessionTargetWindowState: (sessionId: string) =>
-                    sessionTargetWindowStateByIdState.get(sessionId) ?? inactiveSessionTargetWindowState,
-                subscribeSessionTargetWindowState: subscribeSessionTargetWindowStateForTest,
-                onSessionViewportChange: (sessionId: string, state: any) => routeSessionViewportChangeIntoTestStore(sessionId, state),
-                markSessionLiveTailIntent: (sessionId: string) =>
-                    requireCanonicalSessionViewportSync().markSessionLiveTailIntent(qualifySessionViewportTestId(sessionId)),
-            },
-    };
+    return (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListSyncModuleMock({
+        loadOlderMessages: vi.fn(),
+        loadTargetWindowMessages: vi.fn(),
+        loadNewerMessages,
+        hasDeferredNewerMessages: (sessionId: string) => deferredNewerSessionIdsState.has(sessionId),
+        getSyncTuning: () => syncTuningState,
+        maybeDrainDeferredNewerMessages: maybeDrainDeferredNewerMessagesMock,
+        getSessionViewport: (sessionId: string) => sessionViewportByIdState.get(sessionId) ?? null,
+        getSessionTargetWindowState: (sessionId: string) =>
+            sessionTargetWindowStateByIdState.get(sessionId) ?? inactiveSessionTargetWindowState,
+        subscribeSessionTargetWindowState: subscribeSessionTargetWindowStateForTest,
+        onSessionViewportChange: (sessionId: string, state: any) => routeSessionViewportChangeIntoTestStore(sessionId, state),
+        markSessionLiveTailIntent: (sessionId: string) =>
+            requireCanonicalSessionViewportSync().markSessionLiveTailIntent(qualifySessionViewportTestId(sessionId)),
+    });
 });
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {

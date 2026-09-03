@@ -202,6 +202,15 @@ vi.mock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
     })),
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: 'api.happier.dev',
+        serverUrl: 'https://api.happier.dev',
+        kind: 'cloud',
+        generation: 1,
+    }),
+}));
+
 vi.mock('@/sync/domains/features/featureLocalPolicy', () => ({
     resolveLocalFeaturePolicyEnabled: vi.fn((featureId: string, settings: { featureToggles?: Record<string, boolean> }) => settings.featureToggles?.[featureId] === true),
 }));
