@@ -74,3 +74,30 @@ test('expo submit accepts an isolated project directory', () => {
   assert.match(src, /values\['project-dir'\]/);
   assert.match(src, /cwd:\s*uiDir/);
 });
+
+test('static submit workspace normalizes the public dev profile to its canonical EAS owner', () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-expo-submit-dev-'));
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        'scripts/pipeline/expo/prepare-static-submit-workspace.mjs',
+        '--environment',
+        'dev',
+        '--profile',
+        'dev',
+        '--out-dir',
+        outputDir,
+      ],
+      { cwd: repoRoot, stdio: 'pipe' },
+    );
+    const app = JSON.parse(fs.readFileSync(path.join(outputDir, 'app.json'), 'utf8'));
+    const eas = JSON.parse(fs.readFileSync(path.join(outputDir, 'eas.json'), 'utf8'));
+    assert.equal(app.expo.android.package, 'dev.happier.app.publicdev');
+    assert.deepEqual(eas, {
+      submit: { publicdev: { android: { track: 'internal', releaseStatus: 'draft' } } },
+    });
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});

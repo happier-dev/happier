@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
+import { normalizeMobileReleaseProfile } from './mobile-release-environments.mjs';
 
 const require = createRequire(import.meta.url);
 const { EXPO_PROJECT_CONFIG } = require('../../../apps/ui/appProjectConfig.cjs');
@@ -27,8 +28,9 @@ const requestedEnvironment = String(values.environment ?? '').trim();
 const environment = normalizeAppEnvironmentId(requestedEnvironment);
 if (!environment) fail(`Unknown Expo application environment: ${requestedEnvironment || '<empty>'}`);
 
-const profile = String(values.profile ?? '').trim();
-if (!profile) fail('--profile is required');
+const requestedProfile = String(values.profile ?? '').trim();
+if (!requestedProfile) fail('--profile is required');
+const profile = normalizeMobileReleaseProfile(requestedProfile) || requestedProfile;
 
 const outputDirRaw = String(values['out-dir'] ?? '').trim();
 if (!outputDirRaw) fail('--out-dir is required');
