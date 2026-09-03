@@ -36,6 +36,14 @@ export function buildRollingAssetPlan({ immutableNames, payloadNames, version, r
   const occupied = new Set(immutableNames);
   for (const sourceName of payloadNames) {
     if (!isInstallablePayload(sourceName)) continue;
+    if (rollingTag === 'ui-mobile-stable' && sourceName === `happier-production-android-v${version}.apk`) {
+      const name = 'happier-android.apk';
+      if (occupied.has(name)) {
+        fail(`Stable asset name collides with another release asset: ${name}`);
+      }
+      occupied.add(name);
+      plan.push({ name, sourceName });
+    }
     if (rollingTag === 'ui-mobile-preview' && sourceName === 'happier-preview-android.apk') {
       const name = 'happier-preview.apk';
       if (occupied.has(name)) {

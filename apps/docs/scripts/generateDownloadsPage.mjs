@@ -8,7 +8,7 @@
  * single source of truth for the marketing site, and already had a link checker
  * (`yarn --cwd apps/website check:links`) HEADing all of them before deploy.
  *
- * So this page is generated from that file rather than retyped. The alternative
+ * So this page is generated from the website download manifest rather than retyped. The alternative
  * is two hand-maintained copies of the same URLs, which is how the website ended
  * up with three dead links in the first place — the exact history its own
  * docblock records.
@@ -24,36 +24,29 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const MANIFEST = join(REPO, 'apps', 'website', 'src', 'data', 'downloads.ts');
+const MANIFEST = join(REPO, 'apps', 'website', 'src', 'data', 'downloads.json');
 export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'getting-started', 'get-the-apps.mdx');
 
-/** Pull the exported string constants out of the manifest. */
+/** Validate and shape the shared JSON manifest for the docs renderer. */
 export function parseDownloadManifest(source) {
-  const read = (name) => {
-    const match = new RegExp(`export const ${name}\\s*(?::[^=]+)?=\\s*\n?\\s*'([^']+)'`).exec(source);
-    if (!match) throw new Error(`downloads.ts is missing ${name}`);
-    return match[1];
-  };
-  const version = read('DESKTOP_VERSION');
-  const base = /const DESKTOP_ASSET_BASE\s*=\s*\n?\s*'([^']+)'/.exec(source);
-  if (!base) throw new Error('downloads.ts is missing DESKTOP_ASSET_BASE');
-  const asset = (file) => `${base[1]}/${file}`;
+  const manifest = JSON.parse(source);
+  if (!manifest.desktopAssetBase || !Array.isArray(manifest.desktopPlatforms)) {
+    throw new Error('downloads.json is missing desktop release data');
+  }
+  const asset = (file) => `${manifest.desktopAssetBase}/${file}`;
 
   return {
-    desktopVersion: version,
-    desktop: [
-      { label: 'macOS (Apple Silicon)', href: asset(`happier-ui-desktop-darwin-aarch64-v${version}.dmg`) },
-      { label: 'macOS (Intel)', href: asset(`happier-ui-desktop-darwin-x86_64-v${version}.dmg`) },
-      { label: 'Windows (x64)', href: asset(`happier-ui-desktop-windows-x86_64-v${version}.exe`) },
-      { label: 'Linux (x64, AppImage)', href: asset(`happier-ui-desktop-linux-x86_64-v${version}.AppImage`) },
-    ],
-    desktopReleases: read('DESKTOP_RELEASES_PAGE'),
-    appStore: read('APP_STORE_URL'),
-    androidApk: read('ANDROID_APK_URL'),
-    androidOptIn: read('ANDROID_PLAY_TESTING_OPT_IN_URL'),
-    webApp: read('WEB_APP_URL'),
-    installUnix: read('INSTALL_COMMAND_UNIX'),
-    installWindows: read('INSTALL_COMMAND_WINDOWS'),
+    desktop: manifest.desktopPlatforms.map((platform) => ({
+      label: platform.sublabel ? `${platform.label} (${platform.sublabel.replace(' · .exe installer', '').replace(' · AppImage', '')})` : platform.label,
+      href: asset(platform.file),
+    })),
+    desktopReleases: manifest.desktopReleasesPage,
+    appStore: manifest.appStoreUrl,
+    androidApk: manifest.androidApkUrl,
+    androidOptIn: manifest.androidPlayTestingOptInUrl,
+    webApp: manifest.webAppUrl,
+    installUnix: manifest.installCommandUnix,
+    installWindows: manifest.installCommandWindows,
   };
 }
 
@@ -105,10 +98,9 @@ session is running somewhere else.
 | --- | --- |
 ${desktopRows}
 
-Current desktop build: **v${m.desktopVersion}**. Every build is listed on the
-[releases page](${m.desktopReleases}) if you need an older one or a different
-architecture. The desktop app is versioned separately from the CLI, so its
-number will not match \`happier --version\`.
+These stable links always resolve to the current release. Every immutable build
+is listed on the [releases page](${m.desktopReleases}) if you need an older one
+or a different architecture.
 
 ## On the machine that runs your agents
 

@@ -15,12 +15,9 @@ import { useTheme } from '../islands/themeStore';
  *     variants (macOS Apple Silicon / Intel, Windows, Linux). The
  *     detected one is highlighted with a "Detected" chip.
  *
- * Every URL comes from data/downloads.ts. It used to build them here from
- * version-less filenames on the rolling `ui-desktop-stable` tag, on the
- * assumption that the tag published version-less assets. It does not — every
- * asset under that tag carries `-v0.2.0` — so all four desktop downloads were
- * 404 in production, and the Google Play badge pointed at a listing
- * (`id=dev.happier`) that has never existed.
+ * Every URL comes from the shared download manifest. Public downloads use
+ * unversioned rolling aliases so a release never requires a website version
+ * bump. Immutable version tags remain available on GitHub for reproducibility.
  */
 
 import {

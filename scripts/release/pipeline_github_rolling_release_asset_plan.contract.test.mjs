@@ -73,7 +73,7 @@ test('rolling alias derivation fails closed on a filename collision', () => {
   }), /collides/i);
 });
 
-test('stable mobile APK keeps immutable bytes and adds the website-compatible stable name', () => {
+test('stable mobile APK adds a channel-neutral public alias while retaining the released compatibility name', () => {
   const versionedName = `happier-production-android-v${version}.apk`;
   const plan = buildRollingAssetPlan({
     immutableNames: [versionedName],
@@ -83,6 +83,7 @@ test('stable mobile APK keeps immutable bytes and adds the website-compatible st
   });
 
   assert.deepEqual(plan, [
+    { name: 'happier-android.apk', sourceName: versionedName },
     { name: 'happier-production-android.apk', sourceName: versionedName },
     { name: versionedName, sourceName: versionedName },
   ].sort((left, right) => left.name.localeCompare(right.name)));
