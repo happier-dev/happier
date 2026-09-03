@@ -71,6 +71,7 @@ jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -82,6 +83,7 @@ jobs:
           WORKFLOW_REF: ${{ job.workflow_ref }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -91,6 +93,10 @@ jobs:
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
             echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ -n "$RETRY_VERSION" || -n "$RESUME_VERSION" ]] && [[ ! "$AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "authorized_sha must be a full lowercase 40-character commit SHA for retry or resume." >&2
             exit 1
           fi
           case "$WORKFLOW_REF" in
@@ -103,6 +109,7 @@ jobs:
   release_actor_guard:
     name: Release actor guard and bind source
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [trusted_ref_guard]
     permissions:
       contents: read
@@ -213,6 +220,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
     steps:
@@ -267,6 +275,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard, build_candidate]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
     environment: release-shared
     permissions:
       contents: read
@@ -390,6 +399,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard, build_candidate, finalize_darwin]
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: release-shared
     permissions:
       contents: read
@@ -462,6 +472,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
@@ -494,7 +505,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ job.workflow_repository }}
-          AUTHORIZED_SHA: ${{ needs.release_actor_guard.outputs.authorized_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           VERSION: ${{ needs.release_actor_guard.outputs.version }}
           BASE_VERSION: ${{ needs.release_actor_guard.outputs.base_version }}
           CHANNEL: ${{ inputs.channel }}
@@ -520,6 +531,7 @@ jobs:
     needs: [trusted_ref_guard, release_actor_guard, promote_existing]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' && needs.promote_existing.outputs.requires_fresh_runner_retry == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
@@ -549,7 +561,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ job.workflow_repository }}
-          AUTHORIZED_SHA: ${{ needs.release_actor_guard.outputs.authorized_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           VERSION: ${{ needs.release_actor_guard.outputs.version }}
           BASE_VERSION: ${{ needs.release_actor_guard.outputs.base_version }}
           CHANNEL: ${{ inputs.channel }}

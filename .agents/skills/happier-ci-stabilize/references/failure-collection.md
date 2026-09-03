@@ -60,4 +60,4 @@ Before dispatching another full run:
 - inspect skipped downstream jobs and determine whether they were unreachable or unnecessarily coupled;
 - preflight release configuration and generated outputs that do not require publication credentials.
 
-One run cannot expose a job whose real input artifact was never produced. Use immutable-candidate resume after fixing control/validation bytes so downstream validation can execute without rebuilding already verified products.
+One run cannot expose a job whose real input artifact was never produced. Use immutable-candidate resume after fixing control/validation bytes so downstream validation can execute without rebuilding already verified products. Do not rerun the whole graph merely to retry a terminal, independent failing lane.

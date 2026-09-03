@@ -1,9 +1,15 @@
 #!/bin/sh
 set -eu
 
+migrate_only=0
+if [ "${1:-}" = "--migrate-only" ]; then
+  migrate_only=1
+  shift
+fi
+
 server_binary="${1:-}"
 if [ "$#" -gt 1 ]; then
-  echo "[entrypoint] Usage: run-server.sh [packaged-server-binary]"
+  echo "[entrypoint] Usage: run-server.sh [--migrate-only] [packaged-server-binary]"
   exit 1
 fi
 if [ -n "$server_binary" ] && [ ! -x "$server_binary" ]; then
@@ -21,6 +27,9 @@ is_false() {
 migrations_enabled=1
 if is_false "${RUN_MIGRATIONS:-1}" || is_false "${HAPPIER_STACK_PRISMA_MIGRATE:-1}"; then
   migrations_enabled=0
+fi
+if [ "$migrate_only" = "1" ]; then
+  migrations_enabled=1
 fi
 
 provider="$(printf "%s" "${HAPPIER_DB_PROVIDER:-${HAPPY_DB_PROVIDER:-postgres}}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -44,6 +53,11 @@ case "$provider" in
     exit 1
     ;;
 esac
+
+if [ "$migrate_only" = "1" ] && [ "$should_migrate" = "0" ]; then
+  echo "[entrypoint] --migrate-only is not supported by the packaged SQLite runtime."
+  exit 1
+fi
 
 export HAPPIER_DB_PROVIDER="$provider"
 export HAPPY_DB_PROVIDER="$provider"
@@ -126,6 +140,11 @@ if [ "$should_migrate" = "1" ] && [ "$migrations_enabled" = "1" ]; then
     echo "[entrypoint] Migrations failed after ${attempts} attempts."
     exit 1
   fi
+fi
+
+if [ "$migrate_only" = "1" ]; then
+  echo "[entrypoint] Migrations complete."
+  exit 0
 fi
 
 if [ -n "$server_binary" ]; then

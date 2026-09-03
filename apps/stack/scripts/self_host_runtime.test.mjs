@@ -2002,6 +2002,42 @@ test('buildSelfHostDoctorChecks flags missing ui-web bundle when state expects u
   assert.equal(checks.find((c) => c.name === 'ui-web')?.ok, false);
 });
 
+test('buildSelfHostDoctorChecks resolves Windows PATHEXT commands without an external where executable', async (t) => {
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(originalPlatformDescriptor);
+  const originalPath = process.env.PATH;
+  const originalPathExt = process.env.PATHEXT;
+  const root = await mkdtemp(join(tmpdir(), 'happier-self-host-doctor-windows-path-'));
+  t.after(async () => {
+    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalPathExt === undefined) delete process.env.PATHEXT;
+    else process.env.PATHEXT = originalPathExt;
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await writeFile(join(root, 'powershell.exe'), '', 'utf8');
+  await writeFile(join(root, 'schtasks.exe'), '', 'utf8');
+  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+  process.env.PATH = root;
+  process.env.PATHEXT = '.EXE;.CMD';
+
+  const checks = buildSelfHostDoctorChecks({
+    platform: 'win32',
+    mode: 'user',
+    serverBinaryPath: 'C:\\happier\\happier-server.exe',
+    configEnvPath: 'C:\\happier\\server.env',
+    uiWebCurrentDir: 'C:\\happier\\ui-web',
+  }, {
+    state: { uiWeb: { installed: false } },
+    pathExists: () => true,
+  });
+
+  assert.equal(checks.find((check) => check.name === 'powershell')?.ok, true);
+  assert.equal(checks.find((check) => check.name === 'schtasks')?.ok, true);
+});
+
 test('normalizeSelfHostAutoUpdateState upgrades legacy boolean config to structured config', () => {
   assert.deepEqual(
     normalizeSelfHostAutoUpdateState({ autoUpdate: true }, { fallbackIntervalMinutes: 1440 }),

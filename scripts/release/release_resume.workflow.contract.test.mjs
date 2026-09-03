@@ -33,10 +33,23 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
     'stack_requested',
     'server_requested',
     'ui_web_requested',
+    'deploy_ui_requested',
+    'deploy_server_requested',
+    'deploy_website_requested',
+    'deploy_docs_requested',
+    'docker_requested',
+    'npm_requested',
+    'deploy_ui_complete',
+    'deploy_server_complete',
+    'deploy_website_complete',
+    'deploy_docs_complete',
+    'docker_complete',
+    'npm_complete',
   ]) {
     assert.ok(parsed.on.workflow_call.outputs[output], `missing resume output ${output}`);
   }
   const resolveJob = parsed.jobs.resolve;
+  assert.equal(resolveJob['timeout-minutes'], 15);
   assert.equal(resolveJob.permissions.actions, 'read');
   assert.equal(resolveJob.permissions.contents, 'read');
   const source = resolveJob.steps.map((step) => step.run ?? '').join('\n');
@@ -104,6 +117,17 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(parsed.jobs.resolve_resume.with.expected_operation_id, '${{ inputs.hmaint_operation_id }}');
   assert.ok(needs(parsed.jobs.plan).includes('resolve_resume'));
   assert.match(parsed.jobs.plan.if, /needs\.resolve_resume\.result == 'success'/);
+  const resumeResolver = workflow('resolve-release-resume.yml');
+  for (const output of ['cli_rolling_complete', 'stack_rolling_complete', 'server_rolling_complete', 'ui_web_rolling_complete']) {
+    assert.ok(resumeResolver.on.workflow_call.outputs[output], `expected resume output ${output}`);
+  }
+  const bumpPlanStep = parsed.jobs.plan.steps.find((step) => step.id === 'bump_plan');
+  assert.equal(bumpPlanStep.env.RESUME_CLI_VERSION, '${{ needs.resolve_resume.outputs.cli_version }}');
+  assert.equal(bumpPlanStep.env.RESUME_STACK_VERSION, '${{ needs.resolve_resume.outputs.stack_version }}');
+  assert.equal(bumpPlanStep.env.RESUME_SERVER_VERSION, '${{ needs.resolve_resume.outputs.server_version }}');
+  assert.match(bumpPlanStep.run, /--resume-cli-version "\$\{RESUME_CLI_VERSION\}"/);
+  assert.match(bumpPlanStep.run, /--resume-stack-version "\$\{RESUME_STACK_VERSION\}"/);
+  assert.match(bumpPlanStep.run, /--resume-server-version "\$\{RESUME_SERVER_VERSION\}"/);
   for (const [jobName, output] of [
     ['publish_cli_binaries', 'cli_version'],
     ['publish_hstack_binaries', 'stack_version'],
@@ -118,6 +142,56 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(statusProjection.env.CLI_VERSION, '${{ needs.publish_cli_binaries.outputs.version }}');
   assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
   assert.equal(statusProjection.env.IMMUTABLE_VERIFICATION_RESULT, '${{ needs.verify_release_candidates.result }}');
+  assert.match(String(parsed.jobs.plan.outputs.publish_docker_needed), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.if), /needs\.plan\.outputs\.publish_docker_needed == 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.if), /needs\.resolve_resume\.outputs\.docker_complete != 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.with.build_relay), /needs\.plan\.outputs\.publish_docker_relay_needed == 'true'/);
+  assert.match(String(parsed.jobs.publish_docker.with.build_dev_box), /needs\.plan\.outputs\.publish_docker_dev_box_needed == 'true'/);
+  assert.match(String(statusProjection.env.REQUEST_DOCKER), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
+  for (const [jobName, output] of [
+    ['promote_cli_binaries', 'cli_rolling_complete'],
+    ['promote_hstack_binaries', 'stack_rolling_complete'],
+    ['promote_server_runtime', 'server_rolling_complete'],
+    ['promote_ui_web', 'ui_web_rolling_complete'],
+  ]) {
+    assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'));
+    assert.match(String(parsed.jobs[jobName].if), new RegExp(`needs\\.resolve_resume\\.outputs\\.${output} != 'true'`));
+  }
+  assert.equal(statusProjection.env.CLI_ROLLING_RESUME_COMPLETE, '${{ needs.resolve_resume.outputs.cli_rolling_complete }}');
+  assert.ok(needs(parsed.jobs.deploy_ui).includes('resolve_resume'));
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_requested), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_web), /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',ui,'\)/);
+  assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_resume_complete != 'true'/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /needs\.resolve_resume\.outputs\.deploy_ui_complete == 'true'/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /needs\.resolve_resume\.outputs\.deploy_ui_expo_action == inputs\.ui_expo_action/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /needs\.resolve_resume\.outputs\.deploy_ui_desktop_mode == inputs\.desktop_mode/);
+  assert.match(String(parsed.jobs.deploy_ui.with.desktop_mode), /needs\.deploy_plan\.outputs\.deploy_ui_desktop_mode/);
+  assert.match(String(statusProjection.env.REQUEST_DEPLOY_UI), /needs\.resolve_resume\.outputs\.deploy_ui_requested == 'true'/);
+  assert.match(String(statusProjection.env.REQUEST_DEPLOY_UI), /needs\.deploy_plan\.outputs\.deploy_ui_requested == 'true'/);
+  for (const [jobName, outputName, requestEnv] of [
+    ['deploy_server', 'deploy_server_requested', 'REQUEST_DEPLOY_SERVER'],
+    ['deploy_website', 'deploy_website_requested', 'REQUEST_DEPLOY_WEBSITE'],
+    ['deploy_docs', 'deploy_docs_requested', 'REQUEST_DEPLOY_DOCS'],
+  ]) {
+    assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'));
+    assert.match(String(parsed.jobs.deploy_plan.outputs[outputName]), new RegExp(`needs\\.resolve_resume\\.outputs\\.${outputName} == 'true'`));
+    assert.match(String(parsed.jobs[jobName].if), new RegExp(`needs\\.deploy_plan\\.outputs\\.${outputName} == 'true'`));
+    assert.match(String(parsed.jobs[jobName].if), new RegExp(`needs\\.resolve_resume\\.outputs\\.${outputName.replace('_requested', '_complete')} != 'true'`));
+    assert.match(String(statusProjection.env[requestEnv]), new RegExp(`needs\\.resolve_resume\\.outputs\\.${outputName} == 'true'`));
+  }
+  assert.match(String(statusProjection.env.REQUEST_NPM), /needs\.resolve_resume\.outputs\.npm_requested == 'true'/);
+  assert.match(String(parsed.jobs.publish_npm.if), /needs\.resolve_resume\.outputs\.npm_complete != 'true'/);
+  assert.ok(needs(parsed.jobs.publish_npm).includes('publish_cli_binaries'));
+  assert.ok(needs(parsed.jobs.publish_npm).includes('publish_hstack_binaries'));
+  assert.ok(needs(parsed.jobs.publish_npm).includes('publish_server_runtime'));
+  assert.equal(parsed.jobs.publish_npm.with.cli_version, '${{ needs.publish_cli_binaries.outputs.version }}');
+  assert.equal(parsed.jobs.publish_npm.with.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
+  assert.equal(parsed.jobs.publish_npm.with.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
+  for (const name of ['DEPLOY_SERVER_RESUME_COMPLETE', 'DEPLOY_WEBSITE_RESUME_COMPLETE', 'DEPLOY_DOCS_RESUME_COMPLETE', 'DOCKER_RESUME_COMPLETE', 'NPM_RESUME_COMPLETE']) {
+    assert.match(String(statusProjection.env[name]), /needs\.resolve_resume\.outputs\./, `${name} must preserve accepted resume evidence`);
+  }
+  assert.match(String(statusProjection.env.DEPLOY_UI_RESUME_COMPLETE), /needs\.deploy_plan\.outputs\.deploy_ui_resume_complete/);
 });
 
 test('failed grouped verification independently certifies each successful immutable sibling for resume', () => {
@@ -142,7 +216,8 @@ test('failed grouped verification independently certifies each successful immuta
   const owner = action('verify-immutable-release-candidate');
   const ownerSource = owner.runs.steps.map((step) => step.run ?? '').join('\n');
   assert.match(ownerSource, /verify-release-candidate-identity\.mjs/);
-  assert.match(ownerSource, /gh release download/);
+  assert.match(ownerSource, /releases\/assets\/\$\{asset_id\}/);
+  assert.doesNotMatch(ownerSource, /gh release download/);
   assert.match(ownerSource, /verify-artifacts\.mjs/);
   const downloadStep = owner.runs.steps.find((step) => step.id === 'download');
   const verifyStep = owner.runs.steps.find((step) => step.id === 'verify');

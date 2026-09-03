@@ -86,7 +86,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-server-${{ github.ref }}
+  group: deploy-ref-${{ github.repository }}-${{ inputs.environment }}-server
   cancel-in-progress: false
 
 jobs:
@@ -95,6 +95,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -118,6 +119,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -135,6 +137,7 @@ jobs:
   resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
       source_ref: ${{ steps.resolve.outputs.source_ref }}
@@ -244,6 +247,7 @@ jobs:
   apply_bump:
     needs: [release_actor_guard, resolve_source, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     outputs:
       candidate_sha: ${{ steps.select.outputs.candidate_sha }}
@@ -282,11 +286,13 @@ jobs:
         if: inputs.bump != 'none'
         id: bump
         env:
-          HAPPIER_GIT_AUTHORIZATION_HEADER: "AUTHORIZATION: bearer ${{ steps.bump_token.outputs.token }}"
+          APP_TOKEN: ${{ steps.bump_token.outputs.token }}
           BUMP: ${{ inputs.bump }}
           SOURCE_BRANCH: ${{ needs.resolve_source.outputs.source_ref }}
         run: |
           set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export HAPPIER_GIT_AUTHORIZATION_HEADER="AUTHORIZATION: basic $auth"
           node "$RUNNER_TEMP/prepare-server-release-bump.mjs" \
             --bump "$BUMP" \
             --source-branch "$SOURCE_BRANCH" \
@@ -305,6 +311,7 @@ jobs:
   validate_candidate:
     needs: [release_actor_guard, resolve_source]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -347,9 +354,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
@@ -373,6 +378,7 @@ jobs:
   finalize_source:
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       authorized_sha: ${{ steps.bind.outputs.authorized_sha }}
     steps:
@@ -423,6 +429,7 @@ jobs:
     if: always() && needs.finalize_source.result == 'success' && (needs.publish_runtime_release.result == 'success' || needs.publish_runtime_release.result == 'skipped')
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate, finalize_source, publish_runtime_release]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     env:
       RUNTIME_ACTIVITY_ROLLOUT_STAGE: ${{ inputs.environment == 'production' && vars.HAPPIER_PRODUCTION_SERVER_RUNTIME_ACTIVITY_ROLLOUT_STAGE || vars.HAPPIER_PREVIEW_SERVER_RUNTIME_ACTIVITY_ROLLOUT_STAGE }}
@@ -442,6 +449,8 @@ jobs:
           set -euo pipefail
           cp scripts/pipeline/github/enforce-server-runtime-activity-rollout.mjs \
             "$RUNNER_TEMP/enforce-server-runtime-activity-rollout.mjs"
+          cp scripts/pipeline/github/deploy-ref-cas.mjs \
+            "$RUNNER_TEMP/deploy-ref-cas.mjs"
           cp scripts/pipeline/github/promote-server-deploy-ref.mjs \
             "$RUNNER_TEMP/promote-server-deploy-ref.mjs"
           cp scripts/pipeline/deploy/trigger-webhooks.mjs \
@@ -512,12 +521,12 @@ jobs:
       - name: Resolve exact server deploy ref before promotion
         id: deploy_before
         env:
-          GIT_CONFIG_COUNT: "1"
-          GIT_CONFIG_KEY_0: http.extraHeader
-          GIT_CONFIG_VALUE_0: "AUTHORIZATION: bearer ${{ steps.promotion_token.outputs.token }}"
+          APP_TOKEN: ${{ steps.promotion_token.outputs.token }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           ref="refs/heads/deploy/${DEPLOY_ENVIRONMENT}/server"
           row="$(git ls-remote --refs origin "${ref}")"
           sha="${row%%[[:space:]]*}"
@@ -527,10 +536,12 @@ jobs:
       - name: Promote exact validated SHA to server deploy branch
         id: promote_ref
         env:
-          HAPPIER_GIT_AUTHORIZATION_HEADER: "AUTHORIZATION: bearer ${{ steps.promotion_token.outputs.token }}"
+          APP_TOKEN: ${{ steps.promotion_token.outputs.token }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export HAPPIER_GIT_AUTHORIZATION_HEADER="AUTHORIZATION: basic $auth"
           expected="${{ steps.deploy_before.outputs.sha }}"
           if [ -z "${expected}" ]; then expected="missing"; fi
           node "$RUNNER_TEMP/promote-server-deploy-ref.mjs" \

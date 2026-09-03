@@ -282,6 +282,17 @@ export function buildAlreadyRunningMobileMetroArgs(args = []) {
   return out;
 }
 
+export async function completeStackRestartStopBeforeSuccessor(input) {
+  try {
+    await stopStackWithEnv(input);
+  } catch (initialStopError) {
+    const continuation = await completeInterruptedStackStopBeforeStart(input);
+    if (continuation.completed === true) return continuation;
+    throw initialStopError;
+  }
+  return await completeInterruptedStackStopBeforeStart(input);
+}
+
 export async function cleanupExitedStackRuntimeOwner({
   runtimeStatePath,
   expectedRuntimeState = null,
@@ -416,21 +427,17 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           env.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE = '1';
         }
         if (isTrueRestart) {
-          try {
-            await stopStackWithEnv({
-              rootDir,
-              stackName,
-              baseDir,
-              env,
-              json: false,
-              noDocker: false,
-              aggressive: false,
-              sweepOwned: true,
-              preserveDaemon: true,
-            });
-          } catch {
-            // ignore (fail-closed below on port checks)
-          }
+          await completeStackRestartStopBeforeSuccessor({
+            rootDir,
+            stackName,
+            baseDir,
+            env,
+            json: false,
+            noDocker: false,
+            aggressive: false,
+            sweepOwned: true,
+            preserveDaemon: true,
+          });
         }
       }
       if (existingRuntimeStatus.canShortCircuit) {
@@ -576,21 +583,17 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               if (isTrueRestart && !wantsJson) {
                 // Try one more safe cleanup of stack-owned processes and re-check.
                 const baseDir = resolveStackEnvPath(stackName).baseDir;
-                try {
-                  await stopStackWithEnv({
-                    rootDir,
-                    stackName,
-                    baseDir,
-                    env,
-                    json: false,
-                    noDocker: false,
-                    aggressive: false,
-                    sweepOwned: true,
-                    preserveDaemon: true,
-                  });
-                } catch {
-                  // ignore
-                }
+                await completeStackRestartStopBeforeSuccessor({
+                  rootDir,
+                  stackName,
+                  baseDir,
+                  env,
+                  json: false,
+                  noDocker: false,
+                  aggressive: false,
+                  sweepOwned: true,
+                  preserveDaemon: true,
+                });
                 // eslint-disable-next-line no-await-in-loop
                 if (await isTcpPortFree(p)) {
                   continue;

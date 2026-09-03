@@ -54,27 +54,27 @@ test('release workflow uses compact grouped inputs', async () => {
 
 test('release workflow resolves the public profile internally before CI and planning', async () => {
   const { raw, parsed } = await loadWorkflow();
-  const resolver = parsed.jobs.resolve_validation_profile;
-  const resolverStep = resolver?.steps?.find((step) => step?.id === 'resolve');
+  const resolver = parsed.jobs.release_preflight;
+  const resolverStep = resolver?.steps?.find((step) => step?.id === 'profile');
 
   assert.ok(resolver, 'workflow dispatch must resolve profile ownership before callers can schedule checks');
-  assert.deepEqual(resolver.needs, ['release_actor_guard']);
-  assert.equal(resolver.outputs.profile, '${{ steps.resolve.outputs.profile }}');
-  assert.equal(resolver.outputs.checks_profile, '${{ steps.resolve.outputs.checks_profile }}');
+  assert.deepEqual(resolver.needs, ['trusted_ref_guard']);
+  assert.equal(resolver.outputs.validation_profile, '${{ steps.profile.outputs.profile }}');
+  assert.equal(resolver.outputs.checks_profile, '${{ steps.profile.outputs.checks_profile }}');
   assert.equal(resolverStep?.env?.VALIDATION_PROFILE, '${{ inputs.validation_profile }}');
   assert.match(resolverStep?.run ?? '', /release-validation\/resolve-profile\.mjs/);
   assert.doesNotMatch(resolverStep?.run ?? '', /CHECKS_PROFILE/);
 
-  assert.deepEqual(parsed.jobs.ci.needs, ['resolve_validation_profile']);
-  assert.equal(parsed.jobs.ci.if, "${{ needs.resolve_validation_profile.result == 'success' }}");
+  assert.deepEqual(parsed.jobs.ci.needs, ['release_preflight', 'release_actor_guard']);
+  assert.match(parsed.jobs.ci.if, /needs\.release_preflight\.result == 'success'/);
   assert.equal(parsed.jobs.ci.permissions.actions, 'read');
   assert.match(raw, /node scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
   assert.match(raw, /node scripts\/pipeline\/release\/verify-existing-ci\.mjs/);
   assert.equal(parsed.jobs.ci.with, undefined, 'release admission must reuse exact-SHA push CI instead of rerunning a second suite');
   assert.equal(parsed.jobs.supported_old_relay_compatibility, undefined);
-  assert.ok(parsed.jobs.plan.needs.includes('resolve_validation_profile'));
-  assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.resolve_validation_profile.outputs.profile }}');
-  assert.equal(parsed.jobs.plan.outputs.checks_profile, '${{ needs.resolve_validation_profile.outputs.checks_profile }}');
+  assert.ok(parsed.jobs.plan.needs.includes('release_preflight'));
+  assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.release_preflight.outputs.validation_profile }}');
+  assert.equal(parsed.jobs.plan.outputs.checks_profile, '${{ needs.release_preflight.outputs.checks_profile }}');
   assert.doesNotMatch(raw, /inputs\.checks_profile/, 'no workflow path may retain a caller-selected checks profile');
 });
 
@@ -96,7 +96,7 @@ test('release workflow derives promote mode from confirm and uses compact defaul
   assert.match(raw, /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',website,'\)/);
   assert.match(raw, /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',docs,'\)/);
 
-  assert.match(raw, /desktop_mode:\s*\$\{\{\s*inputs\.desktop_mode\s*\}\}/);
+  assert.match(raw, /deploy_ui_desktop_mode:\s*\$\{\{[^\n]*inputs\.desktop_mode/);
   assert.doesNotMatch(raw, /desktop_build:\s*\$\{\{ inputs\.desktop_mode != 'none' \}\}/);
   assert.doesNotMatch(raw, /desktop_publish_release:\s*\$\{\{ inputs\.desktop_mode == 'build_and_publish' \}\}/);
   assert.doesNotMatch(raw, /expo_builder:\s*eas_cloud/);

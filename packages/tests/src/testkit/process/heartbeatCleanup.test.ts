@@ -156,6 +156,9 @@ function createWrapperEnv(
   if (caseItem.toolCommandName === 'yarn') {
     env.npm_execpath = fakeToolchain.sharedScriptPath;
   }
+  if (caseItem.name === 'run-vitest-with-heartbeat') {
+    env.HAPPIER_TEST_VITEST_ENTRYPOINT = fakeToolchain.sharedScriptPath;
+  }
   return env;
 }
 
@@ -174,6 +177,7 @@ async function runWrapperCleanupScenario(
     const env = createWrapperEnv({
       ...tempPathBin.env,
       HAPPIER_HEARTBEAT_MARKER: markerPath,
+      HAPPIER_CI_DIAGNOSTIC_PATH: join(toolDir, 'heartbeat-diagnostic.ndjson'),
       HAPPIER_TEST_HEARTBEAT_MS: '1000',
       HAPPIER_HEARTBEAT_EXIT_AFTER_SPAWN: opts?.exitAfterSpawn === true ? '1' : '',
       ...caseItem.extraEnv,
@@ -246,6 +250,7 @@ async function runWrapperParentExitCleanupScenario(caseItem: WrapperCase): Promi
     const env = createWrapperEnv({
       ...tempPathBin.env,
       HAPPIER_HEARTBEAT_MARKER: markerPath,
+      HAPPIER_CI_DIAGNOSTIC_PATH: join(toolDir, 'heartbeat-diagnostic.ndjson'),
       HAPPIER_TEST_HEARTBEAT_MS: '1000',
       HAPPIER_WRAPPER_PID_PATH: wrapperPidPath,
       ...caseItem.extraEnv,
@@ -377,5 +382,89 @@ describe.each(WRAPPER_CASES)('%s', (caseItem) => {
 
   it('terminates descendant test processes when the wrapper loses its parent', async () => {
     await runWrapperParentExitCleanupScenario(caseItem);
+  }, 30_000);
+});
+
+describe('run-vitest-with-heartbeat diagnostics', () => {
+  it('records the module that started before Vitest exits', async () => {
+    const wrapperPath = resolve(repoRootDir(), 'packages/tests/scripts/run-vitest-with-heartbeat.mjs');
+
+    await withTempPathBin({ prefix: 'happier-vitest-module-diagnostic-' }, async (tempPathBin) => {
+      const configPath = join(tempPathBin.dir, 'vitest.config.mjs');
+      const testPath = join(tempPathBin.dir, 'diagnostic.test.js');
+      const diagnosticPath = join(tempPathBin.dir, 'vitest-heartbeat-diagnostic.ndjson');
+      await writeFile(
+        configPath,
+        `export default { test: { root: ${JSON.stringify(tempPathBin.dir)}, globals: true, include: ['diagnostic.test.js'] } };\n`,
+        'utf8',
+      );
+      await writeFile(testPath, "test('diagnostic fixture', () => expect(true).toBe(true));\n", 'utf8');
+
+      const child = spawn(process.execPath, [wrapperPath, '--config', configPath], {
+        env: {
+          ...tempPathBin.env,
+          HAPPIER_CI_DIAGNOSTIC_PATH: diagnosticPath,
+        },
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      expect(await createChildProcessExitPromise(child)).toEqual({ code: 0, signal: null });
+
+      const diagnostic = (await readFile(diagnosticPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { event?: unknown; moduleId?: unknown });
+      expect(diagnostic).toContainEqual(expect.objectContaining({
+        event: 'module-start',
+        moduleId: testPath,
+      }));
+    });
+  }, 30_000);
+
+  it('preserves a killed Vitest signal and writes the deciding diagnostic artifact', async () => {
+    const wrapperPath = resolve(repoRootDir(), 'packages/tests/scripts/run-vitest-with-heartbeat.mjs');
+
+    await withTempPathBin({ prefix: 'happier-vitest-sigkill-' }, async (tempPathBin) => {
+      const configPath = join(tempPathBin.dir, 'vitest.config.ts');
+      const diagnosticPath = join(tempPathBin.dir, 'vitest-heartbeat-diagnostic.ndjson');
+      const killedEntrypointPath = join(tempPathBin.dir, 'killed-vitest.mjs');
+      const yarnShimPath = join(tempPathBin.dir, 'yarn-shim.cjs');
+      await writeFile(configPath, '// test config\n', 'utf8');
+      await writeFile(killedEntrypointPath, "process.kill(process.pid, 'SIGKILL');\n", 'utf8');
+      await writeFile(
+        yarnShimPath,
+        [
+          "'use strict';",
+          "const { spawn } = require('node:child_process');",
+          `const child = spawn(process.execPath, [${JSON.stringify(killedEntrypointPath)}], { stdio: 'inherit' });`,
+          "child.once('exit', () => process.exit(1));",
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const child = spawn(process.execPath, [wrapperPath, '--config', configPath], {
+        env: {
+          ...tempPathBin.env,
+          npm_execpath: yarnShimPath,
+          HAPPIER_TEST_VITEST_ENTRYPOINT: killedEntrypointPath,
+          HAPPIER_CI_DIAGNOSTIC_PATH: diagnosticPath,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout?.on('data', (chunk) => { output += String(chunk); });
+      child.stderr?.on('data', (chunk) => { output += String(chunk); });
+
+      const result = await createChildProcessExitPromise(child);
+      expect(result).toEqual({ code: 1, signal: null });
+      expect(output).toContain('(signal SIGKILL)');
+
+      const diagnostic = (await readFile(diagnosticPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as { event?: unknown; signal?: unknown });
+      expect(diagnostic).toContainEqual(expect.objectContaining({ event: 'start' }));
+      expect(diagnostic).toContainEqual(expect.objectContaining({ event: 'exit', signal: 'SIGKILL' }));
+    });
   }, 30_000);
 });

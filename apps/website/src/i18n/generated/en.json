@@ -489,8 +489,6 @@
   "faq.FAQ_ITEMS.workComputer.q": "Can I use it on a work computer?",
   "faq.FAQ_ITEMS.workComputer.a.0": "Technically, easily: it is MIT-licensed source you can read before you run it, session content is end-to-end encrypted by default, and `happier relay host install` puts the relay inside your own network so no session content transits infrastructure you do not control. That covers most of what a security review asks.",
   "faq.FAQ_ITEMS.workComputer.a.1": "Organisationally, ask first. Your employer may have rules about what runs on the endpoint, and your provider agreement may have rules about connecting a work account to third-party tooling. Neither of those is a question a marketing page can answer for you — check them before you connect a work account, not after.",
-  "features.GRID_FEATURES.handoff.title": "Hand off mid-session.",
-  "features.GRID_FEATURES.handoff.body": "Move a live session from one machine to another and keep the same thread — pick up exactly where you left off.",
   "features.GRID_FEATURES.sharing.title": "Code together.",
   "features.GRID_FEATURES.sharing.body": "Share a session with teammates, manage who can see and act, and collaborate in real time.",
   "features.GRID_FEATURES.goals.title": "Track what matters.",

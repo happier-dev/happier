@@ -13,6 +13,7 @@ jobs:
   add-to-project:
     name: Sync roadmap fields
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: roadmap
     if: >-
       github.event_name == 'workflow_dispatch' ||

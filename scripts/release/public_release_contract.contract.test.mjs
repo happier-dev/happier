@@ -30,6 +30,10 @@ test('release-contract exposes canonical release targets and suite capabilities 
 
   assert.equal(contract.schemaVersion, 1);
   assert.equal(contract.kind, 'happier.public-release-contract.v1');
+  assert.deepEqual(contract.conductorProtocol, {
+    version: 1,
+    capabilities: ['release-analysis-v1', 'release-dispatch-plan-v3', 'ci-run-id', 'production-promotion-mode-v1'],
+  });
   assert.deepEqual(
     contract.targets,
     Object.values(versionedComponents).map(({ id, baselineTagPrefix, changedWhen }) => ({ id, baselineTagPrefix, changedWhen })),

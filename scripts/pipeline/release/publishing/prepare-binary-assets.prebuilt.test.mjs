@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -76,6 +76,57 @@ test('finalizePreparedBinaryArtifacts signs one complete native CLI artifact mat
     }]);
     assert.equal(result.artifacts.length, CLI_TARGETS.length + 2);
     assert.equal(result.signaturePath, join(artifactsDir, `checksums-happier-v${version}.txt.minisig`));
+  } finally {
+    await rm(artifactsDir, { recursive: true, force: true });
+  }
+});
+
+test('finalizePreparedBinaryArtifacts flattens generated channel manifests into the signed release envelope', async () => {
+  const artifactsDir = await mkdtemp(join(tmpdir(), 'happier-prebuilt-cli-manifests-'));
+  const manifestsDir = join(artifactsDir, 'manifests', 'v1', 'happier', 'preview');
+  const version = '1.2.3-preview.4';
+  try {
+    await writeCliArchives(artifactsDir, version);
+    await writeCliEvidence(artifactsDir);
+    await mkdir(manifestsDir, { recursive: true });
+    const manifestNames = [
+      ...CLI_TARGETS.map(([os, arch]) => `${os}-${arch}.json`),
+      'latest.json',
+    ];
+    for (const name of manifestNames) {
+      await writeFile(join(manifestsDir, name), `${JSON.stringify({ name })}\n`, 'utf8');
+    }
+    const writes = [];
+
+    await finalizePreparedBinaryArtifacts({
+      artifactsDir,
+      manifestsDir,
+      manifestsRoot: join(artifactsDir, 'manifests'),
+      productSpec: getBinaryPublishProductSpec('cli'),
+      channel: 'preview',
+      version,
+      targets: CLI_TARGETS.map(([os, arch]) => ({ os, arch })),
+      writeChecksums: async (input) => {
+        writes.push(input);
+        return join(artifactsDir, `checksums-happier-v${version}.txt`);
+      },
+      signFile: async ({ path }) => `${path}.minisig`,
+    });
+
+    assert.deepEqual(
+      writes[0].artifacts.map((artifact) => artifact.name).sort(),
+      [
+        ...CLI_TARGETS.map(([os, arch]) => `happier-v${version}-${os}-${arch}.tar.gz`),
+        'darwin-arm64.cli.json',
+        'darwin-x64.cli.json',
+        ...manifestNames,
+      ].sort(),
+    );
+    assert.deepEqual(
+      (await readdir(artifactsDir)).filter((name) => name.endsWith('.json')).sort(),
+      ['darwin-arm64.cli.json', 'darwin-x64.cli.json', ...manifestNames].sort(),
+    );
+    assert.equal((await readdir(artifactsDir)).includes('manifests'), false);
   } finally {
     await rm(artifactsDir, { recursive: true, force: true });
   }
@@ -294,9 +345,11 @@ test('prepareBinaryReleaseAssets consumes a prepared matrix without rebuilding i
       },
     });
 
-    assert.equal(finalized.length, 1);
+    assert.equal(finalized.length, 2, 'prepared releases are first sealed for manifest generation, then resealed with those manifests');
     assert.equal(finalized[0].version, '1.2.3-preview.4');
     assert.equal(finalized[0].channel, 'preview');
+    assert.equal(finalized[0].manifestsDir, undefined);
+    assert.match(finalized[1].manifestsDir, /manifests[/\\]v1[/\\]happier[/\\]preview$/u);
     assert.equal(
       logs.some((line) => line.includes('build-cli-binaries.mjs')),
       false,

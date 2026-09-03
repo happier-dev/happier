@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -68,13 +69,26 @@ jobs:
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
           WORKFLOW_FILE: deploy.yml
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$EVENT_NAME" in
+            workflow_dispatch|workflow_call|push) ;;
+            *) echo "Unsupported deploy workflow event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/ui"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/server"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/website"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/preview/docs"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/ui"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/server"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/website"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/deploy/production/docs") ;;
             *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
           esac
 
@@ -84,6 +98,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -102,6 +117,7 @@ jobs:
   deploy:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: ${{ needs.release_actor_guard.result == 'success' }}
     environment: ${{ inputs.environment }}
     steps:
@@ -124,9 +140,11 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|preview|main|deploy/*) ;;
+            dev|preview|main|\
+            deploy/preview/ui|deploy/preview/server|deploy/preview/website|deploy/preview/docs|\
+            deploy/production/ui|deploy/production/server|deploy/production/website|deploy/production/docs) ;;
             *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, main, or deploy/*." >&2
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, main, or a canonical deploy/<preview|production>/<ui|server|website|docs> ref." >&2
               exit 1
               ;;
           esac

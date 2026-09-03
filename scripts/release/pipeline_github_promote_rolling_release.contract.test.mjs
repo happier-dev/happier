@@ -43,6 +43,7 @@ function fixture({ missingRolling = false } = {}) {
   const archivePlatform = process.platform === 'darwin' ? 'darwin' : 'linux';
   const archiveArch = process.arch === 'arm64' ? 'arm64' : 'x64';
   const archiveName = `happier-v1.2.3-preview.4-${archivePlatform}-${archiveArch}.tar.gz`;
+  const aliasName = `happier-${archivePlatform}-${archiveArch}.tar.gz`;
   const archiveStem = archiveName.slice(0, -'.tar.gz'.length);
   const archiveStage = join(root, 'archive-stage');
   const archiveRoot = join(archiveStage, archiveStem);
@@ -81,9 +82,11 @@ function fixture({ missingRolling = false } = {}) {
   const release1Name = join(root, 'release-1-name');
   const release77Tag = join(root, 'release-77-tag');
   const rollingReadFailureMarker = join(root, 'rolling-read-failure-marker');
+  const sourceAssetReadCounter = join(root, 'source-asset-read-counter');
   const deleteConfirmFailureMarker = join(root, 'delete-confirm-failure-marker');
   writeFileSync(log, '');
   writeFileSync(uploadCounter, '0');
+  writeFileSync(sourceAssetReadCounter, '0');
   if (missingRolling) {
     rmSync(join(rolling, 'old-asset'));
   } else {
@@ -190,6 +193,9 @@ if [ "$1" = "api" ]; then
       done
       name="\${endpoint##*name=}"
       cp "$input" ${JSON.stringify(staging)}/"$name"
+      if [ "\${HAPPIER_TEST_CORRUPT_ALIAS:-0}" = "1" ] && [ "$name" = ${JSON.stringify(aliasName)} ]; then
+        printf 'corrupt\n' >> ${JSON.stringify(staging)}/"$name"
+      fi
       exit 0
       ;;
   esac
@@ -220,6 +226,9 @@ if [ "$1" = "api" ]; then
       else
         not_found
       fi
+      ;;
+    *releases/tags/cli-v1.2.3-preview.4*)
+      printf '{"id":55,"tag_name":"cli-v1.2.3-preview.4","name":"Immutable CLI","body":"","prerelease":true,"draft":false}\n'
       ;;
     *releases/tags/cli-preview*)
       if [ -f ${JSON.stringify(release1Tag)} ] && [ "$(cat ${JSON.stringify(release1Tag)})" = "cli-preview" ]; then
@@ -265,6 +274,7 @@ if [ "$1" = "api" ]; then
     *"repos/test/test/releases/assets/"*)
       asset="\${2##*/}"
       case "$asset" in
+        55-*) cat ${JSON.stringify(source)}/"\${asset#55-}" ;;
         77-*) cat ${JSON.stringify(staging)}/"\${asset#77-}" ;;
         1-*) cat ${JSON.stringify(rolling)}/"\${asset#1-}" ;;
       esac
@@ -292,6 +302,22 @@ if [ "$1" = "api" ]; then
           *"@tsv"*) for file in ${JSON.stringify(staging)}/*; do [ -e "$file" ] || continue; name="$(basename "$file")"; printf '77-%s\\t%s\\n' "$name" "$name"; done ;;
           *) printf '{"id":77,"tag_name":"%s","name":"staging","body":"","prerelease":true,"draft":%s}\\n' "$(cat ${JSON.stringify(release77Tag)})" "$([ -f ${JSON.stringify(draftState)} ] && echo true || echo false)" ;;
         esac
+      fi
+      ;;
+    *releases/55*)
+      if echo "$*" | grep -q '@tsv'; then
+        count="$(cat ${JSON.stringify(sourceAssetReadCounter)})"; count=$((count + 1)); printf '%s' "$count" > ${JSON.stringify(sourceAssetReadCounter)}
+        first=1
+        for file in ${JSON.stringify(source)}/*; do
+          [ -e "$file" ] || continue
+          name="$(basename "$file")"
+          prefix=55
+          if [ "\${HAPPIER_TEST_SWAP_SOURCE_ASSET_ID:-0}" = "1" ] && [ "$count" -gt 1 ] && [ "$first" = "1" ]; then prefix=56; fi
+          printf '%s-%s\t%s\n' "$prefix" "$name" "$name"
+          first=0
+        done
+      else
+        printf '{"id":55,"tag_name":"cli-v1.2.3-preview.4","name":"Immutable CLI","body":"","prerelease":true,"draft":false}\n'
       fi
       ;;
     *releases/88*)
@@ -376,6 +402,7 @@ exit 2
     root,
     bin,
     archiveName,
+    aliasName,
     log,
     rolling,
     staging,
@@ -433,6 +460,18 @@ test('rolling promotion removes an abandoned staging draft from an older target 
   }
 });
 
+test('rolling promotion rejects a mismatched expected product/version before GitHub access', () => {
+  const result = spawnSync(process.execPath, [
+    ...args(),
+    '--expected-product', 'ui-desktop',
+    '--expected-version', '1.2.3-preview.4',
+    '--dry-run',
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(String(result.stderr), /does not identify expected/i);
+  assert.doesNotMatch(String(result.stdout), /gh api/);
+});
+
 test('rolling promotion sends release assets to the exact GitHub upload API host', () => {
   const testFixture = fixture();
   try {
@@ -449,7 +488,7 @@ test('rolling promotion sends release assets to the exact GitHub upload API host
     const uploadCalls = readFileSync(testFixture.log, 'utf8')
       .split('\n')
       .filter((line) => line.includes('releases/77/assets'));
-    assert.equal(uploadCalls.length, 3);
+    assert.equal(uploadCalls.length, 4);
     for (const call of uploadCalls) {
       assert.match(call, /gh api -X POST https:\/\/uploads\.github\.com\/repos\/test\/test\/releases\/77\/assets\?name=/);
       assert.doesNotMatch(call, /--hostname uploads\.github\.com/);
@@ -464,6 +503,11 @@ test('rolling promotion audits release assets without buffering their bytes in t
   try {
     const largeMetadata = Buffer.alloc(2 * 1024 * 1024, 'x');
     writeFileSync(join(testFixture.root, 'source', 'large-release-metadata.json'), largeMetadata);
+    const checksumsPath = join(testFixture.root, 'source', 'checksums-happier-v1.2.3-preview.4.txt');
+    writeFileSync(
+      checksumsPath,
+      `${readFileSync(checksumsPath, 'utf8')}${sha256(largeMetadata)}  large-release-metadata.json\n`,
+    );
 
     const result = spawnSync(process.execPath, args(), {
       cwd: repoRoot,
@@ -479,6 +523,29 @@ test('rolling promotion audits release assets without buffering their bytes in t
       readFileSync(join(testFixture.staging, 'large-release-metadata.json')),
       largeMetadata,
     );
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion rejects a channel alias whose downloaded bytes differ from its immutable source', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_CORRUPT_ALIAS: '1',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(String(result.stderr), new RegExp(`differs from immutable source bytes: ${testFixture.aliasName}`));
+    assert.equal(readFileSync(testFixture.release1Tag, 'utf8'), 'cli-preview');
+    assert.equal(readFileSync(testFixture.channelRef, 'utf8'), oldSha);
+    assert.deepEqual(readdirSync(testFixture.rolling), ['old-asset']);
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
@@ -536,10 +603,10 @@ test('existing rolling replacement stages privately, restores after publish fail
     });
 
     const successLog = readFileSync(testFixture.log, 'utf8');
-    const stagedAudit = successLog.lastIndexOf('Accept: application/octet-stream');
+    const stagedAudit = successLog.indexOf('repos/test/test/releases/assets/77-');
     const moveTag = successLog.lastIndexOf('gh api -X PATCH repos/test/test/git/refs/tags/cli-preview');
     const publishReplacement = successLog.lastIndexOf('PATCH repos/test/test/releases/77');
-    const visibleAudit = successLog.lastIndexOf('gh release download cli-preview');
+    const visibleAudit = successLog.lastIndexOf('repos/test/test/releases/assets/77-');
     const deleteBackup = successLog.lastIndexOf('DELETE repos/test/test/releases/1');
     assert.ok(stagedAudit >= 0);
     assert.ok(moveTag > stagedAudit, 'moving tag must follow the private draft byte/signature audit');
@@ -552,13 +619,17 @@ test('existing rolling replacement stages privately, restores after publish fail
       [
         'checksums-happier-v1.2.3-preview.4.txt',
         'checksums-happier-v1.2.3-preview.4.txt.minisig',
+        `happier-${process.platform === 'darwin' ? 'darwin' : 'linux'}-${process.arch === 'arm64' ? 'arm64' : 'x64'}.tar.gz`,
         testFixture.archiveName,
       ],
     );
     for (const name of readdirSync(testFixture.staging)) {
+      const sourceName = name === `happier-${process.platform === 'darwin' ? 'darwin' : 'linux'}-${process.arch === 'arm64' ? 'arm64' : 'x64'}.tar.gz`
+        ? testFixture.archiveName
+        : name;
       assert.deepEqual(
         readFileSync(join(testFixture.staging, name)),
-        readFileSync(join(testFixture.root, 'source', basename(name))),
+        readFileSync(join(testFixture.root, 'source', basename(sourceName))),
       );
     }
 
@@ -569,8 +640,8 @@ test('existing rolling replacement stages privately, restores after publish fail
       encoding: 'utf8',
     });
     const idempotentLog = readFileSync(testFixture.log, 'utf8');
-    assert.match(idempotentLog, /release download cli-preview/);
-    assert.doesNotMatch(idempotentLog, /-X PATCH repos\/test\/test\/releases|releases\/assets/);
+    assert.match(idempotentLog, /repos\/test\/test\/releases\/assets\/77-/);
+    assert.doesNotMatch(idempotentLog, /-X PATCH repos\/test\/test\/releases/);
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
@@ -594,7 +665,7 @@ test('rolling promotion retries a transient GitHub asset upload connectivity fai
     const uploadCalls = readFileSync(testFixture.log, 'utf8')
       .split('\n')
       .filter((line) => line.includes('uploads.github.com'));
-    assert.equal(uploadCalls.length, 4, 'the first asset upload should retry exactly once');
+    assert.equal(uploadCalls.length, 5, 'the first asset upload should retry exactly once');
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
@@ -618,7 +689,7 @@ test('rolling promotion outlasts four consecutive GitHub asset upload connection
     const uploadCalls = readFileSync(testFixture.log, 'utf8')
       .split('\n')
       .filter((line) => line.includes('uploads.github.com'));
-    assert.equal(uploadCalls.length, 7, 'the first asset should recover on attempt five before the remaining two uploads');
+    assert.equal(uploadCalls.length, 8, 'the first asset should recover on attempt five before the remaining three uploads');
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
@@ -673,9 +744,29 @@ test('rolling promotion rejects an immutable tag whose SHA differs from the auth
     assert.match(String(result.stderr), /does not resolve to authorized SHA/i);
     assert.doesNotMatch(
       readFileSync(testFixture.log, 'utf8'),
-      /release download/,
+      /releases\/assets\/55-/,
       'mismatched immutable identity must fail before release assets are consumed',
     );
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion rejects an immutable release whose asset identity changes during audit', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_SWAP_SOURCE_ASSET_ID: '1',
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(String(result.stderr), /changed while its assets were being audited/i);
+    assert.doesNotMatch(readFileSync(testFixture.log, 'utf8'), /gh api -X (?:POST|PATCH|DELETE)/);
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
@@ -820,7 +911,7 @@ test('an initially missing rolling release retries one private draft before publ
     });
     const successLog = readFileSync(testFixture.log, 'utf8');
     const findExistingDraft = successLog.indexOf('releases?per_page=100');
-    const stagedAssetDownload = successLog.lastIndexOf('Accept: application/octet-stream');
+    const stagedAssetDownload = successLog.indexOf('repos/test/test/releases/assets/77-');
     const publishDraft = successLog.lastIndexOf('PATCH repos/test/test/releases/77');
     assert.ok(findExistingDraft >= 0, 'same-version retry must find the private draft by staging tag');
     assert.ok(stagedAssetDownload > findExistingDraft);

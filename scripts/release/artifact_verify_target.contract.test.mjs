@@ -61,3 +61,21 @@ test('artifact verification target helper resolves server execution through the 
     cwd: repoRoot,
   });
 });
+
+test('artifact verification target helper preflights flattened manifests after candidate resealing', () => {
+  const target = resolveArtifactVerifyTarget({
+    repoRoot,
+    source: { kind: 'local-build', ref: 'dist/release-assets/server' },
+    options: {
+      product: 'server',
+      version: '2.0.0-preview.8',
+      releaseChannel: 'preview',
+      manifestsInArtifactsRoot: true,
+    },
+  });
+
+  assert.equal(
+    target.preflightPaths.at(-1),
+    resolve(repoRoot, 'dist/release-assets/server/latest.json'),
+  );
+});

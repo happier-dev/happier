@@ -120,6 +120,9 @@ function main() {
       'versioned-cli-changed': { type: 'string' },
       'versioned-stack-changed': { type: 'string' },
       'versioned-server-changed': { type: 'string' },
+      'resume-cli-version': { type: 'string', default: '' },
+      'resume-stack-version': { type: 'string', default: '' },
+      'resume-server-version': { type: 'string', default: '' },
       'require-materialized': { type: 'boolean', default: false },
       'github-output': { type: 'string', default: '' },
     },
@@ -172,6 +175,9 @@ function main() {
   const versionedCliChanged = parseOptionalBoolString(values['versioned-cli-changed'], '--versioned-cli-changed');
   const versionedStackChanged = parseOptionalBoolString(values['versioned-stack-changed'], '--versioned-stack-changed');
   const versionedServerChanged = parseOptionalBoolString(values['versioned-server-changed'], '--versioned-server-changed');
+  const resumeCliVersion = String(values['resume-cli-version'] ?? '').trim();
+  const resumeStackVersion = String(values['resume-stack-version'] ?? '').trim();
+  const resumeServerVersion = String(values['resume-server-version'] ?? '').trim();
 
   const publishCli = deployTargets.includes('cli');
   const publishStack = deployTargets.includes('stack');
@@ -196,7 +202,7 @@ function main() {
       if (!devVersion || !mainVersion) {
         fail('Unable to resolve cli versions for production validation.');
       }
-      if (devVersion === mainVersion) {
+      if (devVersion === mainVersion && resumeCliVersion !== devVersion) {
         fail(
           `Refusing production deploy_targets includes cli without a version change (dev and main both at ${devVersion}). Set bump!=none or bump_cli_override!=none.`,
         );
@@ -209,7 +215,7 @@ function main() {
       if (!devVersion || !mainVersion) {
         fail('Unable to resolve stack versions for production validation.');
       }
-      if (devVersion === mainVersion) {
+      if (devVersion === mainVersion && resumeStackVersion !== devVersion) {
         fail(
           `Refusing production deploy_targets includes stack without a version change (dev and main both at ${devVersion}). Set bump!=none or bump_stack_override!=none.`,
         );
@@ -230,7 +236,7 @@ function main() {
         mainVersion = '';
       }
 
-      if (mainVersion && devVersion && devVersion === mainVersion) {
+      if (mainVersion && devVersion && devVersion === mainVersion && resumeServerVersion !== devVersion) {
         fail(
           `Refusing production deploy_targets includes server without a version change (dev and main both at ${devVersion}). Set bump!=none.`,
         );

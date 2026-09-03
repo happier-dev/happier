@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 
 const waitForInitialCredentialsMock = vi.fn(async () => ({ action: 'shutdown' as const }));
@@ -76,14 +77,29 @@ describe('startDaemon ownership preflight', () => {
         'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_CHANNEL',
     ]);
-    const fetchMock = vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({ success: true }),
-    } as Response));
+    let currentProcessDaemonFixtureAlive = true;
+    const fetchMock = vi.fn();
 
     beforeEach(() => {
         processListenersBeforeTest = daemonLifecycleProcessEvents.map((event) => [event, process.rawListeners(event)] as const);
+        currentProcessDaemonFixtureAlive = true;
+        fetchMock.mockReset();
+        fetchMock.mockImplementation(async (input: string | URL | Request) => {
+            const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+            if (url.pathname === '/stop') currentProcessDaemonFixtureAlive = false;
+            return {
+                ok: true,
+                status: 200,
+                text: async () => JSON.stringify({ success: true }),
+            } as Response;
+        });
+        vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
+            if (pid === process.pid && (signal === 0 || signal === undefined) && !currentProcessDaemonFixtureAlive) {
+                throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+            }
+            return true;
+        }) as typeof process.kill);
+        mockCurrentProcessAsDaemonLifecycleOwner();
     });
 
     afterEach(() => {
@@ -107,7 +123,6 @@ describe('startDaemon ownership preflight', () => {
                 'If you want to start a manual daemon, stop or replace the installed background service first.',
             ],
         }));
-        fetchMock.mockReset();
         reapSameHomeDaemonOrphansBeforeStartMock.mockReset();
         reapSameHomeDaemonOrphansBeforeStartMock.mockImplementation(async () => ({
             stoppedPids: [],
@@ -115,6 +130,7 @@ describe('startDaemon ownership preflight', () => {
             failedPids: [],
         }));
         vi.unstubAllGlobals();
+        vi.doUnmock('@/daemon/doctor');
         vi.resetModules();
     });
 
@@ -191,16 +207,19 @@ describe('startDaemon ownership preflight', () => {
                 HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: '1',
             });
             vi.resetModules();
-            vi.doMock('@/daemon/doctor', () => ({
-                findAllHappyProcesses: async () => [
-                    {
-                        pid: 4242,
-                        type: 'dev-daemon',
-                        command: `${process.execPath} --import tsx ${join(process.cwd(), 'src/index.ts')} daemon start-sync`,
-                    },
-                ],
-                findHappyProcessByPid: async () => null,
-            }));
+            vi.doMock('@/daemon/doctor', async (importOriginal) => {
+                const actual = await importOriginal<typeof import('@/daemon/doctor')>();
+                return {
+                    ...actual,
+                    findAllHappyProcesses: async () => [
+                        {
+                            pid: 4242,
+                            type: 'dev-daemon',
+                            command: `${process.execPath} --import tsx ${join(process.cwd(), 'src/index.ts')} daemon start-sync`,
+                        },
+                    ],
+                };
+            });
 
             const [{ startDaemon }, { logger }] = await Promise.all([
                 import('./startDaemon'),
@@ -251,24 +270,21 @@ describe('startDaemon ownership preflight', () => {
                 return true;
             }) as typeof process.kill);
 
-            vi.doMock('@/daemon/doctor', () => ({
-                findAllHappyProcesses: async () => [
-                    {
-                        pid: 4242,
-                        type: 'dev-daemon',
-                        command: `${process.execPath} --import tsx ${join(process.cwd(), 'src/index.ts')} daemon start-sync`,
-                    },
-                ],
-                findHappyProcessByPid: async (pid: number) => (
-                    pid === 4242
-                        ? {
-                            pid,
-                            type: 'dev-daemon',
-                            command: `${process.execPath} --import tsx ${join(process.cwd(), 'src/index.ts')} daemon start-sync`,
-                        }
-                        : null
-                ),
-            }));
+            vi.doMock('@/daemon/doctor', async (importOriginal) => {
+                const actual = await importOriginal<typeof import('@/daemon/doctor')>();
+                const processInfo = {
+                    pid: 4242,
+                    type: 'dev-daemon',
+                    command: `${process.execPath} --import tsx ${join(process.cwd(), 'src/index.ts')} daemon start-sync`,
+                };
+                return {
+                    ...actual,
+                    findAllHappyProcesses: async () => [processInfo],
+                    classifyDaemonLifecycleProcessByPid: async (pid: number) => pid === processInfo.pid
+                        ? { kind: 'daemon' as const, process: processInfo }
+                        : await actual.classifyDaemonLifecycleProcessByPid(pid),
+                };
+            });
 
             const { startDaemon } = await import('./startDaemon');
 

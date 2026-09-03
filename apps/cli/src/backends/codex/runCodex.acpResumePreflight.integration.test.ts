@@ -2764,6 +2764,7 @@ describe('runCodex CodexACP resume behavior', () => {
     const steerPrompt = vi.fn(async (_prompt: string, options?: {
       localId?: string | null;
       localIds?: readonly string[] | null;
+      onProviderPromptAccepted?: () => void;
       userMessageSeq?: number | null;
     }) => {
       const localIds = options?.localIds ?? (typeof options?.localId === 'string' ? [options.localId] : null);
@@ -2830,11 +2831,11 @@ describe('runCodex CodexACP resume behavior', () => {
     }
 
     expect(steerPrompt).toHaveBeenCalledTimes(1);
-    expect(steerPrompt).toHaveBeenNthCalledWith(1, 'STEER REPLAY SEED\n\nsteer after replay seed', {
+    expect(steerPrompt).toHaveBeenNthCalledWith(1, 'STEER REPLAY SEED\n\nsteer after replay seed', expect.objectContaining({
       localId: 'local-steer-undeliverable',
       metadata: { source: 'steer-undeliverable-test' },
       userMessageSeq: null,
-    });
+    }));
     expect(appServerRuntime.sendPrompt).not.toHaveBeenCalled();
     expect(lastSessionClient?.blockPendingMessageDelivery).toHaveBeenCalledWith({
       localIds: ['local-steer-undeliverable'],

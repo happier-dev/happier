@@ -185,6 +185,67 @@ describe('run-server.sh', () => {
     ]);
   });
 
+  it('runs only migrations when --migrate-only is requested', async () => {
+    const serverPath = await writeFakePackagedRuntime({ dir: tmpDir, logPath });
+    const res = spawnSync('sh', [getScriptPath(), '--migrate-only', serverPath], {
+      env: {
+        ...process.env,
+        HAPPIER_SERVER_FLAVOR: 'full',
+        HAPPIER_DB_PROVIDER: 'postgres',
+        DATABASE_URL: 'postgresql://postgres@db/happier',
+        RUN_MIGRATIONS: '0',
+        MIGRATIONS_MAX_ATTEMPTS: '1',
+        MIGRATIONS_RETRY_DELAY_SECONDS: '0',
+      },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+
+    expect(res.status).toBe(0);
+    expect(await readLogLines(logPath)).toEqual([
+      'MIGRATE provider=postgres url=postgresql://postgres@db/happier',
+    ]);
+  });
+
+  it('runs only the source-backed migration command when --migrate-only is requested', async () => {
+    const res = spawnSync('sh', [getScriptPath(), '--migrate-only'], {
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        HAPPIER_SERVER_FLAVOR: 'full',
+        HAPPIER_DB_PROVIDER: 'postgres',
+        DATABASE_URL: 'postgresql://postgres@db/happier',
+        RUN_MIGRATIONS: '0',
+        MIGRATIONS_MAX_ATTEMPTS: '1',
+        MIGRATIONS_RETRY_DELAY_SECONDS: '0',
+      },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+
+    expect(res.status).toBe(0);
+    const yarnLines = (await readLogLines(logPath)).filter((line) => line.startsWith('YARN '));
+    expect(yarnLines).toEqual(['YARN --cwd apps/server migrate:deploy']);
+  });
+
+  it('fails closed when --migrate-only cannot own packaged SQLite migrations', async () => {
+    const serverPath = await writeFakePackagedRuntime({ dir: tmpDir, logPath });
+    const res = spawnSync('sh', [getScriptPath(), '--migrate-only', serverPath], {
+      env: {
+        ...process.env,
+        HAPPIER_SERVER_FLAVOR: 'light',
+        HAPPIER_DB_PROVIDER: 'sqlite',
+        RUN_MIGRATIONS: '0',
+      },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+
+    expect(res.status).toBe(1);
+    expect(res.stdout).toContain('--migrate-only is not supported by the packaged SQLite runtime');
+    expect(await readLogLines(logPath)).toEqual([]);
+  });
+
   it('delegates packaged SQLite migration to normal server startup', async () => {
     const serverPath = await writeFakePackagedRuntime({ dir: tmpDir, logPath });
     const res = spawnSync('sh', [getScriptPath(), serverPath], {

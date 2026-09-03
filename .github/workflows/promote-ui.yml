@@ -46,7 +46,7 @@ on:
         default: true
         type: boolean
       expo_action:
-        description: "Deploy (Expo) — Action (requires EXPO_TOKEN secret)"
+        description: "Deploy (Expo) — Action (full includes OTA + native submit + APK)"
         required: true
         default: none
         type: choice
@@ -55,6 +55,7 @@ on:
           - ota
           - native
           - native_submit
+          - full
       release_notes_id:
         description: "Release notes — Exact approved project release ID"
         required: true
@@ -123,7 +124,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-ui-${{ github.ref }}
+  group: deploy-ref-${{ github.repository }}-${{ inputs.environment }}-ui
   cancel-in-progress: false
 
 env:
@@ -135,6 +136,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -158,6 +160,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -175,11 +178,12 @@ jobs:
   resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
-      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
     steps:
       - name: Checkout trusted workflow control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -253,6 +257,7 @@ jobs:
   apply_bump:
     needs: [release_actor_guard, resolve_source]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release-shared
     permissions:
       contents: write
@@ -328,6 +333,7 @@ jobs:
   validate_candidate:
     needs: [apply_bump]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs:
@@ -350,9 +356,7 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
       - name: Install candidate dependencies
         env:
           YARN_PRODUCTION: "false"
@@ -360,7 +364,9 @@ jobs:
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
       - name: Verify generated Mermaid WebView bundle
         run: yarn --cwd apps/ui verify:mermaid-webview-bundle
       - name: Run app tests
@@ -402,7 +408,7 @@ jobs:
               for (const [key, value] of Object.entries(values)) {
                 if (typeof value !== "string") throw new Error(`Missing ${key} projection`);
                 const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`${key}:${value}`).digest("hex")}`;
-                appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\n${value}\\n${delimiter}\\n`);
+                appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\n${value}\n${delimiter}\n`);
               }
             '
       - name: Upload release notes assets
@@ -413,7 +419,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Prepare Android OTA artifact without credentials
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -423,7 +429,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Prepare iOS OTA artifact without credentials
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -433,7 +439,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/ios" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Upload prepared OTA artifacts
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
@@ -445,6 +451,7 @@ jobs:
   promote:
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     permissions:
       contents: write
@@ -471,23 +478,25 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
       - name: Enable Corepack
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-      - name: Install trusted promotion dependencies
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install trusted OTA publisher dependencies
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,release-runtime"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
       - name: Download release notes assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ui-release-notes-${{ needs.apply_bump.outputs.release_sha }}
           path: ${{ runner.temp }}/release-notes-assets
       - name: Download prepared OTA artifacts
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
@@ -518,42 +527,32 @@ jobs:
           node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
             --in-dir "$RUNNER_TEMP/release-notes-assets" --repo happier-dev/happier-assets --tag release-notes
       - name: Publish Android OTA from validated bytes
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+          UPDATE_MESSAGE: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform android \
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --expected-source-sha "$RELEASE_SHA" \
             --message "$UPDATE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
       - name: Publish iOS OTA from validated bytes
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+          UPDATE_MESSAGE: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform ios \
             --input-dir "$RUNNER_TEMP/prepared-ota/ios" --expected-source-sha "$RELEASE_SHA" \
             --message "$UPDATE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
-      - name: Resolve deploy branch SHA before promotion
-        if: inputs.deploy_web
-        id: deploy_before
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          ref="deploy/$DEPLOY_ENVIRONMENT/ui"
-          sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Promote exact release SHA to deploy branch
         if: inputs.deploy_web
+        id: promote_ref
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
@@ -562,20 +561,9 @@ jobs:
         run: |
           node scripts/pipeline/github/promote-deploy-branch.mjs \
             --deploy-environment "$DEPLOY_ENVIRONMENT" --component ui --sha "$RELEASE_SHA" \
-            --summary-file "$GITHUB_STEP_SUMMARY"
-      - name: Resolve deploy branch SHA after promotion
-        if: inputs.deploy_web
-        id: deploy_after
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          ref="deploy/$DEPLOY_ENVIRONMENT/ui"
-          sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            --summary-file "$GITHUB_STEP_SUMMARY" --github-output "$GITHUB_OUTPUT"
       - name: Trigger deploy webhooks when forced without branch change
-        if: inputs.deploy_web && inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
+        if: inputs.deploy_web && inputs.force_deploy && steps.promote_ref.outputs.changed == 'false'
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
@@ -583,7 +571,7 @@ jobs:
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
           HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
+          DEPLOY_SHA: ${{ steps.promote_ref.outputs.new_sha }}
           REPOSITORY: ${{ github.repository }}
         run: |
           node scripts/pipeline/deploy/trigger-webhooks.mjs \
@@ -593,16 +581,17 @@ jobs:
         if: inputs.deploy_web
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
+          DEPLOY_SHA: ${{ steps.promote_ref.outputs.new_sha }}
         run: |
           echo "Web deployment is triggered automatically by pushes to deploy/$DEPLOY_ENVIRONMENT/ui." >> "$GITHUB_STEP_SUMMARY"
           echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
 
   mobile_native:
     name: Mobile native (local runner)
-    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
+      actions: read
       contents: write
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit
@@ -611,16 +600,17 @@ jobs:
       environment: ${{ inputs.environment }}
       platform: all
       profile: auto
-      action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
-      publish_apk_release: "false"
+      action: ${{ (inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') && 'build_and_submit' || 'build_only' }}
+      publish_apk_release: ${{ 'false' }}
       release_message: ${{ needs.promote.outputs.release_notes_expo_message }}
       release_notes_id: ${{ inputs.release_notes_id }}
 
   mobile_apk_release:
     name: Mobile APK release (local runner)
-    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
+      actions: read
       contents: write
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit
@@ -630,7 +620,7 @@ jobs:
       platform: android
       profile: ${{ inputs.environment == 'production' && 'production-apk' || 'preview-apk' }}
       action: build_only
-      publish_apk_release: "true"
+      publish_apk_release: ${{ 'true' }}
       release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
       release_notes_id: ${{ inputs.release_notes_id }}
 

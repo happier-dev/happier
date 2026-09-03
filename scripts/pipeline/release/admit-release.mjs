@@ -8,18 +8,19 @@ const enabled = (value) => value === true || value === 'true';
 
 /**
  * @param {{ checksProfile: string; environment: string; publishServerRuntimeNeeded: boolean;
- * publishCliBinariesNeeded: boolean; risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
+ * publishCliBinariesNeeded: boolean; publishStack: boolean; sourceChecksWaived: boolean;
+ * risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
  * gates: { mysql: string; platform: string; trustRoots: string } }} input
  */
 export function admitRelease(input) {
   if (input.environment === 'production' && input.checksProfile !== 'full') {
     throw new Error('production releases require checks_profile=full');
   }
-  if (input.publishServerRuntimeNeeded && input.risks.mysqlContract && input.gates.mysql !== 'success') {
+  if (!input.sourceChecksWaived && input.publishServerRuntimeNeeded && input.risks.mysqlContract && input.gates.mysql !== 'success') {
     throw new Error('server runtime publication requires a successful MySQL gate');
   }
-  if (input.risks.platformServices && (input.publishServerRuntimeNeeded || input.publishCliBinariesNeeded) && input.gates.platform !== 'success') {
-    throw new Error('server or CLI publication requires successful platform gates');
+  if (!input.sourceChecksWaived && input.risks.platformServices && (input.publishServerRuntimeNeeded || input.publishCliBinariesNeeded || input.publishStack) && input.gates.platform !== 'success') {
+    throw new Error('server, CLI, or stack publication requires successful platform gates');
   }
   if (input.risks.trustRoots && input.gates.trustRoots !== 'success') {
     throw new Error('trust-root changes require successful installer and updater trust validation');
@@ -34,6 +35,8 @@ export function admitReleaseFromEnvironment(env) {
     environment: String(env.DEPLOY_ENVIRONMENT ?? ''),
     publishServerRuntimeNeeded: enabled(env.PUBLISH_SERVER_RUNTIME_NEEDED),
     publishCliBinariesNeeded: enabled(env.PUBLISH_CLI_BINARIES_NEEDED),
+    publishStack: enabled(env.PUBLISH_STACK),
+    sourceChecksWaived: enabled(env.WAIVE_SOURCE_CHECKS),
     risks: {
       mysqlContract: enabled(env.RISK_MYSQL_CONTRACT),
       platformServices: enabled(env.RISK_PLATFORM_SERVICES),

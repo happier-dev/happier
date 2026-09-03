@@ -19,7 +19,7 @@ test('release-npm leaves signed CLI binary assets to the dedicated binary publis
     /release-prepare-binary-assets|MINISIGN_|bootstrap-minisign/,
     'npm package preparation must not sign or prepare the separately published CLI binary release',
   );
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--mode pack/);
+  assert.match(raw, /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs[\s\S]*?--mode pack/);
   assert.doesNotMatch(
     raw,
     /node scripts\/pipeline\/run\.mjs release-build-cli-binaries/,

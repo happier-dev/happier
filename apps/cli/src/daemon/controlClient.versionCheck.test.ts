@@ -1,16 +1,14 @@
 import http from 'node:http';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/projectPath', () => ({
   projectPath: () => '/missing-bunfs-root',
 }));
 
-import { configuration, reloadConfiguration } from '@/configuration';
-import { clearDaemonStateForTests, writeDaemonState } from '@/persistence';
-import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 
 function listen(server: http.Server): Promise<{ port: number }> {
   return new Promise((resolve, reject) => {
@@ -29,11 +27,15 @@ function listen(server: http.Server): Promise<{ port: number }> {
 describe('daemon control client version check', () => {
   const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
 
-  afterEach(async () => {
-    await clearDaemonStateForTests();
+  beforeEach(() => {
+    mockCurrentProcessAsDaemonLifecycleOwner();
+  });
+
+  afterEach(() => {
     envScope.restore();
-    reloadConfiguration();
     vi.restoreAllMocks();
+    vi.doUnmock('@/daemon/doctor');
+    vi.resetModules();
   });
 
   it('uses the resolved current CLI version when packaged runtime package.json is unavailable', async () => {
@@ -41,7 +43,7 @@ describe('daemon control client version check', () => {
       if (req.method === 'POST' && req.url === '/ping') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ status: 'ok' }));
         return;
       }
       res.statusCode = 404;
@@ -53,7 +55,11 @@ describe('daemon control client version check', () => {
 
       await withTempDir('happier-daemon-version-check-', async (tmpHomeDir) => {
         envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-        reloadConfiguration();
+        const [{ configuration }, { writeDaemonState }, { isDaemonRunningCurrentlyInstalledHappyVersion }] = await Promise.all([
+          import('@/configuration'),
+          import('@/persistence'),
+          import('@/daemon/controlClient'),
+        ]);
         writeDaemonState({
           pid: process.pid,
           httpPort: port,
@@ -75,7 +81,7 @@ describe('daemon control client version check', () => {
       if (req.method === 'POST' && req.url === '/ping') {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ status: 'ok' }));
         return;
       }
       res.statusCode = 404;
@@ -87,7 +93,11 @@ describe('daemon control client version check', () => {
 
       await withTempDir('happier-daemon-version-check-', async (tmpHomeDir) => {
         envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-        reloadConfiguration();
+        const [{ configuration }, { writeDaemonState }, { isDaemonRunningCurrentlyInstalledHappyVersion }] = await Promise.all([
+          import('@/configuration'),
+          import('@/persistence'),
+          import('@/daemon/controlClient'),
+        ]);
         writeDaemonState({
           pid: process.pid,
           httpPort: port,
@@ -110,7 +120,11 @@ describe('daemon control client version check', () => {
     try {
       await withTempDir('happier-daemon-version-check-', async (tmpHomeDir) => {
         envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
-        reloadConfiguration();
+        const [{ configuration }, { writeDaemonState }, { isDaemonRunningCurrentlyInstalledHappyVersion }] = await Promise.all([
+          import('@/configuration'),
+          import('@/persistence'),
+          import('@/daemon/controlClient'),
+        ]);
 
         const daemonPort = 43210;
         vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {

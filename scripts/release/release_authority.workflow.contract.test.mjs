@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import YAML from 'yaml';
@@ -82,7 +83,7 @@ test('previously broad release-path tokens use the minimum current-repository co
     ['promote-website.yml/promote/Create GitHub App token', 'write'],
     ['promote-docs.yml/promote/Create GitHub App token', 'write'],
     ['publish-docker.yml/publish/Create GitHub App token', 'read'],
-    ['build-ui-mobile-local.yml/build_android/Create GitHub App token (APK publishing)', 'write'],
+    ['build-ui-mobile-local.yml/publish_android_apk/Create GitHub App token (APK publishing)', 'write'],
     ['publish-ui-mobile-dev.yml/publish/Create GitHub App token', 'read'],
     ['publish-ui-mobile-dev.yml/ios_cloud/Create GitHub App token', 'read'],
     ['publish-ui-mobile-dev.yml/ios_local/Create GitHub App token', 'read'],
@@ -270,10 +271,10 @@ for (const [workflowName, leafScript] of [
       'publish-hstack-binaries.yml': 'stack-v',
       'publish-ui-web.yml': 'ui-web-v',
     }[workflowName];
-    const identityRun = recoverySteps
+    const identityRun = parsed.jobs.release_actor_guard.steps
       .map((step) => String(step.run ?? ''))
       .find((run) => run.includes('resolve-authorized-release-source.mjs'));
-    assert.ok(identityRun, 'recovery must use the trusted remote source resolver');
+    assert.ok(identityRun, 'recovery admission must use the trusted remote source resolver');
     assert.match(identityRun, new RegExp(`refs/tags/${prefix}\\$\\{?RETRY_VERSION\\}?`));
     assert.equal(
       recoverySteps.filter((step) => step.uses === 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262').length,
@@ -287,3 +288,85 @@ for (const [workflowName, leafScript] of [
     );
   });
 }
+
+test('rolling recovery remains bound to the caller-authorized source SHA across every product', () => {
+  const nightly = workflow('nightly-dev.yml');
+  for (const jobName of ['promote_server', 'promote_hstack', 'promote_cli', 'promote_ui_web']) {
+    assert.equal(
+      nightly.jobs[jobName].with.authorized_sha,
+      '${{ needs.prepare_release_candidate.outputs.source_sha }}',
+      `${jobName} must pass the already-authorized nightly source into recovery`,
+    );
+  }
+  const release = workflow('release.yml');
+  for (const jobName of [
+    'promote_server_runtime',
+    'promote_hstack_binaries',
+    'promote_cli_binaries',
+    'promote_ui_web',
+  ]) {
+    assert.equal(
+      release.jobs[jobName].with.authorized_sha,
+      '${{ needs.prepare_release_candidate.outputs.source_sha }}',
+      `${jobName} must retain the full release's exact candidate SHA`,
+    );
+  }
+
+  for (const [workflowName, tagPrefix] of [
+    ['publish-cli-binaries.yml', 'cli-v'],
+    ['publish-hstack-binaries.yml', 'stack-v'],
+    ['publish-server-runtime.yml', 'server-v'],
+    ['publish-ui-web.yml', 'ui-web-v'],
+  ]) {
+    const parsed = workflow(workflowName);
+    const firstGuard = parsed.jobs.trusted_ref_guard.steps[0];
+    assert.equal(firstGuard.env.AUTHORIZED_SHA, '${{ inputs.authorized_sha }}');
+    assert.match(firstGuard.run, /\[\[\s*!\s+"\$AUTHORIZED_SHA"\s+=~\s+\^\[0-9a-f\]\{40\}\$\s*\]\]/);
+    const guardEnv = {
+      ...process.env,
+      CHANNEL: 'dev',
+      CALLER_REPOSITORY: 'happier-dev/happier',
+      WORKFLOW_REPOSITORY: 'happier-dev/happier',
+      WORKFLOW_REF: `happier-dev/happier/.github/workflows/${workflowName}@refs/heads/dev`,
+      RETRY_VERSION: '0.2.11-dev.1',
+      RESUME_VERSION: '',
+    };
+    const selfAuthorized = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
+      env: { ...guardEnv, AUTHORIZED_SHA: '' },
+      encoding: 'utf8',
+    });
+    assert.notEqual(selfAuthorized.status, 0, `${workflowName} accepted tag-derived self-authorization`);
+    const uppercaseAuthorization = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
+      env: { ...guardEnv, AUTHORIZED_SHA: 'A'.repeat(40) },
+      encoding: 'utf8',
+    });
+    assert.notEqual(uppercaseAuthorization.status, 0, `${workflowName} accepted a noncanonical uppercase SHA`);
+    const exactCallerAuthorization = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
+      env: { ...guardEnv, AUTHORIZED_SHA: 'a'.repeat(40) },
+      encoding: 'utf8',
+    });
+    assert.equal(exactCallerAuthorization.status, 0, exactCallerAuthorization.stderr);
+    const ordinaryPublish = spawnSync('bash', ['-euo', 'pipefail', '-c', firstGuard.run], {
+      env: { ...guardEnv, RETRY_VERSION: '', AUTHORIZED_SHA: '' },
+      encoding: 'utf8',
+    });
+    assert.equal(ordinaryPublish.status, 0, ordinaryPublish.stderr);
+
+    const identitySource = parsed.jobs.release_actor_guard.steps
+      .map((step) => String(step.run ?? ''))
+      .find((run) => run.includes('resolve-authorized-release-source.mjs'));
+    assert.ok(identitySource, `${workflowName} must verify recovery identity before mutation`);
+    assert.match(identitySource, new RegExp(`refs/tags/${tagPrefix}`));
+    assert.match(identitySource, /--authorized-sha "\$AUTHORIZED_SHA"/);
+
+    for (const jobName of ['promote_existing', 'promote_existing_fresh_runner_retry']) {
+      const promotion = parsed.jobs[jobName];
+      if (!promotion) continue;
+      const mutation = promotion.steps
+        .map((step) => step.env ?? {})
+        .find((env) => Object.hasOwn(env, 'AUTHORIZED_SHA'));
+      assert.ok(mutation, `${workflowName}/${jobName} must transport caller authorization to mutation`);
+      assert.equal(mutation.AUTHORIZED_SHA, '${{ inputs.authorized_sha }}');
+    }
+  }
+});

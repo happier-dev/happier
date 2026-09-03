@@ -5,6 +5,7 @@ export type GenericScrollObservationViewportState = Readonly<{
             isPinned: boolean;
             offsetY: number;
             shouldRestoreViewport: boolean;
+            shouldPersistViewport: false;
         }>;
     }>;
     drain: Readonly<{

@@ -58,10 +58,7 @@ test('release workflow only promotes and publishes the exact prepared candidate 
     /sync_dev:[\s\S]*?if:\s*\$\{\{\s*inputs\.dry_run != true && inputs\.environment == 'production'[\s\S]*?needs\.release_verify\.result == 'success'/,
   );
   assert.doesNotMatch(raw, /needs\.release_verify\.result == 'skipped'/, 'production sync must not accept skipped release verification');
-  assert.match(
-    raw,
-    /Compute versioned component changes \(latest release tags\.\.release head\)[\s\S]*?node scripts\/pipeline\/run\.mjs release-compute-versioned-component-changes/,
-  );
+  assert.match(raw, /Compute versioned component changes \(latest release tags\.\.release head\)[\s\S]*?compute-versioned-component-changes\.mjs/);
   assert.match(raw, /VERSIONED_APP_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_app\s*\}\}/);
   assert.match(raw, /VERSIONED_CLI_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_cli\s*\}\}/);
 });
@@ -71,7 +68,7 @@ test('release workflow publishes server runner only when explicitly requested', 
 
   // Server runner publishing must be an explicit target so server deploy remains independent.
   // The logic lives in the shared pipeline script (not inline bash).
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs release-resolve-bump-plan/);
+  assert.match(raw, /node \.\.\/scripts\/pipeline\/release\/resolve-bump-plan\.mjs/);
   assert.match(raw, /--deploy-targets "\$\{DEPLOY_TARGETS\}"/);
 
   assert.match(
@@ -119,7 +116,7 @@ test('release workflow accepts the public validation profile and routes its auto
   assert.equal(candidateVerifier?.with?.run_installers_smoke, undefined);
 });
 
-test('release workflow fans a versioned Stack target through immutable publication, staged promotion, npm, and exact signoff', async () => {
+test('release workflow fans a versioned Stack target through immutable publication, grouped verification, promotion, npm, and core signoff', async () => {
   const [raw, verifierRaw] = await Promise.all([
     loadWorkflow('release.yml'),
     loadWorkflow('release-verify.yml'),
@@ -147,8 +144,8 @@ test('release workflow fans a versioned Stack target through immutable publicati
   assert.match(String(promoter?.if ?? ''), /needs\.verify_release_candidates\.result == 'success'/);
   assert.match(String(promoter?.with?.retry_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
 
-  assert.match(String(npm?.if ?? ''), /needs\.plan\.outputs\.publish_stack == 'true'/);
-  assert.match(String(npm?.with?.publish_stack ?? ''), /needs\.plan\.outputs\.publish_stack == 'true'/);
+  assert.match(String(npm?.if ?? ''), /needs\.plan\.outputs\.publish_npm_needed == 'true'/);
+  assert.match(String(npm?.with?.publish_stack ?? ''), /needs\.plan\.outputs\.npm_publish_stack_needed == 'true'/);
   assert.ok(npm?.needs?.includes('publish_cli_binaries'));
   assert.ok(npm?.needs?.includes('publish_hstack_binaries'));
   assert.ok(npm?.needs?.includes('publish_server_runtime'));
@@ -156,11 +153,11 @@ test('release workflow fans a versioned Stack target through immutable publicati
   assert.equal(npm?.with?.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
   assert.equal(npm?.with?.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
 
-  assert.ok(finalVerifier?.needs?.includes('publish_hstack_binaries'));
+  assert.equal(finalVerifier?.needs?.includes('publish_hstack_binaries'), false);
+  assert.ok(finalVerifier?.needs?.includes('verify_release_candidates'));
   assert.ok(finalVerifier?.needs?.includes('promote_hstack_binaries'));
   assert.match(String(finalVerifier?.if ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
-  assert.match(String(finalVerifier?.with?.candidate_stack_version ?? ''), /needs\.publish_hstack_binaries\.outputs\.version/);
-  assert.match(String(finalVerifier?.with?.verify_stack_release ?? ''), /needs\.promote_hstack_binaries\.result == 'success'/);
+  assert.match(JSON.stringify(finalVerifier?.steps ?? []), /server-\$CHANNEL_SUFFIX stack-\$CHANNEL_SUFFIX cli-\$CHANNEL_SUFFIX ui-web-\$CHANNEL_SUFFIX/);
   assert.equal(verifierInputs?.verify_stack_release?.type, 'boolean');
   const stackIdentityGuard = parse(verifierRaw)?.jobs?.verify_candidate?.steps?.find(
     (step) => step.name === 'Require requested HStack verification identity',
@@ -259,7 +256,8 @@ test('release-npm is compatible with npm trusted publishing (OIDC)', async () =>
   const raw = await loadWorkflow('release-npm.yml');
 
   assert.match(raw, /node scripts\/pipeline\/npm\/publish-tarball\.mjs/, 'trusted release control should invoke the canonical npm tarball publisher directly');
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release/, 'release-npm should delegate npm pack preparation to the pipeline command');
+  assert.match(raw, /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs/, 'release-npm should prepare packs with trusted workflow-control code');
+  assert.match(raw, /--repo-root "\$GITHUB_WORKSPACE"/, 'trusted npm control must operate on the exact candidate checkout');
   assert.doesNotMatch(raw, /npm pack --ignore-scripts --json/, 'release-npm should not embed npm pack json parsing boilerplate (use release-packages.mjs)');
   assert.doesNotMatch(raw, /npm install --global npm@11/, 'release-npm should avoid global npm installs (use pinned npm via npx inside the pipeline)');
   assert.doesNotMatch(raw, /NPM_TOKEN is required for npm publish\./);
@@ -302,7 +300,7 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.match(raw, /dir="packages\/relay-server"/);
   assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}/);
   assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}[\s\S]*?yarn --cwd "\$\{SERVER_RUNNER_DIR\}" test/);
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
+  assert.match(raw, /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
 
   const script = await loadFile('scripts/pipeline/npm/set-preview-versions.mjs');
   assert.match(script, /resolveRollingPublishVersion/);
@@ -364,10 +362,10 @@ test('publish-github-release delegates release creation + asset upload to the pi
   assert.doesNotMatch(raw, /gh api -X DELETE/, 'publish-github-release should not embed release asset pruning logic');
 });
 
-test('promote-ui native_submit uses the shared Expo submit script (handles preview credential gaps)', async () => {
+test('promote-ui native_submit uses the shared Expo submit script and reports preview credential gaps after preserving siblings', async () => {
   const promoteUi = await loadWorkflow('promote-ui.yml');
   assert.match(promoteUi, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
-  assert.match(promoteUi, /action:\s*\$\{\{\s*inputs\.expo_action == 'native_submit' && 'build_and_submit' \|\| 'build_only'\s*\}\}/);
+  assert.match(promoteUi, /action:\s*\$\{\{\s*\(inputs\.expo_action == 'native_submit' \|\| inputs\.expo_action == 'full'\) && 'build_and_submit' \|\| 'build_only'\s*\}\}/);
 
   const buildUiMobileLocal = await loadWorkflow('build-ui-mobile-local.yml');
   assert.match(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
@@ -382,6 +380,16 @@ test('promote-ui native_submit uses the shared Expo submit script (handles previ
   assert.match(script, /for \(const platform of platforms\)/);
   assert.match(script, /allowsBestEffortSubmit\(environment\)/);
   assert.match(script, /::warning::Expo submit failed for/);
+  assert.match(script, /process\.exitCode = 1/);
+});
+
+test('promote-ui full publication prepares OTA and publishes native and APK surfaces', async () => {
+  const promoteUi = await loadWorkflow('promote-ui.yml');
+  assert.match(promoteUi, /- full\b/);
+  assert.match(promoteUi, /inputs\.expo_action == 'ota' \|\| inputs\.expo_action == 'full'/);
+  assert.match(promoteUi, /inputs\.expo_action == 'native_submit' \|\| inputs\.expo_action == 'full'/);
+  assert.match(promoteUi, /inputs\.expo_action == 'native' \|\| inputs\.expo_action == 'native_submit' \|\| inputs\.expo_action == 'full'/);
+  assert.match(promoteUi, /\(inputs\.expo_action == 'native_submit' \|\| inputs\.expo_action == 'full'\) && 'build_and_submit'/);
 });
 
 test('promote-ui prepares OTA bytes without secrets and publishes the exact bound artifacts with trusted control', async () => {
@@ -425,6 +433,7 @@ test('release workflow lets promote-ui derive exact-candidate Expo notes from th
   const workflow = parse(raw);
   assert.equal(workflow?.on?.workflow_dispatch?.inputs?.release_message, undefined, 'release.yml must not accept operator-authored release notes');
   assert.match(raw, /deploy_ui:[\s\S]*?uses:\s*\.\/\.github\/workflows\/promote-ui\.yml/);
+  assert.equal(workflow.jobs.deploy_ui.with.run_tests, false, 'release admission owns source tests; UI promotion must not rerun them after artifact verification');
   assert.doesNotMatch(raw, /deploy_ui:[\s\S]*?expo_update_message:/);
 });
 

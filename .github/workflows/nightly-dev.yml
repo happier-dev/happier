@@ -11,7 +11,7 @@ on:
         default: dev
         type: string
       ci_run_id:
-        description: "Completed canonical push CI run ID for this exact source (optional; avoids waiting on a hosted runner)"
+        description: "Completed canonical push CI run ID for this exact source (required for manual runs; schedules resolve once and never wait)"
         required: false
         default: ""
         type: string
@@ -44,6 +44,7 @@ jobs:
     needs: [resolve_resume]
     continue-on-error: true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: read
@@ -88,6 +89,7 @@ jobs:
     name: Prepare exact nightly candidate
     needs: [resolve_resume, snapshot_source_issues]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -95,6 +97,8 @@ jobs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
       release_message: ${{ steps.identity.outputs.release_message }}
       release_needed: ${{ steps.release_need.outputs.release_needed }}
+      ci_run_id: ${{ steps.ci_evidence.outputs.ci_run_id }}
+      waiting_for_ci: ${{ steps.ci_evidence.outputs.waiting_for_ci }}
     steps:
       - name: Checkout requested nightly source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -110,15 +114,49 @@ jobs:
           test "$(printf '%s' "$source_sha" | wc -c | tr -d ' ')" = "40"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "release_message=Automated nightly dev release." >> "$GITHUB_OUTPUT"
+      - name: Bind completed exact-source CI evidence
+        id: ci_evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+          REQUESTED_CI_RUN_ID: ${{ inputs.ci_run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            if [ -z "$REQUESTED_CI_RUN_ID" ]; then
+              echo "ci_run_id is required for a manually dispatched nightly." >&2
+              exit 1
+            fi
+            echo "ci_run_id=$REQUESTED_CI_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "waiting_for_ci=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          endpoint="repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs?branch=dev&head_sha=${SOURCE_SHA}&event=push&status=success&per_page=10"
+          ci_run_id="$(gh api "$endpoint" --jq '.workflow_runs | map(select(.head_sha == "'"$SOURCE_SHA"'" and .head_branch == "dev" and .event == "push" and .status == "completed" and .conclusion == "success")) | sort_by(.id) | last | .id // empty')"
+          if [ -z "$ci_run_id" ]; then
+            echo "ci_run_id=" >> "$GITHUB_OUTPUT"
+            echo "waiting_for_ci=true" >> "$GITHUB_OUTPUT"
+            echo "No completed canonical CI attestation exists for ${SOURCE_SHA}; this schedule is not releasable yet." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "ci_run_id=$ci_run_id" >> "$GITHUB_OUTPUT"
+          echo "waiting_for_ci=false" >> "$GITHUB_OUTPUT"
       - name: Determine whether scheduled publication is needed
         id: release_need
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+          WAITING_FOR_CI: ${{ steps.ci_evidence.outputs.waiting_for_ci }}
         run: |
           set -euo pipefail
           echo "release_needed=true" >> "$GITHUB_OUTPUT"
+          if [ "$WAITING_FOR_CI" = "true" ]; then
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$EVENT_NAME" != "schedule" ]; then
             exit 0
           fi
@@ -161,8 +199,9 @@ jobs:
   verify_source_ci:
     name: Verify exact nightly source CI
     needs: [prepare_release_candidate]
+    if: ${{ needs.prepare_release_candidate.outputs.waiting_for_ci != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -181,25 +220,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
-          CI_RUN_ID: ${{ inputs.ci_run_id }}
+          CI_RUN_ID: ${{ needs.prepare_release_candidate.outputs.ci_run_id }}
         run: |
           set -euo pipefail
           args=(
             --repository "$GITHUB_REPOSITORY"
-            --workflow tests.yml
             --source-sha "$SOURCE_SHA"
             --source-branch dev
+            --run-id "$CI_RUN_ID"
           )
-          if [ -n "$CI_RUN_ID" ]; then
-            args+=(--run-id "$CI_RUN_ID")
-          fi
           node scripts/pipeline/release/verify-existing-ci.mjs "${args[@]}"
+
+  nightly_waiting_for_ci:
+    name: Nightly waiting for exact-source CI
+    needs: [prepare_release_candidate]
+    if: ${{ needs.prepare_release_candidate.outputs.waiting_for_ci == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record non-releasable scheduled source
+        env:
+          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+        run: echo "Nightly ${SOURCE_SHA} is waiting for a completed exact-source CI attestation; no build or publication was started." >> "$GITHUB_STEP_SUMMARY"
 
   nightly_noop:
     name: Skip already completed nightly
     needs: [prepare_release_candidate, verify_source_ci]
-    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'false' }}
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'false' && needs.prepare_release_candidate.outputs.waiting_for_ci != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Record no-op
         env:
@@ -271,6 +320,7 @@ jobs:
     needs: [prepare_release_candidate, verify_source_ci]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     outputs:
@@ -320,6 +370,10 @@ jobs:
   release_verify:
     name: Verify exact immutable nightly candidates
     needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
@@ -355,39 +409,43 @@ jobs:
     with:
       channel: dev
       retry_version: ${{ needs.server_runtime.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   promote_hstack:
     name: Promote verified HStack candidate
-    needs: [prepare_release_candidate, hstack, promote_server]
+    needs: [prepare_release_candidate, hstack, release_verify]
     uses: ./.github/workflows/publish-hstack-binaries.yml
     secrets: inherit
     with:
       channel: dev
       retry_version: ${{ needs.hstack.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   promote_cli:
     name: Promote verified CLI candidate
-    needs: [prepare_release_candidate, cli, promote_hstack]
+    needs: [prepare_release_candidate, cli, release_verify]
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
       channel: dev
       retry_version: ${{ needs.cli.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   promote_ui_web:
     name: Promote verified UI web candidate
-    needs: [prepare_release_candidate, ui_web, promote_cli]
+    needs: [prepare_release_candidate, ui_web, release_verify]
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
       channel: dev
       retry_version: ${{ needs.ui_web.outputs.version }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
@@ -417,7 +475,7 @@ jobs:
 
   docker:
     name: Docker images (dev)
-    needs: [prepare_release_candidate, cli, server_runtime, promote_ui_web]
+    needs: [prepare_release_candidate, cli, server_runtime, release_verify]
     uses: ./.github/workflows/publish-docker.yml
     secrets: inherit
     with:
@@ -433,8 +491,9 @@ jobs:
 
   verify_promoted:
     name: Verify promoted nightly references
-    needs: [prepare_release_candidate, ui_mobile, ui_desktop, docker]
+    needs: [prepare_release_candidate, promote_server, promote_hstack, promote_cli, promote_ui_web]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -469,6 +528,7 @@ jobs:
     needs: [snapshot_source_issues, verify_promoted]
     continue-on-error: true
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       issues: write
@@ -501,6 +561,7 @@ jobs:
     if: ${{ always() && needs.prepare_release_candidate.outputs.release_needed != 'false' }}
     needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

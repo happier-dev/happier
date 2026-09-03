@@ -104,6 +104,7 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 import { sync } from './sync';
 import { storage } from './domains/state/storage';
 import type { Machine } from './domains/state/storageTypes';
+import type { NormalizedMessage } from './typesRaw';
 import { loadChangesCursor, loadDirectSessionTailCursor, saveProfile } from './domains/state/persistence';
 import { profileDefaults } from './domains/profiles/profile';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -191,6 +192,19 @@ function stubSnapshotRefreshFetch(): ReturnType<typeof vi.fn> {
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
+}
+
+function seedMaterializedMessage(sessionId: string, seq: number): void {
+  const message: NormalizedMessage = {
+    id: `m${seq}`,
+    localId: null,
+    createdAt: seq,
+    role: 'user',
+    content: { type: 'text', text: `message ${seq}` },
+    seq,
+    isSidechain: false,
+  };
+  storage.getState().applyMessages(sessionId, [message]);
 }
 
 function expectApiSocketMessageRequest(params: {
@@ -313,6 +327,7 @@ describe('sync socket offline tracking', () => {
         } as any,
       },
     }), true);
+    seedMaterializedMessage('s_reconnect_gap', 20);
     storage.getState().applyMessagesLoaded('s_reconnect_gap');
     (sync as any).sessionMaterializedMaxSeqById = { s_reconnect_gap: 20 };
     (sync as any).isForeground = true;
@@ -342,6 +357,7 @@ describe('sync socket offline tracking', () => {
         } as any,
       },
     }), true);
+    seedMaterializedMessage('s_tuned_page_size', 20);
     storage.getState().applyMessagesLoaded('s_tuned_page_size');
     (sync as any).sessionMaterializedMaxSeqById = { s_tuned_page_size: 20 };
     (sync as any).isForeground = true;
@@ -366,6 +382,7 @@ describe('sync socket offline tracking', () => {
         } as any,
       },
     }), true);
+    seedMaterializedMessage('s_deferred_durable_gap', 7);
     storage.getState().applyMessagesLoaded('s_deferred_durable_gap');
     (sync as any).sessionMaterializedMaxSeqById = { s_deferred_durable_gap: 7 };
     (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
@@ -404,6 +421,7 @@ describe('sync socket offline tracking', () => {
         } as any,
       },
     }), true);
+    seedMaterializedMessage('s_reconnect_consumed', 20);
     storage.getState().applyMessagesLoaded('s_reconnect_consumed');
     (sync as any).sessionMaterializedMaxSeqById = { s_reconnect_consumed: 20 };
     (sync as any).isForeground = true;

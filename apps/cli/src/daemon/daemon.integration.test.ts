@@ -12,6 +12,7 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { 
   listDaemonSessions, 
@@ -72,6 +73,7 @@ const PROCESS_EXIT_WAIT: WaitForOptions = {
 };
 
 let preparedDaemonHome: PreparedDaemonTestHome | null = null;
+const daemonClaudeCliStubPath = fileURLToPath(new URL('./testkit/claudeCliStub.mjs', import.meta.url));
 
 function debugIntegrationPreflight(message: string): void {
   if (process.env.HAPPIER_CLI_DAEMON_INTEGRATION_DEBUG === '1') {
@@ -401,6 +403,9 @@ async function isServerHealthy(): Promise<boolean> {
       preparedDaemonHome = await prepareIsolatedDaemonTestHome({
         prefix: 'happier-cli-daemon-int-',
         logCopyPrefix: 'daemon-int',
+        extraEnv: {
+          HAPPIER_CLAUDE_PATH: daemonClaudeCliStubPath,
+        },
       });
     }
 

@@ -36,7 +36,7 @@ const JIT_CODESIGN_METADATA = [
   'launch-constraints',
   'library-constraints',
 ].join(',');
-const JIT_ENTITLEMENT_REQUIREMENT = '=entitlement[com.apple.security.cs.allow-jit] = true';
+const JIT_ENTITLEMENT_REQUIREMENT = '=entitlement["com.apple.security.cs.allow-jit"] exists';
 const BUN_STANDALONE_ENTITLEMENTS_PATH = fileURLToPath(
   new URL('./bun-standalone.entitlements.plist', import.meta.url),
 );

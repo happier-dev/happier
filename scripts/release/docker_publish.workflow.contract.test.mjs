@@ -93,19 +93,15 @@ test('publish-docker supports workflow_call and is wired from release workflow',
     /publish_server_runtime_needed:\s*\$\{\{[^\n]*inputs\.force_deploy == true[^\n]*steps\.bump_plan\.outputs\.publish_server == 'true'[^\n]*steps\.plan\.outputs\.changed_ui == 'true'[^\n]*steps\.plan\.outputs\.changed_server == 'true'[^\n]*steps\.plan\.outputs\.changed_shared == 'true'[^\n]*\}\}[\s\S]*?publish_server_runtime:[\s\S]*?needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/,
     'server runtime artifacts should publish when server code or its embedded UI changes',
   );
-  assert.match(
-    release,
-    /publish_ui_web:[\s\S]*?\(contains\(format\(',\{0\},', inputs\.deploy_targets\), ',ui,'\) \|\| inputs\.force_deploy == true \|\| needs\.plan\.outputs\.changed_ui == 'true' \|\| needs\.plan\.outputs\.changed_shared == 'true'\)/,
-    'UI web artifacts should publish when relay Docker needs a fresh embedded UI bundle',
-  );
+  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /inputs\.deploy_targets/);
+  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /steps\.plan\.outputs\.changed_ui == 'true'/);
+  assert.match(releaseWorkflow.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed == 'true'/);
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
-  assert.match(release, /publish_docker:[\s\S]*?needs:\s*\[plan, promote_preview, promote_main, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web\]/);
+  assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['resolve_resume', 'plan', 'promote_preview', 'promote_main', 'prepare_release_candidate', 'verify_release_candidates', 'publish_cli_binaries', 'publish_server_runtime']);
   assert.match(release, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(release, /server_version:\s*\${{\s*needs\.publish_server_runtime\.outputs\.version\s*}}/);
   assert.match(release, /cli_version:\s*\${{\s*needs\.publish_cli_binaries\.outputs\.version\s*}}/);
-  assert.match(release, /publish_docker:[\s\S]*?needs\.promote_cli_binaries\.result == 'success' \|\| needs\.promote_cli_binaries\.result == 'skipped'/);
-  assert.match(release, /publish_docker:[\s\S]*?needs\.promote_server_runtime\.result == 'success' \|\| needs\.promote_server_runtime\.result == 'skipped'/);
-  assert.match(release, /publish_docker:[\s\S]*?needs\.promote_ui_web\.result == 'success' \|\| needs\.promote_ui_web\.result == 'skipped'/);
+  assert.match(releaseWorkflow.jobs.publish_docker.if, /needs\.verify_release_candidates\.result == 'success'/);
   assert.match(release, /build_relay:/);
   assert.match(release, /build_dev_box:/);
   assert.doesNotMatch(release, /build_dev_box:\s*\$\{\{[^\n]*changed_stack/);
@@ -120,29 +116,20 @@ test('nightly dev docker waits for the release artifacts it consumes', async () 
   const nightly = await loadWorkflow('nightly-dev.yml');
   assert.match(
     nightly,
-    /docker:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, server_runtime, promote_ui_web\][\s\S]*?uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/,
+    /docker:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, server_runtime, release_verify\][\s\S]*?uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/,
   );
   assert.match(nightly, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(nightly, /server_version:\s*\${{\s*needs\.server_runtime\.outputs\.version\s*}}/);
   assert.match(nightly, /cli_version:\s*\${{\s*needs\.cli\.outputs\.version\s*}}/);
 });
 
-test('Docker publishing installs and builds its release-runtime dependency', async () => {
+test('Docker publishing runs its dependency-free trusted pipeline without a workspace install', async () => {
   const publishDocker = await loadWorkflow('publish-docker.yml');
+  assert.doesNotMatch(publishDocker, /enable-corepack-yarn|install-yarn-dependencies/);
   assert.match(
     publishDocker,
-    /Enable Corepack \(Yarn\)\s+uses:\s+\.\/\.github\/actions\/enable-corepack-yarn/,
-    'publish-docker should use the retrying owner for the pinned repository Yarn runtime',
-  );
-  assert.match(
-    publishDocker,
-    /Install trusted publisher dependencies[\s\S]*?HAPPIER_INSTALL_SCOPE:\s*["']release-runtime["'][\s\S]*?uses:\s*\.\/\.github\/actions\/install-yarn-dependencies/,
-    'publish-docker should install the trusted release-runtime workspace imported by its publisher',
-  );
-  assert.match(
-    publishDocker,
-    /Install trusted publisher dependencies[\s\S]*?Build & push images \(trusted pipeline\)/,
-    'the release-runtime dependency must be available before Docker artifact resolution starts',
+    /Download exact candidate source[\s\S]*?Materialize candidate source as inert build data[\s\S]*?Build & push images \(trusted pipeline\)/,
+    'Docker publication should consume the prepared candidate source before invoking its trusted stdlib-only pipeline',
   );
 });
 
@@ -183,6 +170,18 @@ test('Docker candidate source is prepared without release or registry secrets', 
   assert.notEqual(sourceCheckout?.with?.ref, '${{ job.workflow_sha }}');
   assert.equal(sourceCheckout?.with?.['persist-credentials'], false);
   assert.match(JSON.stringify(candidate), /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
+
+  const stableGuard = candidate.steps.find((step) => step.name === 'Verify stable candidate is current main');
+  assert.ok(stableGuard, 'stable Docker admission must compare immutable commit identities');
+  assert.match(stableGuard.if, /inputs\.channel == 'stable'/);
+  assert.equal(stableGuard.env.SOURCE_SHA, '${{ steps.source.outputs.source_sha }}');
+  assert.match(stableGuard.run, /git ls-remote --exit-code origin refs\/heads\/main/);
+  assert.match(stableGuard.run, /test "\$SOURCE_SHA" = "\$main_sha"/);
+  assert.doesNotMatch(
+    JSON.stringify(candidate),
+    /source_ref != 'main'/,
+    'an exact resumed SHA must not be rejected merely because its ref spelling is not main',
+  );
 });
 
 test('Docker publication requires exact artifact versions for every selected image', async () => {

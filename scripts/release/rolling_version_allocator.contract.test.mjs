@@ -192,6 +192,29 @@ test('same-version rolling recovery is explicit and does not allocate a replacem
   assert.equal(recovery.version, '0.2.6-preview.127');
 });
 
+test('pack preparation may reconstruct the exact published npm version for an idempotent integrity check', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+  const result = await resolveRollingPublishVersion({
+    repoRoot,
+    productId: 'cli',
+    channel: 'preview',
+    baseVersion: '0.2.11',
+    explicitVersion: '0.2.11-preview.2',
+    publishSurface: 'npm',
+    allowExistingExactVersion: true,
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+        github: {},
+        npm: { '@happier-dev/cli': ['0.2.11-preview.2'] },
+      }),
+    },
+  });
+
+  assert.equal(result.version, '0.2.11-preview.2');
+  assert.equal(result.previousVersion, '0.2.11-preview.2');
+});
+
 test('preview recovery derives its base from the latest immutable GitHub Release after control advances', async () => {
   const { resolveRollingRecoveryVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
 

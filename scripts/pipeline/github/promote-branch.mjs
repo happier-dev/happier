@@ -210,8 +210,17 @@ function main() {
   const sourceRefApi = repo ? `repos/${repo}/git/ref/heads/${source}` : `repos/OWNER/REPO/git/ref/heads/${source}`;
   const targetRefApi = repo ? `repos/${repo}/git/ref/heads/${target}` : `repos/OWNER/REPO/git/ref/heads/${target}`;
 
+  const targetSha = run('gh', ['api', targetRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim().toLowerCase();
+  if (!dryRun && targetSha === authorizedSourceSha) {
+    appendSummary(
+      summaryFile,
+      `## Promote Branch\n\n- source: \`${source}\`\n- target: \`${target}\`\n- mode: \`${mode}\`\n- dry_run: \`false\`\n- origin/${target}: \`${targetSha}\`\n- authorized source: \`${authorizedSourceSha}\`\n- result: \`already promoted\`\n\n`,
+    );
+    console.log(`[pipeline] ${target} already resolves to the authorized source SHA; no branch mutation required.`);
+    return;
+  }
+
   const sourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim().toLowerCase();
-  const targetSha = run('gh', ['api', targetRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
   if (!dryRun && sourceSha !== authorizedSourceSha) {
     fail(`Source branch did not match the authorized SHA: ${source}.`);
   }

@@ -41,11 +41,15 @@ and three profiles:
   private release agent to review preview candidate equivalence and soak,
   breaking changes, reachable version-skew directions, persistence, and
   accidental lockstep requirements.
-- `deep` is manual comprehensive certification. It has no automatic suite
-  membership, owns risk-selected installer and Docker checks when those
-  surfaces change, and covers cross-OS, provider, mobile, and full
-  certification before it is considered complete. It is never a normal-release
-  dispatch.
+- `deep` is manual comprehensive source certification. The manual `deep`
+  profile in `tests-dispatch.yml` fans out every non-mutating in-repository
+  lane: extended databases, stress, WSREPL, mobile device E2E, cross-OS
+  service/self-host checks, local daemon/session continuity, installer/binary
+  smoke, and Docker release-asset compatibility. It does not publish, deploy,
+  promote, submit to stores, or run credentialed live-provider scenarios.
+  Those provider scenarios remain an explicit custom/provider-contract run,
+  and native/store publication remains owned by release automation. `deep` is
+  never a normal-release dispatch.
 
 The workflow derives source-check depth from the selected public profile; a
 caller cannot select a second checks profile. MySQL, cross-platform service,
@@ -53,10 +57,11 @@ and installer/updater trust-root gates are selected by the affected diff rather
 than every server, CLI, preview, or stable candidate.
 
 An explicit maintainer may refine the heavy upgrade/continuity suite selection
-or waive exact-SHA CI with a bounded reason. The workflow reports that evidence
-as `WAIVED`, never `PASS`. Candidate identity, artifact integrity, signing,
-release authorization, MySQL migration admission, and trust-root checks remain
-hard contracts on this shipping line.
+or waive exact-SHA source certification with a bounded reason. That source
+waiver also skips the source-only MySQL and platform-service gates; the workflow
+reports the evidence as `WAIVED`, never `PASS`. Candidate identity, artifact
+integrity, binary smoke, signing/notarization, release authorization, and
+installer/updater trust-root checks remain hard contracts on this shipping line.
 
 The slow test lane contains two pinned server-v0.2.1 regressions for pending
 queue and first-prompt behavior. They are exact tests, not a general
@@ -251,6 +256,8 @@ The reset option exists for rare cases where you intentionally want `target` to 
 
 For the server, database migrations should be automated as part of the deployment runtime:
 
-- Run `prisma migrate deploy` at container startup (entrypoint) or via an explicit platform “pre-deploy” hook.
-- Running migrations from *both* API and worker is acceptable as long as you expect contention and handle it (Prisma uses a DB lock to serialize migrations; the non-holder should wait/retry).
+- For a single unmanaged container, the default entrypoint may run `prisma migrate deploy` before server startup.
+- For health-managed or multi-replica deployments, run `run-server --migrate-only` once in an explicit platform pre-deploy operation. Start API and worker replicas with `RUN_MIGRATIONS=0` only after that operation succeeds.
+- When an application platform cannot run and await a blocking pre-deploy operation, designate exactly one API service as the migration owner and set `RUN_MIGRATIONS=0` on workers and all other replicas. Protect that owner with start-first rollout, rollback on failure, and sufficient health-check startup grace; webhook acceptance alone does not prove migration or deployment completion.
+- Do not rely on API and worker startup races as migration ownership. Prisma's database lock serializes contenders, but it cannot preserve the winning migration when an orchestrator terminates that container for missing its startup-health window.
 - Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.

@@ -36,6 +36,7 @@ describe('web observed viewport-state generic effects', () => {
                     viewportState: {
                         isPinned: false,
                         offsetY: 96,
+                        shouldPersistViewport: false,
                         shouldRestoreViewport: false,
                     },
                 },
@@ -55,6 +56,7 @@ describe('web observed viewport-state generic effects', () => {
                 viewportState: {
                     isPinned: false,
                     offsetY: 96,
+                    shouldPersistViewport: false,
                     shouldRestoreViewport: false,
                 },
                 wantsPinned: true,

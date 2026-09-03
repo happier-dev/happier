@@ -3,6 +3,7 @@
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { buildGitHubGitAuthorizationHeader, promoteDeployRef } from './deploy-ref-cas.mjs';
 
 function fail(message) {
   console.error(message);
@@ -28,20 +29,6 @@ function run(cmd, args, opts) {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 120_000,
   });
-}
-
-/**
- * @param {unknown} err
- * @returns {boolean}
- */
-function isExplicitNotFoundError(err) {
-  if (!err || typeof err !== 'object') return false;
-  const status = Number(/** @type {{ status?: unknown }} */ (err).status);
-  if (status === 404) return true;
-  const candidate = /** @type {{ stderr?: unknown; message?: unknown }} */ (err);
-  const stderr = Buffer.isBuffer(candidate.stderr) ? candidate.stderr.toString('utf8') : String(candidate.stderr ?? '');
-  const message = String(candidate.message ?? '');
-  return /(?:\bHTTP\s*)?404\b/i.test(`${stderr}\n${message}`);
 }
 
 /**
@@ -118,6 +105,8 @@ function main() {
       sha: { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
       'summary-file': { type: 'string', default: '' },
+      'github-output': { type: 'string', default: '' },
+      remote: { type: 'string', default: 'origin' },
     },
     allowPositionals: false,
   });
@@ -128,6 +117,8 @@ function main() {
   const shaOverride = String(values.sha ?? '').trim();
   const dryRun = values['dry-run'] === true;
   const summaryFile = String(values['summary-file'] ?? '').trim();
+  const githubOutput = String(values['github-output'] ?? '').trim();
+  const remote = String(values.remote ?? '').trim();
 
   if (!isDeployEnvironment(deployEnvironment)) {
     fail(`--deploy-environment must be 'production' or 'preview' (got: ${deployEnvironment || '<empty>'})`);
@@ -166,34 +157,23 @@ function main() {
     sourceSha = '0123456789abcdef0123456789abcdef01234567';
   }
 
-  const targetRef = encodeURIComponent(targetBranch);
-  const targetApi = repo ? `repos/${repo}/git/ref/heads/${targetRef}` : `repos/OWNER/REPO/git/ref/heads/${targetRef}`;
-  let oldSha = '';
-  let targetMissing = false;
+  const targetRef = `refs/heads/${targetBranch}`;
+  const authorizationHeader =
+    String(process.env.HAPPIER_GIT_AUTHORIZATION_HEADER ?? '').trim() || buildGitHubGitAuthorizationHeader(token);
+  let result;
   try {
-    oldSha = run('gh', ['api', targetApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
-  } catch (err) {
-    if (!isExplicitNotFoundError(err)) throw err;
-    targetMissing = true;
+    result = promoteDeployRef({ candidateSha: sourceSha, targetRef, remote, authorizationHeader, dryRun });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
 
   appendSummary(
     summaryFile,
-    `## Promote deploy branch\n\n- target: \`${targetBranch}\`\n- source_ref: \`${sourceRef || '(sha override)'}\`\n- old_sha: \`${oldSha || '(missing)'}\`\n- new_sha: \`${sourceSha || '(unavailable)'}\`\n\n`,
+    `## Promote deploy branch\n\n- target: \`${targetBranch}\`\n- source_ref: \`${sourceRef || '(sha override)'}\`\n- old_sha: \`${result.oldSha || '(missing)'}\`\n- new_sha: \`${result.newSha}\`\n- changed: \`${result.changed}\`\n\n`,
   );
-
-  const updateApi = repo ? `repos/${repo}/git/refs/heads/${targetRef}` : `repos/OWNER/REPO/git/refs/heads/${targetRef}`;
-  if (!repo && !dryRun) fail('Missing repo for update operation.');
-  if (targetMissing) {
-    run(
-      'gh',
-      ['api', '-X', 'POST', `repos/${repo}/git/refs`, '-f', `ref=refs/heads/${targetBranch}`, '-f', `sha=${sourceSha}`],
-      { env: ghEnv },
-    );
-  } else {
-    run('gh', ['api', '-X', 'PATCH', updateApi, '-f', `sha=${sourceSha}`, '-F', 'force=true'], { env: ghEnv, dryRun });
+  if (githubOutput) {
+    fs.appendFileSync(githubOutput, `old_sha=${result.oldSha ?? ''}\nnew_sha=${result.newSha}\nchanged=${result.changed}\n`, 'utf8');
   }
-  if (dryRun) return;
 }
 
 main();

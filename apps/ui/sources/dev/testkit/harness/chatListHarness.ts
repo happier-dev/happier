@@ -764,6 +764,12 @@ export function createFlashListChatListSyncModuleMock(
     const inactiveSessionMessagesWindowState = createInactiveSessionMessagesWindowState();
     return {
         sync: {
+            fetchUserMessageHistoryPage: async (_sessionId: string, _options?: unknown) => ({
+                status: 'loaded' as const,
+                rows: [],
+                hasMore: false,
+                nextBeforeSeq: null,
+            }),
             loadOlderMessages: async () => ({ loaded: 0, hasMore: false, status: 'no_more' as const }),
             loadNewerMessages,
             hasDeferredNewerMessages,

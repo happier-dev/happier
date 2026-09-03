@@ -1,5 +1,15 @@
 # CI and test cleanup without weakening ship evidence
 
+## Keep three explicit profiles
+
+| Profile | Default use | Contents |
+| --- | --- | --- |
+| `fast` | pull requests and ordinary pushes | affected contracts, typechecks, units/integration, and essential smoke |
+| `release` | candidate and nightly release validation | artifact identity, install/binary smoke, and risk-selected continuity; never a second source-CI run |
+| `deep` | scheduled/manual certification and stable-release evidence | extended databases, platforms, compatibility, stress, and other expensive coverage |
+
+Use one canonical change classifier and one final result aggregator. A profile is a maintained policy, not another copied workflow. A full/deep run remains available, but unrelated paths should not select it by default.
+
 ## Evidence-led cleanup targets
 
 Consolidate or remove a test/check when current evidence shows it is one of:
@@ -42,9 +52,10 @@ A larger timeout is valid only when the operation is making observable progress 
 ## Workflow simplification
 
 - Keep one canonical command per lane and let local/manual/automatic workflows call it.
-- Keep runner-pool selection as an input to the reusable workflow rather than copying workflows for Blacksmith.
+- Keep runner-pool selection as an input to the reusable workflow. Blacksmith is a manual accelerator for approved non-secret Linux lanes, not a fork of CI; the same job graph and commands must continue to work on GitHub-hosted runners.
 - Use matrices only for real platform/configuration differences.
 - Keep result aggregators tiny and free of dependency installation.
+- Reuse immutable prepared inputs when that avoids repeated lifecycle installs without turning caches into evidence.
 - Cache only reproducible inputs; never let a cache become the authority for generated-output freshness.
 - Do not add retries around release mutations unless the operation is proven idempotent or state reconciliation precedes retry.
 

@@ -3,6 +3,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 
 function writeDaemonStateFixture(path: string, serializedState: string, encoding: 'utf-8'): void {

@@ -1,37 +1,40 @@
 ---
 name: happier-ci-stabilize
-description: Stabilize Happier CI and release workflows by collecting every failure from one exact run, clustering shared causes, simplifying stale tests and harnesses without weakening coverage, validating coherent fix batches efficiently, and recovering failed nightlies through the cheapest safe rerun or verified-candidate resume path. Use for failing, flaky, slow, repeatedly rerun, or over-complicated CI/nightly workflows.
+description: Stabilize failing, flaky, slow, or repeatedly rerun Happier CI and nightlies by collecting all reachable failures from one exact attempt, correcting canonical causes in one batch, simplifying low-value coverage, and choosing the cheapest safe rerun or candidate-resume path.
 ---
 
 # Happier CI Stabilization
 
-Drive a failing CI or release run to an evidence-backed terminal result with the fewest expensive reruns. This skill owns failure collection, stabilization sequencing, CI cleanup decisions, monitoring, and recovery selection. It does not grant release authority or replace the test-quality rules in `.agents/skills/happier-testing`.
+Drive a failing CI or release run to an evidence-backed terminal result with the fewest expensive reruns. This skill owns failure collection, failure clustering, stabilization sequencing, CI cleanup decisions, monitoring, and recovery selection. It does not grant release authority or replace the test-quality rules in `.agents/skills/happier-testing`.
 
-## Load the owning workflows
+## Use the existing owners
 
 - Read and apply `.agents/skills/happier-testing/SKILL.md` before changing tests, fixtures, mocks, testkits, timeouts, or lane selection.
 - Use `.agents/skills/happier-implement/SKILL.md` for repository corrections and its RED -> GREEN requirement for behavior changes.
 - Resolve privileged publication through `.agents/skills/happier-release/SKILL.md`; this skill never invents release authority.
-- After a coherent validated 0.2 correction, use `.agents/skills/happier-port-0-2-to-0-3/SKILL.md` for an evidence-backed 0.3 disposition.
+- After a coherent validated 0.2 correction, use `.agents/skills/happier-port-0-2-to-0-3/SKILL.md` once for an evidence-backed 0.3 disposition.
 
 Read [failure-collection.md](references/failure-collection.md) for a failing run, [ci-cleanup.md](references/ci-cleanup.md) before simplifying CI/tests, and [nightly-recovery.md](references/nightly-recovery.md) before rerunning or resuming a release.
 
-## Fast stabilization loop
+## One stabilization loop
 
-1. **Bind exact identity.** Record repository, workflow, run ID, attempt, event, head SHA, status, and branch. Do not diagnose “latest” after the branch has moved.
-2. **Collect the whole reachable failure set.** Let independent jobs reach terminal state unless continued execution is unsafe, produces conflicting publication writes, or a proven wedged job blocks the corrected run. Do not begin a rerun from the first red annotation while other independent lanes can still expose failures.
-3. **Use the collector.** Run `scripts/collect-actions-failures.mjs` after the attempt is terminal. It paginates all jobs and retains full failed-job logs outside the repository while returning compact evidence. Keep the working inventory in the conversation or `/tmp`, not a repository ledger.
-4. **Cluster before fixing.** Collapse aggregator failures and many test symptoms into their originating signature and canonical owner. One stale shared harness can fail dozens of scenarios; do not count those as dozens of defects.
-5. **Classify from evidence.** Use one of: production defect, test drift, harness/mock drift, release-control/configuration drift, external-contract change, infrastructure/resource failure, or inconclusive. A timeout is a symptom until logs and step timing establish the cause.
-6. **Correct one coherent batch.** Reproduce the smallest owner-level failure locally, prove RED for the intended contract, fix the canonical owner, and update or remove only assertions/harnesses invalidated by that same cause. Preserve unrelated dirty work.
-7. **Validate once per widening boundary.** Run all corrected focused tests together, then each affected package/lane, then canonical CI once for the coherent batch. Use the manual Blacksmith runner pool for approved non-secret Linux lanes when fast hosted feedback is useful; keep runner-sensitive, secret-bearing, macOS, and Windows lanes on their proven runners.
-8. **Recover instead of rebuilding.** Choose native failed-job rerun, verified-candidate resume, or fresh release from the decision table in `nightly-recovery.md`. Never reuse artifacts after candidate/source bytes change.
-9. **Monitor proportionally.** Poll ordinary transitions in roughly 1-2 minutes only when a result is expected immediately. Poll dependency installs, full suites, builds, signing, notarization, store submission, and publication every 5-20 minutes. Long duration alone is not failure evidence.
-10. **Close from independent evidence.** Require the canonical CI result for the exact SHA. For a nightly, also inspect `happier-release-status`, immutable candidate identities, promoted-reference verification, rolling tags, and the terminal status owner. A green top-level badge alone is not the release proof.
+1. **Bind the attempt.** Record repository, workflow, run ID, attempt, event, head SHA, branch, and status. Never diagnose “latest” after a branch moves.
+2. **Collect once.** Let independent safe jobs reach terminal state. Then run `scripts/collect-actions-failures.mjs`; retain complete failed-job logs under `/tmp` and use its compact summary. Stop early only for an unsafe mutation, conflicting publisher, or proven wedge blocking a corrected run.
+3. **Cluster causes.** Collapse aggregators and repeated symptoms into the earliest causal signature and canonical owner. Classify each cluster as product, test, harness/mock, release control/configuration, external contract, infrastructure/resource, or inconclusive. A timeout is only a symptom.
+4. **Correct one batch.** Reproduce every deterministic cluster that can be exercised locally. For each behavior change, prove the smallest meaningful RED, fix the canonical owner, and remove or update only coverage invalidated by that cause. Run all focused fixes together, then each affected lane.
+5. **Run canonical CI once.** Use the exact coherent SHA. The manual Blacksmith runner-pool input may accelerate approved non-secret Linux lanes; it selects a backend for the same reusable workflow and must not create a copied CI graph.
+6. **Recover the cheapest safe way.** Choose a native failed-job rerun, immutable-candidate resume, or fresh release using [nightly-recovery.md](references/nightly-recovery.md). Preserve successful sibling candidates when their source and packaging identity remain valid.
+7. **Use one foreground monitor.** Keep exactly one poller bound to the run and attempt. Poll long setup, suites, builds, signing, notarization, store submission, and publication every 5-20 minutes. Long duration alone is not failure evidence.
+8. **Close from terminal evidence.** Require canonical CI success for the exact SHA. For a nightly, also inspect the terminal status artifact, immutable identities, required validation, promoted-reference verification, and requested side lanes. A green top-level badge alone is insufficient.
 
-## Make one run expose more failures
+## Keep source CI and release admission separate
 
-When changing workflow structure, preserve these boundaries:
+- Source CI proves code correctness once for an exact SHA and emits or identifies explicit exact-SHA evidence.
+- Release preflight cheaply proves that the already-tested SHA can be released with the requested channel, versions, notes, protocol, tools, credentials, and platform configuration.
+- A nightly consumes the explicit successful `ci_run_id`/attestation after verifying its repository, workflow, event, branch, status, and exact SHA. It does not rerun full source CI.
+- If explicit evidence is unavailable, use only the repository's canonical unattended lookup; do not create another scanner or occupy a release runner watching CI.
+
+## Expose every reachable failure
 
 - Independent test jobs should not depend on unrelated test jobs.
 - Independent checks inside one job may use `continue-on-error` only when a final `if: always()` aggregator fails the job if any required check failed.
@@ -39,7 +42,7 @@ When changing workflow structure, preserve these boundaries:
 - Publication, promotion, signing, destructive mutation, and security/trust gates remain fail-closed and must not continue merely to collect more errors.
 - A collector exposes all **reachable** failures. A downstream job gated on a missing candidate cannot be meaningfully tested until that prerequisite exists; do not label this unavoidable dependency as hidden CI failure.
 
-Prefer moving cheap, deterministic release contracts, workflow parsing, configuration preflights, generated-output checks, and package-size projections before expensive native builds. Do not duplicate production logic in a preflight; call the canonical owner or inspect its output.
+Move cheap deterministic contracts, workflow parsing, generated-output checks, and configuration preflights before expensive work. Preflight calls the canonical owner or inspects its output; it does not duplicate source CI or production decisions.
 
 ## Stop conditions
 
@@ -61,7 +64,3 @@ Report:
 - tests, mocks, timeouts, or workflow gates consolidated/removed and why coverage did not weaken;
 - recovery mechanism used and what work it preserved;
 - terminal CI/release evidence and residual risk.
-
-## Fast CI evidence handoff
-
-When a completed canonical push CI run is already known, pass its numeric run ID to release/nightly dispatch as `ci_run_id`. The workflow verifies repository, workflow path, branch, exact head SHA, push event, completion, and success; it never trusts the ID alone. This avoids occupying a hosted runner with `gh run watch`. If no run ID is supplied, the exact-SHA lookup remains the unattended fallback.

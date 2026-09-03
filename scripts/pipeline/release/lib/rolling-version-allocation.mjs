@@ -310,6 +310,7 @@ function getProductSource(productId) {
  *   baseVersion: string;
  *   explicitVersion?: string;
  *   publishSurface?: 'github' | 'npm' | 'all';
+ *   allowExistingExactVersion?: boolean;
  *   env?: Record<string, string | undefined>;
  *   dryRun?: boolean;
  * }} opts
@@ -410,7 +411,10 @@ export async function resolveRollingPublishVersion(opts) {
       explicitBuild.run === comparisonBuild.run &&
       (explicitBuild.attempt ?? 0) <= (comparisonBuild.attempt ?? 0);
     const isBehindTarget = comparisonBuild && compareBuildOrder(explicitBuild, comparisonBuild) < 0;
-    if (isOlderThanOverall || isAlreadyPublishedForTarget || isBehindTarget) {
+    const isExactTargetVersion = comparisonBuild
+      && explicitBuild.run === comparisonBuild.run
+      && (explicitBuild.attempt ?? 0) === (comparisonBuild.attempt ?? 0);
+    if (isOlderThanOverall || isBehindTarget || (isAlreadyPublishedForTarget && !(opts.allowExistingExactVersion && isExactTargetVersion))) {
       throw new Error(
         `[release] refusing to publish ${explicitVersion}; latest published ${opts.productId} ${channelSuffix} version is ${previous.version}`,
       );

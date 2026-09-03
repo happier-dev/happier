@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -200,4 +202,64 @@ test('resolve-bump-plan rejects an automatic bump when called by the final relea
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Materialize and commit changelog and version updates, then rerun with --bump none\./);
+});
+
+test('resolve-bump-plan admits an exact verified resume version after production branch promotion', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-bump-plan-git-'));
+  try {
+    const packageJson = readFileSync(resolve(repoRoot, 'apps', 'cli', 'package.json'), 'utf8');
+    const packageVersion = JSON.parse(packageJson).version;
+    const gitStub = join(root, 'git');
+    writeFileSync(
+      gitStub,
+      '#!/usr/bin/env node\n' +
+        'if (process.argv[2] !== "show" || process.argv[3] !== "origin/main:apps/cli/package.json") process.exit(2);\n' +
+        'process.stdout.write(process.env.HAPPIER_TEST_MAIN_CLI_PACKAGE_JSON || "");\n',
+      { mode: 0o700 },
+    );
+    const fixtureEnv = {
+      ...process.env,
+      PATH: `${root}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
+      HAPPIER_TEST_MAIN_CLI_PACKAGE_JSON: packageJson,
+    };
+    const commonArgs = [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+      '--environment', 'production',
+      '--bump-preset', 'none',
+      '--deploy-targets', 'cli',
+      '--changed-ui', 'false',
+      '--changed-cli', 'false',
+      '--changed-stack', 'false',
+      '--changed-server', 'false',
+      '--changed-website', 'false',
+      '--changed-shared', 'false',
+      '--require-materialized',
+    ];
+
+    const withoutResume = spawnSync(process.execPath, commonArgs, {
+      cwd: repoRoot,
+      env: fixtureEnv,
+      encoding: 'utf8',
+    });
+    assert.equal(withoutResume.status, 1);
+    assert.match(withoutResume.stderr, /Refusing production deploy_targets includes cli without a version change/);
+
+    const wrongResume = spawnSync(process.execPath, [...commonArgs, '--resume-cli-version', '0.0.0-wrong'], {
+      cwd: repoRoot,
+      env: fixtureEnv,
+      encoding: 'utf8',
+    });
+    assert.equal(wrongResume.status, 1);
+
+    const withResume = spawnSync(process.execPath, [...commonArgs, '--resume-cli-version', packageVersion], {
+      cwd: repoRoot,
+      env: fixtureEnv,
+      encoding: 'utf8',
+    });
+    assert.equal(withResume.status, 0, withResume.stderr);
+    assert.equal(JSON.parse(withResume.stdout).publish_cli, true);
+    assert.equal(JSON.parse(withResume.stdout).bump_cli, 'none');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

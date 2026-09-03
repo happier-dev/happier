@@ -81,7 +81,10 @@ test('verify-artifacts smoke-runs packaged server binaries with isolated startup
         env: {
           ...process.env,
           HAPPIER_SERVER_LIGHT_DATA_DIR: '',
-          HAPPIER_RELEASE_SERVER_SMOKE_TIMEOUT_MS: '1000',
+          // The full release-contract collector starts hundreds of subprocesses
+          // in parallel. Preserve a tight bound while allowing this fixture's
+          // shell enough time to be scheduled and write its environment proof.
+          HAPPIER_RELEASE_SERVER_SMOKE_TIMEOUT_MS: '3000',
           PORT: '',
           METRICS_PORT: '',
         },

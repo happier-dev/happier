@@ -6503,39 +6503,66 @@ class Sync {
          * revealing older read-only context before the child transcript's own older pages are loaded.
          */
         public async prefetchForkedTranscriptContext(childSessionId: string): Promise<void> {
-            const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
-            if (!fork) return;
+            const attemptedSessionIds = new Set<string>();
+            while (true) {
+                const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
+                if (!fork) return;
 
-            const missingSegments = fork.segments.filter((seg, index) => {
-                if (
-                    seg.isReadOnlyContext !== true ||
-                    typeof seg.cutoffSeqInclusive !== 'number' ||
-                    !Number.isFinite(seg.cutoffSeqInclusive) ||
-                    seg.cutoffSeqInclusive < 0 ||
-                    (seg.messageIdsOldestFirst?.length ?? 0) > 0
-                ) {
-                    return false;
-                }
+                let nextSegment: (typeof fork.segments)[number] | null = null;
+                // Segments are ordered root -> child. Load the nearest missing ancestor first,
+                // then rebuild the snapshot and eligibility after that request settles. A
+                // nearer page can exhaust its segment and make the next ancestor eligible in
+                // this same prefetch call.
+                for (let index = fork.segments.length - 1; index >= 0; index -= 1) {
+                    const seg = fork.segments[index];
+                    if (
+                        !seg ||
+                        attemptedSessionIds.has(seg.sessionId) ||
+                        seg.isReadOnlyContext !== true ||
+                        typeof seg.cutoffSeqInclusive !== 'number' ||
+                        !Number.isFinite(seg.cutoffSeqInclusive) ||
+                        seg.cutoffSeqInclusive < 0 ||
+                        (
+                            (seg.messageIdsOldestFirst?.length ?? 0) > 0
+                            && this.sessionMessagesHasMoreOlderByKey.get(
+                                this.buildSessionMessagesPaginationKey({
+                                    sessionId: seg.sessionId,
+                                    scope: 'main',
+                                }),
+                            ) === false
+                        )
+                    ) {
+                        continue;
+                    }
 
-                for (let i = index + 1; i < fork.segments.length; i += 1) {
-                    const closerSegment = fork.segments[i];
-                    if (!closerSegment) continue;
-                    const key = this.buildSessionMessagesPaginationKey({ sessionId: closerSegment.sessionId, scope: 'main' });
-                    if (this.sessionMessagesHasMoreOlderByKey.get(key) !== false) {
-                        return false;
+                    let allCloserSegmentsExhausted = true;
+                    for (let closerIndex = index + 1; closerIndex < fork.segments.length; closerIndex += 1) {
+                        const closerSegment = fork.segments[closerIndex];
+                        if (!closerSegment) continue;
+                        const key = this.buildSessionMessagesPaginationKey({
+                            sessionId: closerSegment.sessionId,
+                            scope: 'main',
+                        });
+                        if (this.sessionMessagesHasMoreOlderByKey.get(key) !== false) {
+                            allCloserSegmentsExhausted = false;
+                            break;
+                        }
+                    }
+                    if (allCloserSegmentsExhausted) {
+                        nextSegment = seg;
+                        break;
                     }
                 }
+                if (!nextSegment) return;
 
-                return true;
-            });
-            if (missingSegments.length === 0) return;
-
-            for (const seg of missingSegments) {
+                attemptedSessionIds.add(nextSegment.sessionId);
+                const seg = nextSegment;
                 const hydration = await this.ensureSessionVisibleForMessageRoute(seg.sessionId);
-                if (hydration.kind !== 'available') continue;
+                if (hydration.kind !== 'available') return;
 
                 const cutoff = Math.max(0, Math.trunc(seg.cutoffSeqInclusive as number));
-                await this.loadOlderMessagesFromCursor(seg.sessionId, cutoff + 1).catch(() => {});
+                const result = await this.loadOlderMessagesFromCursor(seg.sessionId, cutoff + 1).catch(() => null);
+                if (!result || result.status === 'not_ready' || result.status === 'in_flight') return;
             }
         }
 

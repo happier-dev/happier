@@ -124,6 +124,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -148,6 +149,7 @@ jobs:
       contents: read
     # We install Sapling via a Ubuntu 22.04 package; pin runner for compatibility.
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -168,6 +170,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'production' && 'production' || 'preview' }}
     outputs:
@@ -290,10 +293,7 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Setup Corepack (Yarn 1.22.22)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -410,7 +410,7 @@ jobs:
             if [ -n "${INPUT_CLI_VERSION}" ]; then
               cli_version="${INPUT_CLI_VERSION}"
             elif [ "${INPUT_CHANNEL}" = "preview" ]; then
-              cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||\"\"));' "${versions_json}")"
+              cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||""));' "${versions_json}")"
             else
               cli_version="$(node -e 'process.stdout.write(String(require("./apps/cli/package.json").version ?? ""));')"
             fi
@@ -421,7 +421,7 @@ jobs:
             if [ -n "${INPUT_STACK_VERSION}" ]; then
               stack_version="${INPUT_STACK_VERSION}"
             elif [ "${INPUT_CHANNEL}" = "preview" ]; then
-              stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||\"\"));' "${versions_json}")"
+              stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||""));' "${versions_json}")"
             else
               stack_version="$(node -e 'process.stdout.write(String(require("./apps/stack/package.json").version ?? ""));')"
             fi
@@ -432,12 +432,21 @@ jobs:
             if [ -n "${INPUT_SERVER_VERSION}" ]; then
               server_version="${INPUT_SERVER_VERSION}"
             elif [ "${INPUT_CHANNEL}" = "preview" ]; then
-              server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||\"\"));' "${versions_json}")"
+              server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||""));' "${versions_json}")"
             else
               server_version="$(node -e 'process.stdout.write(String(require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version ?? ""));')"
             fi
             write_version_output server_version server "$server_version"
           fi
+
+      - name: Checkout trusted npm release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: trusted-control
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: npm pack (pipeline)
         if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server
@@ -453,7 +462,8 @@ jobs:
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs npm-release \
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/npm/release-packages.mjs" \
+            --repo-root "$GITHUB_WORKSPACE" \
             --channel "${RELEASE_CHANNEL}" \
             --publish-cli "${PUBLISH_CLI}" \
             --publish-stack "${PUBLISH_STACK}" \
@@ -541,6 +551,7 @@ jobs:
     if: ${{ inputs.publish_cli == true && needs.release.result == 'success' }}
     needs: [release_actor_guard, release]
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
@@ -581,6 +592,7 @@ jobs:
     if: ${{ inputs.publish_stack == true && needs.release.result == 'success' }}
     needs: [release_actor_guard, release]
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read
@@ -621,6 +633,7 @@ jobs:
     if: ${{ inputs.publish_server == true && needs.release.result == 'success' }}
     needs: [release_actor_guard, release]
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     environment: release-shared
     permissions:
       contents: read

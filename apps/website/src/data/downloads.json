@@ -1,0 +1,45 @@
+{
+    "desktopAssetBase": "https://github.com/happier-dev/happier/releases/download/ui-desktop-stable",
+    "desktopReleasesPage": "https://github.com/happier-dev/happier/releases/tag/ui-desktop-stable",
+    "desktopPlatforms": [
+        {
+            "id": "mac-arm64",
+            "label": "macOS",
+            "sublabel": "Apple Silicon",
+            "file": "happier-ui-desktop-darwin-aarch64.dmg"
+        },
+        {
+            "id": "mac-x86_64",
+            "label": "macOS",
+            "sublabel": "Intel",
+            "file": "happier-ui-desktop-darwin-x86_64.dmg"
+        },
+        {
+            "id": "win-x86_64",
+            "label": "Windows",
+            "sublabel": "x64 · .exe installer",
+            "file": "happier-ui-desktop-windows-x86_64.exe"
+        },
+        {
+            "id": "linux-x86_64",
+            "label": "Linux",
+            "sublabel": "x64 · AppImage",
+            "file": "happier-ui-desktop-linux-x86_64.AppImage"
+        }
+    ],
+    "appStoreUrl": "https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297",
+    "androidApkUrl": "https://github.com/happier-dev/happier/releases/download/ui-mobile-stable/happier-android.apk",
+    "androidPlayTestingOptInUrl": "https://play.google.com/apps/testing/dev.happier.app",
+    "androidPlayUrl": "https://play.google.com/store/apps/details?id=dev.happier.app",
+    "webAppUrl": "https://app.happier.dev/",
+    "docsUrl": "https://docs.happier.dev/",
+    "guidesUrl": "https://guides.happier.dev/",
+    "githubRepoUrl": "https://github.com/happier-dev/happier",
+    "licenseUrl": "https://github.com/happier-dev/happier/blob/main/LICENCE",
+    "changelogUrl": "https://docs.happier.dev/releases",
+    "installScriptUrl": "https://happier.dev/install.sh",
+    "installScriptPs1Url": "https://happier.dev/install.ps1",
+    "releasePubkeyUrl": "https://happier.dev/happier-release.pub",
+    "installCommandUnix": "curl -fsSL https://happier.dev/install | bash",
+    "installCommandWindows": "iwr https://happier.dev/install.ps1 -useb | iex"
+}

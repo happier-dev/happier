@@ -85,6 +85,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -101,6 +102,7 @@ jobs:
 
   trusted_ref_guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Enforce trusted workflow control ref
         env:
@@ -119,6 +121,9 @@ jobs:
 
   providers:
     needs: [release_actor_guard]
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:

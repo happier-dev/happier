@@ -59,11 +59,13 @@ test('promote-ui runs a dedicated public APK release build for preview and produ
   assert.match(raw, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
   assert.match(raw, /platform:\s*android/);
   assert.match(raw, /profile:\s*\$\{\{\s*inputs\.environment == 'production' && 'production-apk' \|\| 'preview-apk'\s*\}\}/);
-  assert.match(raw, /publish_apk_release:\s*"true"/);
+  assert.match(raw, /mobile_native:[\s\S]*?publish_apk_release:\s*\$\{\{\s*'false'\s*\}\}/);
+  assert.match(raw, /mobile_apk_release:[\s\S]*?publish_apk_release:\s*\$\{\{\s*'true'\s*\}\}/);
 });
 
 test('promote-ui passes the exact candidate release-note projection to desktop and APK publishers', async () => {
-  const workflow = YAML.parse(await loadWorkflow('promote-ui.yml'));
+  const source = await loadWorkflow('promote-ui.yml');
+  const workflow = YAML.parse(source);
   const raw = JSON.stringify(workflow);
   const promote = workflow.jobs?.promote;
   assert.equal(promote?.outputs?.release_notes_github_markdown, '${{ needs.validate_candidate.outputs.release_notes_github_markdown }}');
@@ -77,6 +79,33 @@ test('promote-ui passes the exact candidate release-note projection to desktop a
     workflow.jobs?.desktop?.with?.release_message,
     '${{ needs.promote.outputs.release_notes_github_markdown }}',
   );
+  assert.equal(
+    source.includes('appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\n${value}\\n${delimiter}\\n`);'),
+    true,
+    'multiline GitHub outputs must contain newline bytes around their delimiter',
+  );
+  assert.equal(
+    source.includes('appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\\\n${value}\\\\n${delimiter}\\\\n`);'),
+    false,
+    'literal backslash-n sequences make GitHub reject the multiline output',
+  );
+});
+
+test('promote-ui publishes OTA updates with release notes from its direct validation dependency', async () => {
+  const workflow = YAML.parse(await loadWorkflow('promote-ui.yml'));
+  const promote = workflow.jobs?.promote;
+  const otaPublishSteps = (promote?.steps ?? []).filter((step) =>
+    String(step?.name ?? '').startsWith('Publish ') && String(step?.name ?? '').endsWith(' OTA from validated bytes'),
+  );
+
+  assert.equal(otaPublishSteps.length, 2, 'promote-ui must publish the prepared Android and iOS OTA artifacts');
+  for (const step of otaPublishSteps) {
+    assert.equal(
+      step?.env?.UPDATE_MESSAGE,
+      '${{ needs.validate_candidate.outputs.release_notes_expo_message }}',
+      `${step.name} must read release notes from the direct validate_candidate dependency`,
+    );
+  }
 });
 
 test('production mobile APK publishing keeps an immutable version tag alongside the rolling stable tag', async () => {

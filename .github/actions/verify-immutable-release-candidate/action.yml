@@ -34,57 +34,87 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        case "$CANDIDATE_PRODUCT" in
-          cli)
-            tag_prefix='cli-v'
-            checksum_stem='happier'
-            ;;
-          hstack)
-            tag_prefix='stack-v'
-            checksum_stem='hstack'
-            ;;
-          server)
-            tag_prefix='server-v'
-            checksum_stem='happier-server'
-            ;;
-          ui-web)
-            tag_prefix='ui-web-v'
-            checksum_stem='happier-ui-web'
-            ;;
-          *)
-            echo "Unsupported immutable candidate product: $CANDIDATE_PRODUCT" >&2
-            exit 1
-            ;;
-        esac
-
         control_dir="$GITHUB_WORKSPACE/.release-control"
-        node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
-          --repository "$REPOSITORY" \
-          --channel "$RELEASE_CHANNEL" \
-          --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
-          --candidate-product "$CANDIDATE_PRODUCT" \
-          --candidate-version "$CANDIDATE_VERSION"
+        identity_output="$(mktemp "$RUNNER_TEMP/happier-candidate-identity-XXXXXX")"
+        node "$control_dir/scripts/pipeline/release/lib/immutable-release-candidate.mjs" \
+          --describe \
+          --expected-product "$CANDIDATE_PRODUCT" \
+          --expected-version "$CANDIDATE_VERSION" \
+          --github-output "$identity_output"
+        candidate_tag="$(sed -n 's/^candidate_tag=//p' "$identity_output")"
+        test -n "$candidate_tag"
+        release_snapshot="$(gh api "repos/${REPOSITORY}/releases/tags/${candidate_tag}" \
+          --jq '[.id, .tag_name, .draft], (.assets[] | [.id, .name]) | @tsv')"
+        mapfile -t release_rows <<< "$release_snapshot"
+        if [ "${#release_rows[@]}" -lt 2 ]; then
+          echo "Immutable release ${candidate_tag} has no downloadable assets." >&2
+          exit 1
+        fi
+        IFS=$'\t' read -r release_id observed_tag release_draft <<< "${release_rows[0]}"
+        if [[ ! "$release_id" =~ ^[0-9]+$ ]] || [ "$observed_tag" != "$candidate_tag" ] || [ "$release_draft" != "false" ]; then
+          echo "Immutable release ${candidate_tag} returned invalid release identity." >&2
+          exit 1
+        fi
+
+        verify_candidate_tag_identity() {
+          node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
+            --repository "$REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --candidate-product "$CANDIDATE_PRODUCT" \
+            --candidate-version "$CANDIDATE_VERSION"
+        }
+        verify_candidate_tag_identity
 
         candidate_dir="$(mktemp -d "$RUNNER_TEMP/happier-verify-${CANDIDATE_PRODUCT}-XXXXXX")"
-        gh release download "${tag_prefix}${CANDIDATE_VERSION}" \
-          --repo "$REPOSITORY" \
-          --dir "$candidate_dir"
-        checksums="$candidate_dir/checksums-${checksum_stem}-v${CANDIDATE_VERSION}.txt"
-        test -f "$checksums"
-        test -f "${checksums}.minisig"
+        declare -A observed_asset_names=()
+        for row in "${release_rows[@]:1}"; do
+          IFS=$'\t' read -r asset_id asset_name <<< "$row"
+          if [[ ! "$asset_id" =~ ^[0-9]+$ ]] \
+            || [ -z "$asset_name" ] \
+            || [ "$asset_name" = '.' ] \
+            || [ "$asset_name" = '..' ] \
+            || [[ "$asset_name" == */* ]] \
+            || [[ "$asset_name" == *\\* ]] \
+            || [ -n "${observed_asset_names[$asset_name]+x}" ]; then
+            echo "Immutable release ${candidate_tag} returned an invalid or duplicate asset row." >&2
+            exit 1
+          fi
+          observed_asset_names["$asset_name"]=1
+          gh api "repos/${REPOSITORY}/releases/assets/${asset_id}" \
+            -H 'Accept: application/octet-stream' > "$candidate_dir/$asset_name"
+        done
+        current_snapshot="$(gh api "repos/${REPOSITORY}/releases/${release_id}" \
+          --jq '[.id, .tag_name, .draft], (.assets[] | [.id, .name]) | @tsv')"
+        if [ "$current_snapshot" != "$release_snapshot" ]; then
+          echo "Immutable release ${candidate_tag} changed while its assets were being downloaded." >&2
+          exit 1
+        fi
+        verify_candidate_tag_identity
         echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
-        echo "checksums=$checksums" >> "$GITHUB_OUTPUT"
+        echo "candidate_tag=$candidate_tag" >> "$GITHUB_OUTPUT"
     - name: Verify downloaded signed artifacts without repository token
       id: verify
       shell: bash
       env:
         CANDIDATE_DIR: ${{ steps.download.outputs.candidate_dir }}
-        CHECKSUMS: ${{ steps.download.outputs.checksums }}
+        CANDIDATE_TAG: ${{ steps.download.outputs.candidate_tag }}
+        CANDIDATE_PRODUCT: ${{ inputs.product }}
+        CANDIDATE_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
         control_dir="$GITHUB_WORKSPACE/.release-control"
+        inspection_output="$(mktemp "$RUNNER_TEMP/happier-candidate-inspection-XXXXXX")"
+        node "$control_dir/scripts/pipeline/release/lib/immutable-release-candidate.mjs" \
+          --directory "$CANDIDATE_DIR" \
+          --source-tag "$CANDIDATE_TAG" \
+          --expected-product "$CANDIDATE_PRODUCT" \
+          --expected-version "$CANDIDATE_VERSION" \
+          --github-output "$inspection_output"
+        checksums="$(sed -n 's/^checksums=//p' "$inspection_output")"
+        test -n "$checksums"
         node "$control_dir/scripts/pipeline/release/verify-artifacts.mjs" \
           --artifacts-dir "$CANDIDATE_DIR" \
-          --checksums "$CHECKSUMS" \
+          --checksums "$checksums" \
           --public-key "$control_dir/scripts/release/installers/happier-release.pub" \
           --skip-smoke

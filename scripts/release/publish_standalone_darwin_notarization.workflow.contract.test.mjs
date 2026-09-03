@@ -189,6 +189,20 @@ test('standalone publishers pass all workflow and malicious free-form payloads t
   }
 });
 
+test('artifact finalizers do not rediscover source-contract failures after signing', async () => {
+  for (const [workflowName, jobName] of [
+    ['publish-cli-binaries.yml', 'finalize_publish'],
+    ['publish-hstack-binaries.yml', 'finalize_publish'],
+    ['publish-ui-web.yml', 'publish'],
+  ]) {
+    const { workflow } = await loadWorkflow(workflowName);
+    const source = JSON.stringify(workflow.jobs?.[jobName]);
+    assert.match(source, /--run-contracts(?:\\\"|\s)+false/, `${workflowName} finalizer must leave source contracts to CI`);
+    assert.match(source, /--check-installers(?:\\\"|\s)+(?:\\\")?true/, `${workflowName} finalizer must retain installer checks`);
+    assert.match(source, /--prepared-artifacts/, `${workflowName} finalizer must retain exact artifact validation`);
+  }
+});
+
 test('Apple certificate import and identity resolution have one reusable workflow owner', async () => {
   const action = await readFile(
     new URL('../../.github/actions/setup-apple-codesigning/action.yml', import.meta.url),

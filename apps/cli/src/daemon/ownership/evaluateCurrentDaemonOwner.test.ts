@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
 import type { HappyProcessInfo } from '@/daemon/doctor';
 import { isDaemonProcessForCurrentRuntimeRoot } from './evaluateCurrentDaemonOwner';
 

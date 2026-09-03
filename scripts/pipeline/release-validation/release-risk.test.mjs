@@ -73,3 +73,21 @@ test('release risk classification requests semantic compatibility review without
   assert.equal(risks.relayUpgrade, false, 'a compatible API route change does not imply a Docker upgrade');
   assert.ok(risks.reasons.compatibilityAnalysis.includes('apps/server/sources/app/api/routes/version/versionRoutes.ts'));
 });
+
+test('stack self-host runtime changes require platform-service evidence', () => {
+  const risks = classifyReleaseValidationRisks([
+    'apps/stack/scripts/self_host_runtime.mjs',
+  ]);
+  assert.equal(risks.platformServices, true);
+  assert.deepEqual(risks.reasons.platformServices, ['apps/stack/scripts/self_host_runtime.mjs']);
+});
+
+test('every stack self-host implementation module requires platform-service evidence', () => {
+  const risks = classifyReleaseValidationRisks([
+    'apps/stack/scripts/self_host/install_companion_cli.mjs',
+  ]);
+  assert.equal(risks.platformServices, true);
+  assert.deepEqual(risks.reasons.platformServices, [
+    'apps/stack/scripts/self_host/install_companion_cli.mjs',
+  ]);
+});

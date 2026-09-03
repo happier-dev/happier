@@ -12,6 +12,12 @@ import { summarizeReleaseStatus } from './summarize-release-status.mjs';
 const value = (env, name) => env[name] === 'true';
 /** @param {Record<string, string | undefined>} env @param {string} name */
 const result = (env, name) => ['success', 'skipped'].includes(env[name] ?? '') ? env[name] : 'failed';
+/** @param {Record<string, string | undefined>} env @param {string} name @param {readonly string[]} allowed */
+const choice = (env, name, allowed) => {
+  const selected = env[name] ?? allowed[0] ?? '';
+  if (!allowed.includes(selected)) throw new Error(`[release] ${name} must be one of ${allowed.join(', ')}`);
+  return selected;
+};
 
 /** @param {Record<string, string | undefined>} env */
 function baseRun(env) {
@@ -42,12 +48,21 @@ export function projectReleaseStatus(mode, env) {
       recoveryHint,
     };
   };
-  const accepted = (id, name, recoveryHint) => ({
+  const accepted = (id, name, resumeCompleteName, recoveryHint, identity = {}) => ({
     id,
-    result: exact(name) ? 'accepted' : result(env, name),
-    identity: { sourceSha, verified: false },
+    result: exact(name) || value(env, resumeCompleteName) ? 'accepted' : result(env, name),
+    identity: { sourceSha, verified: false, ...identity },
     recoveryHint,
   });
+  const promoted = (id, name, resumeCompleteName, recoveryHint) => {
+    const complete = exact(name) || value(env, resumeCompleteName);
+    return {
+      id,
+      result: complete ? 'success' : result(env, name),
+      identity: { sourceSha, verified: complete && exact('RELEASE_VERIFY_RESULT') },
+      recoveryHint,
+    };
+  };
 
   if (mode === 'nightly') {
     const item = (id, required, evidence, name, verified, recoveryHint) => ({
@@ -96,7 +111,16 @@ export function projectReleaseStatus(mode, env) {
     deployUi: value(env, 'REQUEST_DEPLOY_UI'), deployServer: value(env, 'REQUEST_DEPLOY_SERVER'), deployWebsite: value(env, 'REQUEST_DEPLOY_WEBSITE'), deployDocs: value(env, 'REQUEST_DEPLOY_DOCS'),
     docker: value(env, 'REQUEST_DOCKER'), npm: value(env, 'REQUEST_NPM'),
   };
-  const releaseVerified = (name) => exact(name) && exact('RELEASE_VERIFY_RESULT');
+  const deployUiResumeIdentity = {
+    deployWeb: value(env, 'DEPLOY_UI_WEB'),
+    expoAction: choice(env, 'DEPLOY_UI_EXPO_ACTION', ['none', 'ota', 'native', 'native_submit', 'full']),
+    desktopMode: choice(env, 'DEPLOY_UI_DESKTOP_MODE', ['none', 'build_only', 'build_and_publish']),
+  };
+  const npmResumeIdentity = {
+    publishCli: value(env, 'NPM_PUBLISH_CLI'),
+    publishStack: value(env, 'NPM_PUBLISH_STACK'),
+    publishServer: value(env, 'NPM_PUBLISH_SERVER'),
+  };
   return summarizeReleaseStatus({
     operationId: env.HMAINT_OPERATION_ID || undefined,
     run: baseRun(env),
@@ -104,10 +128,10 @@ export function projectReleaseStatus(mode, env) {
     sourceSha,
     requestedSurfaces: [
       requested('candidate', true, true, 'verified'), requested('immutable_candidate_verification', true, true, 'verified'),
-      requested('cli-immutable-candidate', request.cli, false, 'verified'), requested('hstack-immutable-candidate', request.stack, false, 'verified'), requested('server-immutable-candidate', request.server, false, 'verified'), requested('ui-web-immutable-candidate', request.uiWeb, false, 'verified'),
-      requested('cli_rolling_release', request.cli, false, 'verified'), requested('hstack_rolling_release', request.stack, false, 'verified'), requested('server_rolling_release', request.server, false, 'verified'), requested('ui_web_rolling_release', request.uiWeb, false, 'verified'),
-      requested('deploy_ui', request.deployUi, false, 'accepted'), requested('deploy_server', request.deployServer, false, 'accepted'), requested('deploy_website', request.deployWebsite, false, 'accepted'), requested('deploy_docs', request.deployDocs, false, 'accepted'),
-      requested('docker', request.docker, false, 'accepted'), requested('npm', request.npm, false, 'accepted'), requested('post_promotion_identity', true, false, 'verified'),
+      requested('cli-immutable-candidate', request.cli, request.cli, 'verified'), requested('hstack-immutable-candidate', request.stack, request.stack, 'verified'), requested('server-immutable-candidate', request.server, request.server, 'verified'), requested('ui-web-immutable-candidate', request.uiWeb, request.uiWeb, 'verified'),
+      requested('cli_rolling_release', request.cli, request.cli, 'verified'), requested('hstack_rolling_release', request.stack, request.stack, 'verified'), requested('server_rolling_release', request.server, request.server, 'verified'), requested('ui_web_rolling_release', request.uiWeb, request.uiWeb, 'verified'),
+      requested('deploy_ui', request.deployUi, request.deployUi, 'accepted'), requested('deploy_server', request.deployServer, request.deployServer, 'accepted'), requested('deploy_website', request.deployWebsite, request.deployWebsite, 'accepted'), requested('deploy_docs', request.deployDocs, request.deployDocs, 'accepted'),
+      requested('docker', request.docker, false, 'accepted'), requested('npm', request.npm, request.npm, 'accepted'), requested('post_promotion_identity', true, true, 'verified'),
     ],
     surfaces: [
       observed('candidate', 'CANDIDATE_RESULT', exact('CANDIDATE_RESULT'), { job: 'prepare_release_candidate' }),
@@ -116,11 +140,11 @@ export function projectReleaseStatus(mode, env) {
       candidate('hstack-immutable-candidate', 'stack', request.stack, 'STACK_CANDIDATE_RESULT', 'STACK_VERSION', 'HSTACK_RESUME_VERIFIED', { job: 'publish_hstack_binaries' }),
       candidate('server-immutable-candidate', 'server', request.server, 'SERVER_CANDIDATE_RESULT', 'SERVER_VERSION', 'SERVER_RESUME_VERIFIED', { job: 'publish_server_runtime' }),
       candidate('ui-web-immutable-candidate', 'ui-web', request.uiWeb, 'UI_WEB_CANDIDATE_RESULT', 'UI_WEB_VERSION', 'UI_WEB_RESUME_VERIFIED', { job: 'publish_ui_web' }),
-      observed('cli_rolling_release', 'CLI_RESULT', releaseVerified('CLI_RESULT'), { job: 'promote_cli_binaries' }),
-      observed('hstack_rolling_release', 'STACK_RESULT', releaseVerified('STACK_RESULT'), { job: 'promote_hstack_binaries' }),
-      observed('server_rolling_release', 'SERVER_RESULT', releaseVerified('SERVER_RESULT'), { job: 'promote_server_runtime' }),
-      observed('ui_web_rolling_release', 'UI_WEB_RESULT', releaseVerified('UI_WEB_RESULT'), { job: 'promote_ui_web' }),
-      accepted('deploy_ui', 'DEPLOY_UI_RESULT', { job: 'deploy_ui' }), accepted('deploy_server', 'DEPLOY_SERVER_RESULT', { job: 'deploy_server' }), accepted('deploy_website', 'DEPLOY_WEBSITE_RESULT', { job: 'deploy_website' }), accepted('deploy_docs', 'DEPLOY_DOCS_RESULT', { job: 'deploy_docs' }), accepted('docker', 'DOCKER_RESULT', { job: 'publish_docker' }), accepted('npm', 'NPM_RESULT', { job: 'publish_npm' }),
+      promoted('cli_rolling_release', 'CLI_RESULT', 'CLI_ROLLING_RESUME_COMPLETE', { job: 'promote_cli_binaries' }),
+      promoted('hstack_rolling_release', 'STACK_RESULT', 'STACK_ROLLING_RESUME_COMPLETE', { job: 'promote_hstack_binaries' }),
+      promoted('server_rolling_release', 'SERVER_RESULT', 'SERVER_ROLLING_RESUME_COMPLETE', { job: 'promote_server_runtime' }),
+      promoted('ui_web_rolling_release', 'UI_WEB_RESULT', 'UI_WEB_ROLLING_RESUME_COMPLETE', { job: 'promote_ui_web' }),
+      accepted('deploy_ui', 'DEPLOY_UI_RESULT', 'DEPLOY_UI_RESUME_COMPLETE', { job: 'deploy_ui' }, deployUiResumeIdentity), accepted('deploy_server', 'DEPLOY_SERVER_RESULT', 'DEPLOY_SERVER_RESUME_COMPLETE', { job: 'deploy_server' }), accepted('deploy_website', 'DEPLOY_WEBSITE_RESULT', 'DEPLOY_WEBSITE_RESUME_COMPLETE', { job: 'deploy_website' }), accepted('deploy_docs', 'DEPLOY_DOCS_RESULT', 'DEPLOY_DOCS_RESUME_COMPLETE', { job: 'deploy_docs' }), accepted('docker', 'DOCKER_RESULT', 'DOCKER_RESUME_COMPLETE', { job: 'publish_docker' }), accepted('npm', 'NPM_RESULT', 'NPM_RESUME_COMPLETE', { job: 'publish_npm' }, npmResumeIdentity),
       observed('post_promotion_identity', 'RELEASE_VERIFY_RESULT', exact('RELEASE_VERIFY_RESULT'), { job: 'release_verify' }),
     ],
   });

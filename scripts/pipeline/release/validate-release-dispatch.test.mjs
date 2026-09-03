@@ -12,6 +12,8 @@ const base = {
   bump: 'none',
   confirm: 'release dev to preview',
   deployTargets: 'ui,server',
+  uiExpoAction: 'full',
+  desktopMode: 'build_and_publish',
   environment: 'preview',
   dryRun: false,
   eventName: 'workflow_dispatch',
@@ -30,8 +32,21 @@ test('resolves preview source and comparison refs', () => {
     baseRef: 'preview',
     compareLabel: 'preview..dev',
     deployTargets: ['ui', 'server'],
+    uiExpoAction: 'full',
+    desktopMode: 'build_and_publish',
     overrides: { waiveCi: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
   });
+});
+
+test('rejects UI publication modes without the UI target', () => {
+  assert.throws(
+    () => validateReleaseDispatch({ ...base, deployTargets: 'server', uiExpoAction: 'full' }),
+    /requires deploy_targets to include ui/u,
+  );
+  assert.throws(
+    () => validateReleaseDispatch({ ...base, deployTargets: 'server', uiExpoAction: 'none', desktopMode: 'build_and_publish' }),
+    /requires deploy_targets to include ui/u,
+  );
 });
 
 test('requires an attempt identity for conductor-owned dispatches', () => {

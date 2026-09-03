@@ -10,18 +10,18 @@ import {
   validateExactRollingPublishVersion,
 } from './lib/rolling-version-allocation.mjs';
 import { normalizePublicReleaseChannel } from './lib/public-release-rings.mjs';
+import { resolveImmutableCandidateIdentity } from './lib/immutable-release-candidate.mjs';
 
 /** @type {readonly Readonly<{
  *   key: 'cli' | 'stack' | 'server' | 'ui-web';
  *   option: 'candidate-cli-version' | 'candidate-stack-version' | 'candidate-server-version' | 'candidate-ui-web-version';
  *   productId: 'cli' | 'stack' | 'server' | 'ui-web';
- *   tagPrefix: 'cli-v' | 'stack-v' | 'server-v' | 'ui-web-v';
  * }>[]} */
 const CANDIDATES = Object.freeze([
-  Object.freeze({ key: 'cli', option: 'candidate-cli-version', productId: 'cli', tagPrefix: 'cli-v' }),
-  Object.freeze({ key: 'stack', option: 'candidate-stack-version', productId: 'stack', tagPrefix: 'stack-v' }),
-  Object.freeze({ key: 'server', option: 'candidate-server-version', productId: 'server', tagPrefix: 'server-v' }),
-  Object.freeze({ key: 'ui-web', option: 'candidate-ui-web-version', productId: 'ui-web', tagPrefix: 'ui-web-v' }),
+  Object.freeze({ key: 'cli', option: 'candidate-cli-version', productId: 'cli' }),
+  Object.freeze({ key: 'stack', option: 'candidate-stack-version', productId: 'stack' }),
+  Object.freeze({ key: 'server', option: 'candidate-server-version', productId: 'server' }),
+  Object.freeze({ key: 'ui-web', option: 'candidate-ui-web-version', productId: 'ui-web' }),
 ]);
 
 /**
@@ -170,7 +170,7 @@ export async function main(argv = process.argv.slice(2), environment = process.e
   for (const candidate of CANDIDATES) {
     const version = validated.versions[candidate.key];
     if (!version) continue;
-    const tag = `${candidate.tagPrefix}${version}`;
+    const tag = resolveImmutableCandidateIdentity({ product: candidate.productId, version }).sourceTag;
     const sha = await resolveTagCommit(baseUrl, repository, tag, token);
     if (sha !== candidateSourceSha) {
       throw new Error(`[release] immutable tag ${tag} does not identify the candidate source SHA`);

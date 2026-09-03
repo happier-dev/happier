@@ -1,5 +1,5 @@
 import { access, copyFile, mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { join } from 'node:path';
 
@@ -3752,12 +3752,27 @@ function createLoopbackMachineTransferChannels() {
       releaseMutationLock.resolve();
       await mutationLock;
       const result = await statusPromise;
-      const realRunnerLease = await realRunnerLeasePromise;
+      let realRunnerLease = await realRunnerLeasePromise;
+      await vi.waitFor(async () => {
+        if (!realRunnerLease.acquired) {
+          realRunnerLease = await tryAcquireSessionHandoffPrepareTargetJobLease({
+            activeServerDir,
+            jobId: prepareJobId,
+            ownerId: realRunnerOwnerId,
+            nowMs: Date.now(),
+            ttlMs: 60_000,
+          });
+        }
+        expect(realRunnerLease.acquired).toBe(true);
+      }, { timeout: 5_000 });
+      if (!realRunnerLease.acquired) {
+        throw new Error('Real prepare-target runner did not acquire its lease after recovery completed');
+      }
       await releaseSessionHandoffPrepareTargetJobLease({
         activeServerDir,
         jobId: prepareJobId,
         ownerId: realRunnerOwnerId,
-        leaseId: realRunnerLease.lease!.leaseId!,
+        leaseId: realRunnerLease.lease.leaseId,
       });
 
       expect(realRunnerLease.acquired).toBe(true);
@@ -6784,7 +6799,7 @@ function createLoopbackMachineTransferChannels() {
     expect(prepare).toBeDefined();
     expect(statusGet).toBeDefined();
 
-    const handoffId = `handoff_invalid_server_routed_inline_fallback_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const handoffId = `handoff_invalid_server_routed_inline_fallback_${randomUUID()}`;
     const providerBundleTransferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const preparePromise = prepare!({
       handoffId,
@@ -6830,19 +6845,21 @@ function createLoopbackMachineTransferChannels() {
       });
     }
 
-      const prepared = await preparePromise.catch((error: unknown) => {
-        expect(error).toMatchObject({ message: 'Invalid session handoff transfer payload' });
-        return null;
-      });
-      if (prepared) {
-        expect(prepared.status.status).toBe('pending');
-      }
-      await vi.waitFor(async () => {
-        const latest = await statusGet!({ handoffId });
-        expect(latest?.status?.status).toBe('awaiting_recovery');
-      }, { timeout: 2000 });
-	    expect(importSessionBundle).not.toHaveBeenCalled();
-	  });
+    const prepared = await preparePromise.catch((error: unknown) => {
+      expect(error).toMatchObject({ message: 'Invalid session handoff transfer payload' });
+      return null;
+    });
+    if (prepared) {
+      expect(prepared.status.status).toBe('pending');
+    }
+
+    await vi.waitFor(async () => {
+      const latest = await statusGet!({ handoffId });
+      expect(latest?.status?.status).toBe('awaiting_recovery');
+    }, { timeout: 2000 });
+
+    expect(importSessionBundle).not.toHaveBeenCalled();
+  });
 
   it('fails closed when the server-routed transfer payload does not satisfy the canonical handoff schemas', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -7326,10 +7343,20 @@ function createLoopbackMachineTransferChannels() {
 
   it('fails closed when the direct-peer provider bundle payload is malformed', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
-    const handoffId = `handoff_invalid_direct_peer_payload_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const handoffId = `handoff_invalid_direct_peer_payload_${randomUUID()}`;
     const transferId = `session-handoff:${handoffId}:provider-bundle-file`;
     const { requestPayloadFile, dispose } = await createDirectPeerRequestPayloadFile({
       payload: Buffer.from('{"providerId":', 'utf8'),
+    });
+    let releasePayloadRequest = (): void => {
+      throw new Error('payload request gate was not initialized');
+    };
+    const payloadRequestGate = new Promise<void>((resolve) => {
+      releasePayloadRequest = resolve;
+    });
+    const requestPayloadFileAfterAcknowledgement = vi.fn<DirectPeerRequestPayloadFile>(async (input) => {
+      await payloadRequestGate;
+      return await requestPayloadFile(input);
     });
     const importSessionBundle = vi.fn(async () => ({
       remoteSessionId: 'claude_session_target',
@@ -7356,7 +7383,7 @@ function createLoopbackMachineTransferChannels() {
         importSessionBundle,
         directPeerTransfer: {
           publishTransfer: vi.fn(() => []),
-          requestPayloadFile,
+          requestPayloadFile: requestPayloadFileAfterAcknowledgement,
           clearPublishedTransfer: vi.fn(),
         },
       });
@@ -7402,13 +7429,9 @@ function createLoopbackMachineTransferChannels() {
 
       // Prepare acknowledges the durable job before the background transfer/parser settles.
       // Fail-closed behavior is observed through the persisted terminal recovery state.
-      const prepared = await preparePromise.catch((error: unknown) => {
-        expect(error).toMatchObject({ message: 'Invalid session handoff transfer payload' });
-        return null;
-      });
-      if (prepared) {
-        expect(prepared.status.status).toBe('pending');
-      }
+      const prepared = await preparePromise;
+      expect(prepared?.status?.status).toBe('pending');
+      releasePayloadRequest();
       await vi.waitFor(async () => {
         const latest = await statusGet!({ handoffId });
         expect(latest?.status?.status).toBe('awaiting_recovery');

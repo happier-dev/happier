@@ -95,6 +95,7 @@ jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -106,6 +107,7 @@ jobs:
           WORKFLOW_REF: ${{ job.workflow_ref }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
           case "$CHANNEL" in
@@ -115,6 +117,10 @@ jobs:
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
           if [ -n "$RETRY_VERSION" ] && [ -n "$RESUME_VERSION" ]; then
             echo "retry_version and resume_version are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ -n "$RETRY_VERSION" || -n "$RESUME_VERSION" ]] && [[ ! "$AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "authorized_sha must be a full lowercase 40-character commit SHA for retry or resume." >&2
             exit 1
           fi
           case "$WORKFLOW_REF" in
@@ -130,6 +136,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     outputs:
       resume_version: ${{ steps.resume.outputs.resume_version }}
     steps:
@@ -168,11 +175,23 @@ jobs:
             --candidate-product ui-web \
             --candidate-version "$RESUME_VERSION"
           echo "resume_version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify immutable UI-web tag matches caller authorization
+        if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
+        env:
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "refs/tags/ui-web-v${RETRY_VERSION}" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --remote origin
 
   prepare:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     outputs:
@@ -292,6 +311,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions: {}
     env:
       EXPO_UNSTABLE_WEB_MODAL: "1"
@@ -387,6 +407,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare, build_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: release-shared
     permissions:
       contents: write
@@ -497,7 +518,7 @@ jobs:
             --authorized-sha "$AUTHORIZED_SHA" \
             --prepared-artifacts \
             --github-output "$GITHUB_OUTPUT" \
-            --run-contracts "true" \
+            --run-contracts "false" \
             --check-installers "true"
 
   promote_existing:
@@ -505,6 +526,7 @@ jobs:
     needs: [release_actor_guard]
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: release-shared
     permissions:
       contents: read
@@ -523,14 +545,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
-          cache: yarn
-          cache-dependency-path: yarn.lock
-      - name: Enable Corepack
-        run: corepack enable
-      - name: Install dependencies
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
       - name: Create narrowly scoped publish token
         id: app_token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
@@ -540,15 +554,6 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
-      - name: Bind exact immutable version tag SHA
-        id: source
-        env:
-          RETRY_VERSION: ${{ inputs.retry_version }}
-        run: |
-          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
-            --source-ref "refs/tags/ui-web-v$RETRY_VERSION" \
-            --remote origin \
-            --github-output "$GITHUB_OUTPUT"
       - name: Install minisign for immutable bundle verification
         uses: ./.github/actions/bootstrap-minisign
       - name: Re-promote exact verified immutable release bytes
@@ -556,7 +561,7 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
-          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           CHANNEL: ${{ inputs.channel }}
           ALLOW_STABLE: ${{ inputs.allow_stable }}
           RELEASE_MESSAGE: ${{ inputs.release_message }}

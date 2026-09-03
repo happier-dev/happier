@@ -21,6 +21,13 @@ import {
 } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { captureStdout } from '@/testkit/logger/captureOutput';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+vi.mock('@/daemon/doctor', async (importOriginal) => {
+  const [{ withCurrentProcessAsDaemonLifecycleOwner }, actual] = await Promise.all([
+    import('@/testkit/process/daemonLifecycleOwner'),
+    importOriginal<typeof import('@/daemon/doctor')>(),
+  ]);
+  return withCurrentProcessAsDaemonLifecycleOwner(actual);
+});
 
 import { handleServiceCliCommand } from './service';
 import { handleDaemonCliCommand } from './daemon';

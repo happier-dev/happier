@@ -47,11 +47,68 @@ test('release dry-run JSON resolves the actual promotion source independently of
       kind: 'happier.release-dispatch-plan.v3',
       schemaVersion: 3,
       sourceBranch: 'preview',
+      productionPromotionMode: 'fast-forward',
       authorizedPromotionSourceSha: '3333333333333333333333333333333333333333',
       effectiveDeployTargets: ['ui', 'server', 'website', 'docs'],
+      uiExpoAction: 'none',
+      desktopMode: 'none',
       validationProfile: 'stable',
       operationId: 'rel_candidate_20260809',
       releaseNotesId: '2026-08-09.1',
+      approvals: { qualifiedV4Activation: false },
+      overrides: {
+        waiveCi: false,
+        includeValidationSuiteIds: [],
+        waiveValidationSuiteIds: [],
+        reason: '',
+      },
+    });
+  } finally {
+    stub.cleanup();
+  }
+});
+
+test('release dry-run JSON records an explicit production reset without changing the authorized preview source', () => {
+  const stub = createReleaseCliDryRunEnv();
+  try {
+    const raw = execFileSync(
+      process.execPath,
+      [
+        pipelineCli,
+        'release',
+        '--confirm',
+        'reset main from preview',
+        '--repository',
+        'happier-dev/happier',
+        '--deploy-environment',
+        'production',
+        '--dry-run',
+        '--json',
+        '--operation-id',
+        'rel_reset_20260902',
+        '--release-notes-id',
+        '2026-08-29.1',
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...stub.env, GH_TOKEN: '', GH_REPO: '', GITHUB_REPOSITORY: '' },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
+      },
+    );
+    assert.deepEqual(JSON.parse(raw), {
+      kind: 'happier.release-dispatch-plan.v3',
+      schemaVersion: 3,
+      sourceBranch: 'preview',
+      productionPromotionMode: 'reset',
+      authorizedPromotionSourceSha: '3333333333333333333333333333333333333333',
+      effectiveDeployTargets: ['ui', 'server', 'website', 'docs'],
+      uiExpoAction: 'none',
+      desktopMode: 'none',
+      validationProfile: 'stable',
+      operationId: 'rel_reset_20260902',
+      releaseNotesId: '2026-08-29.1',
       approvals: { qualifiedV4Activation: false },
       overrides: {
         waiveCi: false,
@@ -144,7 +201,7 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}, \{1\}\)', inputs\.hmaint_operation_id, inputs\.hmaint_attempt_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
   assert.match(
     raw,
-    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ inputs\.authorized_promotion_source_sha \|\| needs\.ci\.outputs\.source_ref \}\}/,
+    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ needs\.release_preflight\.outputs\.source_sha \}\}/,
   );
   assert.match(raw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
   assert.match(raw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);

@@ -72,7 +72,7 @@ These pages are generated. Do not hand-edit the output — change the generator 
 | `/extras/feature-flags` | the protocol feature catalog, the client's UI feature registry, and `apps/ui/.../translations/en.ts` |
 | `/apps/keyboard-shortcuts` | `apps/ui/sources/keyboard/commands.ts` |
 | `/self-hosting/rate-limits` | `apps/server/.../apiRateLimitCatalog.ts` |
-| `/getting-started/get-the-apps` | `apps/website/src/data/downloads.ts` |
+| `/getting-started/get-the-apps` | `apps/website/src/data/downloads.json` |
 
 Regenerate with `yarn --cwd apps/docs generate:reference`. A generator whose source is not built in this checkout is skipped, not failed — a docs-only build is legitimate.
 

@@ -1,5 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { getAppEnvironmentConfig } = require('./appVariantConfig.cjs');
+const { EXPO_PROJECT_CONFIG } = require('./appProjectConfig.cjs');
 
 function normalizeVariantOverride(raw) {
     const value = String(raw ?? '').trim().toLowerCase();
@@ -58,9 +59,7 @@ if (appLocalConfigModule && typeof appLocalConfigModule === 'object') {
 }
 
 const DEFAULTS = {
-    owner: "happier-dev",
-    slug: "happier",
-    easProjectId: "2a550bd7-e4d2-4f59-ab47-dcb778775cee",
+    ...EXPO_PROJECT_CONFIG,
     linkHost: "app.happier.dev",
 };
 
@@ -122,7 +121,9 @@ const expoBuildPropertiesPlugin = [
     },
 ];
 const shouldUseAndroidReleaseShrinkerPlugin =
-    androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
+    androidEnableMinifyInReleaseBuilds ||
+    androidEnableShrinkResourcesInReleaseBuilds ||
+    Boolean(androidGradleJvmArgsOverride);
 
 const androidReleaseShrinkerPlugin = shouldUseAndroidReleaseShrinkerPlugin
     ? [

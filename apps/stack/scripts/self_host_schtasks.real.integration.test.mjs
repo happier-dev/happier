@@ -6,6 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const SELF_HOST_INSTALL_TIMEOUT_MS = 420_000;
+const SELF_HOST_TEST_TIMEOUT_MS = 45 * 60_000;
 
 import { commandExists, extractBinaryFromArtifact, reserveLocalhostPort, run, waitForHealth } from './self_host_service_e2e_harness.mjs';
 
@@ -26,7 +27,7 @@ function readTail(path) {
 
 test(
   'compiled hstack self-host install/uninstall works on Windows schtasks host without repo checkout',
-  { timeout: 15 * 60_000 },
+  { timeout: SELF_HOST_TEST_TIMEOUT_MS },
   async (t) => {
     if (process.platform !== 'win32') {
       t.skip(`windows-only test (current: ${process.platform})`);

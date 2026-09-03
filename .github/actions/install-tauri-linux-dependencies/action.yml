@@ -8,45 +8,31 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          build-essential \
-          pkg-config \
-          libssl-dev \
-          libgtk-3-dev \
-          libwebkit2gtk-4.1-dev \
-          libayatana-appindicator3-dev \
-          librsvg2-dev \
-          desktop-file-utils \
-          gstreamer1.0-tools \
-          gstreamer1.0-plugins-base \
-          squashfs-tools \
-          patchelf \
-          xvfb \
-          weston \
+        tauri_packages=(
+          build-essential
+          pkg-config
+          libssl-dev
+          libgtk-3-dev
+          libwebkit2gtk-4.1-dev
+          libayatana-appindicator3-dev
+          librsvg2-dev
+          desktop-file-utils
+          gstreamer1.0-tools
+          gstreamer1.0-plugins-base
+          squashfs-tools
+          patchelf
+          xvfb
+          weston
           rpm
+        )
 
-        # linuxdeploy is distributed as an AppImage. Some runner images need
-        # FUSE libraries or utilities even when extraction mode is available.
-        fuse_pkg=""
-        if apt-cache show libfuse2 >/dev/null 2>&1; then
-          fuse_pkg="libfuse2"
-        elif apt-cache show libfuse2t64 >/dev/null 2>&1; then
-          fuse_pkg="libfuse2t64"
-        fi
-        if [ -n "${fuse_pkg}" ]; then
-          sudo apt-get install -y --no-install-recommends "${fuse_pkg}"
-        fi
-
-        fuse_utils=""
-        if apt-cache show fuse >/dev/null 2>&1; then
-          fuse_utils="fuse"
-        elif apt-cache show fuse3 >/dev/null 2>&1; then
-          fuse_utils="fuse3"
-        fi
-        if [ -n "${fuse_utils}" ]; then
-          sudo apt-get install -y --no-install-recommends "${fuse_utils}"
-        fi
+        # Refresh apt metadata before choosing runner-specific optional FUSE
+        # packages, then install the complete set under one bounded retry owner.
+        sudo bash scripts/ci/apt-install-with-retry.sh \
+          --optional-first-available=libfuse2,libfuse2t64 \
+          --optional-first-available=fuse,fuse3 \
+          -- \
+          "${tauri_packages[@]}"
 
         # Tauri's mirrored linuxdeploy can bundle host-coupled Wayland libraries.
         # Install a pinned upstream build that honors LINUXDEPLOY_EXCLUDED_LIBRARIES.
@@ -54,7 +40,9 @@ runs:
         linuxdeploy_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/tauri"
         mkdir -p "${linuxdeploy_dir}"
         linuxdeploy_path="${linuxdeploy_dir}/linuxdeploy-x86_64.AppImage"
-        curl -L --fail --show-error --retry 3 \
+        curl -L --fail --show-error \
+          --connect-timeout 20 --max-time 300 \
+          --retry 3 --retry-delay 2 --retry-max-time 180 \
           "https://github.com/linuxdeploy/linuxdeploy/releases/download/${linuxdeploy_version}/linuxdeploy-x86_64.AppImage" \
           -o "${linuxdeploy_path}"
         printf '%s  %s\n' \

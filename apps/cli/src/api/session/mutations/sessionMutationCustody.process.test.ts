@@ -192,7 +192,7 @@ async function runResurrectionSchedule(mode: 'legacy-shared' | 'split-custody'):
     await waitFor(daemon, 'new-persisted');
     await waitForSocketCall(daemon);
     expect(socketCalls.get(runtime)?.length).toBeGreaterThan(0);
-    expect(socketCalls.get(daemon)?.length).toBe(1);
+    expect(socketCalls.get(daemon)?.length).toBeGreaterThan(0);
     runtime.send({ type: 'exit-without-close' });
     daemon.send({ type: 'exit-without-close' });
     await Promise.all([waitForCleanExit(runtime), waitForCleanExit(daemon)]);

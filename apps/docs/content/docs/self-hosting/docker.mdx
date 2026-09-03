@@ -73,7 +73,7 @@ Notes:
 
 ### Prebuilt image: use Postgres (full flavor)
 
-The `relay-server` image is built from the same server code and can run full flavor too — you just override the defaults. Postgres is the external database supported by the prebuilt image. On startup, the image applies its bundled Postgres migrations before starting the server; set `RUN_MIGRATIONS=0` only when migrations are managed separately.
+The `relay-server` image is built from the same server code and can run full flavor too — you just override the defaults. Postgres is the external database supported by the prebuilt image. On startup, the image applies its bundled Postgres migrations before starting the server. Health-managed or multi-replica deployments should instead use the dedicated migration step described under [Migrations](#migrations).
 
 Example `docker-compose.yml` (Postgres + local files backend):
 
@@ -555,10 +555,23 @@ services:
 
 The source-built `server` target and prebuilt `relay-server` image run DB migrations by default. Migration selection follows `HAPPIER_DB_PROVIDER`, independently of the preset: Postgres, MySQL, and PGlite use their packaged/provider migration owner; SQLite uses the server's canonical in-process startup migration path.
 
+The default is convenient for a single container. For Postgres, MySQL, or PGlite deployments managed by an orchestrator, run migrations once before replacing application containers:
+
+```bash
+docker compose run --rm relay run-server --migrate-only
+docker compose up -d --force-recreate relay
+```
+
+Set `RUN_MIGRATIONS=0` on the long-running API and worker services. The explicit `--migrate-only` command still runs migrations when that environment value is present, exits only after migration completion, and never starts the server. Your deployment system must treat a non-zero exit as a failed deployment and leave the existing application containers running.
+
+If your platform cannot run and await a blocking pre-deploy command (for example, separate Dokploy Applications triggered by independent webhooks), designate exactly one API service as the migration owner instead: set `RUN_MIGRATIONS=1` only there, set `RUN_MIGRATIONS=0` on every worker and other replica, use a start-first rollout with automatic rollback, and give the migration-owning container enough health-check startup grace for the largest expected migration. This fallback relies on backward-compatible migrations so workers may continue serving while the API owner upgrades the schema.
+
 Notes:
 
 - Disable automatic migrations with `RUN_MIGRATIONS=0`. For SQLite, the entrypoint maps this to the server startup migration setting; it does not launch a second migration process.
-- In Postgres multi-replica setups, it’s OK if more than one replica tries to migrate at startup (the DB serializes via locks).
+- Keep SQLite on its normal single-process startup path; the packaged SQLite runtime does not support `--migrate-only`.
+- PostgreSQL advisory locks serialize competing migration attempts, but they do not protect a migration if an orchestrator terminates its container for failing startup health checks. Use one dedicated migration owner when migrations can outlive the platform's startup grace period.
+- If migration deployment is interrupted, inspect the database and migration ledger before recovery. Never mark an unknown failed migration as applied merely to make the server start.
 
 ## Reverse proxy checklist
 

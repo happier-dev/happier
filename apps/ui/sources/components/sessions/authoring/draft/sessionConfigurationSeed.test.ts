@@ -28,7 +28,7 @@ describe('sessionConfigurationSeed', () => {
                             effort: { updatedAt: 101, value: 'high' },
                         },
                     },
-                    mcpSelection: {
+                    mcpSelectionV1: {
                         v: 1,
                         managedServersEnabled: false,
                         forceIncludeServerIds: ['portable'],

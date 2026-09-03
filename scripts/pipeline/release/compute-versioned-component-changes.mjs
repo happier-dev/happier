@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { classifyChangedPaths, deriveVersionedComponentChanges, versionedComponents } from './component-registry.mjs';
 
+const GIT_OUTPUT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
 function fail(msg) {
   process.stderr.write(`[compute-versioned-component-changes] ${msg}\n`);
   process.exit(1);
@@ -26,7 +28,10 @@ function parseArgs(argv) {
 }
 
 function runGit(args) {
-  const result = spawnSync('git', args, { encoding: 'utf8' });
+  const result = spawnSync('git', args, {
+    encoding: 'utf8',
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER_BYTES,
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const err = String(result.stderr || result.stdout || '').trim();

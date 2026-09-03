@@ -15,37 +15,42 @@
  * fails when GitHub has a bad minute is a suite people learn to ignore.
  */
 
+import { readFileSync } from 'node:fs';
+
+import { classifyDownloadLinkStatus } from './download-link-health.mjs';
+
+const downloads = JSON.parse(readFileSync(new URL('../src/data/downloads.json', import.meta.url), 'utf8'));
+const desktopAssets = downloads.desktopPlatforms.map(
+    ({ file }) => `${downloads.desktopAssetBase}/${file}`,
+);
+
 const TARGETS = [
-    // Desktop — filenames carry the version; bump DESKTOP_VERSION when this fails.
-    'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-darwin-aarch64-v0.2.0.dmg',
-    'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-darwin-x86_64-v0.2.0.dmg',
-    'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-windows-x86_64-v0.2.0.exe',
-    'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable/happier-ui-desktop-linux-x86_64-v0.2.0.AppImage',
-    'https://github.com/happier-dev/happier/releases/tag/ui-desktop-stable',
+    ...desktopAssets,
+    downloads.desktopReleasesPage,
 
     // Mobile
-    'https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297',
-    'https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk',
+    downloads.appStoreUrl,
+    downloads.androidApkUrl,
 
     // Installer + trust surface
     'https://happier.dev/install',
-    'https://happier.dev/install.sh',
-    'https://happier.dev/install.ps1',
-    'https://happier.dev/happier-release.pub',
+    downloads.installScriptUrl,
+    downloads.installScriptPs1Url,
+    downloads.releasePubkeyUrl,
 
     // Product surfaces
-    'https://app.happier.dev/',
-    'https://docs.happier.dev/',
+    downloads.webAppUrl,
+    downloads.docsUrl,
     'https://docs.happier.dev/security',
     'https://docs.happier.dev/providers',
     'https://docs.happier.dev/releases',
     'https://docs.happier.dev/getting-started/onboarding',
     'https://docs.happier.dev/deployment/self-host-runtime',
-    'https://guides.happier.dev/',
+    downloads.guidesUrl,
 
     // Repo — note the British spelling; /LICENSE is a 404.
-    'https://github.com/happier-dev/happier',
-    'https://github.com/happier-dev/happier/blob/main/LICENCE',
+    downloads.githubRepoUrl,
+    downloads.licenseUrl,
     'https://github.com/happier-dev/happier/graphs/contributors',
 
     // Published stats the counters read.
@@ -64,21 +69,29 @@ const results = await Promise.all(
             if (res.status === 405 || res.status === 403) {
                 res = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } });
             }
-            return { url, status: res.status, ok: res.status < 400 };
+            return { url, status: res.status, health: classifyDownloadLinkStatus(res.status) };
         } catch (error) {
-            return { url, status: String(error?.message ?? error), ok: false };
+            const status = String(error?.message ?? error);
+            return { url, status, health: classifyDownloadLinkStatus(status) };
         }
     }),
 );
 
 let failed = 0;
-for (const { url, status, ok } of results) {
-    if (!ok) failed += 1;
-    console.log(`${ok ? 'ok  ' : 'FAIL'} ${String(status).padEnd(6)} ${url}`);
+let inconclusive = 0;
+for (const { url, status, health } of results) {
+    if (health === 'fail') failed += 1;
+    if (health === 'warn') inconclusive += 1;
+    const label = health === 'ok' ? 'ok  ' : health === 'warn' ? 'WARN' : 'FAIL';
+    console.log(`${label} ${String(status).padEnd(6)} ${url}`);
 }
 
 if (failed > 0) {
-    console.error(`\n${failed} of ${results.length} links are dead. Do not deploy.`);
+    console.error(`\n${failed} of ${results.length} links returned definitive client errors. Do not deploy.`);
     process.exit(1);
 }
-console.log(`\nAll ${results.length} links reachable.`);
+if (inconclusive > 0) {
+    console.warn(`\n${inconclusive} of ${results.length} links were temporarily unverifiable; no link returned a definitive client error.`);
+} else {
+    console.log(`\nAll ${results.length} links reachable.`);
+}

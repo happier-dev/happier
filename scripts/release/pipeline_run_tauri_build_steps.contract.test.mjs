@@ -32,6 +32,8 @@ for (const [environment, buildVersion] of [
         'x86_64-unknown-linux-gnu',
         '--ui-dir',
         'apps/ui',
+        '--secrets-source',
+        'keychain',
         '--dry-run',
       ],
       {
@@ -51,6 +53,8 @@ test('pipeline run exposes tauri-notarize-macos-artifacts (dry-run)', () => {
       'apps/ui',
       '--tauri-target',
       'aarch64-apple-darwin',
+      '--secrets-source',
+      'keychain',
       '--dry-run',
     ],
   );

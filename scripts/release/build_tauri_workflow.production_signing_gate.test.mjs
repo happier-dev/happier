@@ -309,6 +309,22 @@ test('build-tauri Linux jobs free unused hosted-runner disk before dependency in
   assert.match(runScript, /df -h \//, 'cleanup should report available root filesystem space');
 });
 
+test('build-tauri retries transient rustup toolchain downloads in build and finalizer jobs', async () => {
+  const workflow = parse(await readFile(workflowPath, 'utf8'));
+
+  for (const jobName of ['build', 'finalize']) {
+    const steps = workflow?.jobs?.[jobName]?.steps;
+    assert.ok(Array.isArray(steps), `build-tauri workflow should define jobs.${jobName}.steps`);
+    const rustStep = steps.find((step) => step?.name === 'Setup Rust toolchain');
+    assert.ok(rustStep, `${jobName} should setup Rust`);
+    assert.equal(
+      String(rustStep?.env?.RUSTUP_MAX_RETRIES ?? ''),
+      '10',
+      `${jobName} should tolerate transient static.rust-lang.org resets`,
+    );
+  }
+});
+
 test('Tauri build and trusted finalizer share the complete Linux bundling dependency owner', async () => {
   const workflow = parse(await readFile(workflowPath, 'utf8'));
   const actionPath = './.github/actions/install-tauri-linux-dependencies';
@@ -339,6 +355,19 @@ test('Tauri build and trusted finalizer share the complete Linux bundling depend
   ]) {
     assert.match(installScript, new RegExp(`(^|\\s)${packageName.replaceAll('.', '\\.')}(\\s|\\\\|$)`), `canonical action should install ${packageName}`);
   }
+  assert.match(
+    installScript,
+    /sudo bash scripts\/ci\/apt-install-with-retry\.sh[\s\S]*--optional-first-available=libfuse2,libfuse2t64[\s\S]*--optional-first-available=fuse,fuse3[\s\S]*--[\s\S]*"\$\{tauri_packages\[@\]\}"/,
+    'the bounded apt owner should refresh metadata, choose compatible FUSE packages, and install once',
+  );
+  assert.doesNotMatch(installScript, /apt-cache\s+show/, 'the action must not probe stale apt metadata itself');
+  assert.doesNotMatch(installScript, /sudo apt-get\s+(?:update|install)/, 'the action must not bypass the bounded apt owner');
+
+  const curlCommand = installScript.match(/curl[\s\S]*?linuxdeploy-x86_64\.AppImage" \\\n\s+-o "\$\{linuxdeploy_path\}"/)?.[0] ?? '';
+  assert.match(curlCommand, /--connect-timeout\s+\d+/, 'linuxdeploy download should bound connection establishment');
+  assert.match(curlCommand, /--max-time\s+\d+/, 'linuxdeploy download should have a total transfer bound');
+  assert.match(curlCommand, /--retry-max-time\s+\d+/, 'linuxdeploy retries should have a total retry bound');
+  assert.doesNotMatch(curlCommand, /--retry-all-errors/, 'linuxdeploy must not retry permanent HTTP failures');
 });
 
 test('build-tauri workflow sets Happier Cloud as explicit default server for desktop release builds', async () => {

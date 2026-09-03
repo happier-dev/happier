@@ -79,7 +79,7 @@ test('UI unit and integration suites run independently before the stable aggrega
   assert.match(uiIntegrationJob, /yarn workspace @happier-dev\/app test:integration/);
 
   assert.match(uiJob, /name:\s*UI Tests \(unit \+ integration\)/);
-  assert.match(uiJob, /needs:\s*\[ui-unit, ui-integration\]/);
+  assert.match(uiJob, /needs:\s*\[ci_plan, ui-unit, ui-integration\]/);
   assert.match(uiJob, /if:\s*\$\{\{ always\(\)/);
   assert.match(uiJob, /needs\.ui-unit\.result/);
   assert.match(uiJob, /needs\.ui-integration\.result/);

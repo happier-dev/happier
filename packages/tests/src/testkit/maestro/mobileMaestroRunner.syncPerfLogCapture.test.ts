@@ -40,6 +40,20 @@ describe('mobileMaestroRunner sync performance log capture', () => {
         logcatProcess = createLogcatProcess();
     });
 
+    it('writes capture diagnostics only while the artifact stream is writable', async () => {
+        const { writeCapturedLogDiagnostic } = await import('./mobileMaestroRunner');
+        const write = vi.fn();
+
+        writeCapturedLogDiagnostic({ destroyed: false, writableEnded: true, write }, 'after end');
+        writeCapturedLogDiagnostic({ destroyed: true, writableEnded: false, write }, 'after destroy');
+
+        expect(write).not.toHaveBeenCalled();
+
+        writeCapturedLogDiagnostic({ destroyed: false, writableEnded: false, write }, 'before end');
+
+        expect(write).toHaveBeenCalledExactlyOnceWith('before end');
+    });
+
     it('captures Android logcat into the run manifest for sync-perf parser discovery', async () => {
         logcatProcess = createLogcatProcess();
         logcatProcess.kill = vi.fn(() => {

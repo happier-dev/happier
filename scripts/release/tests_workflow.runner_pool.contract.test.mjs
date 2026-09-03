@@ -42,6 +42,89 @@ function resolveRunnerPool(step, runnerPool) {
   }
 }
 
+function admitWorkflowRef(step, { eventName, eventRef, runnerPool, workflowRef }) {
+  return spawnSync('bash', ['-c', step.run], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CALLER_REPOSITORY: 'happier-dev/happier',
+      WORKFLOW_REPOSITORY: 'happier-dev/happier',
+      WORKFLOW_FILE: 'tests.yml',
+      EVENT_NAME: eventName,
+      EVENT_REF: eventRef,
+      RUNNER_POOL: runnerPool,
+      WORKFLOW_REF: workflowRef,
+    },
+  });
+}
+
+test('ordinary pull requests admit only exact GitHub merge refs through the canonical trust guard', () => {
+  const tests = loadWorkflow('tests.yml');
+  const guard = tests.jobs.trusted_ref_guard;
+  const admission = guard.steps.find((step) => step.name === 'Admit trusted workflow control ref');
+  assert.ok(admission, 'trusted_ref_guard must own PR workflow-ref admission');
+
+  const mergeRef = 'refs/pull/123/merge';
+  const mergeWorkflowRef = `happier-dev/happier/.github/workflows/tests.yml@${mergeRef}`;
+  const admitted = admitWorkflowRef(admission, {
+    eventName: 'pull_request',
+    eventRef: mergeRef,
+    runnerPool: 'github',
+    workflowRef: mergeWorkflowRef,
+  });
+  assert.equal(admitted.status, 0, admitted.stderr);
+  assert.deepEqual(tests.permissions, { contents: 'read' });
+  assert.deepEqual(tests.jobs.ci_plan.permissions, { contents: 'read', 'pull-requests': 'read' });
+
+  for (const rejected of [
+    { eventName: 'workflow_dispatch', eventRef: mergeRef, runnerPool: 'github', workflowRef: mergeWorkflowRef },
+    { eventName: 'pull_request', eventRef: mergeRef, runnerPool: 'blacksmith-linux-8vcpu', workflowRef: mergeWorkflowRef },
+    {
+      eventName: 'pull_request',
+      eventRef: mergeRef,
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/heads/dev',
+    },
+    {
+      eventName: 'pull_request',
+      eventRef: 'refs/pull/123/head',
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/123/head',
+    },
+    {
+      eventName: 'pull_request',
+      eventRef: 'refs/pull/not-a-number/merge',
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/not-a-number/merge',
+    },
+    {
+      eventName: 'pull_request',
+      eventRef: mergeRef,
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/pull/124/merge',
+    },
+    {
+      eventName: 'workflow_call',
+      eventRef: 'refs/heads/untrusted-branch',
+      runnerPool: 'github',
+      workflowRef: 'happier-dev/happier/.github/workflows/tests.yml@refs/heads/untrusted-branch',
+    },
+  ]) {
+    const result = admitWorkflowRef(admission, rejected);
+    assert.notEqual(result.status, 0, `must reject ${JSON.stringify(rejected)}`);
+    assert.match(result.stderr, /Untrusted workflow control ref/);
+  }
+
+  const protectedWorkflowRef = 'happier-dev/happier/.github/workflows/tests.yml@refs/heads/dev';
+  const protectedDispatch = admitWorkflowRef(admission, {
+    eventName: 'workflow_dispatch',
+    eventRef: 'refs/heads/dev',
+    runnerPool: 'blacksmith-linux-8vcpu',
+    workflowRef: protectedWorkflowRef,
+  });
+  assert.equal(protectedDispatch.status, 0, protectedDispatch.stderr);
+});
+
 test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmith without changing ordinary CI', () => {
   const dispatch = loadWorkflow('tests-dispatch.yml');
   const tests = loadWorkflow('tests.yml');
@@ -51,7 +134,7 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     required: true,
     default: 'github',
     type: 'choice',
-    options: ['github', 'blacksmith-linux-4vcpu'],
+    options: ['github', 'blacksmith-linux-4vcpu', 'blacksmith-linux-8vcpu'],
   });
   assert.deepEqual(tests.on.workflow_call.inputs.runner_pool, {
     description: 'Runner pool for approved non-secret Linux test lanes',
@@ -83,6 +166,13 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     ubuntu_2404: 'blacksmith-4vcpu-ubuntu-2404',
   });
 
+  const blacksmith8vcpu = resolveRunnerPool(resolver, 'blacksmith-linux-8vcpu');
+  assert.equal(blacksmith8vcpu.status, 0, blacksmith8vcpu.stderr);
+  assert.deepEqual(blacksmith8vcpu.outputs, {
+    ubuntu_2204: 'blacksmith-8vcpu-ubuntu-2204',
+    ubuntu_2404: 'blacksmith-8vcpu-ubuntu-2404',
+  });
+
   const invalid = resolveRunnerPool(resolver, 'blacksmith-32vcpu-ubuntu-2404');
   assert.notEqual(invalid.status, 0, 'unsupported reusable-workflow input must fail instead of silently falling back');
   assert.match(invalid.stderr, /Unsupported runner_pool/);
@@ -101,13 +191,12 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
     assert.ok(needs(tests.jobs[jobName]).includes('trusted_ref_guard'), `${jobName} must wait for runner admission`);
   }
 
-  for (const jobName of ['server', 'stack', 'binary-smoke', 'typecheck']) {
+  for (const jobName of ['server', 'stack', 'release-contracts', 'binary-smoke', 'typecheck']) {
     assert.equal(tests.jobs[jobName]['runs-on'], '${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}');
     assert.ok(needs(tests.jobs[jobName]).includes('trusted_ref_guard'), `${jobName} must wait for runner admission`);
   }
 
   assert.equal(tests.jobs.ui['runs-on'], 'ubuntu-22.04', 'the tiny UI result aggregator should not consume accelerated minutes');
-  assert.equal(tests.jobs['release-contracts']['runs-on'], 'ubuntu-latest', 'release control contracts should remain on GitHub');
   assert.deepEqual(tests.jobs.cli.permissions, { contents: 'read' });
   assert.deepEqual(tests.jobs.stack.permissions, { contents: 'read' });
   for (const jobName of [
@@ -127,5 +216,16 @@ test('manual test dispatch can opt approved non-secret Linux lanes into Blacksmi
   assert.equal(tests.jobs.providers['runs-on'], 'ubuntu-latest');
   assert.equal(tests.jobs['installers-smoke-macos']['runs-on'], 'macos-latest');
   assert.equal(tests.jobs['installers-smoke-windows']['runs-on'], 'windows-latest');
-  assert.deepEqual(tests.jobs['ui-e2e-wsrepl-lima']['runs-on'], ['self-hosted', 'macOS', 'wsrepl-lima']);
+  assert.equal(tests.on.workflow_call.inputs.run_wsrepl_lima, undefined, 'arbitrary reusable callers must not select a persistent runner');
+  assert.equal(tests.jobs['ui-e2e-wsrepl-lima'], undefined, 'persistent WSREPL execution belongs to the actor-authorized manual dispatcher');
+  const wsreplLima = dispatch.jobs['ui-e2e-wsrepl-lima'];
+  assert.deepEqual(wsreplLima['runs-on'], ['self-hosted', 'macOS', 'wsrepl-lima']);
+  assert.deepEqual(needs(wsreplLima), ['resolve', 'release_actor_guard']);
+  assert.equal(wsreplLima.if, "${{ needs.resolve.outputs.run_wsrepl_lima == 'true' }}");
+  const wsreplCheckout = wsreplLima.steps.find((step) => step.name === 'Checkout');
+  assert.deepEqual(wsreplCheckout.with, {
+    repository: '${{ job.workflow_repository }}',
+    ref: '${{ job.workflow_sha }}',
+    'persist-credentials': false,
+  });
 });

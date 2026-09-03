@@ -4,6 +4,7 @@ import {
   resolveHappierRuntimeContextEnv,
   type HappierRuntimeServerContext,
 } from '@/utils/env/resolveHappierRuntimeContextEnv';
+import { shouldUseSystemdUserSessionResourceGovernor } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './resolveStackProcessKindOverrideForSessionSpawn';
 
 type ChildServerSelectionEnv = HappierRuntimeServerContext;
@@ -29,7 +30,10 @@ export function buildSpawnChildProcessEnv(params: {
     env.HAPPIER_LOG_LEVEL = 'debug';
   }
 
-  if (String(params.processEnv.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim() === 'background-service') {
+  if (shouldUseSystemdUserSessionResourceGovernor({
+    platform: process.platform,
+    startupSource: String(params.processEnv.HAPPIER_DAEMON_STARTUP_SOURCE ?? '').trim(),
+  })) {
     env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY] = '1';
   } else {
     delete env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY];

@@ -946,6 +946,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       Object.defineProperty(process, 'platform', ORIGINAL_PLATFORM_DESCRIPTOR);
     }
     delete process.env.HAPPIER_DAEMON_STARTUP_SOURCE;
+    delete process.env.HAPPIER_DAEMON_SELF_RESTART_CORRELATION_ID;
+    delete process.env.HAPPIER_DAEMON_SELF_RESTART_DEADLINE_MS;
     delete process.env.HAPPIER_DAEMON_DIAGNOSTIC_DISABLE_MACHINE_SYNC;
     delete process.env.HAPPIER_DAEMON_DIAGNOSTIC_DISABLE_AUTOMATION_WORKER;
     delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED;
@@ -2555,6 +2557,10 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
     process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource;
+    if (startupSource === 'self-restart') {
+      process.env.HAPPIER_DAEMON_SELF_RESTART_CORRELATION_ID = 'spawn-resume-cgroup-wrapper';
+      process.env.HAPPIER_DAEMON_SELF_RESTART_DEADLINE_MS = String(Date.now() + 60_000);
+    }
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
@@ -2664,6 +2670,10 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
     process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource;
+    if (startupSource === 'self-restart') {
+      process.env.HAPPIER_DAEMON_SELF_RESTART_CORRELATION_ID = 'spawn-resume-cgroup-reattach';
+      process.env.HAPPIER_DAEMON_SELF_RESTART_DEADLINE_MS = String(Date.now() + 60_000);
+    }
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;

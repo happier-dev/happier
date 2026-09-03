@@ -61,7 +61,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-docs-${{ github.ref }}
+  group: deploy-ref-${{ github.repository }}-${{ inputs.environment }}-docs
   cancel-in-progress: false
 
 jobs:
@@ -70,6 +70,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -93,6 +94,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -110,6 +112,7 @@ jobs:
   resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
       candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
@@ -202,6 +205,7 @@ jobs:
   validate_candidate:
     needs: [resolve_source]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -221,17 +225,15 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        run: |
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
+        uses: ./.github/actions/enable-corepack-yarn
 
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: |
-          set -euo pipefail
-          bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
 
       # The build is unconditional now: deploy_cloudflare publishes exactly these
       # bytes, so skipping it would leave nothing to publish. `run_build` is
@@ -242,7 +244,7 @@ jobs:
       - name: Upload the exact built site
         uses: actions/upload-artifact@v4
         with:
-          name: docs-out-${{ github.sha }}
+          name: docs-out-${{ needs.resolve_source.outputs.candidate_sha }}
           path: apps/docs/out
           retention-days: 7
           if-no-files-found: error
@@ -250,6 +252,7 @@ jobs:
   promote:
     needs: [release_actor_guard, resolve_source, validate_candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-shared
     steps:
       - name: Checkout trusted promotion control
@@ -275,19 +278,8 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
-      - name: Resolve deploy branch SHA (before)
-        id: deploy_before
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          set -euo pipefail
-          ref="deploy/${DEPLOY_ENVIRONMENT}/docs"
-          sha="$(gh api "repos/${GH_REPO}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
       - name: Promote source ref to deploy branch
+        id: promote_ref
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
@@ -299,24 +291,13 @@ jobs:
             --deploy-environment "$DEPLOY_ENVIRONMENT" \
             --component docs \
             --sha "$CANDIDATE_SHA" \
-            --summary-file "$GITHUB_STEP_SUMMARY"
-
-      - name: Resolve deploy branch SHA (after)
-        id: deploy_after
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          set -euo pipefail
-          ref="deploy/${DEPLOY_ENVIRONMENT}/docs"
-          sha="$(gh api "repos/${GH_REPO}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Deploy note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
+          DEPLOY_SHA: ${{ steps.promote_ref.outputs.new_sha }}
         run: |
           set -euo pipefail
           echo "deploy/${DEPLOY_ENVIRONMENT}/docs records what is live; Cloudflare is published by the deploy_cloudflare job." >> "$GITHUB_STEP_SUMMARY"
@@ -333,8 +314,9 @@ jobs:
   # reconnect Cloudflare's Git integration: two publishers for one Worker race,
   # and CI is the one that ran the checks.
   deploy_cloudflare:
-    needs: [promote]
+    needs: [release_actor_guard, resolve_source, validate_candidate, promote]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: cloudflare-deploy
     permissions:
       contents: read
@@ -351,7 +333,7 @@ jobs:
       - name: Download the exact built site
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: docs-out-${{ github.sha }}
+          name: docs-out-${{ needs.resolve_source.outputs.candidate_sha }}
           path: apps/docs/out
       # A green build that produced a partial export publishes a dead site just
       # as successfully as a good one. These are the files whose absence is
@@ -378,16 +360,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.resolve_source.outputs.candidate_sha }}
         working-directory: apps/docs
         run: |
-          set -euo pipefail
-          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
-            npx --yes wrangler@4 deploy --message "promote ${{ github.sha }}"
-          else
-            npx --yes wrangler@4 versions upload --preview-alias preview --message "promote ${{ github.sha }}"
-          fi
+          bash ../../scripts/pipeline/cloudflare/publish-worker.sh \
+            --environment "$DEPLOY_ENVIRONMENT" \
+            --release-sha "$RELEASE_SHA"
       - name: Cloudflare note
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.resolve_source.outputs.candidate_sha }}
         run: |
-          echo "Published apps/docs/out to the happier-docs Worker ($DEPLOY_ENVIRONMENT) from ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published apps/docs/out to the happier-docs Worker ($DEPLOY_ENVIRONMENT) from $RELEASE_SHA." >> "$GITHUB_STEP_SUMMARY"

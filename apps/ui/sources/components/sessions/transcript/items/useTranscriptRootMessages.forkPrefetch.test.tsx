@@ -6,6 +6,26 @@ const prefetchForkedTranscriptContextMock = vi.hoisted(() => vi.fn(() => Promise
 
 const forkPrefetchTestState = vi.hoisted(() => ({
     isLoaded: false,
+    forkSnapshot: {
+        segments: [
+            {
+                sessionId: 'parent',
+                isReadOnlyContext: true,
+                cutoffSeqInclusive: 3,
+                messageIdsOldestFirst: [] as string[],
+            },
+            {
+                sessionId: 'child',
+                isReadOnlyContext: false,
+                cutoffSeqInclusive: null,
+                messageIdsOldestFirst: [] as string[],
+            },
+        ],
+        combinedMessageIdsOldestFirst: [],
+        combinedMessagesById: {},
+        messageOriginById: {},
+        isLoaded: false,
+    },
     listeners: new Set<() => void>(),
 }));
 
@@ -25,28 +45,8 @@ vi.mock('@/sync/domains/state/storage', () => {
         forkPrefetchTestState.listeners.add(listener);
         return () => forkPrefetchTestState.listeners.delete(listener);
     };
-    const forkSnapshot = {
-        segments: [
-            {
-                sessionId: 'parent',
-                isReadOnlyContext: true,
-                cutoffSeqInclusive: 3,
-                messageIdsOldestFirst: [],
-            },
-            {
-                sessionId: 'child',
-                isReadOnlyContext: false,
-                cutoffSeqInclusive: null,
-                messageIdsOldestFirst: [],
-            },
-        ],
-        combinedMessageIdsOldestFirst: [],
-        combinedMessagesById: {},
-        messageOriginById: {},
-        isLoaded: false,
-    };
     return {
-        useForkedTranscriptSnapshot: () => forkSnapshot,
+        useForkedTranscriptSnapshot: () => forkPrefetchTestState.forkSnapshot,
         useSessionTranscriptIds: () => React.useSyncExternalStore(
             subscribe,
             () => forkPrefetchTestState.isLoaded,
@@ -67,6 +67,26 @@ describe('useTranscriptRootMessages fork context prefetch timing', () => {
     beforeEach(() => {
         prefetchForkedTranscriptContextMock.mockClear();
         forkPrefetchTestState.isLoaded = false;
+        forkPrefetchTestState.forkSnapshot = {
+            segments: [
+                {
+                    sessionId: 'parent',
+                    isReadOnlyContext: true,
+                    cutoffSeqInclusive: 3,
+                    messageIdsOldestFirst: [] as string[],
+                },
+                {
+                    sessionId: 'child',
+                    isReadOnlyContext: false,
+                    cutoffSeqInclusive: null,
+                    messageIdsOldestFirst: [] as string[],
+                },
+            ],
+            combinedMessageIdsOldestFirst: [],
+            combinedMessagesById: {},
+            messageOriginById: {},
+            isLoaded: false,
+        };
         forkPrefetchTestState.listeners.clear();
     });
 
@@ -94,6 +114,54 @@ describe('useTranscriptRootMessages fork context prefetch timing', () => {
 
         expect(prefetchForkedTranscriptContextMock).toHaveBeenCalledTimes(1);
         expect(prefetchForkedTranscriptContextMock).toHaveBeenCalledWith('child');
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('prefetches again when hydrating a parent reveals another missing ancestor', async () => {
+        forkPrefetchTestState.isLoaded = true;
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Probe));
+        });
+        expect(prefetchForkedTranscriptContextMock).toHaveBeenCalledTimes(1);
+
+        forkPrefetchTestState.forkSnapshot = {
+            ...forkPrefetchTestState.forkSnapshot,
+            segments: [
+                {
+                    sessionId: 'root',
+                    isReadOnlyContext: true,
+                    cutoffSeqInclusive: 2,
+                    messageIdsOldestFirst: [],
+                },
+                {
+                    ...forkPrefetchTestState.forkSnapshot.segments[0]!,
+                    messageIdsOldestFirst: ['parent-message'],
+                },
+                forkPrefetchTestState.forkSnapshot.segments[1]!,
+            ],
+        };
+        await act(async () => {
+            tree?.update(React.createElement(Probe));
+        });
+
+        expect(prefetchForkedTranscriptContextMock).toHaveBeenCalledTimes(2);
+        expect(prefetchForkedTranscriptContextMock).toHaveBeenLastCalledWith('child');
+
+        forkPrefetchTestState.forkSnapshot = {
+            ...forkPrefetchTestState.forkSnapshot,
+            segments: forkPrefetchTestState.forkSnapshot.segments.map((segment) => ({
+                ...segment,
+                messageIdsOldestFirst: segment.sessionId === 'root' ? ['root-message'] : segment.messageIdsOldestFirst,
+            })),
+        };
+        await act(async () => {
+            tree?.update(React.createElement(Probe));
+        });
+        expect(prefetchForkedTranscriptContextMock).toHaveBeenCalledTimes(2);
 
         await act(async () => {
             tree?.unmount();

@@ -90,6 +90,61 @@ describe('fake Claude CLI fixture', () => {
     }
   });
 
+  it('correlates permission hook callbacks with the emitted tool use', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-permission-'));
+    try {
+      const logPath = join(dir, 'fake-claude.jsonl');
+      const fixturePath = resolve(process.cwd(), 'src/fixtures/fake-claude-code-cli.cjs');
+      const input = [
+        JSON.stringify({
+          type: 'control_request',
+          request_id: 'initialize-permission-hooks',
+          request: {
+            subtype: 'initialize',
+            hooks: {
+              PermissionRequest: [{ matcher: '', hookCallbackIds: ['permission-hook-1'] }],
+            },
+          },
+        }),
+        JSON.stringify({
+          type: 'message',
+          message: { role: 'user', content: [{ type: 'text', text: 'write a file' }] },
+        }),
+      ].join('\n');
+
+      const res = spawnSync(process.execPath, [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
+          HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: 'permission-invocation',
+          HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: 'permission-session',
+          HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'permission-prompt-write',
+        },
+        input: `${input}\n`,
+        encoding: 'utf8',
+      });
+
+      expect(res.status).toBe(0);
+      const rows = parseJsonLines(res.stdout);
+      const assistant = rows.find((row) => row?.type === 'assistant');
+      const toolUse = assistant?.message?.content?.find((item: any) => item?.type === 'tool_use');
+      const controlRequest = rows.find((row) => row?.type === 'control_request' && row?.request?.subtype === 'hook_callback');
+
+      expect(toolUse?.id).toBeTruthy();
+      expect(controlRequest?.request?.callback_id).toBe('permission-hook-1');
+      expect(controlRequest?.request?.tool_use_id).toBe(toolUse.id);
+      expect(controlRequest?.request?.input).toMatchObject({
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'Write',
+        tool_input: toolUse.input,
+        tool_use_id: toolUse.id,
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('answers --version without requiring native OAuth credentials', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-version-'));
     try {

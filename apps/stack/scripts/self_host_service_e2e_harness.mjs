@@ -20,6 +20,10 @@ export function commandExists(cmd) {
 
 export function run(cmd, args, { label, cwd, env, timeoutMs = 0, allowFail = false, stdio = 'pipe' } = {}) {
   const prefix = label ? `[${label}] ` : '';
+  const startedAt = Date.now();
+  if (label) {
+    console.log(`${prefix}starting: ${cmd} ${args.join(' ')}`);
+  }
   const result = spawnSync(cmd, args, {
     cwd,
     env: env ?? process.env,
@@ -27,6 +31,9 @@ export function run(cmd, args, { label, cwd, env, timeoutMs = 0, allowFail = fal
     stdio,
     timeout: timeoutMs || undefined,
   });
+  if (label) {
+    console.log(`${prefix}completed in ${Date.now() - startedAt}ms: ${cmd} (status ${String(result.status ?? 'null')})`);
+  }
   const timedOut = result.error && result.error.code === 'ETIMEDOUT';
   if (!allowFail && (timedOut || (result.status ?? 1) !== 0)) {
     const stderr = String(result.stderr ?? '').trim();
@@ -90,4 +97,3 @@ export async function reserveLocalhostPort() {
   }
   throw new Error('failed to reserve localhost port from non-ephemeral range');
 }
-

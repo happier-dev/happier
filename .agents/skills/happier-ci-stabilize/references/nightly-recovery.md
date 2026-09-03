@@ -10,6 +10,8 @@
 | Ambiguous mutation failure (for example HTTP failure after release PATCH/upload) | Reconcile observed remote state, then use the owning recovery-aware rerun | Blind retry could duplicate or overwrite publication |
 | Origin run is still active or lacks its terminal status artifact | Wait | Resume trust intentionally requires completed evidence |
 
+Successful sibling candidates are reusable evidence, not disposable intermediate work. Preserve them unless source, packaging, dependency, signing, or candidate bytes changed.
+
 For 0.2 nightly, the public workflow input is defined by `.github/workflows/nightly-dev.yml`. A typical authorized dispatch is:
 
 ```bash
@@ -36,6 +38,13 @@ A control-only fix may change workflow/test code while reusing immutable candida
 - Do not cancel notarization, native builds, store submission, or a release mutation solely because duration is unusual.
 - Compare a suspected hang with the same step's successful baseline and configured job timeout. Obtain terminal logs before changing code when live logs are unavailable.
 - Cancel a superseded run only when it is already unable to satisfy the requested outcome and it blocks a corrected run; preserve useful candidate/status evidence required for resume.
+
+## Retry boundaries
+
+- Retry bounded read-only operations such as status lookup, artifact download, and permission lookup for transient network errors, `408`, `429`, and `5xx` responses.
+- Treat authentication/authorization failures, invalid inputs, and stable not-found responses as configuration or contract failures, not transient success candidates.
+- A failed publication, upload, tag update, release PATCH, or store relationship write may have succeeded remotely. Observe and reconcile the canonical remote state before retrying.
+- Retry a mutation automatically only when the owning operation is proven idempotent or its reconciliation path makes the next attempt safe. Never wrap ambiguous mutations in a generic retry loop.
 
 ## Terminal proof
 

@@ -39,10 +39,16 @@ test('npm candidate packing is permission-minimized and secret-free', async () =
   );
 
   const checkouts = checkoutSteps(candidate);
-  assert.equal(checkouts.length, 1);
-  assert.equal(checkouts[0].with?.['persist-credentials'], false);
-  assert.notEqual(checkouts[0].with?.ref, '${{ job.workflow_sha }}');
-  assert.match(JSON.stringify(candidate), /node scripts\/pipeline\/run\.mjs npm-release/);
+  assert.equal(checkouts.length, 2);
+  const sourceCheckout = checkouts.find((step) => step.name === 'Checkout source ref');
+  const controlCheckout = checkouts.find((step) => step.name === 'Checkout trusted npm release control');
+  assert.equal(sourceCheckout?.with?.['persist-credentials'], false);
+  assert.notEqual(sourceCheckout?.with?.ref, '${{ job.workflow_sha }}');
+  assert.equal(controlCheckout?.with?.repository, '${{ job.workflow_repository }}');
+  assert.equal(controlCheckout?.with?.ref, '${{ job.workflow_sha }}');
+  assert.equal(controlCheckout?.with?.path, 'trusted-control');
+  assert.equal(controlCheckout?.with?.['persist-credentials'], false);
+  assert.match(JSON.stringify(candidate), /trusted-control\/scripts\/pipeline\/npm\/release-packages\.mjs/);
 });
 
 test('an authorized npm candidate is checked out by exact SHA and rechecked against its canonical branch before packing', async () => {
@@ -159,5 +165,28 @@ test('npm release metadata rejects newline output forgery before emitting packag
       /Invalid version|must match/,
       `${productId} metadata must reject a forged output line`,
     );
+  }
+});
+
+test('preview npm metadata extractors execute as valid JavaScript for every product', async () => {
+  const workflow = await loadWorkflow();
+  const metadata = workflow.jobs?.release?.steps?.find((step) => step.name === 'Release metadata');
+  const source = String(metadata?.run ?? '');
+  const versions = {
+    cli: '0.2.11-preview.1',
+    stack: '0.2.11-preview.2',
+    server: '0.2.11-preview.3',
+  };
+
+  for (const [productId, expected] of Object.entries(versions)) {
+    const assignment = new RegExp(
+      `${productId}_version="\\$\\(node -e '([^']+)' "\\$\\{versions_json\\}"\\)"`,
+    ).exec(source);
+    assert.ok(assignment, `missing ${productId} preview version extractor`);
+    const result = spawnSync(process.execPath, ['-e', assignment[1], JSON.stringify(versions)], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `${productId} extractor failed: ${result.stderr}`);
+    assert.equal(result.stdout, expected);
   }
 });
