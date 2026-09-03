@@ -268,7 +268,9 @@ import { updateAgentStateBestEffort, updateMetadataBestEffort } from './sessionW
 import { readCliClientUpgradeRequired } from '@/api/clientCompatibility/cliClientCompatibility';
 import { normalizeAgentPromptPayload } from '@/agent/core/AgentPromptPayload';
 import type {
+    MaterializeNextPendingOptions,
     MaterializeNextPendingResult,
+    PendingMaterializationDiagnosticPhase,
     SessionUserMessageDeliveryInfo,
 } from './sessionClientPort';
 import {
@@ -310,6 +312,17 @@ import {
     type PendingQueueRuntimeActivityProjection,
 } from '@/agent/runtime/sessionInput/pendingQueueDrainPolicy';
 import type { ProviderOwnedUserMessageEchoClassifier } from './providerOwnedUserMessageEcho';
+
+function reportPendingMaterializationDiagnosticPhase(
+    observer: ((phase: PendingMaterializationDiagnosticPhase) => void) | undefined,
+    phase: PendingMaterializationDiagnosticPhase,
+): void {
+    try {
+        observer?.(phase);
+    } catch {
+        // Diagnostics must never alter materialization or provider-custody behavior.
+    }
+}
 
 export type SessionProviderInputOutcomeProducer = Readonly<{
     providerId: CatalogAgentId;
@@ -6004,6 +6017,7 @@ export class ApiSessionClient extends EventEmitter {
         expectedRuntimeActivityRevision?: number;
         pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
         foregroundState?: 'ready' | 'active_steerable' | 'active_unsteerable';
+        onDiagnosticPhase?: (phase: PendingMaterializationDiagnosticPhase) => void;
     } = {}): Promise<{
         didMaterialize: boolean;
         result: MaterializeNextPendingResult;
@@ -6043,6 +6057,7 @@ export class ApiSessionClient extends EventEmitter {
             return { didMaterialize: false, result: { type: 'retryable_transport' } };
         }
         let materializeResult: PendingQueueMaterializeNextResult;
+        reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.server_claim');
         if (serverContract.pendingInput === 'released_server_v0_2_1') {
             const releasedResult = await continuePendingQueueV2OnReleasedServer({
                 contract: serverContract,
@@ -6054,6 +6069,9 @@ export class ApiSessionClient extends EventEmitter {
                 getSocket: () => this.socket,
                 hasCurrentLocalRuntimeAuthority: () => !this.closed && !this.runtimeTerminationStarted,
                 decodeStoredContent: (content) => this.decodeStoredSessionMessageContent(content),
+                reportDiagnosticPhase: (phase) => {
+                    reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, phase);
+                },
             });
             if (releasedResult.type === 'auth_failed') {
                 return {
@@ -6239,6 +6257,7 @@ export class ApiSessionClient extends EventEmitter {
                 messageSeq: materializedMessage?.seq ?? null,
             });
             if (materializedLocalId) {
+                reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.delivery_settlement');
                 await this.blockPendingQueueDeliveryLocalId(materializedLocalId, 'unknown', {
                     canonicalOnly: false,
                 });
@@ -6285,6 +6304,7 @@ export class ApiSessionClient extends EventEmitter {
                 localId: materializedLocalId,
             });
             if (materializedLocalId) {
+                reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.delivery_settlement');
                 await this.blockPendingQueueDeliveryLocalId(materializedLocalId, 'unsupported_action', {
                     canonicalOnly: false,
                 });
@@ -6301,6 +6321,7 @@ export class ApiSessionClient extends EventEmitter {
             // server contract that carries no requested action at all (released-server v0.2.1,
             // whose materialize ack is exactly id/seq/localId). Notify unconditionally; the
             // wrapper attaches the action and the active-turn witness only when there is one.
+            reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.daemon_lifecycle');
             const lifecycleResult = await this.notifyDaemonConnectedServiceTurnLifecycle(
                 'prompt_or_steer',
                 undefined,
@@ -6318,13 +6339,15 @@ export class ApiSessionClient extends EventEmitter {
                     sessionId: this.sessionId,
                     localId: materializedLocalId,
                 });
-                const didBlock = materializedLocalId
-                    ? await this.blockPendingQueueDeliveryLocalId(
+                let didBlock = false;
+                if (materializedLocalId) {
+                    reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.delivery_settlement');
+                    didBlock = await this.blockPendingQueueDeliveryLocalId(
                         materializedLocalId,
                         'provider_unavailable_before_acceptance',
                         { canonicalOnly: false },
-                    )
-                    : false;
+                    );
+                }
                 // Only the durable block proves the server row is retryable again. Retire every
                 // process-local claim then so an explicit reopen of this exact localId can be
                 // materialized; a failed block keeps custody and therefore fails closed.
@@ -6387,6 +6410,7 @@ export class ApiSessionClient extends EventEmitter {
         if (materializedLocalId) {
             this.pendingQueueMaterializedLocalIds.add(materializedLocalId);
         }
+        reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.provider_handoff');
         const deliveredMaterializedMessage = await this.deliverPendingQueueMessage(materializedMessage, {
             providerAcceptancePending: isProviderDeliveryHandoff,
         });
@@ -6418,6 +6442,7 @@ export class ApiSessionClient extends EventEmitter {
             && materializedMessage?.localId
             && !deliveredMaterializedMessage
         ) {
+            reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.delivery_settlement');
             await this.blockCanonicalPendingDeliveries([materializedMessage.localId], 'invalid_prompt_text');
         }
 
@@ -6467,13 +6492,7 @@ export class ApiSessionClient extends EventEmitter {
         return { didMaterialize: true, result: { type: 'no_pending' } };
     }
 
-    async materializeNextPendingMessageSafely(opts: {
-        expectedPendingVersion?: number;
-        expectedRuntimeActivityRevision?: number;
-        reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
-        activeTurnSteerability?: PendingForegroundSteerability;
-        pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
-    } = {}): Promise<MaterializeNextPendingResult> {
+    async materializeNextPendingMessageSafely(opts: MaterializeNextPendingOptions = {}): Promise<MaterializeNextPendingResult> {
         const supervisorState = this.sessionConnectionSupervisor?.getState();
         if (supervisorState?.phase === 'auth_failed') {
             return { type: 'auth_failure', statusCode: 401 };
@@ -6490,17 +6509,21 @@ export class ApiSessionClient extends EventEmitter {
                 phase: supervisorState.phase,
             });
         }
+        reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.delivery_reconcile');
         if (!await this.reconcileCanonicalPendingDeliveriesBeforeMaterialization()) {
             return { type: 'no_pending' };
         }
 
         const policy = resolvePendingQueueReconcileWhenEmpty(opts, 'skip');
         if (!this.pendingQueueState.known) {
+            reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.pending_snapshot');
             await this.reconcilePendingQueueState({ force: true });
         } else if (countMaterializablePendingRows(this.pendingQueueState) <= 0) {
             if (policy === 'force') {
+                reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.pending_snapshot');
                 await this.reconcilePendingQueueState({ force: true });
             } else if (policy === 'throttled') {
+                reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.pending_snapshot');
                 await this.reconcilePendingQueueState({ force: false });
             }
         }
@@ -6510,6 +6533,7 @@ export class ApiSessionClient extends EventEmitter {
         if (countMaterializablePendingRows(this.pendingQueueState) <= 0) {
             return { type: 'no_pending' };
         }
+        reportPendingMaterializationDiagnosticPhase(opts.onDiagnosticPhase, 'materialize.turn_status');
         const refreshedTurnStatus = await this.reconcileTurnStatusBeforePendingMaterializationIfNeeded({
             activeTurnSteerability: opts.activeTurnSteerability,
         });
@@ -6527,6 +6551,7 @@ export class ApiSessionClient extends EventEmitter {
             expectedRuntimeActivityRevision: opts.expectedRuntimeActivityRevision,
             pendingQueueDeliveryTiming: opts.pendingQueueDeliveryTiming,
             foregroundState: this.resolvePendingForegroundState(opts.activeTurnSteerability),
+            onDiagnosticPhase: opts.onDiagnosticPhase,
         });
         return inner.result;
     }

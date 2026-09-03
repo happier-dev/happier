@@ -11,6 +11,7 @@ import {
 } from './pendingQueueV2Transport';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
 import { delayUnref } from '@/utils/time';
+import type { PendingMaterializationDiagnosticPhase } from './sessionClientPort';
 
 const RELEASED_SERVER_EXACT_READ_MAX_ATTEMPTS = 2;
 const RELEASED_SERVER_EXACT_READ_RETRY_DELAY_MS = 100;
@@ -62,11 +63,13 @@ export async function continuePendingQueueV2OnReleasedServer(params: Readonly<{
     getSocket: () => unknown;
     hasCurrentLocalRuntimeAuthority: () => boolean;
     decodeStoredContent: (content: SessionMessageContent) => unknown;
+    reportDiagnosticPhase?: (phase: PendingMaterializationDiagnosticPhase) => void;
 }>): Promise<ReleasedServerPendingContinuationResult> {
     if (!isExactContractCurrent(params)) return { type: 'zero_effect' };
 
     let ack: Awaited<ReturnType<typeof materializeNextPendingQueueV2MessageOnReleasedServer>>;
     try {
+        params.reportDiagnosticPhase?.('materialize.server_claim');
         ack = await materializeNextPendingQueueV2MessageOnReleasedServer({
             sessionId: params.sessionId,
             socket: params.contract.socket as ReleasedServerSocket,
@@ -82,6 +85,7 @@ export async function continuePendingQueueV2OnReleasedServer(params: Readonly<{
 
     let lookup: Awaited<ReturnType<typeof findTranscriptEncryptedMessageByLocalIdV2>>;
     for (let attempt = 0; ; attempt += 1) {
+        params.reportDiagnosticPhase?.('materialize.compatibility_transcript_lookup');
         lookup = await findTranscriptEncryptedMessageByLocalIdV2({
             token: params.token,
             serverUrl: params.serverUrl,

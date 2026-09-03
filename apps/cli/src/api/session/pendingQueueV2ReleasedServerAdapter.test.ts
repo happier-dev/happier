@@ -34,7 +34,10 @@ function positiveMessage() {
     };
 }
 
-function harness(ack: ReleasedAck = positiveAck()) {
+function harness(
+    ack: ReleasedAck = positiveAck(),
+    reportDiagnosticPhase?: (phase: string) => void,
+) {
     const socket = {
         connected: true,
         emitWithAck: vi.fn().mockResolvedValue(ack),
@@ -68,6 +71,7 @@ function harness(ack: ReleasedAck = positiveAck()) {
             getSocket: () => activeSocket,
             hasCurrentLocalRuntimeAuthority: () => runtimeCurrent,
             decodeStoredContent: (content) => content.t === 'plain' ? content.v : null,
+            reportDiagnosticPhase,
         }),
     };
 }
@@ -93,7 +97,8 @@ describe('released server pending continuation', () => {
     });
 
     it('continues its own exact didWrite acknowledgement through the real parser and one exact lookup', async () => {
-        const target = harness();
+        const reportDiagnosticPhase = vi.fn();
+        const target = harness(positiveAck(), reportDiagnosticPhase);
         const get = mockLookupMessage();
 
         await expect(target.run()).resolves.toEqual({
@@ -114,6 +119,10 @@ describe('released server pending continuation', () => {
             'https://server.example/v2/sessions/session-1/messages/by-local-id/local-1',
             expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer token' }) }),
         );
+        expect(reportDiagnosticPhase.mock.calls).toEqual([
+            ['materialize.server_claim'],
+            ['materialize.compatibility_transcript_lookup'],
+        ]);
     });
 
     it.each([

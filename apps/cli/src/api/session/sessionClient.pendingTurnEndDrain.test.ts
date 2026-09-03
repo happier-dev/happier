@@ -1854,6 +1854,58 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect(materializeNextMock).toHaveBeenCalledTimes(2);
   });
 
+  it('identifies the server-claim subphase before awaiting an unsettled materialization transport', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 1,
+      pendingBlockedCount: 0,
+      pendingVersion: 1,
+    });
+    await waitForCurrentPendingInputContract(client);
+    const transport = createDeferred<{
+      didMaterialize: false;
+      localId: null;
+      didWrite: false;
+    }>();
+    materializeNextMock.mockImplementationOnce(async () => await transport.promise);
+    const observedPhases: string[] = [];
+    const pending = client.materializeNextPendingMessageSafely({
+      reconcileWhenEmpty: 'force',
+      onDiagnosticPhase: (phase) => observedPhases.push(phase),
+    });
+
+    try {
+      await vi.waitFor(() => expect(materializeNextMock).toHaveBeenCalledTimes(1));
+      expect(observedPhases.at(-1)).toBe('materialize.server_claim');
+    } finally {
+      transport.resolve({ didMaterialize: false, localId: null, didWrite: false });
+      await pending;
+    }
+  });
+
+  it('keeps diagnostic callback failures outside pending materialization behavior', async () => {
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 1,
+      pendingBlockedCount: 0,
+      pendingVersion: 1,
+    });
+    await waitForCurrentPendingInputContract(client);
+    materializeNextMock.mockResolvedValueOnce({
+      didMaterialize: false,
+      localId: null,
+      didWrite: false,
+    });
+
+    await expect(client.materializeNextPendingMessageSafely({
+      reconcileWhenEmpty: 'force',
+      onDiagnosticPhase: () => {
+        throw new Error('diagnostic callback failed');
+      },
+    })).resolves.toEqual({ type: 'no_pending' });
+    expect(materializeNextMock).toHaveBeenCalledTimes(1);
+  });
+
   it('passes runtime-idle delivery timing to server materialization when locally eligible', async () => {
     const client = await createClient({
       latestTurnStatus: 'completed',

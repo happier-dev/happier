@@ -51,6 +51,25 @@ export type MaterializeNextPendingResult =
     retryAfterMs?: number;
   };
 
+export type PendingMaterializationDiagnosticPhase =
+  | 'materialize.delivery_reconcile'
+  | 'materialize.pending_snapshot'
+  | 'materialize.turn_status'
+  | 'materialize.server_claim'
+  | 'materialize.compatibility_transcript_lookup'
+  | 'materialize.daemon_lifecycle'
+  | 'materialize.provider_handoff'
+  | 'materialize.delivery_settlement';
+
+export type MaterializeNextPendingOptions = {
+  expectedPendingVersion?: number;
+  expectedRuntimeActivityRevision?: number;
+  reconcileWhenEmpty?: PendingQueueReconcileWhenEmpty;
+  activeTurnSteerability?: PendingForegroundSteerability;
+  pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
+  onDiagnosticPhase?: (phase: PendingMaterializationDiagnosticPhase) => void;
+};
+
 export type SessionUserMessageDeliveryInfo = Readonly<{
   seq: number | null;
   providerAcceptancePending?: boolean | undefined;
@@ -164,13 +183,7 @@ export interface SessionClientPort {
    */
   hasOnlyBlockedPendingWork?(): boolean;
   reconcilePendingQueueState?(opts?: { force?: boolean }): Promise<boolean>;
-  materializeNextPendingMessageSafely?(opts?: {
-    expectedPendingVersion?: number;
-    expectedRuntimeActivityRevision?: number;
-    reconcileWhenEmpty?: PendingQueueReconcileWhenEmpty;
-    activeTurnSteerability?: PendingForegroundSteerability;
-    pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
-  }): Promise<MaterializeNextPendingResult>;
+  materializeNextPendingMessageSafely?(opts?: MaterializeNextPendingOptions): Promise<MaterializeNextPendingResult>;
   popPendingMessage(): Promise<boolean>;
 
   peekPendingMessageQueueV2Count(opts?: PendingQueueReadOptions): Promise<number>;

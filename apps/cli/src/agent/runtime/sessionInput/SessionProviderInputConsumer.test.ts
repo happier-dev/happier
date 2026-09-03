@@ -656,7 +656,10 @@ describe('SessionProviderInputConsumer drainPending', () => {
       stoppedReason: 'max_pop_per_wake',
     });
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
-    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({ reconcileWhenEmpty: 'force' });
+    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+      reconcileWhenEmpty: 'force',
+      onDiagnosticPhase: expect.any(Function),
+    });
   });
 
   it('reconciles before stopping when materialization is disallowed', async () => {
@@ -709,6 +712,7 @@ describe('SessionProviderInputConsumer drainPending', () => {
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'force',
       activeTurnSteerability: 'steerable',
+      onDiagnosticPhase: expect.any(Function),
     });
   });
 
@@ -740,6 +744,7 @@ describe('SessionProviderInputConsumer drainPending', () => {
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'force',
       activeTurnSteerability: 'unsteerable',
+      onDiagnosticPhase: expect.any(Function),
     });
   });
 
@@ -938,7 +943,10 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     });
 
     await expect(consumer.waitForNextInput({ abortSignal: abortController.signal })).resolves.toBeNull();
-    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({ reconcileWhenEmpty: 'skip' });
+    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+      reconcileWhenEmpty: 'skip',
+      onDiagnosticPhase: expect.any(Function),
+    });
     expect(reconcilePendingQueueState).not.toHaveBeenCalled();
   });
 
@@ -1192,6 +1200,50 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     expect(onMetadataUpdate).toHaveBeenCalledTimes(1);
   });
 
+  it('reports the exact materialization subphase when the canonical owner remains unsettled', async () => {
+    vi.useFakeTimers();
+    const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    try {
+      const materialization = createDeferred<MaterializeNextPendingResult>();
+      const materializeNextPendingMessageSafely = vi.fn(async (options?: unknown) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+        const diagnostics = options as {
+          onDiagnosticPhase?: (phase: 'materialize.server_claim') => void;
+        } | undefined;
+        diagnostics?.onDiagnosticPhase?.('materialize.server_claim');
+        return await materialization.promise;
+      });
+      const consumer = createDrainConsumer({
+        materializeNextPendingMessageSafely,
+        waitForPendingEligibilityUpdate: vi.fn(async () => false),
+      });
+
+      const drain = consumer.drainPending?.({ maxPopPerWake: 1, reason: 'slow-phase-diagnostic-test' });
+      if (!drain) throw new Error('Missing drainPending test seam');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(materializeNextPendingMessageSafely).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(infoFileSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(infoFileSpy).toHaveBeenCalledWith(
+        '[pendingQueue] input consumer phase remains unsettled',
+        expect.objectContaining({ phase: 'materialize.server_claim' }),
+      );
+
+      materialization.resolve({ type: 'no_pending' });
+      await expect(drain).resolves.toMatchObject({ materialized: 0 });
+      expect(infoFileSpy).toHaveBeenCalledWith(
+        '[pendingQueue] input consumer slow phase settled',
+        expect.objectContaining({ phase: 'materialize.server_claim' }),
+      );
+    } finally {
+      infoFileSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('waits for a fresh eligibility event before retrying transient transport', async () => {
     const abortController = new AbortController();
     const eligibilityWake = createDeferred<boolean>();
@@ -1415,6 +1467,7 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
     expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
       reconcileWhenEmpty: 'skip',
       pendingQueueDeliveryTiming: 'after_runtime_idle',
+      onDiagnosticPhase: expect.any(Function),
     });
     tail = {
       sequence: 8,
@@ -1437,6 +1490,7 @@ describe('SessionProviderInputConsumer waitForNextInput', () => {
       reconcileWhenEmpty: 'skip',
       pendingQueueDeliveryTiming: 'after_runtime_idle',
       expectedRuntimeActivityRevision: 41,
+      onDiagnosticPhase: expect.any(Function),
     });
   });
 
