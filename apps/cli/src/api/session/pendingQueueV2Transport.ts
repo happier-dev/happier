@@ -469,6 +469,8 @@ function readPendingRowDeliveryStatus(record: Record<string, unknown>): PendingD
 type PendingQueueV2ProjectionEntry = Readonly<{
     localId: string;
     deliveryStatus: PendingDeliveryStatusV1;
+    messageRole: SessionMessageRole | null;
+    requestedAction: PendingRequestedActionV1 | null;
 }>;
 
 function parsePendingQueueV2Projection(value: unknown): PendingQueueV2ProjectionEntry[] {
@@ -488,6 +490,8 @@ function parsePendingQueueV2Projection(value: unknown): PendingQueueV2Projection
         const pendingRecord = row as Record<string, unknown>;
         const localId = readPendingLocalId(pendingRecord.localId);
         const deliveryStatus = readPendingRowDeliveryStatus(pendingRecord);
+        const messageRole = SessionMessageRoleSchema.safeParse(pendingRecord.messageRole);
+        const requestedAction = PendingRequestedActionV1Schema.safeParse(pendingRecord.requestedAction);
         if (
             localId === null
             || seenLocalIds.has(localId)
@@ -496,7 +500,12 @@ function parsePendingQueueV2Projection(value: unknown): PendingQueueV2Projection
             throw new Error('Invalid pending queue delivery status projection');
         }
         seenLocalIds.add(localId);
-        entries.push({ localId, deliveryStatus });
+        entries.push({
+            localId,
+            deliveryStatus,
+            messageRole: messageRole.success ? messageRole.data : null,
+            requestedAction: requestedAction.success ? requestedAction.data : null,
+        });
     }
     return entries;
 }
@@ -721,6 +730,23 @@ export async function listPendingQueueV2LocalIdsFromServer(params: {
 }): Promise<string[]> {
     const pending = await fetchPendingQueueV2Projection(params);
     return pending.map((entry) => entry.localId);
+}
+
+export type PendingQueueV2ActivationEligibility = 'eligible' | 'missing' | 'ineligible';
+
+export async function readPendingQueueV2ActivationEligibilityFromServer(params: {
+    token: string;
+    sessionId: string;
+    requestId: string;
+}): Promise<PendingQueueV2ActivationEligibility> {
+    const pending = await fetchPendingQueueV2Projection(params);
+    const exact = pending.find((entry) => entry.localId === params.requestId);
+    if (!exact) return 'missing';
+    return exact.messageRole === 'user'
+        && exact.requestedAction?.kind === 'send_now'
+        && exact.deliveryStatus.status === 'queued'
+        ? 'eligible'
+        : 'ineligible';
 }
 
 export type PendingQueueV2DeliveryStatusEntry = Readonly<{

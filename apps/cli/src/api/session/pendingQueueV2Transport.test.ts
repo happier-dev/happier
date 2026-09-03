@@ -6,6 +6,7 @@ import {
     blockPendingQueueV2Delivery,
     enqueuePendingQueueV2MessageViaHttp,
     readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
+    readPendingQueueV2ActivationEligibilityFromServer,
     listPendingQueueV2LocalIdsFromServer,
     listPendingQueueV2DeliveryStatusesFromServer,
     listPendingQueueV2ProviderDeliveryLocalIdsFromServer,
@@ -1548,6 +1549,49 @@ describe('pendingQueueV2Transport', () => {
                 timeout: 10_000,
             }),
         );
+    });
+
+    it('requires the exact queued user send-now row for inactive-session activation', async () => {
+        mockGet.mockResolvedValueOnce({
+            data: {
+                pending: [
+                    {
+                        localId: 'eligible',
+                        messageRole: 'user',
+                        requestedAction: { v: 1, kind: 'send_now' },
+                        deliveryStatus: { status: 'queued' },
+                    },
+                    {
+                        localId: 'claimed',
+                        messageRole: 'user',
+                        requestedAction: { v: 1, kind: 'send_now' },
+                        deliveryStatus: { status: 'delivering' },
+                    },
+                ],
+            },
+        });
+        await expect(readPendingQueueV2ActivationEligibilityFromServer({
+            token: 'token', sessionId: 'session-1', requestId: 'eligible',
+        })).resolves.toBe('eligible');
+
+        mockGet.mockResolvedValueOnce({
+            data: {
+                pending: [{
+                    localId: 'wrong-action',
+                    messageRole: 'user',
+                    requestedAction: { v: 1, kind: 'enqueue' },
+                    deliveryStatus: { status: 'queued' },
+                }],
+            },
+        });
+        await expect(readPendingQueueV2ActivationEligibilityFromServer({
+            token: 'token', sessionId: 'session-1', requestId: 'wrong-action',
+        })).resolves.toBe('ineligible');
+
+        mockGet.mockResolvedValueOnce({ data: { pending: [] } });
+        await expect(readPendingQueueV2ActivationEligibilityFromServer({
+            token: 'token', sessionId: 'session-1', requestId: 'resolved',
+        })).resolves.toBe('missing');
     });
 
     it.each([

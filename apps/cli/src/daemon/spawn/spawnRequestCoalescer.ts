@@ -178,7 +178,7 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
       key: `${serializationKey}${requestKey}`,
       serializationKey,
       ...(executionAuthorization
-        ? { authorizationKey: `${serializationKey}:authorization:${sha256Hex(executionAuthorization.requestId)}` }
+        ? { authorizationKey: `${serializationKey}:authorization:${sha256Hex(stableJsonStringify(executionAuthorization))}` }
         : {}),
     };
   }

@@ -37,6 +37,44 @@ function computeRuntimeDescriptorKeys(
 }
 
 describe('computeDaemonSpawnRequestKey', () => {
+  it('distinguishes re-armed durable authorizations while preserving exact duplicate identity', () => {
+    const baseExistingSessionOptions = {
+      directory: '/tmp/repo',
+      existingSessionId: 'sess_1',
+    } satisfies SpawnSessionOptions;
+    const first = computeDaemonSpawnRequestKey({
+      ...baseExistingSessionOptions,
+      executionAuthorization: {
+        provenance: 'user_request',
+        requestId: 'local-1',
+        requestedAt: 100,
+      },
+    });
+    const duplicate = computeDaemonSpawnRequestKey({
+      ...baseExistingSessionOptions,
+      executionAuthorization: {
+        provenance: 'user_request',
+        requestId: 'local-1',
+        requestedAt: 100,
+      },
+    });
+    const rearmed = computeDaemonSpawnRequestKey({
+      ...baseExistingSessionOptions,
+      executionAuthorization: {
+        provenance: 'user_request',
+        requestId: 'local-1',
+        requestedAt: 101,
+      },
+    });
+
+    expect(first).toEqual(duplicate);
+    expect(rearmed.key).not.toBe(first.key);
+    expect(rearmed.kind).toBe('existing');
+    expect(first.kind).toBe('existing');
+    if (first.kind !== 'existing' || rearmed.kind !== 'existing') throw new Error('expected existing-session keys');
+    expect(rearmed.authorizationKey).not.toBe(first.authorizationKey);
+    expect(rearmed.serializationKey).toBe(first.serializationKey);
+  });
   it('is stable for equivalent inputs with different object key order', () => {
     const a = computeDaemonSpawnRequestKey({
       directory: '/tmp/repo',
@@ -584,15 +622,23 @@ describe('createSpawnRequestCoalescer', () => {
     expect(r4).toEqual({ type: 'success', sessionId: 'sess_new' });
   });
 
-  it('serializes distinct exact requests for one existing session without coalescing either result', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+  it('serializes a same-row re-arm without joining the prior attempt or replaying its cached success', async () => {
+    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 2_000 });
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
     const starts: string[] = [];
-    const firstKey = computeExactExistingSessionKey('first');
-    const secondKey = computeExactExistingSessionKey('second');
+    const firstKey = computeDaemonSpawnRequestKey({
+      directory: '/tmp',
+      existingSessionId: 'sess_1',
+      executionAuthorization: { provenance: 'user_request', requestId: 'same-row', requestedAt: 100 },
+    });
+    const secondKey = computeDaemonSpawnRequestKey({
+      directory: '/tmp',
+      existingSessionId: 'sess_1',
+      executionAuthorization: { provenance: 'user_request', requestId: 'same-row', requestedAt: 101 },
+    });
 
     const first = coalescer.run(firstKey, async () => {
       starts.push('first');

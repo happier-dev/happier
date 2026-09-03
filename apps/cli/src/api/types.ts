@@ -365,6 +365,7 @@ export const DaemonStateSchema = z.object({
   httpPort: z.number().optional(),
   startedAt: z.number().optional(),
   startedWithCliVersion: z.string().optional(),
+  daemonPendingSessionActivationSupported: z.boolean().optional(),
   shutdownRequestedAt: z.number().optional(),
   shutdownSource:
     z.union([

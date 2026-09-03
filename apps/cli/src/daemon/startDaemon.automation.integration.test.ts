@@ -1292,6 +1292,15 @@ describe('startDaemon automation wiring (integration)', () => {
       );
 
       expect(stopDaemon).toHaveBeenCalledTimes(1);
+      expect(ensureMachineRegistered).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(ensureMachineRegistered).mock.calls[0]?.[0]).not.toHaveProperty('daemonState');
+      expect(vi.mocked(ensureMachineRegistered).mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+        machineId: 'machine-rotated',
+        caller: 'startDaemon',
+        daemonState: expect.objectContaining({
+          daemonPendingSessionActivationSupported: true,
+        }),
+      }));
       expect(writeDaemonState).toHaveBeenCalledWith(expect.objectContaining({
         machineId: 'machine-rotated',
       }));

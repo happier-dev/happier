@@ -104,6 +104,10 @@ import { forceStopKnownDaemonPid, isDaemonRunningCurrentlyInstalledHappyVersion,
 import { startDaemonControlServer } from './controlServer';
 import { resolveTrackedSessionCatalogAgentId } from './sessions/resolveTrackedSessionCatalogAgentId';
 import { activatePendingInactiveSession } from './sessions/activatePendingInactiveSession';
+import {
+  recoverPendingSessionActivations,
+  type PendingSessionActivationInput,
+} from './sessions/pendingSessionActivationRecovery';
 import { resolveExistingRunnerAcceptance } from './spawn/resolveRunnerAcceptance';
 import {
   createDirectPeerTransferRegistry,
@@ -1811,6 +1815,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       if (preflightMachineRegistration.didRotateMachineId) {
         logger.debug('[DAEMON RUN] Same-version daemon matched a stale machine id, restarting daemon with recovered machine identity');
         await stopDaemon();
+        preflightMachineRegistration = null;
       } else {
         logger.debug('[DAEMON RUN] Daemon version and machine identity match, keeping existing daemon');
         console.log('Daemon already running with matching version');
@@ -7142,6 +7147,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           httpPort: controlPort,
           startedAt: Date.now(),
           startedWithCliVersion: daemonStateCliVersion,
+          daemonPendingSessionActivationSupported: true,
         };
 
       const restartOnAuthUpdate = parseBooleanEnv(
@@ -8395,23 +8401,36 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 });
               });
 
-              connectedApiMachine.onPendingSessionActivationHint(async (hint) => {
-                const result = await activatePendingInactiveSession({
-                  credentials,
-                  machineId,
-                  sessionId: hint.sessionId,
-                  requestId: hint.requestId,
-                  pendingVersion: hint.pendingVersion,
-                  spawnSession: async (options) => await spawnSession(options),
-                });
-                if (result.status === 'rejected') {
-                  logger.warn('[DAEMON RUN] Exact inactive Pending activation was rejected; Pending custody retained', {
+              const activateExactPendingSession = async (hint: PendingSessionActivationInput): Promise<void> => {
+                try {
+                  const result = await activatePendingInactiveSession({
+                    credentials,
+                    machineId,
+                    sessionId: hint.sessionId,
+                    requestId: hint.requestId,
+                    pendingVersion: hint.pendingVersion,
+                    spawnSession: async (options) => await spawnSession(options),
+                  });
+                  if (result.status === 'rejected') {
+                    logger.warn('[DAEMON RUN] Exact inactive Pending activation was rejected', {
+                      sessionId: hint.sessionId,
+                      requestId: hint.requestId,
+                      source: hint.source,
+                      reason: result.reason,
+                    });
+                  }
+                } catch (error) {
+                  logger.warn('[DAEMON RUN] Exact inactive Pending activation failed; durable authorization retained', {
                     sessionId: hint.sessionId,
                     requestId: hint.requestId,
                     source: hint.source,
-                    reason: result.reason,
+                    error: serializeAxiosErrorForLog(error),
                   });
                 }
+              };
+
+              connectedApiMachine.onPendingSessionActivationHint(async (hint) => {
+                await activateExactPendingSession(hint);
               });
 
               daemonConnectivityCoordinator = createDaemonConnectivityCoordinator({
@@ -8457,6 +8476,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   if (shutdownInitiated) return;
 
                   await reconcileSessionMachineAccessBindings();
+
+                  await recoverPendingSessionActivations({
+                    token: credentials.token,
+                    activate: activateExactPendingSession,
+                  }).catch((error) => {
+                    logger.warn('[DAEMON RUN] Pending session activation reconnect scan failed; durable custody retained', {
+                      error: serializeAxiosErrorForLog(error),
+                    });
+                  });
 
                   // FIX-1a (incident Jun-11 H-A): keep the account-settings snapshot fresh on
                   // (re)connect. Cheap no-op when a scope-matching snapshot is already active;
