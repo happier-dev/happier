@@ -8,7 +8,7 @@ import { useSessionMachineTarget } from '@/components/sessions/model/useSessionM
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
-import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
+import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { canLaunchExecutionRunsForSession } from '@/sync/domains/executionRuns/canLaunchExecutionRunsForSession';
 import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -31,7 +31,7 @@ export function useSessionExecutionRunLaunchability(
     const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId);
     const { machineReachable } = useSessionMachineReachability(sessionId);
     const machineTarget = useSessionMachineTarget(sessionId);
-    const directSessionRuntime = useDirectSessionRuntime({
+    const directSessionRuntime = useSessionDirectSessionRuntime({
         sessionId,
         metadata: session?.metadata,
     });

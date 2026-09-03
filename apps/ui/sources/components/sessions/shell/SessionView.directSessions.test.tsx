@@ -3777,6 +3777,25 @@ describe('SessionView (direct sessions)', () => {
     expect(nestedRuntimeStatus).toMatchObject({ machineOnline: true, activity: 'running' });
   });
 
+  it('shares the session surface direct runtime with nested execution and subagent projections', async () => {
+    const { useSessionExecutionRunLaunchability } = await import('@/hooks/session/useSessionExecutionRunLaunchability');
+    const { useSessionSubagents } = await import('@/hooks/session/useSessionSubagents');
+    const NestedSessionProjections = () => {
+      useSessionExecutionRunLaunchability('s1', storageState.sessions.s1);
+      useSessionSubagents({
+        sessionId: 's1',
+        session: storageState.sessions.s1,
+        messages: [],
+      });
+      return null;
+    };
+
+    await renderSessionViewAndSettle({ contentOverride: <NestedSessionProjections /> });
+
+    expect(machineDirectSessionStatusGetSpy).toHaveBeenCalledTimes(1);
+    expect(syncRefreshSessionMessagesSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('polls direct session status and transcript refreshes using the active cadence while the session view is open', async () => {
     const previousActivePollMs = process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE;
     process.env.EXPO_PUBLIC_HAPPIER_DIRECT_SESSIONS_TAIL_POLL_MS_ACTIVE = '50';

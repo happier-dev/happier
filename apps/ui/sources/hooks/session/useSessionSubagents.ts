@@ -14,7 +14,8 @@ import type {
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useDirectSessionRuntime, type UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
+import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
+import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { useReconciledStableRows } from './reconcileStableRows';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
 
@@ -175,7 +176,7 @@ export function useSessionSubagents(params: Readonly<{
         [runningExecutionRuns],
     );
     const stableRunningExecutionRuns = useStableValueBySignature(runningExecutionRuns, runningExecutionRunsSignature);
-    const internalDirectSessionRuntime = useDirectSessionRuntime({
+    const internalDirectSessionRuntime = useSessionDirectSessionRuntime({
         sessionId: params.sessionId,
         metadata: params.session?.metadata,
         enabled: params.directSessionRuntime == null,
