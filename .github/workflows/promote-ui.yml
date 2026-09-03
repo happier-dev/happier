@@ -591,6 +591,7 @@ jobs:
     if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
+      actions: read
       contents: write
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit
@@ -609,6 +610,7 @@ jobs:
     if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
+      actions: read
       contents: write
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit
