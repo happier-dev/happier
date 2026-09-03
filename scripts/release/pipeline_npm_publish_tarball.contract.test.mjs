@@ -59,6 +59,12 @@ if (args[0] === 'view' && args[2] === 'dist.integrity') {
   process.exit(0);
 }
 if (args[0] === 'view' && args[2] === 'dist-tags') {
+  state.distTagQueries = (state.distTagQueries ?? 0) + 1;
+  writeState();
+  if (mode === 'stale-tag' && state.distTagAdds > 0 && state.distTagQueries === 2) {
+    process.stdout.write(JSON.stringify(state.previousDistTags ?? {}) + '\\n');
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify(state.distTags ?? {}) + '\\n');
   process.exit(0);
 }
@@ -79,6 +85,7 @@ if (args[0] === 'publish') {
 }
 if (args[0] === 'dist-tag' && args[1] === 'add') {
   state.distTagAdds = (state.distTagAdds ?? 0) + 1;
+  state.previousDistTags = state.distTags ?? {};
   state.distTags = { ...(state.distTags ?? {}), [args[3]]: packageVersion };
   writeState();
   process.stdout.write('tagged\\n');
@@ -234,6 +241,22 @@ test('pipeline npm publish skips an exact version, repairs its dist-tag, and ver
   assert.equal(result.state.distTags.next, '1.2.3');
   assert.ok(result.calls.some((args) => args[0] === 'view' && args[2] === 'dist.integrity'));
   assert.ok(result.calls.some((args) => args[0] === 'dist-tag' && args[1] === 'add'));
+});
+
+test('pipeline npm publish tolerates a stale read after an already-applied dist-tag repair', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-stale-tag-'));
+  const result = runNpmPublication(tmpDir, 'stale-tag', {
+    remoteIntegrity: undefined,
+    distTags: { next: '1.2.2' },
+    integrityQueries: 0,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.state.publishCalls ?? 0, 0, 'exact integrity must skip npm publish');
+  assert.equal(result.state.distTagAdds, 1, 'the dist-tag mutation must not be repeated');
+  assert.equal(result.state.distTagQueries, 3, 'read-only verification should retry after one stale response');
+  assert.equal(result.state.distTags.next, '1.2.3');
+  const distTagReads = result.calls.filter((args) => args[0] === 'view' && args[2] === 'dist-tags');
+  assert.equal(distTagReads.every((args) => args.includes('--prefer-online')), true, 'every verification read must bypass stale npm cache data');
 });
 
 test('pipeline npm publish fails closed when the existing version has different integrity', () => {

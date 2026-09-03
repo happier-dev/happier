@@ -325,7 +325,7 @@ jobs:
 
   # Publishes the exact bytes the build job produced. Kept out of `promote`
   # because that job owns release-shared (GitHub App) secrets and a job may only
-  # bind one environment; Cloudflare credentials live in docs-deploy.
+  # bind one environment; shared Cloudflare credentials live in cloudflare-deploy.
   #
   # This replaced a Cloudflare PAGES deploy hook, which rebuilt the app inside
   # Cloudflare's build container on every push to deploy/<env>/docs — bypassing
@@ -335,7 +335,7 @@ jobs:
   deploy_cloudflare:
     needs: [promote]
     runs-on: ubuntu-latest
-    environment: docs-deploy
+    environment: cloudflare-deploy
     permissions:
       contents: read
     steps:

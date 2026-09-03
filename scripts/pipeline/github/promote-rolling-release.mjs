@@ -201,6 +201,28 @@ function findDraftReleaseId({ repo, tag, env, dryRun }) {
   }).trim().split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? '';
 }
 
+function findDraftReleasesByTagPrefix({ repo, tagPrefix, env, dryRun }) {
+  const jqPrefix = JSON.stringify(tagPrefix);
+  const output = run('gh', [
+    'api',
+    `repos/${repo}/releases?per_page=100`,
+    '--paginate',
+    '--jq',
+    `.[] | select(.draft == true and (.tag_name | startswith(${jqPrefix}))) | [.id, .tag_name] | @tsv`,
+  ], {
+    env,
+    dryRun,
+  }).trim();
+  if (!output) return [];
+  return output.split(/\r?\n/).map((line) => {
+    const [id = '', tagName = '', ...extra] = line.split('\t');
+    if (extra.length > 0 || !/^\d+$/.test(id) || !tagName.startsWith(tagPrefix)) {
+      fail('GitHub returned invalid staging draft metadata.');
+    }
+    return { id, tagName };
+  });
+}
+
 function parseRelease(raw, label) {
   const value = String(raw ?? '').trim();
   if (!value) return null;
@@ -500,6 +522,20 @@ async function main() {
     const stagingTag = `happier-rolling-staging-${safeRollingTag}-${targetSha}`;
     const backupTag = `happier-rolling-backup-${safeRollingTag}`;
     const stagingName = `[staging:${rollingTag}] ${title}`;
+
+    if (!dryRun) {
+      const stagingPrefix = `happier-rolling-staging-${safeRollingTag}-`;
+      for (const staleDraft of findDraftReleasesByTagPrefix({
+        repo,
+        tagPrefix: stagingPrefix,
+        env: ghEnv,
+        dryRun: false,
+      })) {
+        if (staleDraft.tagName === stagingTag) continue;
+        deleteReleaseIfPresent({ repo, releaseId: staleDraft.id, env: ghEnv, dryRun: false });
+        deleteRefIfPresent({ repo, tag: staleDraft.tagName, env: ghEnv, dryRun: false });
+      }
+    }
 
     let rollingRelease = readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun });
     let rollingSha = readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun });

@@ -177,7 +177,7 @@ function queryPublishedIntegrity(opts) {
  */
 function queryDistTags(opts) {
   const output = String(
-    runNpm(opts.npmVersion, ['view', opts.packageName, 'dist-tags', '--json'], {
+    runNpm(opts.npmVersion, ['view', opts.packageName, 'dist-tags', '--json', '--prefer-online'], {
       env: opts.env,
       stdio: 'pipe',
     }) ?? '',
@@ -195,6 +195,10 @@ function queryDistTags(opts) {
   return Object.fromEntries(Object.entries(parsed).map(([tag, version]) => [tag, String(version)]));
 }
 
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
 /**
  * @param {{ npmVersion: string; env: Record<string, string>; packageName: string; version: string; distTag: string }} opts
  */
@@ -209,11 +213,19 @@ function ensureDistTag(opts) {
   runNpm(opts.npmVersion, ['dist-tag', 'add', `${opts.packageName}@${opts.version}`, opts.distTag], {
     env: opts.env,
   });
-  const verified = queryDistTags(opts);
-  if (verified[opts.distTag] !== opts.version) {
-    throw new Error(`npm dist-tag verification failed: ${opts.distTag} does not point to ${opts.version}`);
+  const verificationDelaysMs = [250, 500, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
+  for (let attempt = 0; attempt <= verificationDelaysMs.length; attempt += 1) {
+    const verified = queryDistTags(opts);
+    if (verified[opts.distTag] === opts.version) {
+      console.log(`[pipeline] npm dist-tag verified: ${opts.distTag} -> ${opts.version}`);
+      return;
+    }
+    if (attempt === verificationDelaysMs.length) break;
+    const delayMs = verificationDelaysMs[attempt];
+    console.log(`[pipeline] npm dist-tag read is stale; retrying verification in ${delayMs}ms`);
+    sleepSync(delayMs);
   }
-  console.log(`[pipeline] npm dist-tag verified: ${opts.distTag} -> ${opts.version}`);
+  throw new Error(`npm dist-tag verification failed: ${opts.distTag} does not point to ${opts.version}`);
 }
 
 /**
