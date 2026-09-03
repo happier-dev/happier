@@ -14,6 +14,7 @@ import {
     SessionMcpSelectionRestartRequiredV1Schema,
     SessionMcpSelectionV1Schema,
     type PendingDeliveryBlockedReason,
+    type PendingActivationAuthorizationV1,
     type PrimaryTurnStatusV1,
     type SessionRuntimeActivityState,
     type SessionMessageRole,
@@ -449,6 +450,7 @@ export interface Session {
     pendingVersion?: number,
     pendingCount?: number,
     pendingBlockedCount?: number,
+    pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null,
     lastViewedSessionSeq?: number | null,
     pendingPermissionRequestCount?: number,
     pendingUserActionRequestCount?: number,
@@ -551,6 +553,8 @@ export interface PendingMessage {
     requestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     /** Explicit persisted action was malformed; the row remains visible but is never executable. */
     requestedActionMalformed?: true;
+    /** Protocol-owned role for eligibility decisions; null means an older/unknown row. */
+    messageRole?: 'user' | 'non_user' | null;
     pendingOutboxConflict?: true;
     text: string;
     displayText?: string;

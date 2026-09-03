@@ -10,6 +10,7 @@ import type {
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ResumeSessionOptions, ResumeSessionResult } from '@/sync/ops/sessions';
+import type { SessionInactiveResumePolicy } from '@/sync/domains/session/control/inactiveResumePolicy';
 
 export type SubmitResultType =
     | 'success'
@@ -78,6 +79,8 @@ export type SubmitSessionUserMessageOptions = Readonly<{
     metaOverrides?: Record<string, unknown>;
     configuredMode: MessageSendMode;
     busySteerSendPolicy?: BusySteerSendPolicy;
+    /** How ordinary input may resume an inactive/offline runtime. */
+    sessionInactiveResumePolicy?: SessionInactiveResumePolicy;
     /** `sessionPermissionModeApplyTiming` setting for the payload-aware steer gate (lane P). */
     permissionModeApplyTiming?: 'immediate' | 'next_prompt';
     /** `sessionNonSteerableSendPrompt` setting; `off` restores the legacy silent behavior. */
@@ -158,6 +161,9 @@ export interface SessionSubmitPort {
         }>,
     ): Promise<DirectMessageSubmitResult>;
     ensureSessionRuntimeForPendingInput(options: ResumeSessionOptions): Promise<ResumeSessionResult>;
+    shouldDelegatePendingActivationToDaemon?(session: Session, serverId?: string | null, machineId?: string | null): Promise<boolean>;
+    /** Current reachability of the exact resume target; used only for a user-present one-shot attempt. */
+    isMachineReachable?(machineId: string): boolean;
     refreshSessionForSubmit?(
         sessionId: string,
         options?: Readonly<{ serverId?: string | null }>,

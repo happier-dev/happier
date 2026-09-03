@@ -1067,6 +1067,7 @@ function withPendingDeliveryState<T extends PendingMessage>(
     const { reason: pendingDeliveryBlockedReason, rawReason: pendingDeliveryBlockedReasonRaw } = resolvePendingDeliveryBlockedReason(row);
     return {
         ...message,
+        messageRole: row.messageRole,
         ...(pendingDeliveryStatus === 'external_handoff' ? { pendingOutboxScope: outboxScope } : {}),
         ...(row.requestedAction ? { requestedAction: row.requestedAction } : {}),
         ...(row.requestedActionMalformed ? { requestedActionMalformed: true as const } : {}),

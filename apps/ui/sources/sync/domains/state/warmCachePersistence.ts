@@ -5,6 +5,7 @@ import {
     SessionOrganizationSnapshotSchema,
     SessionRuntimeActivityStateSchema,
     SessionRuntimeIssueV1Schema,
+    PendingActivationAuthorizationV1Schema,
     type SessionOrganizationSnapshot,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
@@ -215,6 +216,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     pendingCount: z.number().int().nonnegative().optional(),
     pendingBlockedCount: z.number().int().nonnegative().optional(),
     pendingVersion: z.number().int().nonnegative().optional(),
+    pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.nullable().optional(),
     latestTurnId: z.string().min(1).nullable().optional(),
     latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
     latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),

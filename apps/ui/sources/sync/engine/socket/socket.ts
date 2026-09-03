@@ -5,6 +5,7 @@ import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { buildPendingChangedSessionPatch } from './pendingChangedSessionPatch';
 import { isSessionVisible } from '@/sync/domains/session/activeViewingSession';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
@@ -536,18 +537,6 @@ function readShareSessionId(body: unknown): string | null {
     if (!body || typeof body !== 'object') return null;
     const candidate = (body as { sessionId?: unknown; sid?: unknown }).sessionId ?? (body as { sid?: unknown }).sid;
     return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : null;
-}
-
-function buildPendingChangedSessionPatch(body: unknown): Pick<Session, 'pendingCount' | 'pendingVersion'> & Pick<Partial<Session>, 'pendingBlockedCount' | 'meaningfulActivityAt'> {
-    const pendingBody = body as { pendingCount: number; pendingBlockedCount?: unknown; pendingVersion: number; meaningfulActivityAt?: unknown };
-    const meaningfulActivityAt = finiteTimestamp(pendingBody.meaningfulActivityAt);
-    const pendingBlockedCount = finiteNumber(pendingBody.pendingBlockedCount);
-    return {
-        pendingCount: pendingBody.pendingCount,
-        pendingVersion: pendingBody.pendingVersion,
-        ...(pendingBlockedCount === null ? {} : { pendingBlockedCount: Math.max(0, Math.trunc(pendingBlockedCount)) }),
-        ...(meaningfulActivityAt === undefined ? {} : { meaningfulActivityAt }),
-    };
 }
 
 function buildShareSessionPatch(body: unknown): Partial<Pick<Session, 'accessLevel' | 'canApprovePermissions' | 'updatedAt'>> {

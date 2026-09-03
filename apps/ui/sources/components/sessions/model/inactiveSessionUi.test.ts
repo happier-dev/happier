@@ -27,13 +27,13 @@ describe('getInactiveSessionUiState', () => {
         });
     });
 
-    it('hides input and shows a machine-offline notice when the machine is offline', () => {
+    it('keeps input visible and shows a machine-offline notice for a resumable session', () => {
         expect(getInactiveSessionUiState({
             isSessionActive: false,
             isResumable: true,
             isMachineOnline: false,
         })).toEqual({
-            shouldShowInput: false,
+            shouldShowInput: true,
             inactiveStatusTextKey: 'session.inactiveMachineOffline',
             noticeKind: 'machine-offline',
         });

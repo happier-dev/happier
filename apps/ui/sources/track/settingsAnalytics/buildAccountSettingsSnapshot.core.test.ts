@@ -56,6 +56,7 @@ describe('buildAccountSettingsSnapshot', () => {
             sessionPermissionModeApplyTiming: 'next_prompt',
             sessionMessageSendMode: 'interrupt',
             sessionBusySteerSendPolicy: 'server_pending',
+            sessionInactiveResumePolicy: 'manual',
             agentInputEnterToSend: false,
             alwaysShowContextSize: true,
             agentInputHistoryScope: 'global',
@@ -81,6 +82,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__sessionPermissionModeApplyTiming).toBe('next_prompt');
         expect(snapshot.properties.acct_setting__sessionMessageSendMode).toBe('interrupt');
         expect(snapshot.properties.acct_setting__sessionBusySteerSendPolicy).toBe('server_pending');
+        expect(snapshot.properties.acct_setting__sessionInactiveResumePolicy).toBe('manual');
         expect(snapshot.properties.acct_setting__agentInputEnterToSend).toBe(false);
         expect(snapshot.properties.acct_setting__alwaysShowContextSize).toBe(true);
         expect(snapshot.properties.acct_setting__agentInputHistoryScope).toBe('global');

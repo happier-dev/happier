@@ -30,7 +30,7 @@ export function getInactiveSessionUiState(opts: {
 
     if (!opts.isMachineOnline) {
         return {
-            shouldShowInput: false,
+            shouldShowInput: true,
             inactiveStatusTextKey: 'session.inactiveMachineOffline',
             noticeKind: 'machine-offline',
         };

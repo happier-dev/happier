@@ -1,6 +1,8 @@
 import Constants from 'expo-constants';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { ensureSessionRuntimeForPendingInput } from '@/sync/ops';
+import { shouldDelegatePendingActivationToDaemon } from '@/sync/domains/session/input/pendingActivationWakeDecision';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { type AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     ClientVersionCheckRequestV1Schema,
@@ -2791,6 +2793,7 @@ class Sync {
                 localId: pending.localId,
                 configuredMode: state.settings.sessionMessageSendMode,
                 busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
+                sessionInactiveResumePolicy: state.settings.sessionInactiveResumePolicy,
                 permissionModeApplyTiming: state.settings.sessionPermissionModeApplyTiming,
                 nonSteerableSendPrompt: state.settings.sessionNonSteerableSendPrompt,
                 resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
@@ -3145,6 +3148,18 @@ class Sync {
             updatePendingRequestedAction: (targetSessionId, localId, requestedAction) =>
                 this.updatePendingRequestedAction(targetSessionId, localId, requestedAction),
             ensureSessionRuntimeForPendingInput: (options) => ensureSessionRuntimeForPendingInput(options),
+            shouldDelegatePendingActivationToDaemon: (session, serverId, machineId) =>
+                shouldDelegatePendingActivationToDaemon({
+                    session,
+                    serverId,
+                    machineId,
+                    getServerFeaturesSnapshot,
+                    getMachine: (machineId) => storage.getState().machines[machineId],
+                }),
+            isMachineReachable: (machineId) => {
+                const machine = storage.getState().machines[machineId];
+                return Boolean(machine && isMachineOnline(machine));
+            },
             refreshSessionForSubmit: (targetSessionId, options) =>
                 this.refreshSessionForSubmit(targetSessionId, options),
             ...(canWakeMachineId ? { canWakeMachineId } : {}),
@@ -3186,6 +3201,7 @@ class Sync {
             metaOverrides,
             configuredMode: state.settings.sessionMessageSendMode,
             busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
+            sessionInactiveResumePolicy: state.settings.sessionInactiveResumePolicy,
             permissionModeApplyTiming: state.settings.sessionPermissionModeApplyTiming,
             // Programmatic path: never prompt here; 'ask' still hardens the decision (queue).
             nonSteerableSendPrompt: state.settings.sessionNonSteerableSendPrompt,

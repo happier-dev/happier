@@ -349,6 +349,7 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
 import type { StorageState } from '@/sync/store/types';
 
 /**
@@ -2551,6 +2552,7 @@ function SessionViewLoaded({
     const machineId = reachableMachineTarget?.machineId ?? session.metadata?.machineId;
     const goalControlMachineId = controlMachineTarget?.machineId ?? machineId;
     const goalControlMachine = useMachine(typeof goalControlMachineId === 'string' ? goalControlMachineId : '');
+    const sessionMachineRecord = useMachine(typeof machineId === 'string' ? machineId : '');
     const daemonGoalControlsSupported = goalControlMachine?.metadata?.daemonSessionGoalControlsSupported === true;
     const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
     const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
@@ -2580,7 +2582,6 @@ function SessionViewLoaded({
     // Composer banner collapse is owned by ComposerBannerCollapseProvider (mounted above this
     // component) so a banner and the badge that toggles it agree even across subtrees, and so the
     // account-level "remember" preference decides between session-scoped and device-persisted state.
-    const [pendingQueueResumeFailed, setPendingQueueResumeFailed] = React.useState(false);
     const usageLimitRecoveryBanner = useComposerBannerCollapse('usageLimitRecovery');
     const staleSessionRunnerBanner = useComposerBannerCollapse('staleSessionRunner');
     const mcpSelectionRestartRequiredBanner = useComposerBannerCollapse('mcpSelectionRestartRequired');
@@ -2678,6 +2679,15 @@ function SessionViewLoaded({
         [agentId, enabledAgentIds, session],
     );
     const hasWriteAccess = hasSessionWriteAccess(session.accessLevel);
+    const pendingActivationPresentation = React.useMemo(() => resolvePendingActivationBanner({
+        authorization: session.pendingActivationAuthorization,
+        activeAt: session.activeAt,
+        active: session.active,
+        machineReachable: Boolean(sessionMachineRecord && isMachineOnline(sessionMachineRecord)),
+        canWrite: hasWriteAccess,
+        pendingMessages,
+    }), [hasWriteAccess, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization, sessionMachineRecord]);
+    const [pendingActivationActionBusy, setPendingActivationActionBusy] = React.useState(false);
     const providerSupportsEditableSessionGoals = React.useMemo(
         () => supportsEditableSessionGoals({ agentId, session, daemonGoalControlsSupported }),
         [agentId, daemonGoalControlsSupported, session],
@@ -3664,14 +3674,14 @@ function SessionViewLoaded({
                 onPress: authRecoveryBanner.toggle,
             } satisfies AgentInputStatusBadge]
             : [];
-        const pendingQueueBadge = pendingQueueResumeFailed
+        const pendingQueueBadge = pendingActivationPresentation
             ? [{
-                key: 'session-pendingQueue-resumeFailed',
-                testID: 'session.pendingQueueResumeFailed.badge',
-                label: t('session.pendingQueuedResumeFailedTitle'),
-                tone: 'warning',
+                key: 'session-pendingActivation',
+                testID: 'session.pendingActivation.badge',
+                label: t(`session.pendingActivation.${pendingActivationPresentation.kind}.title`),
+                tone: pendingActivationPresentation.kind === 'failed' ? 'warning' : 'neutral',
                 ...buildComposerBannerBadgeAccessibility({
-                    statusLabel: t('session.pendingQueuedResumeFailedTitle'),
+                    statusLabel: t(`session.pendingActivation.${pendingActivationPresentation.kind}.title`),
                     collapsed: pendingQueueResumeFailedBanner.collapsed,
                     expandHint: t('session.composerBanners.showBannerAction'),
                     collapseHint: t('session.composerBanners.hideBannerAction'),
@@ -3723,7 +3733,7 @@ function SessionViewLoaded({
         mcpSelectionRestartNoticePresentation,
         mcpSelectionRestartRequiredBanner.collapsed,
         mcpSelectionRestartRequiredBanner.toggle,
-        pendingQueueResumeFailed,
+        pendingActivationPresentation,
         pendingQueueResumeFailedBanner.collapsed,
         pendingQueueResumeFailedBanner.toggle,
         sessionWorkStateBadges,
@@ -3815,7 +3825,6 @@ function SessionViewLoaded({
         sessionActionDefaultBackend?.backendTarget
         ?? { kind: 'builtInAgent', agentId: liveComposerState.agentId },
     ), [liveComposerState.agentId, sessionActionDefaultBackend?.backendTarget]);
-    const sessionMachineRecord = useMachine(typeof machineId === 'string' ? machineId : '');
     // Each successful connect stamps a new value, which is exactly the lifetime a
     // continuation inspection may be trusted for.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;
@@ -4864,46 +4873,6 @@ function SessionViewLoaded({
     // running to take it". The disposition owner decides it; the two effects
     // below only route it, and neither re-decides it.
     const armedContinuationAwaitingRuntime = armedContinuationDisposition?.awaitingRuntime === true;
-    const pendingQueueResumeActionLabel = armedContinuationAwaitingRuntime
-        ? t('session.agentContinuation.transition.resumeAction')
-        : t('common.retry');
-
-    React.useEffect(() => {
-        if (!pendingQueueResumeFailed) return;
-        if (!isSessionActive) return;
-        // A live runtime retracts the ordinary send's signal — but not one the
-        // disposition owner is still asserting. `target_start_failed` is the
-        // daemon's own proof that the target never started, and letting a
-        // client-side liveness read clear it here would both weaken a definite
-        // daemon arm and fight the router below for the same boolean. It yields
-        // to canonical custody instead: `resolveAwaitingRuntime` stops asserting
-        // the moment the message is demonstrably carried.
-        if (armedContinuationAwaitingRuntime) return;
-        setPendingQueueResumeFailed(false);
-    }, [armedContinuationAwaitingRuntime, isSessionActive, pendingQueueResumeFailed]);
-
-    // The armed switch's half of the same fact: this input is in the queue and
-    // nothing is running to take it. It is handed to the queued-message owner
-    // directly above rather than restated by a second banner, and it is WATCHED
-    // rather than sampled once at send time — `accepted` only means the spawn
-    // was acknowledged, so the target can die minutes later (the incident that
-    // exposed this had the runtime fail 94 seconds after a switch that reported
-    // success, and the reader was told nothing at all). The disposition owner
-    // decides; this only routes, and the effect above retracts it once canonical
-    // custody shows the message was actually carried.
-    React.useEffect(() => {
-        if (!armedContinuationAwaitingRuntime) return;
-        // `isResumable` is a capability of the recovery this banner offers, not a
-        // second opinion on whether the message is waiting. Liveness deliberately
-        // is NOT re-checked here: the disposition owner already weighed it for the
-        // arms decided from client facts, and for the arm the daemon proved
-        // (`target_start_failed`) re-checking it would let a stale Session view
-        // silence a fact the daemon established — which is exactly how this arm
-        // reached a real reader saying nothing.
-        if (!isResumable) return;
-        setPendingQueueResumeFailed(true);
-    }, [armedContinuationAwaitingRuntime, isResumable]);
-
     const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
     const cliAvailability = useCLIDetection(machineId ?? null, {
         autoDetect: isLocallyAttached,
@@ -5294,6 +5263,7 @@ function SessionViewLoaded({
             const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
             const permissionModeApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming;
             const nonSteerableSendPrompt = storage.getState().settings.sessionNonSteerableSendPrompt;
+            const sessionInactiveResumePolicy = storage.getState().settings.sessionInactiveResumePolicy;
             const forceImmediateSend = sendIntent?.forceImmediate === true;
             const providerNonSteerablePayloadReason = getSessionComposerNonSteerablePayloadReasonFromUiState({
                 agentId: liveComposerState.agentId,
@@ -5324,6 +5294,7 @@ function SessionViewLoaded({
                     text: trimmedText,
                     permissionModeApplyTiming,
                     nonSteerableSendPrompt,
+                    sessionInactiveResumePolicy,
                     providerNonSteerablePayloadReason,
                     nowMs: Date.now(),
                 });
@@ -5745,6 +5716,7 @@ function SessionViewLoaded({
                                 : outbound.metaOverrides,
                             configuredMode,
                             busySteerSendPolicy,
+                            sessionInactiveResumePolicy,
                             permissionModeApplyTiming,
                             nonSteerableSendPrompt,
                             providerNonSteerablePayloadReason,
@@ -5783,9 +5755,6 @@ function SessionViewLoaded({
                             }
                             Modal.alert(t('common.error'), result.errorMessage ?? t('errors.failedToSendMessage'));
                             return;
-                        }
-                        if ((result.type === 'wake_pending' || result.type === 'wake_failed') && !isSessionActive && isResumable) {
-                            setPendingQueueResumeFailed(true);
                         }
                         if (shouldSendReviewComments) {
                             clearSentReviewCommentDrafts();
@@ -5983,6 +5952,7 @@ function SessionViewLoaded({
                             : outbound.metaOverrides,
                         configuredMode,
                         busySteerSendPolicy,
+                        sessionInactiveResumePolicy,
                         permissionModeApplyTiming,
                         nonSteerableSendPrompt,
                         providerNonSteerablePayloadReason,
@@ -6026,9 +5996,6 @@ function SessionViewLoaded({
 
                     recordOutboundAccepted();
 
-                    if ((result.type === 'wake_pending' || result.type === 'wake_failed') && !isSessionActive && isResumable) {
-                        setPendingQueueResumeFailed(true);
-                    }
 
                     if (shouldSendReviewComments) {
                         clearSentReviewCommentDrafts();
@@ -6136,24 +6103,71 @@ function SessionViewLoaded({
                     <SessionAuthRecoveryBanner message={authSurfaceState.message} />
                 </ComposerAuxiliaryFrame>
             ) : null}
-            {pendingQueueResumeFailed && !pendingQueueResumeFailedBanner.collapsed ? (
+            {pendingActivationPresentation && !pendingQueueResumeFailedBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <SessionWarningActionBanner
-                        testID="session-pendingQueue-resumeFailed"
-                        actionTestID="session-pendingQueue-resumeFailed-retry"
-                        title={t('session.pendingQueuedResumeFailedTitle')}
-                        body={t('session.pendingQueuedResumeFailedBody')}
-                        actionLabel={pendingQueueResumeActionLabel}
-                        actionAccessibilityLabel={pendingQueueResumeActionLabel}
-                        disabled={isResuming}
-                        onActionPress={async () => {
-                            const ok = armedContinuationAwaitingRuntime
-                                ? await handleArmedContinuationResume()
-                                : await handleResumeSession({ silent: false });
-                            if (ok) {
-                                setPendingQueueResumeFailed(false);
+                        testID="session-pendingActivation"
+                        tone={pendingActivationPresentation.kind === 'failed' ? 'warning' : 'neutral'}
+                        title={t(`session.pendingActivation.${pendingActivationPresentation.kind}.title`)}
+                        body={t(`session.pendingActivation.${pendingActivationPresentation.kind}.body`)}
+                        {...(pendingActivationPresentation.primaryAction && pendingActivationPresentation.row
+                            ? {
+                                actionTestID: `session-pendingActivation-${pendingActivationPresentation.primaryAction}`,
+                                actionLabel: t(`session.pendingActivation.actions.${pendingActivationPresentation.primaryAction}`),
+                                actionAccessibilityLabel: t(`session.pendingActivation.actions.${pendingActivationPresentation.primaryAction}`),
+                                actionBusy: pendingActivationActionBusy,
+                                disabled: pendingActivationActionBusy,
+                                onActionPress: async () => {
+                                    const row = pendingActivationPresentation.row;
+                                    if (!row?.localId) return;
+                                    setPendingActivationActionBusy(true);
+                                    try {
+                                        await sync.sendPendingMessageNow(sessionId, {
+                                            localId: row.localId,
+                                            createdAt: row.createdAt,
+                                            rawRecord: row.rawRecord,
+                                            text: row.text,
+                                            displayText: row.displayText,
+                                        });
+                                    } catch (error) {
+                                        Modal.alert(t('common.error'), error instanceof Error ? error.message : t('session.pendingMessages.errors.sendFailed'));
+                                    } finally {
+                                        setPendingActivationActionBusy(false);
+                                    }
+                                },
                             }
-                        }}
+                            : {})}
+                        secondaryActions={[
+                            ...(pendingActivationPresentation.secondaryAction && pendingActivationPresentation.row?.localId
+                                ? [{
+                                    key: 'keep-queued',
+                                    testID: 'session-pendingActivation-keepQueued',
+                                    label: t('session.pendingActivation.actions.keepQueued'),
+                                    accessibilityLabel: t('session.pendingActivation.actions.keepQueued'),
+                                    disabled: pendingActivationActionBusy,
+                                    onPress: async () => {
+                                        const localId = pendingActivationPresentation.row?.localId;
+                                        if (!localId) return;
+                                        setPendingActivationActionBusy(true);
+                                        try {
+                                            await sync.updatePendingRequestedAction(sessionId, localId, { v: 1, kind: 'enqueue' });
+                                        } catch (error) {
+                                            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('session.pendingMessages.errors.sendFailed'));
+                                        } finally {
+                                            setPendingActivationActionBusy(false);
+                                        }
+                                    },
+                                }]
+                                : []),
+                            {
+                                key: 'settings',
+                                testID: 'session-pendingActivation-settings',
+                                label: t('session.pendingActivation.actions.autoResumeOptions'),
+                                accessibilityLabel: t('session.pendingActivation.actions.autoResumeOptions'),
+                                onPress: () => router.push('/settings/session/composer'),
+                                variant: 'quiet' as const,
+                            },
+                        ]}
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}

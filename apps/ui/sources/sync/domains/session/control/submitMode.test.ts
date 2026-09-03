@@ -90,10 +90,39 @@ describe('selectSessionPendingRequestedAction', () => {
         expect(selectSessionPendingRequestedAction({
             session: { ...activeIdle, active: false, presence: 1 },
             nowMs: now,
-        })).toEqual({ v: 1, kind: 'send_now' });
+        })).toEqual({ v: 1, kind: 'enqueue' });
         expect(selectSessionPendingRequestedAction({ session: activeSteerable, nowMs: now, firstTurn: true })).toEqual({
             v: 1, kind: 'send_now',
         });
+    });
+
+    it('uses the inactive-session resume policy for inactive and stale-active offline sessions', () => {
+        const inactive = { ...activeIdle, active: false, presence: 'offline' };
+        const staleActiveOffline = { ...activeIdle, presence: 'offline' };
+
+        expect(selectSessionPendingRequestedAction({ session: inactive, nowMs: now })).toEqual({
+            v: 1, kind: 'enqueue',
+        });
+        expect(selectSessionPendingRequestedAction({
+            session: inactive,
+            nowMs: now,
+            sessionInactiveResumePolicy: 'when_available',
+        })).toEqual({ v: 1, kind: 'send_now' });
+        expect(selectSessionPendingRequestedAction({
+            session: inactive,
+            nowMs: now,
+            sessionInactiveResumePolicy: 'online_only',
+        })).toEqual({ v: 1, kind: 'enqueue' });
+        expect(selectSessionPendingRequestedAction({
+            session: staleActiveOffline,
+            nowMs: now,
+            sessionInactiveResumePolicy: 'when_available',
+        })).toEqual({ v: 1, kind: 'send_now' });
+        expect(selectSessionPendingRequestedAction({
+            session: staleActiveOffline,
+            nowMs: now,
+            sessionInactiveResumePolicy: 'manual',
+        })).toEqual({ v: 1, kind: 'enqueue' });
     });
 });
 

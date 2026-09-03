@@ -147,6 +147,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
         session,
         firstTurn: args.providerDeliveryIntent === 'first_turn',
         timingOverride: args.providerDeliveryIntent === 'immediate' ? 'send_now' : undefined,
+        sessionInactiveResumePolicy: storage.getState().settings.sessionInactiveResumePolicy,
       });
 
     const completeProviderRequiredDelivery = async (result: Readonly<{

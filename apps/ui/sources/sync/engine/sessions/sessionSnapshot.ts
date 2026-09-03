@@ -360,6 +360,7 @@ function buildRenderableFromRowAndCache(
         pendingCount: row.pendingCount,
         pendingBlockedCount: row.pendingBlockedCount,
         pendingVersion: row.pendingVersion,
+        pendingActivationAuthorization: row.pendingActivationAuthorization ?? null,
         lastViewedSessionSeq,
         metadataVersion: useStaleCacheMetadata
             ? staleCacheMetadataVersion

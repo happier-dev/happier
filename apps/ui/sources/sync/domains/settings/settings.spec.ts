@@ -1259,6 +1259,7 @@ describe('settings', () => {
             expect(settingsDefaults.codexBackendMode).toBe('appServer');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionMessageSendMode).toBe('server_pending');
+            expect(settingsDefaults.sessionInactiveResumePolicy).toBe('online_only');
             expect((settingsDefaults as any).sessionPendingQueueDrainMode).toBe('one_at_a_time');
             expect((settingsDefaults as any).sessionPendingQueueDeliveryTiming).toBe('after_foreground_ready');
             expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({

@@ -146,6 +146,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.pendingCount === previousEntry.pendingCount
         && nextEntry.pendingBlockedCount === previousEntry.pendingBlockedCount
         && nextEntry.pendingVersion === previousEntry.pendingVersion
+        && areCacheJsonValuesEqual(nextEntry.pendingActivationAuthorization ?? null, previousEntry.pendingActivationAuthorization ?? null)
         && (nextEntry.latestTurnId ?? null) === (previousEntry.latestTurnId ?? null)
         && (nextEntry.latestTurnStatus ?? null) === (previousEntry.latestTurnStatus ?? null)
         && (nextEntry.latestTurnStatusObservedAt ?? null) === (previousEntry.latestTurnStatusObservedAt ?? null)
@@ -217,6 +218,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         pendingCount: entry.pendingCount,
         pendingBlockedCount: entry.pendingBlockedCount,
         pendingVersion: entry.pendingVersion,
+        pendingActivationAuthorization: entry.pendingActivationAuthorization ?? null,
         lastViewedSessionSeq: normalizeNonNegativeInteger(entry.lastViewedSessionSeq),
         metadataVersion: entry.metadataVersion,
         agentStateVersion: entry.agentStateVersion,
@@ -317,6 +319,7 @@ export function buildSessionListCacheEntryFromRenderable(
         pendingCount: session.pendingCount,
         pendingBlockedCount: session.pendingBlockedCount,
         pendingVersion: session.pendingVersion,
+        pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
         latestTurnId: session.latestTurnId ?? null,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeNonNegativeNumber(session.latestTurnStatusObservedAt),

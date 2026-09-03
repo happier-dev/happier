@@ -22,6 +22,7 @@ import type {
     SubmitSessionUserMessageResult,
 } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
+import { DEFAULT_SESSION_INACTIVE_RESUME_POLICY } from '@/sync/domains/session/control/inactiveResumePolicy';
 
 type ResolvedSubmitDecision = Readonly<{
     decision: SessionMessageDeliveryDecision;
@@ -99,6 +100,7 @@ function resolveSubmitDecision(opts: SubmitSessionUserMessageOptions): SessionMe
     return decideSessionMessageDelivery({
         configuredMode: opts.configuredMode,
         busySteerSendPolicy: opts.busySteerSendPolicy,
+        sessionInactiveResumePolicy: opts.sessionInactiveResumePolicy,
         explicitMode: opts.explicitMode,
         session: opts.session,
         nowMs: opts.nowMs,
@@ -283,6 +285,31 @@ async function switchRemoteAfterPendingEnqueueIfNeeded(
     }
 }
 
+async function shouldWakePendingInputFromUi(
+    port: SessionSubmitPort,
+    opts: SubmitSessionUserMessageOptions,
+    machineId: string,
+): Promise<boolean> {
+    if (!port.shouldDelegatePendingActivationToDaemon) return true;
+    return !(await port.shouldDelegatePendingActivationToDaemon(opts.session, opts.serverId, machineId));
+}
+
+function requestedActionRequiresRuntimeActivation(action: PendingRequestedActionV1): boolean {
+    return action.kind === 'send_now' || action.kind === 'steer_now';
+}
+
+function shouldAttemptOnlineOnlyResume(
+    opts: SubmitSessionUserMessageOptions,
+    decision: SessionMessageDeliveryDecision,
+    requestedAction: PendingRequestedActionV1,
+): boolean {
+    return (opts.sessionInactiveResumePolicy ?? DEFAULT_SESSION_INACTIVE_RESUME_POLICY) === 'online_only'
+        && opts.requestedAction === undefined
+        && decision.intent === 'default'
+        && requestedAction.kind === 'enqueue'
+        && (opts.session.active === false || opts.session.presence !== 'online');
+}
+
 async function directSend(
     port: SessionSubmitPort,
     opts: SubmitSessionUserMessageOptions,
@@ -353,7 +380,8 @@ async function enqueuePending(
     // Freeze the row action before persistence starts. Neither an enqueue delay nor a later
     // readiness refresh may reinterpret the caller's chosen action/command.
     const requestedAction = selectSubmitRequestedAction(opts, decision);
-    const wakeOpts = getPendingQueueWakeResumeOptions({
+    const attemptOnlineOnlyResume = shouldAttemptOnlineOnlyResume(opts, decision, requestedAction);
+    const wakeOpts = requestedActionRequiresRuntimeActivation(requestedAction) || attemptOnlineOnlyResume ? getPendingQueueWakeResumeOptions({
         sessionId: opts.sessionId,
         session: opts.session,
         resumeCapabilityOptions: opts.resumeCapabilityOptions,
@@ -361,7 +389,7 @@ async function enqueuePending(
         permissionOverride: opts.permissionOverride,
         nowMs: opts.nowMs,
         canWakeMachineId: port.canWakeMachineId,
-    });
+    }) : null;
 
     let enqueueResult: PendingMessageSubmitResult;
     try {
@@ -424,6 +452,22 @@ async function enqueuePending(
         if (!wakeOpts) {
             return {
                 type: 'wake_pending',
+                persistence: 'pending',
+                wake: { attempted: false, state: 'not_needed' },
+                localId,
+            };
+        }
+        if (attemptOnlineOnlyResume && port.isMachineReachable?.(wakeOpts.machineId) !== true) {
+            return {
+                type: 'wake_pending',
+                persistence: 'pending',
+                wake: { attempted: false, state: 'not_needed' },
+                localId,
+            };
+        }
+        if (!attemptOnlineOnlyResume && !(await shouldWakePendingInputFromUi(port, opts, wakeOpts.machineId))) {
+            return {
+                type: 'success',
                 persistence: 'pending',
                 wake: { attempted: false, state: 'not_needed' },
                 localId,
@@ -553,7 +597,7 @@ export async function submitSessionUserMessage(
             };
         }
 
-        const wakeOpts = getPendingQueueWakeResumeOptions({
+        const wakeOpts = requestedActionRequiresRuntimeActivation(requestedAction) ? getPendingQueueWakeResumeOptions({
             sessionId: effectiveOpts.sessionId,
             session: effectiveOpts.session,
             resumeCapabilityOptions: effectiveOpts.resumeCapabilityOptions,
@@ -561,8 +605,9 @@ export async function submitSessionUserMessage(
             permissionOverride: effectiveOpts.permissionOverride,
             nowMs: effectiveOpts.nowMs,
             canWakeMachineId: port.canWakeMachineId,
-        });
-        if (wakeOpts) {
+        }) : null;
+        const shouldWakeFromUi = wakeOpts && await shouldWakePendingInputFromUi(port, effectiveOpts, wakeOpts.machineId);
+        if (shouldWakeFromUi) {
             try {
                 const wakeResult = await port.ensureSessionRuntimeForPendingInput({
                     ...wakeOpts,
@@ -592,7 +637,7 @@ export async function submitSessionUserMessage(
         return {
             type: 'success',
             persistence: 'pending',
-            wake: wakeOpts
+            wake: shouldWakeFromUi
                 ? { attempted: true, state: 'started' }
                 : { attempted: false, state: 'not_needed' },
             localId: effectiveOpts.localId,

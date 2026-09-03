@@ -60,14 +60,19 @@ function createPort() {
         persistence: 'transcript_committed',
     }));
     const updatePendingRequestedAction = vi.fn<NonNullable<SessionSubmitPort['updatePendingRequestedAction']>>(async () => {});
+    const ensureSessionRuntimeForPendingInput = vi.fn(async () => ({ type: 'success' as const }));
+    const shouldDelegatePendingActivationToDaemon = vi.fn(async () => false);
+    const isMachineReachable = vi.fn(() => false);
     const port: SessionSubmitPort = {
         enqueuePendingMessage,
         sendMessage,
         updatePendingRequestedAction,
-        ensureSessionRuntimeForPendingInput: vi.fn(async () => ({ type: 'success' as const })),
+        ensureSessionRuntimeForPendingInput,
+        shouldDelegatePendingActivationToDaemon,
+        isMachineReachable,
         refreshSessionForSubmit: vi.fn(async () => null),
     };
-    return { port, enqueuePendingMessage, sendMessage, updatePendingRequestedAction };
+    return { port, enqueuePendingMessage, sendMessage, updatePendingRequestedAction, ensureSessionRuntimeForPendingInput, shouldDelegatePendingActivationToDaemon, isMachineReachable };
 }
 
 const baseOptions = {
@@ -99,6 +104,101 @@ describe('submitSessionUserMessage', () => {
         );
         expect(harness.sendMessage).not.toHaveBeenCalled();
         expect(result).toMatchObject({ type: 'wake_pending', persistence: 'pending', localId: 'pending-1' });
+    });
+
+    it('keeps manual-policy input queued without authorizing daemon or UI activation', async () => {
+        const harness = createPort();
+        await submitSessionUserMessage(harness.port, {
+            ...baseOptions,
+            sessionInactiveResumePolicy: 'manual',
+            session: createSession({ active: false, presence: 0 }),
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(harness.enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.anything(),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'enqueue' } }),
+        );
+        expect(harness.shouldDelegatePendingActivationToDaemon).not.toHaveBeenCalled();
+        expect(harness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
+    });
+
+    it('attempts one immediate UI resume for online-only policy only when the exact machine is reachable', async () => {
+        const offlineHarness = createPort();
+        await submitSessionUserMessage(offlineHarness.port, {
+            ...baseOptions,
+            sessionInactiveResumePolicy: 'online_only',
+            session: createSession({ active: false, presence: 0 }),
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(offlineHarness.enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.anything(),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'enqueue' } }),
+        );
+        expect(offlineHarness.shouldDelegatePendingActivationToDaemon).not.toHaveBeenCalled();
+        expect(offlineHarness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
+
+        const onlineHarness = createPort();
+        onlineHarness.isMachineReachable.mockReturnValue(true);
+        const result = await submitSessionUserMessage(onlineHarness.port, {
+            ...baseOptions,
+            sessionInactiveResumePolicy: 'online_only',
+            session: createSession({ active: false, presence: 0 }),
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(onlineHarness.enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.anything(),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'enqueue' } }),
+        );
+        expect(onlineHarness.isMachineReachable).toHaveBeenCalledWith('m1');
+        expect(onlineHarness.shouldDelegatePendingActivationToDaemon).not.toHaveBeenCalled();
+        expect(onlineHarness.ensureSessionRuntimeForPendingInput).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({ type: 'success', wake: { attempted: true, state: 'started' } });
+    });
+
+    it('durably authorizes daemon activation for when-available policy', async () => {
+        const harness = createPort();
+        harness.shouldDelegatePendingActivationToDaemon.mockResolvedValue(true);
+        await submitSessionUserMessage(harness.port, {
+            ...baseOptions,
+            sessionInactiveResumePolicy: 'when_available',
+            session: createSession({ active: false, presence: 0 }),
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(harness.enqueuePendingMessage).toHaveBeenCalledWith(
+            's1', 'hello', undefined, expect.anything(),
+            expect.objectContaining({ requestedAction: { v: 1, kind: 'send_now' } }),
+        );
+        expect(harness.shouldDelegatePendingActivationToDaemon).toHaveBeenCalledTimes(1);
+        expect(harness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
+    });
+
+    it('does not authorize either daemon or UI activation when an existing row is kept queued', async () => {
+        const harness = createPort();
+        await submitSessionUserMessage(harness.port, {
+            ...baseOptions,
+            session: createSession({ active: false, presence: 0 }),
+            localId: 'existing-local',
+            existingDurablePendingMessage: true,
+            requestedAction: { v: 1, kind: 'enqueue' },
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(harness.updatePendingRequestedAction).toHaveBeenCalledWith('s1', 'existing-local', { v: 1, kind: 'enqueue' });
+        expect(harness.shouldDelegatePendingActivationToDaemon).not.toHaveBeenCalled();
+        expect(harness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
+    });
+
+    it('suppresses UI wake for an activation action delegated to the capable daemon', async () => {
+        const harness = createPort();
+        harness.shouldDelegatePendingActivationToDaemon.mockResolvedValue(true);
+        const result = await submitSessionUserMessage(harness.port, {
+            ...baseOptions,
+            session: createSession({ active: false, presence: 0 }),
+            forceImmediate: true,
+            resumeTargetOverride: { machineId: 'm1', directory: '/tmp/project' },
+        });
+        expect(harness.shouldDelegatePendingActivationToDaemon).toHaveBeenCalledTimes(1);
+        expect(harness.ensureSessionRuntimeForPendingInput).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ type: 'success', wake: { attempted: false, state: 'not_needed' } });
     });
 
     it('persists force-immediate input as send_now instead of bypassing Pending', async () => {

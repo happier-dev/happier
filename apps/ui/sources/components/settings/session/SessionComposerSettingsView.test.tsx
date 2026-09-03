@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
 const setNewSessionDraftEntryMode = vi.fn();
+const setSessionInactiveResumePolicy = vi.fn();
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -11,6 +12,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
         useSettingMutable: (name: string) => {
             if (name === 'newSessionDraftEntryMode') {
                 return ['resumePrevious', setNewSessionDraftEntryMode];
+            }
+            if (name === 'sessionInactiveResumePolicy') {
+                return ['online_only', setSessionInactiveResumePolicy];
             }
             const defaults: Record<string, unknown> = {
                 sessionMessageSendMode: 'agent_queue',
@@ -45,7 +49,7 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: () => null,
+    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
@@ -67,5 +71,28 @@ describe('SessionComposerSettingsView', () => {
 
         screen.pressRowByTitle('Always start fresh');
         expect(setNewSessionDraftEntryMode).toHaveBeenCalledWith('alwaysFresh');
+    });
+
+    it('renders the inactive-session resume policy dropdown and persists changes', async () => {
+        const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');
+        const screen = await renderSettingsView(React.createElement(SessionComposerSettingsView));
+        const menu = screen.findAllByType('DropdownMenu').find((candidate) => (
+            candidate.props.itemTrigger?.title === 'Automatic resume after sending'
+        ));
+
+        expect(menu?.props).toMatchObject({
+            selectedId: 'online_only',
+            itemTrigger: {
+                title: 'Automatic resume after sending',
+            },
+        });
+        expect(menu?.props.items.map((item: { id: string }) => item.id)).toEqual([
+            'when_available',
+            'online_only',
+            'manual',
+        ]);
+
+        menu?.props.onSelect('when_available');
+        expect(setSessionInactiveResumePolicy).toHaveBeenCalledWith('when_available');
     });
 });

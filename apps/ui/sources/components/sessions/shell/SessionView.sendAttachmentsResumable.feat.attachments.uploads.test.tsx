@@ -644,6 +644,10 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
         intent: 'default',
         reason: 'test_decision',
         pendingSupportState: chooseSubmitModeState.mode === 'agent_queue' ? 'unsupported' : 'supported',
+        requestedAction: {
+            v: 1,
+            kind: chooseSubmitModeState.mode === 'interrupt' ? 'steer_now' : 'send_now',
+        },
         ...(chooseSubmitModeState.mode === 'agent_queue'
             ? { directBypassReason: 'selected_direct' }
             : chooseSubmitModeState.mode === 'interrupt'
@@ -2215,9 +2219,22 @@ describe('SessionView (attachments.uploads resumable send)', () => {
          * store publishes in production.
          */
         function syncPendingRowForLocalId(localId: string) {
-            sessionPendingStoreState.current = {
-                s1: { messages: [{ source: 'server_pending', localId }], discarded: [], isLoaded: true },
+            const row = {
+                id: `pending-${localId}`,
+                localId,
+                createdAt: 1,
+                updatedAt: 1,
+                source: 'server_pending',
+                messageRole: 'user',
+                pendingDeliveryStatus: 'server_queued',
+                requestedAction: { v: 1, kind: 'enqueue' },
+                text: 'queued message',
+                rawRecord: { role: 'user', content: { type: 'text', text: 'queued message' } },
             };
+            sessionPendingStoreState.current = {
+                s1: { messages: [row], discarded: [], isLoaded: true },
+            };
+            sessionPendingMessagesState.current = [row];
             act(() => {
                 for (const listener of sessionPendingMessagesState.listeners) listener();
             });
@@ -2236,27 +2253,24 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             try {
                 expect(modalAlertSpy).not.toHaveBeenCalled();
                 // Nothing yet, correctly: no canonical fact has arrived.
-                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed')).toHaveLength(0);
+                expect(screen.findAllByTestId('session-pendingActivation')).toHaveLength(0);
 
+                sessionState.session.active = false;
+                sessionState.session.presence = 0;
                 syncPendingRowForLocalId('armed-local-id');
 
-                const banner = screen.findAllByTestId('session-pendingQueue-resumeFailed');
+                const banner = screen.findAllByTestId('session-pendingActivation');
                 expect(banner.length).toBeGreaterThan(0);
-                expect(screen.getTextContent()).toContain('session.pendingQueuedResumeFailedTitle');
                 // Never an invitation to send the same input twice: the only action
                 // is the Session's own resume owner, which drains the queue.
-                expect(screen.findAllByTestId('session-pendingQueue-resumeFailed-retry').length).toBeGreaterThan(0);
+                expect(screen.findAllByTestId('session-pendingActivation-resume').length).toBeGreaterThan(0);
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;
             }
         });
 
-        it('does not let a live Session view silence an activation failure the daemon proved', async () => {
-            // `target_start_failed` is the daemon's own account: the input was
-            // admitted and the target then failed to start. A client-side liveness
-            // read must never weaken a definite daemon arm, so this must be stated
-            // even while this client still believes the Session is running.
+        it('does not show a stale queued-input activation banner while the Session and machine are reachable', async () => {
             sessionState.session.active = true;
             sessionState.session.presence = 'online';
             armedContinuationState.intent = {
@@ -2280,15 +2294,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             if (!screen.tree) throw new Error('SessionView test renderer did not mount');
             try {
                 await sendOneAttachment(screen.tree);
-                const banners = screen.findAllByTestId('session-pendingQueue-resumeFailed');
-                expect(banners.length).toBeGreaterThan(0);
-                const retry = screen.findByTestId('session-pendingQueue-resumeFailed-retry');
-                expect(retry).toBeTruthy();
-                expect(retry?.props.accessibilityLabel)
-                    .toBe('session.agentContinuation.transition.resumeAction');
-                expect(retry?.findAll((node) => (
-                    node.props.children === 'session.agentContinuation.transition.resumeAction'
-                )).length).toBeGreaterThan(0);
+                expect(screen.findAllByTestId('session-pendingActivation')).toHaveLength(0);
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;

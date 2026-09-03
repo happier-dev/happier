@@ -4,6 +4,10 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { getVersionSupportState, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
 import { getSessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 import { deriveSessionInputReadinessState } from '@/sync/domains/session/control/deriveSessionInputReadinessState';
+import {
+    DEFAULT_SESSION_INACTIVE_RESUME_POLICY,
+    type SessionInactiveResumePolicy,
+} from '@/sync/domains/session/control/inactiveResumePolicy';
 
 export type MessageSendMode = 'agent_queue' | 'interrupt' | 'server_pending';
 
@@ -106,24 +110,39 @@ export function selectSessionPendingRequestedAction(opts: {
     nowMs?: number;
     firstTurn?: boolean;
     preferSteer?: boolean;
+    /** How ordinary input may resume an inactive/offline runtime. */
+    sessionInactiveResumePolicy?: SessionInactiveResumePolicy;
     /** Explicit user override of the pending delivery timing preference; control serviceability still applies. */
     timingOverride?: 'send_now';
 }): PendingRequestedActionV1 {
     const session = opts.session;
     if (!session) return { v: 1, kind: opts.timingOverride === 'send_now' ? 'send_now' : 'enqueue' };
     if (session.active === false) {
-        return { v: 1, kind: 'send_now' };
+        return {
+            v: 1,
+            kind: opts.firstTurn === true
+                || opts.timingOverride === 'send_now'
+                || (opts.sessionInactiveResumePolicy ?? DEFAULT_SESSION_INACTIVE_RESUME_POLICY) === 'when_available'
+                ? 'send_now'
+                : 'enqueue',
+        };
     }
     if (opts.firstTurn === true) {
         return { v: 1, kind: 'send_now' };
     }
 
     const runtimeState = deriveSubmitRuntimeState(session, opts.nowMs ?? Date.now());
-    if (
-        runtimeState.localControlBlocksDirectSubmit
-        || !runtimeState.isOnline
-        || !runtimeState.agentReady
-    ) {
+    if (!runtimeState.isOnline) {
+        return {
+            v: 1,
+            kind: opts.timingOverride === 'send_now'
+                || (opts.sessionInactiveResumePolicy ?? DEFAULT_SESSION_INACTIVE_RESUME_POLICY) === 'when_available'
+                ? 'send_now'
+                : 'enqueue',
+        };
+    }
+
+    if (runtimeState.localControlBlocksDirectSubmit || !runtimeState.agentReady) {
         return { v: 1, kind: opts.timingOverride === 'send_now' ? 'send_now' : 'enqueue' };
     }
 
@@ -312,6 +331,8 @@ export function decideSessionMessageDelivery(opts: {
     session: Session | null;
     nowMs?: number;
     forceImmediate?: boolean;
+    /** Account preference controlling resume behavior for ordinary inactive/offline sends. */
+    sessionInactiveResumePolicy?: SessionInactiveResumePolicy;
     /** Outgoing message text — enables the payload-aware steer gate (lane P). */
     text?: string;
     /** `sessionPermissionModeApplyTiming` setting; `next_prompt` skips the mode-change gate. */
@@ -348,6 +369,7 @@ export function decideSessionMessageDelivery(opts: {
             && configuredMode !== 'server_pending'
             && (opts.busySteerSendPolicy ?? DEFAULT_BUSY_STEER_SEND_POLICY) === 'steer_immediately',
         ...(opts.forceImmediate === true ? { timingOverride: 'send_now' as const } : {}),
+        sessionInactiveResumePolicy: opts.sessionInactiveResumePolicy,
     });
     if (
         opts.forceImmediate === true

@@ -20,6 +20,10 @@ import {
     SESSION_LIST_ORDERING_MODE_DEFAULT_V1,
     SESSION_LIST_ORDERING_MODES_V1,
 } from '@/sync/domains/session/listing/sessionListOrderingRules';
+import {
+    DEFAULT_SESSION_INACTIVE_RESUME_POLICY,
+    SESSION_INACTIVE_RESUME_POLICY_VALUES,
+} from '@/sync/domains/session/control/inactiveResumePolicy';
 
 export const SessionListDensitySchema = z.preprocess((raw) => {
     if (raw === 'compact') return 'cozy';
@@ -353,6 +357,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: SessionNonSteerableSendPromptSchema,
         default: 'ask',
         description: 'When a busy send cannot be steered into the active turn: ask (Interrupt & send vs Queue), queue silently, or keep the legacy behavior (off)',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionInactiveResumePolicy: {
+        schema: z.enum(SESSION_INACTIVE_RESUME_POLICY_VALUES),
+        default: DEFAULT_SESSION_INACTIVE_RESUME_POLICY,
+        description: 'How ordinary sends may resume an inactive or offline session runtime',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },

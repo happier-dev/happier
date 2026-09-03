@@ -4,6 +4,7 @@ import type {
     PrimaryTurnStatusV1,
     SessionRuntimeActivityState,
     SessionRuntimeIssueV1,
+    PendingActivationAuthorizationV1,
 } from '@happier-dev/protocol';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
@@ -93,6 +94,7 @@ export interface SessionListRenderableSession {
     pendingVersion?: number;
     pendingCount?: number;
     pendingBlockedCount?: number;
+    pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null;
     lastViewedSessionSeq?: number | null;
     metadataVersion: number;
     agentStateVersion: number;
@@ -279,6 +281,7 @@ export function buildSessionListRenderableFromSession(
         pendingVersion: session.pendingVersion,
         pendingCount: session.pendingCount,
         pendingBlockedCount: session.pendingBlockedCount,
+        pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
         lastViewedSessionSeq: normalizeLastViewedSessionSeq(session.lastViewedSessionSeq),
         metadataVersion: session.metadataVersion,
         agentStateVersion: session.agentStateVersion,

@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { findTestInstanceByTypeWithProps } from '@/dev/testkit/render/renderScreen';
@@ -11,6 +9,7 @@ import type { ResumeSessionResult } from '@/sync/ops/sessions';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
@@ -21,6 +20,8 @@ const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const sendMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const submitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
+const sendPendingMessageNowSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
+const updatePendingRequestedActionSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const resumeSessionSpy = vi.hoisted(() =>
     vi.fn<(..._args: any[]) => Promise<ResumeSessionResult>>(async (..._args: any[]) => ({
         type: 'error' as const,
@@ -49,6 +50,14 @@ const sessionMetadataOverrides = vi.hoisted(() => ({
 }));
 const sessionStateOverrides = vi.hoisted(() => ({
     current: {} as Record<string, unknown>,
+}));
+const pendingMessagesState = vi.hoisted(() => ({
+    current: { messages: [], discarded: [], isLoaded: true } as {
+        messages: PendingMessage[];
+        discarded: [];
+        isLoaded: boolean;
+    },
+    listeners: new Set<() => void>(),
 }));
 const shellSessionOverride = vi.hoisted(() => ({
     current: null as Record<string, unknown> | null,
@@ -230,8 +239,18 @@ installSessionShellCommonModuleMocks({
             id: 's1',
             serverId: 'server-cache',
             seq: 0,
-            presence: Date.now() - 60_000,
-            active: false,
+            get presence() {
+                return sessionStateOverrides.current.presence ?? 0;
+            },
+            get active() {
+                return sessionStateOverrides.current.active ?? false;
+            },
+            get activeAt() {
+                return sessionStateOverrides.current.activeAt ?? 0;
+            },
+            get pendingActivationAuthorization() {
+                return sessionStateOverrides.current.pendingActivationAuthorization ?? null;
+            },
             accessLevel: 'edit',
             get pendingVersion() {
                 return sessionStateOverrides.current.pendingVersion ?? 2;
@@ -267,6 +286,7 @@ installSessionShellCommonModuleMocks({
             codexBackendMode: 'acp',
             sessionMessageSendMode: 'server_pending',
             sessionBusySteerSendPolicy: 'steer_immediately',
+            sessionInactiveResumePolicy: 'when_available',
         };
         const projectFixture: Project = {
             id: 'project-1',
@@ -397,7 +417,13 @@ installSessionShellCommonModuleMocks({
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionSubagentSourceMessages: () => [],
-            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionPendingMessages: () => React.useSyncExternalStore(
+                (listener) => {
+                    pendingMessagesState.listeners.add(listener);
+                    return () => pendingMessagesState.listeners.delete(listener);
+                },
+                () => pendingMessagesState.current,
+            ),
             useSessionReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
             useProfile: () => null,
@@ -576,6 +602,8 @@ vi.mock('@/sync/sync', () => ({
         markSessionLiveTailIntent: () => {},
         sendMessage: (...args: any[]) => sendMessageSpy(...args),
         enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
+        sendPendingMessageNow: (...args: any[]) => sendPendingMessageNowSpy(...args),
+        updatePendingRequestedAction: (...args: any[]) => updatePendingRequestedActionSpy(...args),
         submitMessage: (...args: any[]) => submitMessageSpy(...args),
         encryption: {
             getMachineEncryption: () => (machineEncryptionAvailable.current ? { keyId: 'machine-key' } : null),
@@ -684,10 +712,30 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         return agentInput as any;
     }
 
+    function durablePendingRow(
+        localId: string,
+        action: 'send_now' | 'enqueue' = 'send_now',
+    ): PendingMessage {
+        return {
+            id: `pending-${localId}`,
+            localId,
+            createdAt: 200,
+            updatedAt: 200,
+            source: 'server_pending',
+            messageRole: 'user',
+            pendingDeliveryStatus: 'server_queued',
+            requestedAction: { v: 1, kind: action },
+            text: 'parked input',
+            rawRecord: { role: 'user', content: { type: 'text', text: 'parked input' } },
+        };
+    }
+
     beforeEach(async () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         authCredentials = { token: 't', secret: 's' };
         enqueuePendingMessageSpy.mockClear();
+        sendPendingMessageNowSpy.mockClear();
+        updatePendingRequestedActionSpy.mockClear();
         sendMessageSpy.mockClear();
         submitMessageSpy.mockClear();
         resumeCapabilityMachineIds.length = 0;
@@ -696,6 +744,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         settingsState.current = { experiments: true, featureToggles: {}, codexBackendMode: 'acp' };
         sessionMetadataOverrides.current = {};
         sessionStateOverrides.current = {};
+        pendingMessagesState.listeners.clear();
+        pendingMessagesState.current = { messages: [], discarded: [], isLoaded: true };
         shellSessionOverride.current = null;
         resetLiveSessionState.current?.();
         draftHookState.valuesBySessionId.clear();
@@ -787,43 +837,57 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('shows a non-blocking warning (no modal) when resume fails after enqueueing a pending message', async () => {
+    it('shows an offline queued banner and authorizes the exact durable row for processing when online', async () => {
+        const row = durablePendingRow('queued-row', 'enqueue');
+        pendingMessagesState.current = { messages: [row], discarded: [], isLoaded: true };
+        sessionStateOverrides.current = { active: false, activeAt: 100, presence: 0 };
+
         const screen = await renderSessionView();
 
-        pendingFireAndForget.length = 0;
+        expect(screen.findByTestId('session-pendingActivation')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('session.pendingActivation.queued_offline.title');
+        expect(screen.findByTestId('session-pendingActivation-process_when_online')).toBeTruthy();
+        expect(screen.findByTestId('session-pendingActivation-settings')).toBeTruthy();
 
-        const agentInput = findAgentInput(screen);
+        await screen.pressByTestIdAsync('session-pendingActivation-process_when_online');
 
-        await act(async () => {
-            agentInput.props.onChangeText('hello');
+        expect(sendPendingMessageNowSpy).toHaveBeenCalledWith('s1', {
+            localId: 'queued-row',
+            createdAt: 200,
+            rawRecord: row.rawRecord,
+            text: 'parked input',
+            displayText: undefined,
         });
-        await act(async () => {
-            agentInput.props.onSend();
-        });
 
-        expect(pendingFireAndForget.length).toBeGreaterThan(0);
-        await act(async () => {
-            await pendingFireAndForget[0];
-        });
+        await screen.unmount();
+    });
 
-        expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
-        expect(enqueuePendingMessageSpy.mock.calls[0]?.[0]).toBe('s1');
-        expect(enqueuePendingMessageSpy.mock.calls[0]?.[1]).toBe('hello');
-        expect(resumeCapabilityMachineIds).toContain('m-target');
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
-        expect(resumeSessionSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                machineId: 'm-target',
-                directory: '/tmp/target',
-            }),
+    it('shows durable waiting state while offline and keeps the exact row queued on request', async () => {
+        const row = durablePendingRow('waiting-row');
+        pendingMessagesState.current = { messages: [row], discarded: [], isLoaded: true };
+        sessionStateOverrides.current = {
+            active: false,
+            activeAt: 100,
+            presence: 0,
+            pendingActivationAuthorization: {
+                requestId: 'waiting-row',
+                requestedAt: 200,
+                status: 'waiting',
+            },
+        };
+        const screen = await renderSessionView();
+
+        expect(screen.findByTestId('session-pendingActivation')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('session.pendingActivation.waiting_offline.title');
+        expect(screen.findByTestId('session-pendingActivation-keepQueued')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('session-pendingActivation-keepQueued');
+
+        expect(updatePendingRequestedActionSpy).toHaveBeenCalledWith(
+            's1',
+            'waiting-row',
+            { v: 1, kind: 'enqueue' },
         );
-        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
-        expect(findAgentInput(screen).props.value).toBe('');
-        const pendingResumeBanner = screen.findByTestId('session-pendingQueue-resumeFailed');
-        expect(pendingResumeBanner).toBeTruthy();
-        const pendingResumeRetry = screen.findByTestId('session-pendingQueue-resumeFailed-retry');
-        expect(pendingResumeRetry?.props.accessibilityLabel).toBe('common.retry');
-        expect(pendingResumeRetry?.findAll((node) => node.props.children === 'common.retry').length).toBeGreaterThan(0);
 
         await screen.unmount();
     });
@@ -1131,114 +1195,34 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('retries resume from the warning banner and clears it on success', async () => {
-        resumeSessionSpy
-            .mockImplementationOnce(async () => ({
-                type: 'error' as const,
-                errorCode: 'DAEMON_RPC_UNAVAILABLE' as const,
-                errorMessage: 'Daemon RPC is not available',
-            }))
-            .mockImplementationOnce(async () => ({ type: 'success' as const }));
-
+    it('retries the exact durable row after terminal activation failure', async () => {
+        const row = durablePendingRow('failed-row');
+        pendingMessagesState.current = { messages: [row], discarded: [], isLoaded: true };
+        sessionStateOverrides.current = {
+            active: false,
+            activeAt: 100,
+            presence: 0,
+            pendingActivationAuthorization: {
+                requestId: 'failed-row',
+                requestedAt: 200,
+                status: 'failed',
+                failureCode: 'runtime_start_failed',
+            },
+        };
         const screen = await renderSessionView();
 
-        pendingFireAndForget.length = 0;
+        expect(screen.findByTestId('session-pendingActivation')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('session.pendingActivation.failed.title');
 
-        const agentInput = findAgentInput(screen);
+        await screen.pressByTestIdAsync('session-pendingActivation-retry');
 
-        await act(async () => {
-            agentInput.props.onChangeText('hello');
+        expect(sendPendingMessageNowSpy).toHaveBeenCalledWith('s1', {
+            localId: 'failed-row',
+            createdAt: 200,
+            rawRecord: row.rawRecord,
+            text: 'parked input',
+            displayText: undefined,
         });
-        await act(async () => {
-            agentInput.props.onSend();
-        });
-
-        expect(pendingFireAndForget.length).toBeGreaterThan(0);
-        await act(async () => {
-            await pendingFireAndForget[0];
-        });
-
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
-        expect(resumeCapabilityMachineIds).toContain('m-target');
-        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
-        });
-
-        expect(resumeSessionSpy).toHaveBeenCalledTimes(2);
-        expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
-        expect(screen.findAllByTestId('session-pendingQueue-resumeFailed').length).toBe(0);
-
-        await screen.unmount();
-    });
-
-    it('shows a retry error when the user explicitly retries resume from the banner', async () => {
-        const screen = await renderSessionView();
-
-        pendingFireAndForget.length = 0;
-
-        const agentInput = findAgentInput(screen);
-        await act(async () => {
-            agentInput.props.onChangeText('hello');
-        });
-        await act(async () => {
-            agentInput.props.onSend();
-        });
-
-        await act(async () => {
-            await pendingFireAndForget[0];
-        });
-
-        expect(resumeCapabilityMachineIds).toContain('m-target');
-
-        modalMockState.current?.spies.alert.mockClear();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
-        });
-
-        expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'Daemon RPC is not available');
-
-        await screen.unmount();
-    });
-
-    it('redacts internal spawn validation details when explicit retry cannot resume the queued message', async () => {
-        resumeSessionSpy
-            .mockImplementationOnce(async () => ({
-                type: 'error' as const,
-                errorCode: 'DAEMON_RPC_UNAVAILABLE' as const,
-                errorMessage: 'Daemon RPC is not available',
-            }))
-            .mockImplementationOnce(async () => ({
-                type: 'error' as const,
-                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: 'connected_service_materialization_identity_missing',
-            }));
-
-        const screen = await renderSessionView();
-
-        pendingFireAndForget.length = 0;
-
-        const agentInput = findAgentInput(screen);
-        await act(async () => {
-            agentInput.props.onChangeText('hello');
-        });
-        await act(async () => {
-            agentInput.props.onSend();
-        });
-
-        await act(async () => {
-            await pendingFireAndForget[0];
-        });
-
-        modalMockState.current?.spies.alert.mockClear();
-
-        await act(async () => {
-            await screen.pressByTestIdAsync('session-pendingQueue-resumeFailed-retry');
-        });
-
-        expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'session.resumeFailed');
 
         await screen.unmount();
     });
