@@ -33,6 +33,13 @@ workers_dev = false
 # production, so it is turned back on explicitly.
 preview_urls = true
 
+# Declarative production ownership. A custom-domain route makes Wrangler create
+# and maintain the DNS record and certificate for the Worker instead of relying
+# on a dashboard-only mapping that a deployment cannot reproduce.
+[[routes]]
+pattern = "docs.happier.dev"
+custom_domain = true
+
 [assets]
 directory = "./out/"
 binding = "ASSETS"
