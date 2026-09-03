@@ -1314,11 +1314,13 @@ export function useCreateNewSession(params: Readonly<{
                     suffix: postSpawnSessionRouteSuffix,
                 });
 
-                current.router.replace(postSpawnReplacementHref ?? sessionRoute, {
-                    dangerouslySingular() {
-                        return 'session';
-                    },
-                });
+                if (mountedRef.current && isLaunchScopeStillActive()) {
+                    current.router.replace(postSpawnReplacementHref ?? sessionRoute, {
+                        dangerouslySingular() {
+                            return 'session';
+                        },
+                    });
+                }
 
                 if (!preserveLaunchAttemptForFirstTurnRetry) {
                     if (operationCustody?.status === 'completed') {
@@ -1544,14 +1546,16 @@ export function useCreateNewSession(params: Readonly<{
             }
             if (confirmedCreatedSessionId) {
                 operationReentryRegistration?.markSetupNeedsAttention(confirmedCreatedSessionId);
-                Modal.alert(
-                    t('newSession.createdWithSetupIssueTitle'),
-                    `${t('newSession.createdWithSetupIssueBody')}\n\n${t('common.details')}: ${errorMessage}`,
-                );
-            } else {
+                if (mountedRef.current) {
+                    Modal.alert(
+                        t('newSession.createdWithSetupIssueTitle'),
+                        `${t('newSession.createdWithSetupIssueBody')}\n\n${t('common.details')}: ${errorMessage}`,
+                    );
+                }
+            } else if (mountedRef.current) {
                 Modal.alert(t('common.error'), errorMessage);
             }
-            latestParamsRef.current.setIsCreating(false);
+            if (mountedRef.current) latestParamsRef.current.setIsCreating(false);
         } finally {
             createInFlightRef.current = false;
             operationReentryRegistration?.release();

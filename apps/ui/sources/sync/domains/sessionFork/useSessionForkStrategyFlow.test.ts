@@ -97,6 +97,28 @@ describe('useSessionForkStrategyFlow', () => {
         expect(onNavigated).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps the completed fork in activity without navigating after the initiating surface unmounts', async () => {
+        const forkSettlement: { current: ((value: { ok: true; childSessionId: string }) => void) | null } = { current: null };
+        forkSessionMock.mockImplementationOnce(() => new Promise((resolve) => {
+            forkSettlement.current = resolve;
+        }));
+        const { harness, navigate, onNavigated } = await mountFlow();
+        let submission: Promise<void> | null = null;
+
+        await act(async () => {
+            submission = harness.getCurrent().submit('native');
+            await Promise.resolve();
+        });
+        await vi.waitFor(() => expect(forkSessionMock).toHaveBeenCalledTimes(1));
+        await harness.unmount();
+        forkSettlement.current?.({ ok: true, childSessionId: 'child_detached' });
+        await submission;
+
+        expect(completeSessionForkNavigationMock).not.toHaveBeenCalled();
+        expect(navigate).not.toHaveBeenCalled();
+        expect(onNavigated).not.toHaveBeenCalled();
+    });
+
     it('reuses one requestId across retries of the same route so a transport retry cannot double-fork', async () => {
         forkSessionMock.mockResolvedValue({ ok: false, errorCode: 'SPAWN_FAILED', errorMessage: 'nope' });
         const { harness } = await mountFlow();

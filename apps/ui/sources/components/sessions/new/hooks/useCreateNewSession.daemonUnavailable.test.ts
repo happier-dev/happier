@@ -732,7 +732,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
   });
 
-  it('continues outer follow-up after direct spawn custody settles even when the launcher unmounts', async () => {
+  it('continues outer follow-up without navigating after direct spawn custody settles when the launcher unmounts', async () => {
     const {
       useCreateNewSession,
       machineSpawnNewSessionSpy,
@@ -863,8 +863,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(projectedFirstTurn).not.toHaveProperty('pendingOutboxScope');
     expect(projectedFirstTurn).not.toHaveProperty('pendingOutboxOperation');
     expect(callOrder.indexOf('pending')).toBeGreaterThanOrEqual(0);
-    expect(callOrder.indexOf('replace')).toBeGreaterThan(callOrder.indexOf('pending'));
-    expect(callOrder.indexOf('clear')).toBeGreaterThan(callOrder.indexOf('replace'));
+    expect(callOrder).not.toContain('replace');
+    expect(callOrder.indexOf('clear')).toBeGreaterThan(callOrder.indexOf('pending'));
     expect(afterCreated).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session-created',
       launchAttempt: expect.objectContaining({
@@ -891,11 +891,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       }),
     });
     expect(onLaunchUserAttemptIdChange).toHaveBeenLastCalledWith(null);
-    expect(router.replace).toHaveBeenCalledWith(
-      '/session/session-created?serverId=server-a',
-      expect.anything(),
-    );
-  });
+    expect(router.replace).not.toHaveBeenCalled();
+  }, 120_000);
 
   it('consumes the operation settlement and actual custody identity without a hook-level resolver', async () => {
     const {
