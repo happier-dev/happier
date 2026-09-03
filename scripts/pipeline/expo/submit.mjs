@@ -230,6 +230,7 @@ function main() {
       id: { type: 'string', default: '' },
       path: { type: 'string', default: '' },
       profile: { type: 'string', default: '' },
+      'project-dir': { type: 'string', default: '' },
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'android-release-status': { type: 'string', default: 'draft' },
@@ -285,7 +286,9 @@ function main() {
   const platforms = platformRaw === 'all' ? ['ios', 'android'] : [platformRaw];
   console.log(`[pipeline] expo submit: environment=${formatMobileReleaseEnvironment(environment)} platform=${platformRaw}`);
 
-  const uiDir = path.join(repoRoot, 'apps', 'ui');
+  const projectDirRaw = String(values['project-dir'] ?? '').trim();
+  const uiDir = projectDirRaw ? path.resolve(repoRoot, projectDirRaw) : path.join(repoRoot, 'apps', 'ui');
+  if (!fs.existsSync(uiDir)) fail(`Expo submit project directory does not exist: ${uiDir}`);
   const submitPathAbs = submitPathRaw ? path.resolve(repoRoot, submitPathRaw) : '';
   if (submitPathAbs) {
     if (!fs.existsSync(submitPathAbs)) {

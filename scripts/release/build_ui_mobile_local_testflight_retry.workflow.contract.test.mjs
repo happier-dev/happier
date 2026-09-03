@@ -52,6 +52,8 @@ test('build-ui-mobile-local can resubmit a preserved Android store artifact with
   assert.match(retryJob, /identity\.candidateSha !== process\.env\.RETRY_STORE_SOURCE_SHA/);
   assert.match(retryJob, /ORIGIN_HEAD_SHA.*RETRY_STORE_SOURCE_SHA/);
   assert.match(retryJob, /scripts\/pipeline\/expo\/submit\.mjs/);
+  assert.match(retryJob, /prepare-static-submit-workspace\.mjs/);
+  assert.match(retryJob, /--project-dir "\$submit_workspace"/);
   assert.match(retryJob, /--path "\$aab"/);
   assert.doesNotMatch(retryJob, /Install dependencies|native-build\.mjs|ui-mobile-release/);
 

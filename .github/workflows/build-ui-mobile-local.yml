@@ -592,10 +592,17 @@ jobs:
             exit 1
           fi
           aab="${aabs[0]}"
+          aab="$(realpath "$aab")"
+          submit_workspace="$RUNNER_TEMP/happier-android-submit"
+          node scripts/pipeline/expo/prepare-static-submit-workspace.mjs \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --profile "$RELEASE_PROFILE" \
+            --out-dir "$submit_workspace"
           node scripts/pipeline/expo/submit.mjs \
             --environment "$RELEASE_ENVIRONMENT" \
             --platform android \
             --profile "$RELEASE_PROFILE" \
+            --project-dir "$submit_workspace" \
             --path "$aab" \
             --wait false \
             --android-release-status draft
