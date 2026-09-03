@@ -102,7 +102,6 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
           generation: 8,
         },
         applyReason: 'same_provider_account_exhausted',
-        requireDirectLiveHotApply: true,
       },
       baseSelection,
     });
@@ -111,7 +110,6 @@ describe('materializeCodexConnectedServiceRuntimeAuthSelection', () => {
     expect(materialized).toMatchObject({
       serviceId: 'openai-codex',
       applyReason: 'same_provider_account_exhausted',
-      requireDirectLiveHotApply: true,
     });
 
     const apply = (materialized as Readonly<{

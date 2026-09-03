@@ -139,7 +139,6 @@ describe('createCodexConnectedServiceRuntimeAuthAdapter', () => {
     expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith(expect.objectContaining({
       serviceId: 'openai-codex',
       reason: 'usage_limit',
-      requireDirectLiveHotApply: false,
       authGeneration: expect.objectContaining({
         credential: expect.any(Object),
       }),
@@ -205,7 +204,7 @@ describe('createCodexConnectedServiceRuntimeAuthAdapter', () => {
     });
   });
 
-  it('threads direct-live-required policy into runtime apply requests', async () => {
+  it('threads the switch reason into runtime apply requests', async () => {
     const adapter = createCodexConnectedServiceRuntimeAuthAdapter();
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({
       ok: false,
@@ -236,7 +235,6 @@ describe('createCodexConnectedServiceRuntimeAuthAdapter', () => {
         }),
         applyConnectedServiceAuthGeneration,
         applyReason: 'same_provider_account_exhausted',
-        requireDirectLiveHotApply: true,
       },
     })).resolves.toEqual({
       applied: false,
@@ -246,7 +244,6 @@ describe('createCodexConnectedServiceRuntimeAuthAdapter', () => {
 
     expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith(expect.objectContaining({
       reason: 'same_provider_account_exhausted',
-      requireDirectLiveHotApply: true,
     }));
   });
 
@@ -287,7 +284,6 @@ describe('createCodexConnectedServiceRuntimeAuthAdapter', () => {
         }),
         applyConnectedServiceAuthGeneration,
         applyReason: 'same_provider_account_exhausted',
-        requireDirectLiveHotApply: true,
       },
     })).resolves.toEqual({
       applied: false,

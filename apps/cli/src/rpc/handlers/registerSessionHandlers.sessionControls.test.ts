@@ -1530,7 +1530,6 @@ describe('registerSessionHandlers session controls', () => {
     const request = {
       serviceId: ' openai-codex ',
       reason: 'usage_limit',
-      requireDirectLiveHotApply: false,
       expected: {
         profileId: 'profile-old',
         groupId: 'group-1',

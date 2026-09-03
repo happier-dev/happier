@@ -22,14 +22,12 @@ export type CodexConnectedServiceRuntimeAuthApplyRequest = Readonly<{
   selection?: CodexConnectedServiceRefreshSelection | null;
   expected?: CodexConnectedServiceRuntimeAuthExpected | null;
   reason?: string | null;
-  requireDirectLiveHotApply?: boolean;
 }>;
 
 export type CodexConnectedServiceRuntimeAuthApplyBuildInput = Readonly<{
   record: ConnectedServiceCredentialRecordV1;
   selection?: Record<string, unknown> | null;
   reason?: string | null;
-  requireDirectLiveHotApply?: boolean;
   forcedWorkspaceId?: string | null;
   forcedLoginMethod?: string | null;
 }>;
@@ -42,10 +40,6 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true;
 }
 
 function readNonNegativeInteger(value: unknown): number | null {
@@ -131,7 +125,6 @@ export function buildCodexConnectedServiceRuntimeAuthApplyRequest(
   return {
     serviceId: 'openai-codex',
     reason: readApplyReason(input.reason ?? selection?.applyReason),
-    requireDirectLiveHotApply: readBoolean(input.requireDirectLiveHotApply ?? selection?.requireDirectLiveHotApply),
     expected: buildRuntimeApplyExpected(selection, input.record),
     authGeneration: {
       credential: input.record,
@@ -221,6 +214,5 @@ export function parseCodexConnectedServiceRuntimeAuthApplyRequest(
     selection,
     expected,
     reason: readString(record.reason),
-    requireDirectLiveHotApply: readBoolean(record.requireDirectLiveHotApply),
   };
 }

@@ -33,7 +33,6 @@ export const materializeCodexConnectedServiceRuntimeAuthSelection: ConnectedServ
   return {
     ...params.baseSelection,
     applyReason: params.input.applyReason ?? 'manual',
-    requireDirectLiveHotApply: params.input.requireDirectLiveHotApply === true,
     // K5:fsm_switch this materializer only wires the provider-owned direct-live apply callback
     // into the session-auth FSM/runtime-auth owners; restart/hot-apply policy still lives there.
     applyConnectedServiceAuthGeneration: async (request: unknown) => {
@@ -59,7 +58,7 @@ export const materializeCodexConnectedServiceRuntimeAuthSelection: ConnectedServ
           // `<codexHome>/auth.json` when its transports are invalidated, so the
           // switched credential must be persisted there or the runtime would
           // resume on the previous account (post-switch verification then
-          // rejects the hot apply and forces a restart).
+          // rejects the hot apply without replacing the live app-server).
           persistAuthStore: async () => {
             await writeCodexAuthStoreFile({
               codexHome,

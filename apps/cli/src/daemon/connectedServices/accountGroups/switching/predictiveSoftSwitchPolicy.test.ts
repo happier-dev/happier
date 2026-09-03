@@ -155,6 +155,21 @@ describe('evaluateConnectedServiceSwitchApplyPolicy', () => {
       allowRestartResume: false,
     });
   });
+
+  it('requires direct live hot apply for manual reconciliation when the provider declares direct live auth', () => {
+    expect(evaluateConnectedServiceSwitchApplyPolicy({
+      context: 'manual',
+      reason: 'manual',
+      applyMode: 'restart_resume',
+      runtimeAuthApply: directLiveExternalTokenInjectionCapability,
+    })).toEqual({
+      status: 'suppress',
+      reason: 'direct_live_hot_apply_required',
+      allowDirectLiveHotApply: true,
+      allowTransportRecycle: false,
+      allowRestartResume: false,
+    });
+  });
 });
 
 describe('evaluatePredictiveSoftSwitchPolicy', () => {

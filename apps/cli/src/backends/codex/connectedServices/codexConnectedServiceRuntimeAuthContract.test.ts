@@ -29,7 +29,6 @@ describe('codexConnectedServiceRuntimeAuthContract', () => {
     const request = buildCodexConnectedServiceRuntimeAuthApplyRequest({
       record,
       reason: 'same_provider_account_exhausted',
-      requireDirectLiveHotApply: true,
       forcedWorkspaceId: 'workspace-1',
       selection: {
         groupId: 'team',
@@ -43,7 +42,6 @@ describe('codexConnectedServiceRuntimeAuthContract', () => {
     expect(request).toEqual({
       serviceId: 'openai-codex',
       reason: 'same_provider_account_exhausted',
-      requireDirectLiveHotApply: true,
       expected: {
         profileId: 'primary',
         groupId: 'team',
@@ -82,7 +80,6 @@ describe('codexConnectedServiceRuntimeAuthContract', () => {
         generation: 4,
       },
       reason: 'same_provider_account_exhausted',
-      requireDirectLiveHotApply: true,
     });
   });
 

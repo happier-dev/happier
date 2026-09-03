@@ -162,15 +162,14 @@ export function evaluateConnectedServiceSwitchApplyPolicy(input: Readonly<{
   runtimeAuthApply?: ConnectedServiceRuntimeAuthApplyCapability | null;
 }>): ConnectedServiceSwitchApplyPolicyDecision {
   const directLiveOnly =
-    input.context === 'healthy_sibling'
+    (
+      input.context !== 'pre_spawn'
+      && supportsDirectLiveHotAuth(input.runtimeAuthApply)
+    )
+    || input.context === 'healthy_sibling'
     || input.context === 'healthy_live_session'
     || input.reason === 'same_provider_account_exhausted'
-    || input.reason === 'soft_threshold'
-    || (
-      input.context === 'original_failed_session'
-      && input.reason === 'usage_limit'
-      && supportsDirectLiveHotAuth(input.runtimeAuthApply)
-    );
+    || input.reason === 'soft_threshold';
   if (directLiveOnly) {
     if (
       input.context === 'healthy_sibling'

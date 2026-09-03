@@ -237,19 +237,6 @@ export type SessionConnectedServiceAuthSwitchResult =
       diagnostics?: SessionConnectedServiceAuthSwitchDiagnostics;
     }>;
 
-function withSwitchAttemptedAction(
-  failure: SessionConnectedServiceAuthSwitchFailure,
-  attemptedAction: NonNullable<SessionConnectedServiceAuthSwitchDiagnostics['attemptedAction']>,
-): SessionConnectedServiceAuthSwitchFailure {
-  return {
-    ...failure,
-    diagnostics: {
-      ...(failure.diagnostics ?? {}),
-      attemptedAction,
-    },
-  };
-}
-
 export type SessionConnectedServiceAuthSwitchRequest = Readonly<{
   sessionId: string;
   agentId: string;
@@ -301,7 +288,6 @@ export type SessionConnectedServiceRuntimeAuthSelectionMaterializerInput = Reado
   normalizedBindings: ConnectedServiceBindingsV1;
   groupMetadata?: ConnectedServiceGroupRuntimeMetadata;
   applyReason?: 'usage_limit' | 'same_provider_account_exhausted' | 'soft_threshold' | 'manual' | 'diagnostic';
-  requireDirectLiveHotApply?: boolean;
   expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
 }>;
 
@@ -583,29 +569,6 @@ function readHotApplyFailurePartialState(
     : undefined;
 }
 
-function hotApplyFailureRequiresRestart(input: Readonly<{
-  errorCode?: string;
-  serviceResultsByServiceId?: Readonly<Record<string, SessionConnectedServiceAuthSwitchServiceResult>>;
-}>): boolean {
-  const serviceResults = Object.values(input.serviceResultsByServiceId ?? {});
-  if (input.errorCode === 'hot_apply_restart_required') return true;
-  if (input.errorCode === 'hot_apply_unavailable') {
-    return serviceResults.length === 0 || !serviceResults.some((result) => result.status === 'applied');
-  }
-  if (serviceResults.some((result) => (
-    result.errorCode === 'hot_apply_restart_required'
-  ))) {
-    return true;
-  }
-
-  if (input.errorCode !== 'hot_apply_failed') return false;
-  if (serviceResults.length === 0) return true;
-  return !serviceResults.some((result) => result.status === 'applied')
-    && serviceResults.every((result) => (
-      result.status !== 'failed' || result.errorCode === 'hot_apply_failed'
-    ));
-}
-
 function normalizeSwitchApplyReason(reason: string | undefined): 'usage_limit' | 'same_provider_account_exhausted' | 'soft_threshold' | 'manual' | 'diagnostic' {
   return reason === 'usage_limit'
     || reason === 'same_provider_account_exhausted'
@@ -637,7 +600,7 @@ function resolveSwitchApplyPolicy(input: Readonly<{
   });
 }
 
-function switchPolicyAllowsRestartResumeFallback(
+function switchPolicyAllowsDeclaredRestartResume(
   groupSwitchTriggerReason: string | undefined,
   runtimeAuthApply?: ConnectedServiceRuntimeAuthApplyCapability | null,
 ): boolean {
@@ -648,49 +611,19 @@ function switchPolicyAllowsRestartResumeFallback(
   }).allowRestartResume;
 }
 
-function shouldRequireDirectLiveHotApply(
-  groupSwitchTriggerReason: string | undefined,
-  runtimeAuthApply?: ConnectedServiceRuntimeAuthApplyCapability | null,
-): boolean {
-  const decision = resolveSwitchApplyPolicy({
-    groupSwitchTriggerReason,
-    applyMode: 'hot_apply',
-    runtimeAuthApply,
-  });
-  return decision.allowDirectLiveHotApply
-    && !decision.allowRestartResume
-    && !decision.allowTransportRecycle;
-}
-
-function switchPolicyAllowsRestartResumeFallbackForServices(input: Readonly<{
+function switchPolicyAllowsDeclaredRestartResumeForServices(input: Readonly<{
   groupSwitchTriggerReason: string | undefined;
   runtimeAuthApplyByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceRuntimeAuthApplyCapability | null>;
   serviceIds: Iterable<ConnectedServiceId>;
-  failedServiceId?: string;
 }>): boolean {
-  const failedServiceId = Array.from(input.runtimeAuthApplyByServiceId.keys())
-    .find((serviceId) => serviceId === input.failedServiceId);
-  const fallbackServiceIds = failedServiceId
-    ? [failedServiceId]
-    : Array.from(input.serviceIds);
-  if (fallbackServiceIds.length === 0) {
-    return switchPolicyAllowsRestartResumeFallback(input.groupSwitchTriggerReason);
+  const serviceIds = Array.from(input.serviceIds);
+  if (serviceIds.length === 0) {
+    return switchPolicyAllowsDeclaredRestartResume(input.groupSwitchTriggerReason);
   }
-  return fallbackServiceIds.every((serviceId) => switchPolicyAllowsRestartResumeFallback(
+  return serviceIds.every((serviceId) => switchPolicyAllowsDeclaredRestartResume(
     input.groupSwitchTriggerReason,
     input.runtimeAuthApplyByServiceId.get(serviceId) ?? null,
   ));
-}
-
-function markHotApplyContinuityAsRestart(
-  continuityByServiceId: Readonly<Record<string, SessionConnectedServiceSwitchContinuity['mode']>>,
-): Record<string, SessionConnectedServiceSwitchContinuity['mode']> {
-  return Object.fromEntries(
-    Object.entries(continuityByServiceId).map(([serviceId, mode]) => [
-      serviceId,
-      mode === 'hot_apply' ? 'restart_rematerialize' : mode,
-    ]),
-  );
 }
 
 function buildConnectedServiceChildSelection(input: Readonly<{
@@ -1471,60 +1404,6 @@ async function runPostSwitchVerificationThenContinuation(
   };
 }
 
-function isRetryableHotApplyPostSwitchVerificationFailure(
-  failure: SessionConnectedServiceAuthSwitchFailure,
-): boolean {
-  return (
-    failure.errorCode === 'provider_account_adoption_mismatch'
-    || failure.errorCode === 'post_switch_verification_failed'
-  )
-    && failure.diagnostics?.failurePhase === 'post_switch_verification'
-    && failure.diagnostics.retryable === true;
-}
-
-async function restartAfterRetryableHotApplyVerificationFailure(input: SwitchContinuationRecoveryInput & Readonly<{
-  restartSession: SwitchSessionConnectedServiceAuthInput['restartSession'];
-  recoverAfterRuntimeAuthSwitch: SwitchSessionConnectedServiceAuthInput['recoverAfterRuntimeAuthSwitch'];
-  continueAfterRuntimeAuthSwitch: SwitchSessionConnectedServiceAuthInput['continueAfterRuntimeAuthSwitch'];
-  verifyProviderAccountAdoption: SwitchSessionConnectedServiceAuthInput['verifyProviderAccountAdoption'];
-  postSwitchVerificationMode: SwitchSessionConnectedServiceAuthInput['postSwitchVerificationMode'];
-  diagnosticSource: ConnectedServiceUxDiagnosticV1['source'];
-  agentId: CatalogAgentId;
-  nextByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
-}>): Promise<SessionConnectedServiceAuthSwitchPostSwitchOutcome> {
-  try {
-    await input.restartSession(input.tracked);
-  } catch (error) {
-	    return {
-	      failure: failureResult('restart_failed', {
-	        ...buildRestartFailureOptions(error, {
-	          partialState: 'runtime_auth_applied',
-	        }),
-	        diagnosticSource: input.diagnosticSource,
-	      }),
-	    };
-	  }
-  return await runPostSwitchVerificationThenContinuation({
-    recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
-    continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
-    verifyProviderAccountAdoption: input.verifyProviderAccountAdoption,
-    postSwitchVerificationMode: input.postSwitchVerificationMode,
-    diagnosticSource: input.diagnosticSource,
-    tracked: input.tracked,
-    sessionId: input.sessionId,
-    attemptId: input.attemptId,
-    normalizedBindings: input.normalizedBindings,
-    agentId: input.agentId,
-    nextByServiceId: input.nextByServiceId,
-    serviceIds: input.serviceIds,
-    action: 'restart_requested',
-    switchReason: input.switchReason,
-    ...(input.runtimeAuthSelectionsByServiceId
-      ? { runtimeAuthSelectionsByServiceId: input.runtimeAuthSelectionsByServiceId }
-      : {}),
-  });
-}
-
 function verificationFailureResult(input: Readonly<{
   serviceId: ConnectedServiceId;
   result: Exclude<ConnectedServiceAccountTransitionVerificationResult, Readonly<{ status: 'verified' | 'weakly_verified' }>>;
@@ -1589,10 +1468,6 @@ async function maybeMaterializeRuntimeAuthSelection(input: Readonly<{
     normalizedBindings: input.normalizedBindings,
     groupMetadata: input.groupMetadataByServiceId?.get(input.serviceId),
     applyReason: normalizeSwitchApplyReason(input.groupSwitchTriggerReason),
-    requireDirectLiveHotApply: shouldRequireDirectLiveHotApply(
-      input.groupSwitchTriggerReason,
-      input.runtimeAuthApply,
-    ),
     ...(input.expectedCredentialRevision === undefined
       ? {}
       : { expectedCredentialRevision: input.expectedCredentialRevision }),
@@ -1685,10 +1560,36 @@ function gatePredictiveSoftSwitchBeforeSideEffects(input: Readonly<{
   });
 }
 
+function gateRestartResumeBeforeSideEffects(input: Readonly<{
+  groupSwitchTriggerReason: string | undefined;
+  executionPolicy: SwitchSessionConnectedServiceAuthInput['executionPolicy'];
+  runtimeAuthApplyByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceRuntimeAuthApplyCapability | null>;
+  serviceIds: Iterable<ConnectedServiceId>;
+  diagnosticSource: ConnectedServiceUxDiagnosticV1['source'];
+}>): SessionConnectedServiceAuthSwitchResult | null {
+  if (
+    input.executionPolicy?.allowRestartResume !== false
+    && switchPolicyAllowsDeclaredRestartResumeForServices({
+      groupSwitchTriggerReason: input.groupSwitchTriggerReason,
+      runtimeAuthApplyByServiceId: input.runtimeAuthApplyByServiceId,
+      serviceIds: input.serviceIds,
+    })
+  ) {
+    return null;
+  }
+  return failureResult('restart_disallowed_by_execution_policy', {
+    failurePhase: 'continuity',
+    attemptedAction: 'restart_requested',
+    retryable: true,
+    diagnosticSource: input.diagnosticSource,
+  });
+}
+
 async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
   request: SessionConnectedServiceAuthSwitchRequest;
   switchReason?: ConnectedServiceSessionAuthSwitchReason;
   groupSwitchTriggerReason?: string;
+  executionPolicy: SwitchSessionConnectedServiceAuthInput['executionPolicy'];
   tracked: TrackedSession;
   trackedAgentId: CatalogAgentId;
   previousByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
@@ -1809,6 +1710,16 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
     runtimeAuthApply,
   });
   if (predictiveGate) return predictiveGate;
+  if (continuity.mode !== 'hot_apply') {
+    const restartGate = gateRestartResumeBeforeSideEffects({
+      groupSwitchTriggerReason: input.groupSwitchTriggerReason,
+      executionPolicy: input.executionPolicy,
+      runtimeAuthApplyByServiceId: new Map([[serviceId, runtimeAuthApply]]),
+      serviceIds: [serviceId],
+      diagnosticSource: input.diagnosticSource,
+    });
+    if (restartGate) return restartGate;
+  }
 
   if (input.dryRun) {
     return {
@@ -1883,54 +1794,6 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
         };
       }
       if (!hotApplyResult.ok) {
-        if (
-          hotApplyFailureRequiresRestart(hotApplyResult)
-          && switchPolicyAllowsRestartResumeFallback(input.groupSwitchTriggerReason, runtimeAuthApply)
-        ) {
-          try {
-            await input.restartSession(input.tracked);
-	          } catch (error) {
-	            input.tracked.spawnOptions = previousSpawnOptions;
-	            return failureResult('restart_failed', {
-	              ...buildRestartFailureOptions(error),
-	              diagnosticSource: input.diagnosticSource,
-	            });
-	          }
-          const restartServiceIds = new Set([serviceId]);
-          const restartContinuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
-            action: 'restart_requested',
-            serviceIds: restartServiceIds,
-            normalizedBindings: input.normalizedBindings,
-            expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
-          });
-          const continuationOutcome = await runPostSwitchVerificationThenContinuation({
-            recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
-	            continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
-	            verifyProviderAccountAdoption: input.verifyProviderAccountAdoption,
-	            postSwitchVerificationMode: input.postSwitchVerificationMode,
-	            diagnosticSource: input.diagnosticSource,
-	            tracked: input.tracked,
-            sessionId: input.request.sessionId,
-            attemptId: restartContinuationAttemptId,
-            normalizedBindings: input.normalizedBindings,
-            agentId: input.trackedAgentId,
-            nextByServiceId: input.nextByServiceId,
-            serviceIds: restartServiceIds,
-            action: 'restart_requested',
-            switchReason: input.switchReason,
-            ...(runtimeAuthSelectionsByServiceId ? { runtimeAuthSelectionsByServiceId } : {}),
-          });
-	    if (continuationOutcome.failure) return continuationOutcome.failure;
-          return {
-            ok: true,
-            action: 'restart_requested',
-            normalizedBindings: input.normalizedBindings,
-            continuityByServiceId: { [serviceId]: 'restart_rematerialize' },
-            warnings: continuity.warnings ?? [],
-            ...spreadPostSwitchVerification(continuationOutcome),
-            ...spreadContinuityProofDiagnostics(continuity.diagnostics),
-          };
-        }
         input.tracked.spawnOptions = previousSpawnOptions;
 	        return failureResult('hot_apply_failed', {
 	          serviceId: hotApplyResult.serviceId ?? serviceId,
@@ -1968,51 +1831,7 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
           : {}),
         ...(runtimeAuthSelectionsByServiceId ? { runtimeAuthSelectionsByServiceId } : {}),
       });
-      if (continuationOutcome.failure) {
-        if (
-          isRetryableHotApplyPostSwitchVerificationFailure(continuationOutcome.failure)
-          && switchPolicyAllowsRestartResumeFallback(input.groupSwitchTriggerReason, runtimeAuthApply)
-        ) {
-          const restartServiceIds = new Set([serviceId]);
-          const restartContinuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
-            action: 'restart_requested',
-            serviceIds: restartServiceIds,
-            normalizedBindings: input.normalizedBindings,
-            expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
-          });
-          const restartContinuationFailure = await restartAfterRetryableHotApplyVerificationFailure({
-            restartSession: input.restartSession,
-            recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
-	            continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
-	            verifyProviderAccountAdoption: input.verifyProviderAccountAdoption,
-	            postSwitchVerificationMode: input.postSwitchVerificationMode,
-	            diagnosticSource: input.diagnosticSource,
-	            tracked: input.tracked,
-            sessionId: input.request.sessionId,
-            attemptId: restartContinuationAttemptId,
-            normalizedBindings: input.normalizedBindings,
-            agentId: input.trackedAgentId,
-            nextByServiceId: input.nextByServiceId,
-            serviceIds: restartServiceIds,
-            action: 'restart_requested',
-            switchReason: input.switchReason,
-            ...(runtimeAuthSelectionsByServiceId ? { runtimeAuthSelectionsByServiceId } : {}),
-          });
-	          if (restartContinuationFailure.failure) {
-	            return withSwitchAttemptedAction(restartContinuationFailure.failure, 'hot_applied');
-	          }
-          return {
-            ok: true,
-            action: 'restart_requested',
-            normalizedBindings: input.normalizedBindings,
-            continuityByServiceId: { [serviceId]: 'restart_rematerialize' },
-            warnings: continuity.warnings ?? [],
-            ...spreadPostSwitchVerification(restartContinuationFailure),
-            ...spreadContinuityProofDiagnostics(continuity.diagnostics),
-          };
-        }
-        return continuationOutcome.failure;
-      }
+      if (continuationOutcome.failure) return continuationOutcome.failure;
       return {
         ok: true,
         action: 'hot_applied',
@@ -2242,6 +2061,7 @@ export async function switchSessionConnectedServiceAuth(
           // reach its continuation calls so `pre_turn_group_policy` replay suppression engages (F5).
           switchReason: input.switchReason,
           groupSwitchTriggerReason: input.groupSwitchTriggerReason,
+          executionPolicy: input.executionPolicy,
           tracked,
           trackedAgentId,
           previousByServiceId,
@@ -2397,14 +2217,6 @@ export async function switchSessionConnectedServiceAuth(
         : diagnosticSource === 'runtime_auth_recovery'
           ? 'metadata_updated'
           : 'restart_requested';
-      if (action === 'restart_requested' && input.executionPolicy?.allowRestartResume === false) {
-        return failureResult('restart_disallowed_by_execution_policy', {
-          failurePhase: 'continuity',
-          attemptedAction: 'restart_requested',
-          retryable: true,
-          diagnosticSource,
-        });
-      }
       const predictiveGate = gatePredictiveSoftSwitchBeforeSideEffects({
         groupSwitchTriggerReason: input.groupSwitchTriggerReason,
         sessionId: input.request.sessionId,
@@ -2418,6 +2230,16 @@ export async function switchSessionConnectedServiceAuth(
         runtimeAuthApply: Array.from(runtimeAuthApplyByServiceId.values()).find((capability) => capability !== null) ?? null,
       });
       if (predictiveGate) return predictiveGate;
+      if (action === 'restart_requested') {
+        const restartGate = gateRestartResumeBeforeSideEffects({
+          groupSwitchTriggerReason: input.groupSwitchTriggerReason,
+          executionPolicy: input.executionPolicy,
+          runtimeAuthApplyByServiceId,
+          serviceIds: changedServiceIds,
+          diagnosticSource,
+        });
+        if (restartGate) return restartGate;
+      }
       if (input.dryRun) {
         return {
           ok: true,
@@ -2483,68 +2305,8 @@ export async function switchSessionConnectedServiceAuth(
             };
           }
           if (!hotApplyResult.ok) {
-            if (
-              hotApplyFailureRequiresRestart(hotApplyResult)
-              && input.executionPolicy?.allowRestartResume !== false
-              && switchPolicyAllowsRestartResumeFallbackForServices({
-                groupSwitchTriggerReason: input.groupSwitchTriggerReason,
-                runtimeAuthApplyByServiceId,
-                serviceIds: changedServiceIdSet,
-                failedServiceId: hotApplyResult.serviceId,
-              })
-            ) {
-              try {
-                await input.restartSession(tracked);
-              } catch (error) {
-                const rolledBack = await rollbackPersistedSessionBindings({
-                  persistSessionBindings: input.persistSessionBindings,
-                  sessionId: input.request.sessionId,
-                  previousBindings,
-                  connectedServiceMaterializationIdentityV1,
-                });
-                tracked.spawnOptions = previousSpawnOptions;
-                if (!rolledBack) {
-	                  return failureResult('bindings_rollback_failed', {
-	                    failurePhase: 'rollback',
-	                    partialState: 'metadata_may_reference_new_binding',
-	                    diagnosticSource,
-	                  });
-	                }
-	                return failureResult('restart_failed', {
-	                  ...buildRestartFailureOptions(error),
-	                  diagnosticSource,
-	                });
-              }
-              action = 'restart_requested';
-              Object.assign(continuityByServiceId, markHotApplyContinuityAsRestart(continuityByServiceId));
-              const restartContinuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
-                action,
-                serviceIds: changedServiceIdSet,
-                normalizedBindings: normalized.normalized,
-                expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
-              });
-              const continuationOutcome = await runPostSwitchVerificationThenContinuation({
-                recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
-                continueAfterRuntimeAuthSwitch,
-	                verifyProviderAccountAdoption: input.verifyProviderAccountAdoption,
-	                postSwitchVerificationMode: input.postSwitchVerificationMode,
-	                diagnosticSource,
-	                tracked,
-                sessionId: input.request.sessionId,
-                attemptId: restartContinuationAttemptId,
-                normalizedBindings: normalized.normalized,
-                agentId: trackedAgentId,
-                nextByServiceId,
-                serviceIds: changedServiceIdSet,
-                action,
-                switchReason: input.switchReason,
-                ...(runtimeAuthSelectionsByServiceId.size === 0 ? {} : { runtimeAuthSelectionsByServiceId }),
-              });
-	              if (continuationOutcome.failure) {
-	                return withSwitchAttemptedAction(continuationOutcome.failure, 'hot_applied');
-	              }
-              Object.assign(postSwitchVerificationByServiceId, continuationOutcome.verificationByServiceId ?? {});
-            } else {
+            const partialState = readHotApplyFailurePartialState(hotApplyResult.serviceResultsByServiceId);
+            if (!partialState) {
               const rolledBack = await rollbackPersistedSessionBindings({
                 persistSessionBindings: input.persistSessionBindings,
                 sessionId: input.request.sessionId,
@@ -2559,18 +2321,18 @@ export async function switchSessionConnectedServiceAuth(
 	                  diagnosticSource,
 	                });
 	              }
-	              return failureResult('hot_apply_failed', {
-	                serviceId: hotApplyResult.serviceId,
-	                continuityByServiceId,
-	                failurePhase: 'hot_apply',
-	                diagnosticSource,
-	                partialState: readHotApplyFailurePartialState(hotApplyResult.serviceResultsByServiceId),
+            }
+	            return failureResult('hot_apply_failed', {
+	              serviceId: hotApplyResult.serviceId,
+	              continuityByServiceId,
+	              failurePhase: 'hot_apply',
+	              diagnosticSource,
+	              ...(partialState ? { partialState } : {}),
                 serviceResultsByServiceId: hotApplyResult.serviceResultsByServiceId,
                 ...(hotApplyResult.underlyingError
                   ? { underlyingError: sanitizeConnectedServiceSwitchUnderlyingError(hotApplyResult.underlyingError) }
                   : {}),
               });
-            }
           } else {
             input.registerHotApplyTargets(
               tracked,
@@ -2596,52 +2358,8 @@ export async function switchSessionConnectedServiceAuth(
                 : {}),
               ...(runtimeAuthSelectionsByServiceId.size === 0 ? {} : { runtimeAuthSelectionsByServiceId }),
             });
-            if (continuationOutcome.failure) {
-              if (
-                isRetryableHotApplyPostSwitchVerificationFailure(continuationOutcome.failure)
-                && input.executionPolicy?.allowRestartResume !== false
-                && switchPolicyAllowsRestartResumeFallbackForServices({
-                groupSwitchTriggerReason: input.groupSwitchTriggerReason,
-                runtimeAuthApplyByServiceId,
-                serviceIds: changedServiceIdSet,
-              })
-              ) {
-                action = 'restart_requested';
-                Object.assign(continuityByServiceId, markHotApplyContinuityAsRestart(continuityByServiceId));
-                const restartContinuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
-                  action,
-                  serviceIds: changedServiceIdSet,
-                  normalizedBindings: normalized.normalized,
-                  expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
-                });
-                const restartContinuationFailure = await restartAfterRetryableHotApplyVerificationFailure({
-                  restartSession: input.restartSession,
-                  recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
-                  continueAfterRuntimeAuthSwitch,
-	                  verifyProviderAccountAdoption: input.verifyProviderAccountAdoption,
-	                  postSwitchVerificationMode: input.postSwitchVerificationMode,
-	                  diagnosticSource,
-	                  tracked,
-                  sessionId: input.request.sessionId,
-                  attemptId: restartContinuationAttemptId,
-                  normalizedBindings: normalized.normalized,
-                  agentId: trackedAgentId,
-                  nextByServiceId,
-                  serviceIds: changedServiceIdSet,
-                  action,
-                  switchReason: input.switchReason,
-                  ...(runtimeAuthSelectionsByServiceId.size === 0 ? {} : { runtimeAuthSelectionsByServiceId }),
-                });
-	                if (restartContinuationFailure.failure) {
-	                  return withSwitchAttemptedAction(restartContinuationFailure.failure, 'hot_applied');
-	                }
-                Object.assign(postSwitchVerificationByServiceId, restartContinuationFailure.verificationByServiceId ?? {});
-              } else {
-                return continuationOutcome.failure;
-              }
-            } else {
-              Object.assign(postSwitchVerificationByServiceId, continuationOutcome.verificationByServiceId ?? {});
-            }
+            if (continuationOutcome.failure) return continuationOutcome.failure;
+            Object.assign(postSwitchVerificationByServiceId, continuationOutcome.verificationByServiceId ?? {});
           }
         } else {
           try {
