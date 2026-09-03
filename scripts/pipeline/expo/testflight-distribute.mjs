@@ -375,29 +375,51 @@ async function attachBuildToGroups({ request, ascAppId, build, groups }) {
     const groupId = String(group?.id ?? '').trim();
     if (!groupId || existingGroupIds.has(groupId)) continue;
     const groupLabel = String(group?.attributes?.name ?? '').trim() || groupId;
+    try {
+      await request({
+        method: 'POST',
+        url: buildAscBaseUrl(`/v1/betaGroups/${groupId}/relationships/builds`),
+        body: {
+          data: [{ type: 'builds', id: buildId }],
+        },
+      });
+      console.log(`[pipeline] attached build ${buildId} to TestFlight group ${groupLabel}`);
+      continue;
+    } catch (error) {
+      if (!(error instanceof AscApiError) || error.status !== 404) throw error;
+      const state = await reconcileGroupAttachment({ request, ascAppId, buildId, groupId });
+      if (state.attached) {
+        console.log(`[pipeline] confirmed build ${buildId} is already attached to TestFlight group ${groupLabel}`);
+        continue;
+      }
+      if (!state.groupExists) throw error;
+    }
+
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        console.log(
+          `[pipeline] retrying TestFlight group attachment through build relationship after state reconciliation ` +
+          `(group=${groupLabel}, attempt=${attempt}/${maxAttempts})`,
+        );
         await request({
           method: 'POST',
-          url: buildAscBaseUrl(`/v1/betaGroups/${groupId}/relationships/builds`),
+          url: buildAscBaseUrl(`/v1/builds/${buildId}/relationships/betaGroups`),
           body: {
-            data: [{ type: 'builds', id: buildId }],
+            data: [{ type: 'betaGroups', id: groupId }],
           },
         });
         console.log(`[pipeline] attached build ${buildId} to TestFlight group ${groupLabel}`);
         break;
       } catch (error) {
-        if (!(error instanceof AscApiError) || error.status !== 404) throw error;
         const state = await reconcileGroupAttachment({ request, ascAppId, buildId, groupId });
         if (state.attached) {
           console.log(`[pipeline] confirmed build ${buildId} is already attached to TestFlight group ${groupLabel}`);
           break;
         }
-        if (!state.groupExists || attempt === maxAttempts) throw error;
-        console.log(
-          `[pipeline] retrying TestFlight group attachment after state reconciliation ` +
-          `(group=${groupLabel}, attempt=${attempt + 1}/${maxAttempts})`,
+        const transient = error instanceof AscApiError && (
+          [404, 408, 425, 429].includes(error.status) || error.status >= 500
         );
+        if (!state.groupExists || !transient || attempt === maxAttempts) throw error;
         await sleep(retryDelayMs);
       }
     }

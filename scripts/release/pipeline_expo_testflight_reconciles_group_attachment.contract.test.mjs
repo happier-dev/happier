@@ -20,7 +20,6 @@ test('TestFlight distribution revalidates state before retrying a contradictory 
     preloadPath,
     `import fs from 'node:fs';
 
-let attachmentAttempts = 0;
 globalThis.fetch = async (url, init = {}) => {
   const parsed = new URL(url);
   const pathname = parsed.pathname;
@@ -54,12 +53,11 @@ globalThis.fetch = async (url, init = {}) => {
     return Response.json({ data: { type: 'builds', id: 'build-1', relationships: { betaGroups: { data: [] } } } });
   }
   if (pathname === '/v1/betaGroups/${groupId}/relationships/builds' && method === 'POST') {
-    attachmentAttempts += 1;
-    if (attachmentAttempts === 1) {
-      return Response.json({
-        errors: [{ status: '404', code: 'NOT_FOUND', title: 'The specified resource does not exist' }],
-      }, { status: 404 });
-    }
+    return Response.json({
+      errors: [{ status: '404', code: 'NOT_FOUND', title: 'The specified resource does not exist' }],
+    }, { status: 404 });
+  }
+  if (pathname === '/v1/builds/build-1/relationships/betaGroups' && method === 'POST') {
     return Response.json({});
   }
   return Response.json({ errors: [{ code: 'UNEXPECTED_TEST_URL', detail: method + ' ' + pathname }] }, { status: 500 });
@@ -95,13 +93,11 @@ globalThis.fetch = async (url, init = {}) => {
 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const requests = fs.readFileSync(requestsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-    assert.equal(
-      requests.filter(({ method, pathname }) => method === 'POST' && pathname.endsWith('/relationships/builds')).length,
-      2,
-    );
+    assert.equal(requests.filter(({ method, pathname }) => method === 'POST' && pathname.endsWith('/relationships/builds')).length, 1);
+    assert.equal(requests.filter(({ method, pathname }) => method === 'POST' && pathname.endsWith('/relationships/betaGroups')).length, 1);
     assert.ok(requests.some(({ method, pathname }) => method === 'GET' && pathname === '/v1/builds/build-1'));
     assert.ok(requests.filter(({ method, pathname }) => method === 'GET' && pathname === '/v1/apps/6761304097/betaGroups').length >= 2);
-    assert.match(result.stdout, /retrying TestFlight group attachment after state reconciliation/i);
+    assert.match(result.stdout, /retrying TestFlight group attachment through build relationship after state reconciliation/i);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
