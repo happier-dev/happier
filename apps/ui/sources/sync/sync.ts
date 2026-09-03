@@ -1610,6 +1610,7 @@ class Sync {
               throw new Error('Session draft repository scope is unavailable');
           }
           configureSessionDraftRepository({
+              scope,
               transport: this.sessionDraftSyncEnabled
                   ? createApiSessionDraftsTransport({ credentials })
                   : undefined,
@@ -1680,6 +1681,18 @@ class Sync {
               return true;
             },
           });
+      }
+
+      private async refreshSessionDraftRepositoryForSync(params: Readonly<{
+          forceSnapshotHydration?: boolean;
+      }> = {}): Promise<void> {
+          try {
+              await this.ensureSessionDraftRepositoryRuntimeReady(params);
+          } catch {
+              // Drafts are locally durable and the hydration gate retries after a failed run.
+              // A draft-only outage must not suppress already-loaded account projections.
+              log.log('[session-drafts] Snapshot hydration unavailable; retaining local drafts and retrying on the next sync');
+          }
       }
 
       /**
@@ -4480,7 +4493,7 @@ class Sync {
                           return;
                       }
 
-                      await this.ensureSessionDraftRepositoryRuntimeReady({
+                      await this.refreshSessionDraftRepositoryForSync({
                           forceSnapshotHydration: reason === 'manual' || this.sessionDraftOfflineCatchUpPending,
                       });
                       if (!shouldContinue()) {
@@ -4569,9 +4582,6 @@ class Sync {
           if (this.isBootstrapSyncRunning) {
               return;
           }
-          if (this.pauseController.isPaused()) {
-              return;
-          }
           await this.pauseController.waitUntilResumed();
           if (!this.credentials) {
               return;
@@ -4591,19 +4601,20 @@ class Sync {
               // Bootstrap concurrency is slightly higher to reduce time-to-first-render.
               const bootstrapConcurrencyLimit = this.syncTuning.bootstrapConcurrencyLimit;
 
-              // Phase 1: load core UI state (settings/profile) while also loading sessions/machines.
+              // Phase 1: load core UI state and every projection consumed immediately after readiness.
               await runTasksWithLimit(
                   [
                       () => invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                      () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.purchasesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                   ],
                   bootstrapConcurrencyLimit
               );
 
-              await this.ensureSessionDraftRepositoryRuntimeReady();
+              await this.refreshSessionDraftRepositoryForSync();
 
               await this.rearmPendingOutboxForActiveScope();
 
@@ -4626,7 +4637,6 @@ class Sync {
               // Phase 2: load non-critical lists.
               await runTasksWithLimit(
                   [
-                      () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.automationsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.todosSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.friendsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
@@ -4668,7 +4678,7 @@ class Sync {
               concurrencyLimit
           );
 
-          await this.ensureSessionDraftRepositoryRuntimeReady({ forceSnapshotHydration: true });
+          await this.refreshSessionDraftRepositoryForSync({ forceSnapshotHydration: true });
 
           // Catch up transcripts only for sessions that are already loaded locally AND are live
           // content consumers right now. The catch-up policy already no-ops for hidden

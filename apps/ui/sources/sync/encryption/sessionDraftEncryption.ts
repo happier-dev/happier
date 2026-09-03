@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { SessionDraftRepositoryCipher } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { SessionDraftContextUnavailableError } from '@/sync/ops/sessionDrafts/sessionDraftCipherError';
 
 type SessionContentEncryption = Readonly<{
     encryptRaw(payload: unknown): Promise<string>;
@@ -52,9 +53,9 @@ export function createSessionDraftCipher(options: SessionDraftCipherOptions): Se
                     };
             }
             const context = options.getSessionContext(address.sessionId);
-            if (!context) throw new Error('Session draft encryption context is unavailable');
+            if (!context) throw new SessionDraftContextUnavailableError();
             if (context.mode === 'plain') return { t: 'plain', v: payload };
-            if (!context.encryption) throw new Error('Session draft encryption key is unavailable');
+            if (!context.encryption) throw new SessionDraftContextUnavailableError();
             return { t: 'encrypted', c: await context.encryption.encryptRaw(payload) };
         },
         open: async (address, content): Promise<SessionDraftDocumentV1 | null> => {
@@ -71,9 +72,10 @@ export function createSessionDraftCipher(options: SessionDraftCipherOptions): Se
                 return opened ? parseBoundPayload(address, opened.value) : null;
             }
             const context = options.getSessionContext(address.sessionId);
-            if (!context) return null;
+            if (!context) throw new SessionDraftContextUnavailableError();
             if (context.mode === 'plain') return content.t === 'plain' ? parseBoundPayload(address, content.v) : null;
-            if (content.t !== 'encrypted' || !context.encryption) return null;
+            if (!context.encryption) throw new SessionDraftContextUnavailableError();
+            if (content.t !== 'encrypted') return null;
             return parseBoundPayload(address, await context.encryption.decryptRaw(content.c));
         },
     };

@@ -186,6 +186,56 @@ describe('sync AppState pause/resume', () => {
         expect(rearm).toHaveBeenCalledTimes(2);
     });
 
+    it('resumes a paused bootstrap and exposes hydrated artifacts when draft hydration is unavailable', async () => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const events: string[] = [];
+        const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+
+        (sync as any).credentials = { token: 'token', secret: 'secret' };
+        (sync as any).serverID = 'account-a';
+        vi.spyOn(sync as any, 'ensureSessionDraftRepositoryRuntimeReady').mockRejectedValue(new Error('draft snapshot unavailable'));
+        vi.spyOn(sync as any, 'rearmPendingOutboxForActiveScope').mockResolvedValue(undefined);
+        vi.spyOn(storage.getState(), 'applyReady').mockImplementation(() => {
+            events.push('ready');
+        });
+
+        for (const field of [
+            'settingsSync',
+            'profileSync',
+            'sessionsSync',
+            'machinesSync',
+            'purchasesSync',
+            'automationsSync',
+            'todosSync',
+            'friendsSync',
+            'friendRequestsSync',
+            'feedSync',
+            'pushTokenSync',
+            'nativeUpdateSync',
+        ]) {
+            (sync as any)[field] = {
+                invalidateCoalesced: vi.fn(() => events.push(field)),
+                awaitQueue: vi.fn(async () => undefined),
+            };
+        }
+        (sync as any).artifactsSync = {
+            invalidateCoalesced: vi.fn(() => events.push('artifacts')),
+            awaitQueue: vi.fn(async () => undefined),
+        };
+
+        pauseController.pause();
+        const bootstrap = (sync as any).bootstrapSync() as Promise<void>;
+        await Promise.resolve();
+        expect(events).toEqual([]);
+
+        pauseController.resume();
+        await bootstrap;
+
+        expect(events).toContain('artifacts');
+        expect(events.indexOf('artifacts')).toBeLessThan(events.indexOf('ready'));
+    });
+
     it('pauses on background and resumes on active (disconnect/connect socket + invalidate reachability)', async () => {
         const { sync } = await import('./sync');
 

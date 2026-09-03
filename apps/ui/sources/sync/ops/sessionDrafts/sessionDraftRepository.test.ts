@@ -12,6 +12,7 @@ import {
     type SessionDraftRepositoryCipher,
     type SessionDraftRepositoryTransport,
 } from './sessionDraftRepository';
+import { SessionDraftContextUnavailableError } from './sessionDraftCipherError';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
 const sessionAddress = { kind: 'session', sessionId: 'session-a' } as const;
@@ -1460,6 +1461,229 @@ describe('sessionDraftRepository', () => {
         expect(transport.read).not.toHaveBeenCalled();
     });
 
+    it('hydrates openable records while preserving a listed draft whose session context is unavailable', async () => {
+        const baseCipher = plainCipher();
+        const unavailableAddress = { kind: 'session', sessionId: 'session-b' } as const;
+        const laterAddress = { kind: 'newSession', draftId: uuid(235) } as const;
+        const firstDocument = createSessionDocument('first', uuid(233));
+        const unavailableDocument = createSessionDocument('unavailable', uuid(234));
+        const laterDocument = createNewSessionDocument('later', uuid(236));
+        const records = await Promise.all([
+            { address: sessionAddress, document: firstDocument },
+            { address: unavailableAddress, document: unavailableDocument },
+            { address: laterAddress, document: laterDocument },
+        ].map(async ({ address, document }) => ({
+            address,
+            revision: 1,
+            content: await baseCipher.seal(address, document),
+            createdAt: 1,
+            updatedAt: 1,
+        })));
+        const transport: SessionDraftRepositoryTransport = {
+            list: vi.fn(async () => ({ items: records, nextAfter: undefined })),
+            read: vi.fn(async () => ({ status: 'absent' as const })),
+            mutate: vi.fn(async () => { throw new Error('not expected'); }),
+        };
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            transport,
+            syncEnabled: true,
+            cipher: {
+                seal: baseCipher.seal,
+                open: vi.fn(async (address, content) => {
+                    if (address.kind === 'session' && address.sessionId === unavailableAddress.sessionId) {
+                        throw new SessionDraftContextUnavailableError();
+                    }
+                    return baseCipher.open(address, content);
+                }),
+            },
+            randomUUID: () => uuid(237),
+            now: () => 2,
+        });
+        repository.writeExistingSessionDraft({
+            scope,
+            sessionId: unavailableAddress.sessionId,
+            patch: { text: 'preserve locally' },
+        });
+
+        await repository.ensureSessionDraftRepositoryHydrated(scope);
+
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.document).toEqual(firstDocument);
+        expect(repository.getSessionDraftSnapshot(scope, laterAddress)?.document).toEqual(laterDocument);
+        expect(repository.listNewSessionDraftProjections(scope).map((draft) => draft.draftId)).toEqual([
+            laterAddress.draftId,
+        ]);
+        expect(repository.getSessionDraftSnapshot(scope, unavailableAddress)).toMatchObject({
+            document: { composer: { text: { value: 'preserve locally' } } },
+        });
+        expect(transport.read).not.toHaveBeenCalled();
+    });
+
+    it('preserves a locally known draft when exact-read hydration cannot load its session context', async () => {
+        const baseCipher = plainCipher();
+        const remoteDocument = createSessionDocument('remote', uuid(238));
+        const remoteRecord = {
+            address: sessionAddress,
+            revision: 2,
+            content: await baseCipher.seal(sessionAddress, remoteDocument),
+            createdAt: 1,
+            updatedAt: 2,
+        };
+        const transport: SessionDraftRepositoryTransport = {
+            list: vi.fn(async () => ({ items: [], nextAfter: undefined })),
+            read: vi.fn(async () => ({ status: 'present' as const, record: remoteRecord })),
+            mutate: vi.fn(),
+        };
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            transport,
+            syncEnabled: true,
+            cipher: {
+                seal: baseCipher.seal,
+                open: vi.fn(async () => {
+                    throw new SessionDraftContextUnavailableError();
+                }),
+            },
+            randomUUID: () => uuid(239),
+            now: () => 3,
+        });
+        repository.writeExistingSessionDraft({ scope, sessionId: sessionAddress.sessionId, patch: { text: 'local' } });
+
+        await repository.ensureSessionDraftRepositoryHydrated(scope);
+
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
+            document: { composer: { text: { value: 'local' } } },
+        });
+        expect(transport.read).toHaveBeenCalledWith(sessionAddress);
+    });
+
+    it('does not silently classify invalid new-session content as unavailable session context', async () => {
+        const address = { kind: 'newSession', draftId: uuid(238) } as const;
+        const document = createNewSessionDocument('invalid', uuid(239));
+        const cipher = plainCipher();
+        const transport: SessionDraftRepositoryTransport = {
+            list: vi.fn(async () => ({
+                items: [{
+                    address,
+                    revision: 1,
+                    content: await cipher.seal(address, document),
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+                nextAfter: undefined,
+            })),
+            read: vi.fn(async () => ({ status: 'absent' as const })),
+            mutate: vi.fn(async () => { throw new Error('not expected'); }),
+        };
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            transport,
+            syncEnabled: true,
+            cipher: {
+                seal: cipher.seal,
+                open: vi.fn(async () => null),
+            },
+        });
+
+        await expect(repository.ensureSessionDraftRepositoryHydrated(scope))
+            .rejects.toThrow(`Unable to open session draft new-session/${address.draftId}`);
+        expect(repository.listNewSessionDraftProjections(scope)).toEqual([]);
+    });
+
+    it('does not redirect a pending flush through a transport configured for another account', async () => {
+        const sealStarted = createDeferred<void>();
+        const releaseSeal = createDeferred<void>();
+        const baseCipher = plainCipher();
+        const firstTransport = createRemote().transport;
+        const secondTransport = createRemote().transport;
+        const secondScope = { serverId: 'server-a', accountId: 'account-b' } as const;
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            scope,
+            transport: firstTransport,
+            syncEnabled: true,
+            cipher: {
+                open: baseCipher.open,
+                seal: vi.fn(async (address, document) => {
+                    sealStarted.resolve();
+                    await releaseSeal.promise;
+                    return baseCipher.seal(address, document);
+                }),
+            },
+            randomUUID: () => uuid(240),
+            now: () => 2,
+        });
+        repository.writeExistingSessionDraft({ scope, sessionId: sessionAddress.sessionId, patch: { text: 'account A' } });
+
+        const flush = repository.flushSessionDraft({ scope, address: sessionAddress });
+        await sealStarted.promise;
+        repository.configure({
+            scope: secondScope,
+            transport: secondTransport,
+            cipher: baseCipher,
+            syncEnabled: true,
+        });
+        releaseSeal.resolve();
+
+        await expect(flush).resolves.toEqual({ status: 'pending' });
+        expect(firstTransport.mutate).not.toHaveBeenCalled();
+        expect(secondTransport.mutate).not.toHaveBeenCalled();
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
+            status: 'pending',
+            document: { composer: { text: { value: 'account A' } } },
+        });
+    });
+
+    it('does not apply a staged snapshot after the repository is configured for another account', async () => {
+        const listStarted = createDeferred<void>();
+        const releaseList = createDeferred<void>();
+        const address = { kind: 'newSession', draftId: uuid(241) } as const;
+        const document = createNewSessionDocument('account A remote', uuid(242));
+        const cipher = plainCipher();
+        const firstTransport: SessionDraftRepositoryTransport = {
+            list: vi.fn(async () => {
+                listStarted.resolve();
+                await releaseList.promise;
+                return {
+                    items: [{
+                        address,
+                        revision: 1,
+                        content: await cipher.seal(address, document),
+                        createdAt: 1,
+                        updatedAt: 1,
+                    }],
+                    nextAfter: undefined,
+                };
+            }),
+            read: vi.fn(async () => ({ status: 'absent' as const })),
+            mutate: vi.fn(async () => { throw new Error('not expected'); }),
+        };
+        const secondTransport = createRemote().transport;
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            scope,
+            transport: firstTransport,
+            syncEnabled: true,
+            cipher,
+        });
+
+        const hydration = repository.ensureSessionDraftRepositoryHydrated(scope);
+        await listStarted.promise;
+        repository.configure({
+            scope: { serverId: 'server-a', accountId: 'account-b' },
+            transport: secondTransport,
+            syncEnabled: true,
+            cipher,
+        });
+        releaseList.resolve();
+        await hydration;
+
+        expect(repository.getSessionDraftSnapshot(scope, address)).toBeNull();
+        expect(secondTransport.read).not.toHaveBeenCalled();
+        expect(secondTransport.list).not.toHaveBeenCalled();
+        expect(secondTransport.mutate).not.toHaveBeenCalled();
+    });
+
     it('keeps an immediate local edit durable when a later snapshot page fails', async () => {
         const storage = createMemoryStorage();
         let resolveFirstPage: ((value: { items: []; nextAfter: string }) => void) | undefined;
@@ -1588,6 +1812,19 @@ function createSessionDocument(text: string, mutationId: string): ExistingSessio
             agentContinuation: { mutationId: uuid(53), value: null },
             executionRunDelivery: { mutationId: uuid(54), value: null },
         } },
+        extensions: {},
+    };
+}
+
+function createNewSessionDocument(text: string, mutationId: string): NewSessionDraftDocument {
+    return {
+        v: 1 as const,
+        composer: {
+            text: { mutationId, value: text },
+            mentions: { mutationId: uuid(55), value: [] },
+            attachments: { mutationId: uuid(56), value: [] },
+        },
+        target: { kind: 'newSession' as const, authoring: {} },
         extensions: {},
     };
 }

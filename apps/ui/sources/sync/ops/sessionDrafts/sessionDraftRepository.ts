@@ -17,9 +17,11 @@ import {
 } from '@happier-dev/protocol';
 
 import { randomUUID as platformRandomUUID } from '@/platform/randomUUID';
+import { log } from '@/log';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { getPersistenceStorage } from '@/sync/domains/state/persistence';
+import { isSessionDraftContextUnavailableError } from './sessionDraftCipherError';
 import type { NewSessionDraftLocalState } from './newSessionDraftLocalState';
 
 export type SessionDraftRepositoryScope = ServerAccountScope;
@@ -186,11 +188,25 @@ type ScopeMutationBatch = {
 
 type RepositoryOptions = Readonly<{
     storage: SessionDraftRepositoryStorage;
+    scope?: SessionDraftRepositoryScope;
     transport?: SessionDraftRepositoryTransport;
     cipher: SessionDraftRepositoryCipher;
     syncEnabled: boolean;
     randomUUID?: () => string;
     now?: () => number;
+}>;
+
+type RepositoryRuntime = Readonly<{
+    epoch: number;
+    scopeKey: string | null;
+    transport?: SessionDraftRepositoryTransport;
+    cipher: SessionDraftRepositoryCipher;
+    syncEnabled: boolean;
+}>;
+
+type SyncRepositoryRuntime = RepositoryRuntime & Readonly<{
+    transport: SessionDraftRepositoryTransport;
+    syncEnabled: true;
 }>;
 
 const STORAGE_PREFIX = 'session-drafts-repository-v1';
@@ -418,30 +434,52 @@ export class SessionDraftRepository {
     private readonly snapshotCache = new WeakMap<PersistedReplica, SessionDraftSnapshot>();
     private readonly existingProjectionCache = new WeakMap<PersistedReplica, ExistingSessionDraftProjection | null>();
     private readonly newListProjectionCache = new Map<string, readonly NewSessionDraftProjection[]>();
-    private transport?: SessionDraftRepositoryTransport;
-    private cipher: SessionDraftRepositoryCipher;
-    private syncEnabled: boolean;
+    private runtime: RepositoryRuntime;
     private readonly storage: SessionDraftRepositoryStorage;
     private readonly randomUUID: () => string;
     private readonly now: () => number;
 
     constructor(options: RepositoryOptions) {
         this.storage = options.storage;
-        this.transport = options.transport;
-        this.cipher = options.cipher;
-        this.syncEnabled = options.syncEnabled;
+        this.runtime = {
+            epoch: 0,
+            scopeKey: options.scope ? serverAccountScopeKeySuffix(options.scope) : null,
+            transport: options.transport,
+            cipher: options.cipher,
+            syncEnabled: options.syncEnabled,
+        };
         this.randomUUID = options.randomUUID ?? platformRandomUUID;
         this.now = options.now ?? Date.now;
     }
 
     configure(options: Readonly<{
+        scope?: SessionDraftRepositoryScope;
         transport?: SessionDraftRepositoryTransport;
         cipher?: SessionDraftRepositoryCipher;
         syncEnabled: boolean;
     }>): void {
-        this.transport = options.transport;
-        if (options.cipher) this.cipher = options.cipher;
-        this.syncEnabled = options.syncEnabled;
+        this.runtime = {
+            epoch: this.runtime.epoch + 1,
+            scopeKey: options.scope ? serverAccountScopeKeySuffix(options.scope) : null,
+            transport: options.transport,
+            cipher: options.cipher ?? this.runtime.cipher,
+            syncEnabled: options.syncEnabled,
+        };
+    }
+
+    private syncRuntime(scope: SessionDraftRepositoryScope): SyncRepositoryRuntime | null {
+        const runtime = this.runtime;
+        if (!runtime.syncEnabled || !runtime.transport) return null;
+        if (runtime.scopeKey !== null && runtime.scopeKey !== this.scopeKey(scope)) return null;
+        return runtime as SyncRepositoryRuntime;
+    }
+
+    private isCurrentRuntime(runtime: RepositoryRuntime): boolean {
+        return runtime.epoch === this.runtime.epoch;
+    }
+
+    private isSyncEnabledForScope(scope: SessionDraftRepositoryScope): boolean {
+        return this.syncRuntime(scope) !== null;
     }
 
     private scopeKey(scope: SessionDraftRepositoryScope): string {
@@ -693,7 +731,7 @@ export class SessionDraftRepository {
             baseRawDocument: existing?.baseRawDocument ?? null,
             localRawDocument: document,
             pendingFieldMutations: pending,
-            status: this.syncEnabled ? 'pending' : 'clean',
+            status: this.isSyncEnabledForScope(scope) ? 'pending' : 'clean',
             conflict: existing?.conflict ?? null,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -879,7 +917,7 @@ export class SessionDraftRepository {
             localRawDocument: document,
             pendingFieldMutations: pending,
             updatedAt: this.now(),
-            status: this.syncEnabled ? 'pending' : 'clean',
+            status: this.isSyncEnabledForScope(params.scope) ? 'pending' : 'clean',
             conflict: null,
             materialized: params.address.kind === 'newSession' ? meaningfulContent : meaningfulContent,
             deleteWhenEmpty: !meaningfulContent,
@@ -891,15 +929,18 @@ export class SessionDraftRepository {
     async deleteSessionDraft(params: Readonly<{ scope: SessionDraftRepositoryScope; address: SessionDraftAddressV1 }>): Promise<void> {
         const replica = this.readReplica(params.scope, params.address);
         if (!replica) return;
-        if (!this.syncEnabled || !this.transport) {
+        const runtime = this.syncRuntime(params.scope);
+        if (!runtime) {
+            if (this.runtime.syncEnabled) return;
             this.deleteReplica(params.scope, params.address);
             return;
         }
-        const result = await this.transport.mutate({
+        const result = await runtime.transport.mutate({
             address: params.address,
             expectedRevision: replica.baseRevision,
             content: null,
         });
+        if (!this.isCurrentRuntime(runtime)) return;
         if (result.status === 'updated') {
             this.deleteReplica(params.scope, params.address);
         } else {
@@ -917,7 +958,9 @@ export class SessionDraftRepository {
     }
 
     private async flushLoop(params: Readonly<{ scope: SessionDraftRepositoryScope; address: SessionDraftAddressV1 }>): Promise<SessionDraftFlushResult> {
-        if (!this.syncEnabled || !this.transport) {
+        const runtime = this.syncRuntime(params.scope);
+        if (!runtime) {
+            if (this.runtime.syncEnabled) return { status: 'pending' };
             const replica = this.readReplica(params.scope, params.address);
             if (replica?.deleteWhenEmpty) this.deleteReplica(params.scope, params.address);
             else if (replica) this.writeReplica(params.scope, { ...replica, status: 'clean' });
@@ -933,22 +976,26 @@ export class SessionDraftRepository {
                 || (submittedDocument !== null && !hasMeaningfulContent(submittedDocument) && params.address.kind === 'session');
             let content: SessionDraftStoredContentEnvelopeV1 | null;
             try {
-                content = shouldTombstone ? null : await this.cipher.seal(params.address, submittedDocument!);
+                content = shouldTombstone ? null : await runtime.cipher.seal(params.address, submittedDocument!);
             } catch {
+                if (!this.isCurrentRuntime(runtime)) return { status: 'pending' };
                 this.writeLatestReplicaStatus(params.scope, params.address, 'error');
                 return { status: 'error' };
             }
+            if (!this.isCurrentRuntime(runtime)) return { status: 'pending' };
             let response: SessionDraftMutateResponseV1;
             try {
-                response = await this.transport.mutate({
+                response = await runtime.transport.mutate({
                     address: params.address,
                     expectedRevision: replica.baseRevision,
                     content,
                 });
             } catch {
+                if (!this.isCurrentRuntime(runtime)) return { status: 'pending' };
                 this.writeLatestReplicaStatus(params.scope, params.address, 'offline');
                 return { status: 'offline' };
             }
+            if (!this.isCurrentRuntime(runtime)) return { status: 'pending' };
             if (response.status === 'updated') {
                 if (response.record.content === null) {
                     const latest = this.readReplica(params.scope, params.address) ?? replica;
@@ -996,7 +1043,8 @@ export class SessionDraftRepository {
                 if (remaining.length === 0) return { status: 'clean' };
                 continue;
             }
-            const rebased = await this.rebaseConflict(params.scope, params.address, replica, response.current);
+            const rebased = await this.rebaseConflict(runtime, params.scope, params.address, replica, response.current);
+            if (rebased === 'stale') return { status: 'pending' };
             if (rebased === 'conflict') return { status: 'conflict' };
             if (rebased === 'error') return { status: 'error' };
             const latest = this.readReplica(params.scope, params.address);
@@ -1008,13 +1056,15 @@ export class SessionDraftRepository {
     }
 
     private async rebaseConflict(
+        runtime: SyncRepositoryRuntime,
         scope: SessionDraftRepositoryScope,
         address: SessionDraftAddressV1,
         replica: PersistedReplica,
         current: SessionDraftRecordV1 | Readonly<{ status: 'absent' }>,
-    ): Promise<'rebased' | 'conflict' | 'error'> {
+    ): Promise<'rebased' | 'conflict' | 'error' | 'stale'> {
         const remoteRecord = 'status' in current ? null : current;
-        const remoteDocument = remoteRecord?.content ? await this.cipher.open(address, remoteRecord.content) : null;
+        const remoteDocument = remoteRecord?.content ? await runtime.cipher.open(address, remoteRecord.content) : null;
+        if (!this.isCurrentRuntime(runtime)) return 'stale';
         const latestReplica = this.readReplica(scope, address) ?? replica;
         if (remoteRecord?.content && !remoteDocument) {
             this.writeReplica(scope, { ...latestReplica, status: 'error' });
@@ -1131,32 +1181,40 @@ export class SessionDraftRepository {
     }
 
     async materializeExact(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV1): Promise<void> {
-        if (!this.syncEnabled || !this.transport) return;
         const activeFlush = this.flushInFlight.get(this.replicaListenerKey(scope, address));
         if (activeFlush) await activeFlush;
+        const runtime = this.syncRuntime(scope);
+        if (!runtime) return;
         let response: SessionDraftReadResponseV1;
         try {
-            response = await this.transport.read(address);
+            response = await runtime.transport.read(address);
         } catch (error) {
+            if (!this.isCurrentRuntime(runtime)) return;
             this.writeLatestReplicaStatus(scope, address, 'offline');
             throw error;
         }
+        if (!this.isCurrentRuntime(runtime)) return;
         let remoteDocument: SessionDraftDocumentV1 | null = null;
         if (response.status === 'present') {
             try {
-                remoteDocument = await this.openRequiredDocument(response.record);
+                remoteDocument = await this.openRequiredDocument(runtime, response.record);
             } catch (error) {
+                if (!this.isCurrentRuntime(runtime)) return;
                 this.writeLatestReplicaStatus(scope, address, 'error');
                 throw error;
             }
+            if (!this.isCurrentRuntime(runtime)) return;
         }
         const shouldFlush = this.reconcileStagedRead(scope, address, response, remoteDocument);
         if (shouldFlush) await this.flushSessionDraft({ scope, address });
     }
 
-    private async openRequiredDocument(record: SessionDraftRecordV1): Promise<SessionDraftDocumentV1> {
+    private async openRequiredDocument(
+        runtime: RepositoryRuntime,
+        record: SessionDraftRecordV1,
+    ): Promise<SessionDraftDocumentV1> {
         if (!record.content) throw new Error(`Session draft ${canonicalSessionDraftAddressV1(record.address)} has no active content`);
-        const document = await this.cipher.open(record.address, record.content);
+        const document = await runtime.cipher.open(record.address, record.content);
         if (!document) throw new Error(`Unable to open session draft ${canonicalSessionDraftAddressV1(record.address)}`);
         return document;
     }
@@ -1249,18 +1307,33 @@ export class SessionDraftRepository {
     }
 
     async ensureSessionDraftRepositoryHydrated(scope: SessionDraftRepositoryScope): Promise<void> {
-        if (!this.syncEnabled || !this.transport) return;
+        const runtime = this.syncRuntime(scope);
+        if (!runtime) return;
         const staged = new Map<string, Readonly<{
             address: SessionDraftAddressV1;
             response: SessionDraftReadResponseV1;
             document: SessionDraftDocumentV1 | null;
         }>>();
+        const listedAddresses = new Set<string>();
+        let unavailableSessionContextCount = 0;
         let after: string | undefined;
         do {
-            const response = await this.transport.list({ ...(after ? { after } : {}), limit: 100 });
+            const response = await runtime.transport.list({ ...(after ? { after } : {}), limit: 100 });
+            if (!this.isCurrentRuntime(runtime)) return;
             for (const record of response.items) {
-                const document = await this.openRequiredDocument(record);
-                staged.set(canonicalSessionDraftAddressV1(record.address), {
+                const addressKey = canonicalSessionDraftAddressV1(record.address);
+                listedAddresses.add(addressKey);
+                let document: SessionDraftDocumentV1;
+                try {
+                    document = await this.openRequiredDocument(runtime, record);
+                } catch (error) {
+                    if (!this.isCurrentRuntime(runtime)) return;
+                    if (!isSessionDraftContextUnavailableError(error)) throw error;
+                    unavailableSessionContextCount += 1;
+                    continue;
+                }
+                if (!this.isCurrentRuntime(runtime)) return;
+                staged.set(addressKey, {
                     address: record.address,
                     response: { status: 'present', record },
                     document,
@@ -1270,10 +1343,22 @@ export class SessionDraftRepository {
         } while (after);
         const localAddressesMissingFromActiveList = [...this.getScopeState(scope).replicas.values()]
             .map((replica) => replica.address)
-            .filter((address) => !staged.has(canonicalSessionDraftAddressV1(address)));
+            .filter((address) => !listedAddresses.has(canonicalSessionDraftAddressV1(address)));
         for (const address of localAddressesMissingFromActiveList) {
-            const response = await this.transport.read(address);
-            const document = response.status === 'present' ? await this.openRequiredDocument(response.record) : null;
+            const response = await runtime.transport.read(address);
+            if (!this.isCurrentRuntime(runtime)) return;
+            let document: SessionDraftDocumentV1 | null = null;
+            if (response.status === 'present') {
+                try {
+                    document = await this.openRequiredDocument(runtime, response.record);
+                } catch (error) {
+                    if (!this.isCurrentRuntime(runtime)) return;
+                    if (!isSessionDraftContextUnavailableError(error)) throw error;
+                    unavailableSessionContextCount += 1;
+                    continue;
+                }
+            }
+            if (!this.isCurrentRuntime(runtime)) return;
             staged.set(canonicalSessionDraftAddressV1(address), { address, response, document });
         }
         const addressesToFlush: SessionDraftAddressV1[] = [];
@@ -1289,6 +1374,11 @@ export class SessionDraftRepository {
         });
         for (const address of addressesToFlush) await this.flushSessionDraft({ scope, address });
         for (const address of addressesToRematerialize) await this.materializeExact(scope, address);
+        if (unavailableSessionContextCount > 0) {
+            log.log(
+                `[session-drafts] Snapshot skipped reason=session_context_unavailable count=${unavailableSessionContextCount}`,
+            );
+        }
     }
 
     getExistingSessionDraftProjection(scope: SessionDraftRepositoryScope, sessionId: string): ExistingSessionDraftProjection | null {
@@ -1367,6 +1457,8 @@ export class SessionDraftRepository {
         scope: SessionDraftRepositoryScope,
         records: readonly SessionDraftRecordV1[],
     ): Promise<void> {
+        const runtime = this.syncRuntime(scope);
+        if (!runtime) throw new Error('Session draft repository scope is unavailable');
         const candidates = this.listNewSessionDraftEncryptionMigrationCandidates(scope);
         const candidateKeys = new Set(candidates.map((candidate) => canonicalSessionDraftAddressV1(candidate.address)));
         const candidateRevisionByKey = new Map(candidates.map((candidate) => [
@@ -1387,7 +1479,10 @@ export class SessionDraftRepository {
             if (record.address.kind !== 'newSession' || record.content === null) {
                 throw new Error('Session draft encryption migration returned an invalid record');
             }
-            const document = await this.cipher.open(record.address, record.content);
+            const document = await runtime.cipher.open(record.address, record.content);
+            if (!this.isCurrentRuntime(runtime)) {
+                throw new Error('Session draft repository scope changed during encryption migration');
+            }
             if (!document) throw new Error(`Unable to open migrated session draft ${canonicalSessionDraftAddressV1(record.address)}`);
             openedRecords.push({ record, document });
         }
@@ -1430,6 +1525,7 @@ const singleton = createSessionDraftRepository({
 });
 
 export function configureSessionDraftRepository(options: Readonly<{
+    scope?: SessionDraftRepositoryScope;
     transport?: SessionDraftRepositoryTransport;
     cipher?: SessionDraftRepositoryCipher;
     syncEnabled: boolean;

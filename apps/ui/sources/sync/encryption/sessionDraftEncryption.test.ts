@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { SessionDraftDocumentV1, StrictJsonValue } from '@happier-dev/protocol';
 
 import { createSessionDraftCipher } from './sessionDraftEncryption';
+import { SessionDraftContextUnavailableError } from '@/sync/ops/sessionDrafts/sessionDraftCipherError';
 
 const sessionAddress = { kind: 'session', sessionId: 'session-a' } as const;
 const newAddress = { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000001' } as const;
@@ -57,5 +58,25 @@ describe('sessionDraftEncryption', () => {
         expect(accountEnvelope).toMatchObject({ t: 'encrypted' });
         await expect(cipher.open(newAddress, accountEnvelope)).resolves.toEqual(document('newSession'));
         expect(sessionEncryption.encryptRaw).toHaveBeenCalledOnce();
+    });
+
+    it('distinguishes unavailable Session context from invalid encrypted content', async () => {
+        const unavailable = createSessionDraftCipher({
+            accountMode: 'e2ee',
+            accountCryptoMaterial: { type: 'dataKey', machineKey: new Uint8Array(32) },
+            getSessionContext: () => null,
+            randomBytes: (length) => new Uint8Array(length),
+        });
+
+        await expect(unavailable.open(sessionAddress, { t: 'encrypted', c: 'opaque' }))
+            .rejects.toBeInstanceOf(SessionDraftContextUnavailableError);
+
+        const plainSession = createSessionDraftCipher({
+            accountMode: 'plain',
+            accountCryptoMaterial: { type: 'dataKey', machineKey: new Uint8Array(32) },
+            getSessionContext: () => ({ mode: 'plain' }),
+            randomBytes: (length) => new Uint8Array(length),
+        });
+        await expect(plainSession.open(sessionAddress, { t: 'encrypted', c: 'opaque' })).resolves.toBeNull();
     });
 });
