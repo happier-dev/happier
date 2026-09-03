@@ -289,7 +289,10 @@ async function openSecondContext(params: Readonly<{
     draftId: string;
     expectedText: string;
 }>): Promise<Readonly<{ context: BrowserContext; page: Page; composer: ReturnType<Page['getByTestId']> }>> {
-    const storageState = await params.sourcePage.context().storageState({ indexedDB: true });
+    // Copy authenticated localStorage, but deliberately leave IndexedDB behind so
+    // this context discovers the draft from the Account snapshot rather than a
+    // cloned device-local repository cache.
+    const storageState = await params.sourcePage.context().storageState();
     const context = await params.browser.newContext({ storageState });
     const page = await context.newPage();
     const opened = await openNewSessionDraft({ page, uiBaseUrl: params.uiBaseUrl, draftId: params.draftId, expectedText: params.expectedText });
