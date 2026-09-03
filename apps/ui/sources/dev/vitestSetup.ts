@@ -7,6 +7,7 @@ import { SHADOW_LEVELS } from '@/shadowElevation';
 import { buildLightStateColors, LIGHT_STATE_INFO_FOREGROUND } from '@/theme/tokens/stateColors';
 import { lightSurfaceColors, lightTextColors } from '@/theme/tokens/surfaceAndTextColors';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
+import { disposeUndiciDispatcherForTestTeardown } from './testkit/cleanup/undiciDispatcherCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { resetReactNativeMmkvStub } from './reactNativeMmkvStub';
 
@@ -246,14 +247,7 @@ async function closeUndiciGlobalDispatcherForTests(): Promise<void> {
             close?: () => Promise<void> | void;
             destroy?: () => Promise<void> | void;
         } | null;
-        if (!dispatcher) return;
-        if (typeof dispatcher.close === 'function') {
-            await dispatcher.close();
-            return;
-        }
-        if (typeof dispatcher.destroy === 'function') {
-            await dispatcher.destroy();
-        }
+        await disposeUndiciDispatcherForTestTeardown(dispatcher);
     } catch {
         // ignore (undici may not be available in some runtimes)
     }
