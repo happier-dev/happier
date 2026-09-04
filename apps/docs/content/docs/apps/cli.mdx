@@ -138,6 +138,13 @@ and stored sign-in exactly as they are, says it could not check them, and offers
 retry or explicitly choosing another relay — an unreachable relay is never
 treated as a rejected sign-in or a reason to sign in somewhere else.
 
+The installer's automatic handoff to setup is best-effort: declining it or
+leaving setup incomplete does not turn a successful binary installation into a
+failed installation. An explicitly requested installer action, such as
+`--run setup`, is different: that action is part of the command you asked for,
+so its exit status is propagated. A non-zero result means the CLI was installed
+but the requested setup action did not finish.
+
 | Flag | Effect |
 | --- | --- |
 | `--cloud` | Use Happier Cloud without being asked |

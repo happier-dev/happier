@@ -91,10 +91,24 @@ happier setup --relay https://…       # a relay you already run
 happier setup --this-computer         # install a relay here too
 ```
 
-Signing in prints a URL and a QR code. Scan it with the app, or open the URL in
-a browser where you are already signed in, and approve. The terminal continues
-on its own once you do, and hands itself back if you do not — the sign-in stays
-approvable, and `happier setup` picks up where it left off.
+When a new sign-in is needed, Happier prints a URL and, when your relay is
+reachable from another device, a QR code. Scan it with the app, or open the URL
+in a browser where you are already signed in, and approve. A loopback-only
+relay (`localhost` or `127.0.0.1`) cannot be reached from your phone, so this
+new-authentication step uses a browser on the same computer instead. If the
+stored sign-in is still accepted and only the machine registration is missing,
+setup repairs that registration without opening a browser or asking you to sign
+in again.
+
+The terminal continues on its own after approval. If the request times out, that
+request ends; rerun `happier setup` or `happier auth login` to create a new
+request and approve that one.
+
+If the selected relay does not answer, setup cannot verify either the stored
+sign-in or the machine registration. It keeps both the relay choice and stored
+credential, then offers retry or an explicit choice of another relay. An outage
+does not silently switch this computer to Happier Cloud or create another
+account.
 
 Setup also checks whether you have a coding agent installed, and says so if you
 do not — it will not stop you, but it is the step people skip and then hit at

@@ -30,10 +30,13 @@ Optional CLI path:
 ```bash
 # Node-free (recommended): install the CLI binary via the official installer
 curl -fsSL https://happier.dev/install | bash
-happier auth login
+happier setup
 ```
 
-The CLI login flow still works, but the app-first setup is the recommended control-panel flow.
+`happier setup` chooses the relay before authentication, then signs in,
+registers this machine, and reconciles automatic startup. The lower-level
+`happier auth login` command remains available when the relay profile and
+machine lifecycle are already configured.
 
 Notes:
 - The desktop app and the installer-installed CLI are self-contained; you do not need system Node/Yarn installed.

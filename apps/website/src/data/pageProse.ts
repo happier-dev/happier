@@ -315,19 +315,19 @@ export const GET_STARTED_STEPS = [
     {
         id: 'install',
         title: 'Install on the computer with your code',
-        description: 'One command. macOS, Linux, and Windows. Signed and checksum-verified.',
+        description: 'One command. macOS, Linux, and Windows. Signed and checksum-verified. On an eligible interactive first install, guided setup opens automatically.',
     },
     {
         id: 'setup',
-        title: 'Sign in on that computer',
+        title: 'Choose your relay, then sign in',
         description:
-            'Connects the CLI to your Happier account. You approve it from a device where you are already signed in — the app, or the web.',
+            'Guided setup selects the relay before authentication, registers this computer, and configures the background service. Run it directly if the installer did not open it.',
     },
     {
         id: 'pair',
-        title: 'Pair a device',
+        title: 'Approve a new sign-in',
         description:
-            'happier auth login prints a QR code. Scan it with the app, or open the URL it prints in any browser.',
+            'When a new sign-in is needed, setup prints a QR code or browser link. A phone cannot open a loopback relay address; use the same computer\'s browser, or give the relay a LAN, Tailscale, or HTTPS address your phone can reach.',
     },
     {
         id: 'session',

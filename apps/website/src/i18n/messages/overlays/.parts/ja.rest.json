@@ -179,7 +179,7 @@
   "faq.FAQ_ITEMS.shutdown.q": "プロジェクトが止まったらどうなりますか？",
   "faq.FAQ_ITEMS.shutdown.a.0": "ライセンスは MIT で、リレーはセルフホストできるので、失敗のしかたは「自分で運用する」であって「作業を失う」ではありません。いずれにせよあなたのセッションは自分のコンピュータの上にあり、Happier はその上のクライアントです。",
   "faq.FAQ_ITEMS.server.q": "サーバーは必要ですか？",
-  "faq.FAQ_ITEMS.server.a.0": "いいえ。コードを動かすコンピュータに CLI をインストールし、QR でデバイスをペアリングすれば終わりです — 残りは Happier のホスト型リレーが無料で担います。",
+  "faq.FAQ_ITEMS.server.a.0": "いいえ。コードを実行するコンピューターに CLI をインストールし、`happier setup` を完了してください。ガイド付きセットアップでは、デフォルトでサインイン前に Happier Cloud が選択され、その後コンピューターが登録され、バックグラウンドサービスが構成されます。",
   "faq.FAQ_ITEMS.server.a.1": "自分のリレーを動かすのは選択肢であって要件ではありません。`happier relay host install` はマネージドサービスとしてセットアップします。Docker イメージとランナーもあります。localhost、LAN、公開インターネットのいずれにもバインドでき、Tailscale、SSH トンネル、直接の HTTPS で到達できます。",
   "faq.FAQ_ITEMS.agents.q": "Happier はどのエージェントに対応していますか？",
   "faq.FAQ_ITEMS.agents.a.0": "13 が組み込みとして同梱されています。Claude Code、Codex、OpenCode、Cursor、Gemini、Copilot、Qwen、Kimi、Auggie、Kilo、Kiro、Pi、Grok です。それ以外に、Custom ACP バックエンドが Agent Client Protocol を話すあらゆる CLI を受け付け、定義したあとはエージェントの選択画面に組み込みのものと並んで表示されます。",

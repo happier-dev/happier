@@ -210,7 +210,7 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         id: 'server',
         q: 'Do I need a server?',
         a: [
-            'No. Install the CLI on the computer that runs your code, pair a device by QR, and you are done — Happier’s hosted relay does the rest at no cost.',
+            'No. Install the CLI on the computer that runs your code and complete `happier setup`. Guided setup selects Happier Cloud before sign-in by default, then registers the computer and configures its background service.',
             'Running your own relay is an option, not a requirement. `happier relay host install` sets it up as a managed service; there is also a Docker image and a runner. Bind it to localhost, your LAN, or the open internet, and reach it over Tailscale, an SSH tunnel or direct HTTPS.',
         ],
     },

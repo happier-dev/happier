@@ -507,6 +507,11 @@
       "`happier relay host install`"
     ]
   },
+  "faq.FAQ_ITEMS.server.a.0": {
+    "dnt": [
+      "`happier setup`"
+    ]
+  },
   "faq.FAQ_ITEMS.server.a.1": {
     "dnt": [
       "`happier relay host install`"
@@ -560,11 +565,6 @@
   "features.PRIMARY_FEATURES.surfaces.code.4": {
     "dnt": [
       "happier session"
-    ]
-  },
-  "pageProse.GET_STARTED_STEPS.pair.description": {
-    "dnt": [
-      "happier auth"
     ]
   },
   "pageProse.PAGE_PROSE.agentsIndex.p6": {

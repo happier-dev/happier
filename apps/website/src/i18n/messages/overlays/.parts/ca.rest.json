@@ -179,7 +179,7 @@
   "faq.FAQ_ITEMS.shutdown.q": "I si el projecte s'atura?",
   "faq.FAQ_ITEMS.shutdown.a.0": "La llicència és MIT i el relay és autoallotjable, així que el mode de fallada és «te'l fas anar tu», no «perds la teva feina». Les teves sessions viuen al teu propi ordinador en tots dos casos — Happier és un client per sobre.",
   "faq.FAQ_ITEMS.server.q": "Necessito un servidor?",
-  "faq.FAQ_ITEMS.server.a.0": "No. Instal·la la CLI a l'ordinador que executa el teu codi, aparella un dispositiu amb un QR, i ja està — el relay allotjat de Happier fa la resta sense cap cost.",
+  "faq.FAQ_ITEMS.server.a.0": "No. Instal·la la CLI a l'ordinador que executa el teu codi i completa `happier setup`. Per defecte, la configuració guiada selecciona Happier Cloud abans d'iniciar la sessió; després registra l'ordinador i configura el servei en segon pla.",
   "faq.FAQ_ITEMS.server.a.1": "Executar el teu propi relay és una opció, no un requisit. `happier relay host install` el configura com a servei gestionat; també hi ha una imatge de Docker i un runner. Lliga'l a localhost, a la teva LAN o a internet obert, i arriba-hi per Tailscale, per un túnel SSH o per HTTPS directe.",
   "faq.FAQ_ITEMS.agents.q": "Quins agents admet Happier?",
   "faq.FAQ_ITEMS.agents.a.0": "Tretze venen integrats: Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot, Qwen, Kimi, Auggie, Kilo, Kiro, Pi i Grok. A més d'aquests, el backend Custom ACP accepta qualsevol CLI que parli l'Agent Client Protocol, i un cop l'has definit apareix al selector d'agents al costat dels integrats.",
