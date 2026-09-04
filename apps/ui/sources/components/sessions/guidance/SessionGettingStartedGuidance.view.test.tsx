@@ -80,7 +80,7 @@ vi.mock('@/config', () => ({
 }));
 
 describe('SessionGettingStartedGuidanceView', () => {
-  it('keeps manual terminal follow-up focused on auth and daemon setup when setup is available', async () => {
+  it('uses one target-bound guided setup instead of a parallel server/auth/service recipe', async () => {
     const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
     const onOpenSetup = vi.fn();
     const screen = await renderScreen(
@@ -117,16 +117,17 @@ describe('SessionGettingStartedGuidanceView', () => {
 
     const expandedContent = screen.getTextContent();
     expect(screen.findByTestId('session-getting-started-cli-follow-up')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-step-server_setup')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-step-server_setup')).toBeNull();
     expect(screen.findByTestId('session-getting-started-step-auth_login')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-step-daemon_install')).not.toBeNull();
+    expect(screen.findByTestId('session-getting-started-step-daemon_install')).toBeNull();
     expect(screen.findByTestId('session-getting-started-step-create_session')).not.toBeNull();
-    expect(expandedContent).toContain('happier server add');
+    expect(expandedContent).not.toContain('happier server add');
     expect(expandedContent).toContain('https://api.company.example');
     expect(expandedContent).not.toContain('$ npm i -g @happier-dev/cli');
-    expect(expandedContent).toContain('curl -fsSL https://happier.dev/install | bash');
+    expect(expandedContent).toContain('curl -fsSL https://happier.dev/install | bash -s -- --yes');
     expect(expandedContent).not.toContain('npm i -g @happier-dev/cli');
-    expect(expandedContent).toContain('happier service install');
+    expect(expandedContent).not.toContain('happier service install');
+    expect(expandedContent).toContain('happier setup --relay "https://api.company.example"');
     expect(expandedContent).not.toContain('happier daemon install');
     expect(expandedContent).toContain('happier codex');
     expect(expandedContent).toContain('happier opencode');
@@ -134,7 +135,7 @@ describe('SessionGettingStartedGuidanceView', () => {
     clipboardMocks.setStringAsync.mockClear();
     modalMocks.alert.mockClear();
     await screen.pressByTestIdAsync('session-getting-started-copy-auth_login');
-    expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('happier auth login');
+    expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('happier setup --relay "https://api.company.example"');
     expect(modalMocks.alert).not.toHaveBeenCalledWith('common.copied', 'items.copiedToClipboard');
     expect(screen.findByTestId('session-getting-started-copy-auth_login-copied')).not.toBeNull();
   });
@@ -231,7 +232,8 @@ describe('SessionGettingStartedGuidanceView', () => {
       });
 
       expect(screen.findByTestId('session-getting-started-cli-follow-up')).not.toBeNull();
-      expect(screen.findByTestId('session-getting-started-step-server_setup')).not.toBeNull();
+      expect(screen.findByTestId('session-getting-started-step-server_setup')).toBeNull();
+      expect(screen.findByTestId('session-getting-started-step-auth_login')).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }

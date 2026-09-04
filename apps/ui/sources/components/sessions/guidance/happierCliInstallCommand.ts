@@ -17,10 +17,16 @@ export function buildHappierCliCommandName(input: Readonly<{ appVariant: AppVari
     return resolveInstallChannel(input) === 'preview' ? 'hprev' : 'happier';
 }
 
-export function buildHappierCliInstallCommand(input: Readonly<{ appVariant: AppVariant; distTagOverride?: unknown }>): string {
+export function buildHappierCliInstallCommand(input: Readonly<{
+    appVariant: AppVariant;
+    distTagOverride?: unknown;
+    suppressAutomaticSetup?: boolean;
+}>): string {
     const channel = resolveInstallChannel(input);
     if (channel === 'preview') {
-        return 'curl -fsSL https://happier.dev/install | bash -s -- --channel preview';
+        return `curl -fsSL https://happier.dev/install | bash -s -- --channel preview${input.suppressAutomaticSetup ? ' --yes' : ''}`;
     }
-    return 'curl -fsSL https://happier.dev/install | bash';
+    return input.suppressAutomaticSetup
+        ? 'curl -fsSL https://happier.dev/install | bash -s -- --yes'
+        : 'curl -fsSL https://happier.dev/install | bash';
 }

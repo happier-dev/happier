@@ -20,6 +20,13 @@ describe('buildHappierCliInstallCommand', () => {
         expect(buildHappierCliInstallCommand({ appVariant })).toBe('curl -fsSL https://happier.dev/install | bash');
     });
 
+    it('can install without the automatic setup handoff when a target-bound setup command follows', () => {
+        expect(buildHappierCliInstallCommand({ appVariant: 'production', suppressAutomaticSetup: true }))
+            .toBe('curl -fsSL https://happier.dev/install | bash -s -- --yes');
+        expect(buildHappierCliInstallCommand({ appVariant: 'preview', suppressAutomaticSetup: true }))
+            .toBe('curl -fsSL https://happier.dev/install | bash -s -- --channel preview --yes');
+    });
+
     it('maps preview-like overrides to the preview installer channel', () => {
         const appVariant: AppVariant = 'production';
         expect(buildHappierCliInstallCommand({ appVariant, distTagOverride: 'next' })).toBe('curl -fsSL https://happier.dev/install | bash -s -- --channel preview');
