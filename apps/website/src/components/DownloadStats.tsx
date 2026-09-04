@@ -4,7 +4,7 @@ import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
 
 /** Measured 2026-08-04; only shown until the published stats load. */
-const FALLBACK_DOWNLOAD_TOTAL = 35020;
+const FALLBACK_DOWNLOAD_TOTAL = 10000;
 
 type DownloadStatsPayload = {
     totalDownloads: number;
