@@ -16,9 +16,9 @@ import type { ApplyRuntimeConfigReason } from './types';
 import {
   getClaudeUnifiedRecognizedDialogRegistryEntry,
   isClaudeUnifiedRegisteredDialogVisible,
-  resolveClaudeUnifiedRegisteredDialogOption,
   type ClaudeUnifiedRecognizedDialogRegistryEntry,
 } from './dialogRegistry';
+import { answerClaudeUnifiedRegisteredDialog } from './dialogAnswer';
 
 /**
  * `/model` and `/effort` controls (B9, B10). These are next-idle/before-next-prompt controls: a live
@@ -84,10 +84,18 @@ async function injectRegisteredDialogAnswer(params: Readonly<{
   entry: ClaudeUnifiedRecognizedDialogRegistryEntry;
   choice: string;
 }>): Promise<ClaudeScreenState> {
-  const option = resolveClaudeUnifiedRegisteredDialogOption(params.state, params.entry, params.choice);
-  if (!option) throw new Error(`missing_claude_dialog_option:${params.entry.dialogId}:${params.choice}`);
-  await params.ctx.runtime.port.sendLiteralText(option.answer.text);
-  await params.ctx.runtime.wait(params.ctx.runtime.timings.commandSettleMs);
+  const result = await answerClaudeUnifiedRegisteredDialog({
+    port: params.ctx.runtime.port,
+    dialogId: params.entry.dialogId,
+    choice: params.choice,
+    initialState: params.state,
+    verifyAfterSubmit: false,
+    settleMs: params.ctx.runtime.timings.commandSettleMs,
+    wait: params.ctx.runtime.wait,
+  });
+  if (result.status === 'failed') {
+    throw new Error(`claude_dialog_answer_failed:${params.entry.dialogId}:${result.reason}`);
+  }
   const after = await captureScreenState(params.ctx.runtime.port);
   return after.kind === 'state' ? after.state : params.state;
 }

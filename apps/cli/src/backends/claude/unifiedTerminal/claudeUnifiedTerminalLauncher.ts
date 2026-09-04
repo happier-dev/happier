@@ -1184,7 +1184,6 @@ export async function claudeUnifiedTerminalLauncher(
           sessionId: session.client.sessionId,
           terminal,
         });
-        await session.publishUnifiedTerminalHostMetadata(terminal);
         await opts.onTerminalHostReady?.({
           handle,
           terminal,
@@ -1198,6 +1197,7 @@ export async function claudeUnifiedTerminalLauncher(
           },
         });
       },
+      publishTerminalHostMetadata: (terminal) => session.publishUnifiedTerminalHostMetadata(terminal),
       }),
     }).catch((error: unknown) => {
       launchAttemptSettled = true;
@@ -1280,7 +1280,7 @@ export async function claudeUnifiedTerminalLauncher(
           await surfaceTerminalRuntimeIssue(error);
           await flushUnifiedStartupFailureSurface(session, 'readiness_timeout');
           if (consumeParkRelaunchBudget() === 'within_budget') continue;
-          if (await parkForNextMessageAfterRuntimeIssue('readiness_timeout')) continue;
+          if (await parkAfterRelaunchBudgetExhausted('readiness_timeout')) continue;
           return { type: 'exit', code: 1 };
         }
         if (

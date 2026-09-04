@@ -653,6 +653,13 @@ export class Session {
         terminal: NonNullable<Metadata['terminal']>,
     ): Promise<void> => {
         let updatedMetadata: Metadata | null = null;
+        const attachmentId = terminal.controlServiceabilityV1?.attachmentId;
+        logger.debug('[Session] Publishing Claude Unified terminal host metadata', {
+            sessionId: this.client.sessionId,
+            attachmentId,
+            mode: terminal.mode,
+            tmuxTarget: terminal.tmux?.target,
+        });
         try {
             await this.client.updateMetadata((metadata) => {
                 updatedMetadata = {
@@ -667,10 +674,22 @@ export class Session {
                     metadata: updatedMetadata,
                 });
             }
+            logger.debug('[Session] Published Claude Unified terminal host metadata', {
+                sessionId: this.client.sessionId,
+                attachmentId,
+                mode: terminal.mode,
+                tmuxTarget: terminal.tmux?.target,
+            });
         } catch (error) {
-            logger.debug(
+            logger.warn(
                 '[Session] Failed to publish Claude Unified terminal host metadata (non-fatal)',
-                error,
+                {
+                    sessionId: this.client.sessionId,
+                    attachmentId,
+                    mode: terminal.mode,
+                    tmuxTarget: terminal.tmux?.target,
+                    error,
+                },
             );
         }
     };

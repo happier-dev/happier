@@ -450,6 +450,12 @@ export type ClaudeUnifiedTerminalSessionOptions<Mode extends EnhancedMode = Enha
     terminal: NonNullable<Metadata['terminal']>;
     destroyOwnedHostForExplicitStop: () => Promise<void>;
   }>) => void | Promise<void>) | undefined;
+  /**
+   * Publishes the exact host attachment as soon as the host owner has created and persisted it.
+   * This is intentionally separate from onTerminalHostReady, whose callback may be delayed until
+   * the controller has initialized (or never run on a startup failure).
+   */
+  publishTerminalHostMetadata?: ((terminal: NonNullable<Metadata['terminal']>) => void | Promise<void>) | undefined;
   persistTerminalHostAttachmentInfo?: ((params: Readonly<{
     sessionId: string;
     attachmentId: NonNullable<TerminalHostHandle['attachmentId']>;
@@ -1405,6 +1411,16 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       handle: activeHandle,
       persist: opts.persistTerminalHostAttachmentInfo ?? persistDefaultTerminalHostAttachmentInfo,
     });
+    if (terminalAttachment) {
+      await opts.publishTerminalHostMetadata?.(terminalAttachment);
+    } else {
+      logger.debug('[unified]: terminal host metadata publication skipped; attachment identity unavailable', {
+        sessionId: opts.happySessionId,
+        hostKind: activeHandle.kind,
+        sessionName: activeHandle.sessionName,
+        attachmentId: activeHandle.attachmentId,
+      });
+    }
     if (processSignalAbortController.signal.aborted) {
       return;
     }

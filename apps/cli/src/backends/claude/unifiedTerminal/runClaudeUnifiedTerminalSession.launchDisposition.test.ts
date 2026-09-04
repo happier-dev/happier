@@ -80,6 +80,56 @@ function baseOptions(
 }
 
 describe('runClaudeUnifiedTerminalSession launch disposition', () => {
+  it('publishes the host attachment before controller startup completes', async () => {
+    const abortController = new AbortController();
+    const adapter = createAdapter();
+    let controllerRunStarted = false;
+    let resolveControllerRun: (() => void) | null = null;
+    const controllerRun = new Promise<void>((resolve) => {
+      resolveControllerRun = resolve;
+    });
+    const publishTerminalHostMetadata = vi.fn(async () => {
+      expect(controllerRunStarted).toBe(false);
+      resolveControllerRun?.();
+    });
+
+    const runPromise = runClaudeUnifiedTerminalSession({
+      ...baseOptions(adapter, abortController),
+      persistTerminalHostAttachmentInfo: async () => undefined,
+      publishTerminalHostMetadata,
+      createController: async () => ({
+        run: async () => {
+          controllerRunStarted = true;
+          await controllerRun;
+        },
+        dispose: async () => undefined,
+      }),
+      onTerminalHostReady: async () => {
+        abortController.abort();
+      },
+    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        runPromise,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('host publication did not occur before controller startup completed')),
+            1_000,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+
+    expect(publishTerminalHostMetadata).toHaveBeenCalledTimes(1);
+    expect(publishTerminalHostMetadata).toHaveBeenCalledWith({
+      mode: 'tmux',
+      tmux: { target: 'happier-adopted-resume:%1' },
+    });
+  });
+
   it('destroys the exact owned host once when explicit runner stop is requested', async () => {
     const abortController = new AbortController();
     const dispose = vi.fn(async () => undefined);

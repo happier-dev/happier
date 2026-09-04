@@ -282,6 +282,38 @@ describe('permission RPC routing', () => {
     await expect(registered.get('permission')!({ id: 'toolu_handled_1', approved: true })).resolves.toEqual({ ok: true });
   });
 
+  it('does not acknowledge a handled RPC until its async consumer has finished', async () => {
+    const registered = new Map<string, (payload: PermissionRpcPayload) => unknown>();
+    const router = new ClaudePermissionRpcRouter({
+      registerHandler: (method, handler) => {
+        registered.set(method, handler);
+      },
+    });
+    let finishConsumer!: () => void;
+    const consumerFinished = new Promise<void>((resolve) => {
+      finishConsumer = resolve;
+    });
+    router.registerConsumer({
+      name: 'terminal-answer',
+      tryHandlePermissionRpc: async () => {
+        await consumerFinished;
+        return true;
+      },
+    });
+
+    let rpcSettled = false;
+    const rpc = Promise.resolve(registered.get('permission')!({ id: 'dialog_1', approved: true }))
+      .then((result) => {
+        rpcSettled = true;
+        return result;
+      });
+    await Promise.resolve();
+    expect(rpcSettled).toBe(false);
+
+    finishConsumer();
+    await expect(rpc).resolves.toEqual({ ok: true });
+  });
+
   it('does not let remote permission cleanup cancel local-bridge requests', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
 

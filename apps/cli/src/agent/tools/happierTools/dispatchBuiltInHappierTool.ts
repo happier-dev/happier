@@ -5,6 +5,7 @@ import {
   type ActionId,
   type ActionsSettingsV1,
   type ApprovalRequestOriginV1,
+  type ExecutionRunStartRequest,
   type ResolvedActionOption,
 } from '@happier-dev/protocol';
 import {
@@ -32,7 +33,7 @@ type DispatchDeps = Readonly<{
     title: string,
     options?: Readonly<{ approvalOrigin?: ApprovalRequestOriginV1 | null }>,
   ) => Promise<unknown>;
-  startExecutionRun: (sessionId: string, request: unknown) => Promise<HappierBuiltInToolDispatchResult>;
+  startExecutionRun: (sessionId: string, request: ExecutionRunStartRequest) => Promise<HappierBuiltInToolDispatchResult>;
   executeActionByToolName: (
     toolName: string,
     args: unknown,

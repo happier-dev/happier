@@ -28,6 +28,18 @@ const CROPPED_SINGLE_OPTION_USAGE_LIMIT_DIALOG = [
   'Enter to confirm · Esc to cancel',
 ].join('\n');
 
+const CLAUDE_2_1_259_HIDDEN_INDEX_TRUST_DIALOG = [
+  'Accessing workspace:',
+  '/tmp/happier-claude-dialog-probe',
+  '',
+  'Quick safety check: Is this a project you created or one you trust?',
+  '',
+  '❯ No, exit',
+  '  Yes, I trust this folder',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+
 /**
  * Fixtures are derived from the live probe captures documented in
  * `.reviews/20260610-claude-unified-independent-audit/probes/probe-log.md` (Claude Code 2.1.170, tmux).
@@ -256,6 +268,92 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
   it('detects the trust-folder prompt', () => {
     const state = parseClaudeScreenState(CLAUDE_2_1_170.trustFolderPrompt);
     expect(state.trustFolderPromptVisible).toBe(true);
+  });
+
+  it('recognizes the Claude 2.1.259 hidden-index trust chooser as a dialog, never a user draft', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_259_HIDDEN_INDEX_TRUST_DIALOG);
+
+    expect(state.trustFolderPromptVisible).toBe(true);
+    expect(state.inputBoxInteractive).toBe(false);
+    expect(state.userDraftPresent).toBe(false);
+    expect(state.visibleDialogSelection).toEqual({
+      kind: 'focused',
+      options: [
+        { label: 'No, exit', focused: true },
+        { label: 'Yes, I trust this folder', focused: false },
+      ],
+    });
+  });
+
+  it.each([
+    ['switch model', [
+      'Switch model?',
+      '',
+      '❯ No, go back',
+      '  Yes, switch',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ], 'switchModelDialogVisible'],
+    ['effort change', [
+      'Change effort level?',
+      'Switching to high means the full history gets re-read before Claude can continue.',
+      '',
+      '❯ No, go back',
+      '  Yes, switch to high',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ], 'effortChangeDialogVisible'],
+    ['resume choice', [
+      'This session is 18h old and 560.4k tokens.',
+      '',
+      '❯ Resume from summary (recommended)',
+      '  Resume full session as-is',
+      '  Don’t ask me again',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ], 'resumeChoiceDialogVisible'],
+    ['safeguard pause', [
+      'Session paused',
+      'Fable 5\'s safeguards flagged this message.',
+      '',
+      '❯ Switch to Opus 4.8',
+      '  Edit prompt and retry with Fable 5',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ], 'safeguardPauseDialogVisible'],
+    ['usage limit', [
+      "You've hit your session limit · resets 2:40am (Europe/Zurich)",
+      'What do you want to do?',
+      '',
+      '❯ Stop and wait for limit to reset',
+      '  Switch to usage credits',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ], 'usageLimitDialogVisible'],
+  ] as const)('recognizes a hidden-index %s chooser from its semantics and presentation', (_name, lines, key) => {
+    const state = parseClaudeScreenState(lines.join('\n'));
+
+    expect(state[key]).toBe(true);
+    expect(state.visibleDialogSelection?.kind).toBe('focused');
+    expect(state.userDraftPresent).toBe(false);
+  });
+
+  it('surfaces an unknown hidden-index chooser as a generic choice instead of a composer draft', () => {
+    const state = parseClaudeScreenState([
+      'Use the experimental cache?',
+      '',
+      '❯ No, keep current behavior',
+      '  Yes, enable it',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n'));
+
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialog?.options).toEqual([
+      { choice: 'option_1', label: 'No, keep current behavior' },
+      { choice: 'option_2', label: 'Yes, enable it' },
+    ]);
+    expect(state.userDraftPresent).toBe(false);
   });
 
   it('detects the slash command picker', () => {
@@ -839,7 +937,7 @@ describe('startup readiness predicate (D15 shared-parser unification)', () => {
       '  ⏵⏵ accept edits on (shift+tab to cycle)',
     ].join('\n'));
 
-    expect(state.composerContent).toBeNull();
+    expect(state.userDraftPresent).toBe(false);
     expect(state.inputBoxInteractive).toBe(true);
     expect(isClaudeScreenReadyForInput(state)).toBe(false);
     expect(isSafeWindowForSlashControl(state)).toBe(false);
@@ -893,7 +991,52 @@ describe('parseClaudeScreenState — unrecognized confirmation dialogs (P-B fail
       { choice: '1', label: 'No, exit' },
       { choice: '2', label: 'Yes, I accept' },
     ]);
-    expect(state.composerContent).toBeNull();
+    expect(state.userDraftPresent).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+  });
+
+  it('captures an unindexed confirmation as a generic dialog that can self-adapt to new Claude prompts', () => {
+    const state = parseClaudeScreenState([
+      'Allow external CLAUDE.md file imports?',
+      '',
+      'This project imports instructions from outside the current working directory.',
+      '',
+      '❯ No, disable external imports',
+      '  Yes, allow external imports',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n'));
+
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialog).toMatchObject({
+      context: ['Allow external CLAUDE.md file imports?', 'This project imports instructions from outside the current working directory.'],
+      options: [
+        { choice: 'option_1', label: 'No, disable external imports' },
+        { choice: 'option_2', label: 'Yes, allow external imports' },
+      ],
+    });
+    expect(state.userDraftPresent).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+  });
+
+  it('does not let the cursor on an unindexed confirmation masquerade as the composer', () => {
+    const state = parseClaudeScreenState([
+      'WARNING: Claude Code running in Bypass Permissions mode',
+      '',
+      'By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.',
+      '',
+      '❯ No, exit',
+      '  Yes, I accept',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n'), { cursor: { x: 2, y: 4 } });
+
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(state.unrecognizedConfirmationDialog?.options).toEqual([
+      { choice: 'option_1', label: 'No, exit' },
+      { choice: 'option_2', label: 'Yes, I accept' },
+    ]);
+    expect(state.composerCursorRelation).toBeNull();
     expect(isClaudeScreenReadyForInput(state)).toBe(false);
   });
 

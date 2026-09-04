@@ -32,6 +32,18 @@ const UNKNOWN_DIALOG = [
   '  2. No, go back',
 ].join('\n');
 
+const HIDDEN_UNKNOWN_FIRST_FOCUSED = [
+  'Allow external CLAUDE.md file imports?',
+  '',
+  '❯ No, disable external imports',
+  '  Yes, allow external imports',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+const HIDDEN_UNKNOWN_SECOND_FOCUSED = HIDDEN_UNKNOWN_FIRST_FOCUSED
+  .replace('❯ No, disable external imports', '  No, disable external imports')
+  .replace('  Yes, allow external imports', '❯ Yes, allow external imports');
+
 const LSP_RECOMMENDATION_DIALOG = [
   'LSP plugin recommendation',
   '',
@@ -64,6 +76,21 @@ const TRUST_FOLDER_DIALOG = [
   '  2. No, exit',
 ].join('\n');
 
+const HIDDEN_TRUST_REJECT_FOCUSED = [
+  'Accessing workspace:',
+  '/private/tmp/new-project',
+  '',
+  'Quick safety check: Is this a project you created or one you trust?',
+  '',
+  '❯ No, exit',
+  '  Yes, I trust this folder',
+  '',
+  'Enter to confirm · Esc to cancel',
+].join('\n');
+const HIDDEN_TRUST_ACCEPT_FOCUSED = HIDDEN_TRUST_REJECT_FOCUSED
+  .replace('❯ No, exit', '  No, exit')
+  .replace('  Yes, I trust this folder', '❯ Yes, I trust this folder');
+
 const IDLE = ['──────────────────────────────', '❯ ', '──────────────────────────────'].join('\n');
 
 // Live runner pid 57509 published claude_dialog_choice_639f8db8-a03f-4b66-9af6-06e1b3c02dd6
@@ -91,6 +118,7 @@ function createHarness(params: Readonly<{
   ownsDialog?: (dialogId: string) => boolean;
   resumeStartupActive?: boolean;
   trustPolicy?: 'ask_every_time' | 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
+  wait?: ((ms: number) => Promise<void>) | undefined;
 }>) {
   const { session, client } = createPermissionHandlerSessionStub('dialog-choice-session');
   Object.assign(session, {
@@ -108,7 +136,7 @@ function createHarness(params: Readonly<{
   const probe = createClaudeUnifiedDialogChoiceScreenProbe({
     broker,
     port,
-    wait: async () => undefined,
+    wait: params.wait ?? (async () => undefined),
     graceMs: 25,
     settleMs: 1,
     verifyPollIntervalMs: 1,
@@ -342,6 +370,35 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     });
   });
 
+  it('acknowledges an always-choice RPC only after the terminal dialog is verified resolved', async () => {
+    let releaseVerification!: () => void;
+    const verification = new Promise<void>((resolve) => { releaseVerification = resolve; });
+    let waitCalls = 0;
+    const { client, probe } = createHarness({
+      captures: [TRUST_FOLDER_DIALOG, TRUST_FOLDER_DIALOG, TRUST_FOLDER_DIALOG, IDLE],
+      wait: async () => {
+        waitCalls += 1;
+        if (waitCalls >= 2) await verification;
+      },
+    });
+    await expect(probe.probe()).resolves.toEqual({ kind: 'request_published', dialogId: 'trust_folder' });
+
+    let rpcResolved = false;
+    const rpc = Promise.resolve(client.rpcHandlerManager.getHandler('permission')!({
+      id: 'claude_dialog_choice_1',
+      approved: true,
+      answers: { [CLAUDE_UNIFIED_DIALOG_CHOICE_QUESTION]: 'always_trust_happier_workspaces' },
+    })).then((result: unknown) => {
+      rpcResolved = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(waitCalls).toBeGreaterThanOrEqual(2));
+    expect(rpcResolved).toBe(false);
+
+    releaseVerification();
+    await expect(rpc).resolves.toMatchObject({ ok: true });
+  });
+
   it.each([
     ['always_trust_happier_workspaces', '1'],
     ['always_reject_happier_workspaces', '2'],
@@ -358,6 +415,54 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     await vi.waitFor(() => expect(port.sentLiteral).toEqual([literal]));
     expect(port.sentKeys).toEqual([]);
     expect(client.getAgentStateSnapshot().requests).toEqual({});
+  });
+
+  it('auto-answers the Claude 2.1.259 hidden-index trust prompt by verified navigation, never by a guessed number', async () => {
+    const { client, port, probe } = createHarness({
+      captures: [
+        HIDDEN_TRUST_REJECT_FOCUSED,
+        HIDDEN_TRUST_REJECT_FOCUSED,
+        HIDDEN_TRUST_REJECT_FOCUSED,
+        HIDDEN_TRUST_ACCEPT_FOCUSED,
+        IDLE,
+      ],
+      trustPolicy: 'always_trust_happier_workspaces',
+    });
+
+    await expect(probe.probe()).resolves.toEqual({
+      kind: 'automatic_answer_started',
+      dialogId: 'trust_folder',
+    });
+    await vi.waitFor(() => expect(port.sentKeys).toEqual(['ArrowDown', 'Enter']));
+    expect(port.sentLiteral).toEqual([]);
+    expect(client.getAgentStateSnapshot().requests).toEqual({});
+  });
+
+  it('falls back from one failed automatic answer to one user action without hot-looping terminal bytes', async () => {
+    const { broker, client, port, probe } = createHarness({
+      captures: Array.from({ length: 12 }, () => HIDDEN_TRUST_REJECT_FOCUSED),
+      trustPolicy: 'always_trust_happier_workspaces',
+    });
+
+    await expect(probe.probe()).resolves.toEqual({
+      kind: 'automatic_answer_started',
+      dialogId: 'trust_folder',
+    });
+    await vi.waitFor(() => expect(port.sentKeys).toEqual(['ArrowDown']));
+
+    await expect(probe.probe()).resolves.toEqual({
+      kind: 'request_published',
+      dialogId: 'trust_folder',
+    });
+    expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_dialog_choice_1']);
+    expect(port.sentKeys).toEqual(['ArrowDown']);
+
+    await expect(probe.evaluateScreenState(parseClaudeScreenState(HIDDEN_TRUST_REJECT_FOCUSED))).resolves.toEqual({
+      kind: 'already_pending',
+      dialogId: 'trust_folder',
+    });
+    expect(port.sentKeys).toEqual(['ArrowDown']);
+    await broker.dispose();
   });
 
   it('waits through a delayed terminal redraw after Claude accepts an automatic dialog answer', async () => {
@@ -439,6 +544,41 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     });
     await vi.waitFor(() => expect(port.sentLiteral).toEqual(['2']));
     expect(port.sentKeys).toEqual([]);
+  });
+
+  it('surfaces and answers a strictly parsed generic hidden-index dialog by verified focus', async () => {
+    const { client, port, probe } = createHarness({
+      captures: [
+        HIDDEN_UNKNOWN_FIRST_FOCUSED,
+        HIDDEN_UNKNOWN_FIRST_FOCUSED,
+        HIDDEN_UNKNOWN_FIRST_FOCUSED,
+        HIDDEN_UNKNOWN_SECOND_FOCUSED,
+        IDLE,
+      ],
+    });
+
+    await expect(probe.probe()).resolves.toEqual({
+      kind: 'request_published',
+      dialogId: 'unrecognized_confirmation',
+    });
+    expect(client.getAgentStateSnapshot().requests.claude_dialog_choice_1).toMatchObject({
+      arguments: expect.objectContaining({
+        questions: [expect.objectContaining({
+          options: [
+            expect.objectContaining({ choice: 'option_1', label: 'No, disable external imports' }),
+            expect.objectContaining({ choice: 'option_2', label: 'Yes, allow external imports' }),
+          ],
+        })],
+      }),
+    });
+
+    await client.rpcHandlerManager.getHandler('permission')?.({
+      id: 'claude_dialog_choice_1',
+      approved: true,
+      answers: { [CLAUDE_UNIFIED_DIALOG_CHOICE_QUESTION]: 'option_2' },
+    });
+    await vi.waitFor(() => expect(port.sentKeys).toEqual(['ArrowDown', 'Enter']));
+    expect(port.sentLiteral).toEqual([]);
   });
 
   it('surfaces Claude 2.1.217 LSP recommendations through the generic private dialog owner', async () => {
@@ -557,7 +697,7 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
   });
 
   it('fails a freeform answer closed with a typed cancellation instead of an opaque throw', async () => {
-    // F4: numbered-choice-only dialogs cannot accept a freeform "Other" answer. It must resolve as a
+    // F4: selection-only dialogs cannot accept a freeform "Other" answer. It must resolve as a
     // typed cancellation (fail closed), not throw an opaque permission_response_failed error, and must
     // never type stray bytes into the terminal.
     const { client, port, probe } = createHarness({

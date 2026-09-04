@@ -43,6 +43,12 @@ type PendingChoice = Readonly<{
   promise: Promise<ClaudeUnifiedDialogChoiceDecision>;
 }>;
 
+type TerminalAnswerAcknowledgement = Readonly<{
+  promise: Promise<PermissionRpcConsumerOutcome>;
+  resolve: () => void;
+  reject: (reason: Error) => void;
+}>;
+
 type DialogChoiceRequestParams = Readonly<{
   dialog: ClaudeUnifiedVisibleDialog;
   signal?: AbortSignal | undefined;
@@ -137,6 +143,8 @@ export class ClaudeUnifiedDialogChoiceBroker {
   private readonly sourceCompletionByRequestId = new Map<string, Promise<void>>();
   private pendingChoice: PendingChoice | null = null;
   private pendingOptions: readonly RequestOption[] = [];
+  private unresolvedTerminalAnswerIdentity: string | null = null;
+  private readonly terminalAnswerAcknowledgements = new Map<string, TerminalAnswerAcknowledgement>();
   private activated = false;
   private disposed = false;
 
@@ -175,6 +183,28 @@ export class ClaudeUnifiedDialogChoiceBroker {
 
   hasPendingChoiceForDialog(dialog: ClaudeUnifiedVisibleDialog): boolean {
     return this.pendingChoice?.identity === getClaudeUnifiedDialogIdentity(dialog);
+  }
+
+  hasUnresolvedTerminalAnswerForDialog(dialog: ClaudeUnifiedVisibleDialog): boolean {
+    return this.unresolvedTerminalAnswerIdentity === getClaudeUnifiedDialogIdentity(dialog);
+  }
+
+  noteTerminalAnswerFailed(dialog: ClaudeUnifiedVisibleDialog): void {
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
+    this.unresolvedTerminalAnswerIdentity = identity;
+    this.terminalAnswerAcknowledgements.get(identity)?.reject(new Error('claude_unified_dialog_terminal_answer_failed'));
+    this.terminalAnswerAcknowledgements.delete(identity);
+  }
+
+  clearTerminalAnswerFailure(): void {
+    this.unresolvedTerminalAnswerIdentity = null;
+  }
+
+  noteTerminalAnswerSucceeded(dialog: ClaudeUnifiedVisibleDialog): void {
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
+    this.clearTerminalAnswerFailure();
+    this.terminalAnswerAcknowledgements.get(identity)?.resolve();
+    this.terminalAnswerAcknowledgements.delete(identity);
   }
 
   resolveAutomaticDialogChoice(dialog: ClaudeUnifiedVisibleDialog): ClaudeUnifiedDialogChoiceDecision | null {
@@ -238,12 +268,17 @@ export class ClaudeUnifiedDialogChoiceBroker {
   }
 
   async noteDialogResolvedInTerminal(reason: string): Promise<void> {
+    this.clearTerminalAnswerFailure();
     await this.cancelAllSourceOwnedRequests(reason);
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    for (const acknowledgement of this.terminalAnswerAcknowledgements.values()) {
+      acknowledgement.reject(new Error('claude_unified_dialog_choice_broker_disposed'));
+    }
+    this.terminalAnswerAcknowledgements.clear();
     await this.cancelAllSourceOwnedRequests('claude_unified_dialog_choice_broker_disposed');
     await Promise.all(this.sourceCompletionByRequestId.values());
     this.permissionCoordinator.dispose();
@@ -287,7 +322,9 @@ export class ClaudeUnifiedDialogChoiceBroker {
     return isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(rawRequest) ? outstanding : null;
   }
 
-  private tryHandlePermissionRpc(payload: PermissionRpcPayload): PermissionRpcConsumerOutcome {
+  private tryHandlePermissionRpc(
+    payload: PermissionRpcPayload,
+  ): PermissionRpcConsumerOutcome | Promise<PermissionRpcConsumerOutcome> {
     const requestId = typeof payload?.id === 'string' ? payload.id : '';
     if (!requestId) return false;
     const context = this.permissionCoordinator.getResponseContext(requestId);
@@ -313,7 +350,7 @@ export class ClaudeUnifiedDialogChoiceBroker {
       : readOptionsFromToolInput(context.toolInput);
     const decision = dialogId ? decodeDialogChoice(payload, dialogId, options) : null;
     if (!decision) {
-      // The recognized dialogs are numbered-choice-only, so an approved answer that matches no option
+      // Recognized dialogs are selection-only, so an approved answer that matches no option
       // (e.g. a freeform "Other" entry) cannot be injected. Fail closed with a typed cancellation
       // rather than throwing an opaque `permission_response_failed`; the still-visible dialog is
       // re-surfaced by the next screen observation / turn-end probe.
@@ -321,7 +358,27 @@ export class ClaudeUnifiedDialogChoiceBroker {
       return true;
     }
 
-    return this.permissionCoordinator.completeResponse({
+    const identity = this.pendingChoice?.requestId === requestId ? this.pendingChoice.identity : null;
+    const selectedRequestOption = options.find((option) => option.choice === decision.choice);
+    let acknowledgement: TerminalAnswerAcknowledgement | null = null;
+    // Only a remembered choice has a caller-visible mutation after this RPC. Keep its response
+    // pending until terminal verification so the UI cannot persist a policy Claude did not apply.
+    if (identity && selectedRequestOption?.settingMutation) {
+      let resolvePromise!: (outcome: PermissionRpcConsumerOutcome) => void;
+      let rejectPromise!: (reason: Error) => void;
+      const promise = new Promise<PermissionRpcConsumerOutcome>((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
+      });
+      acknowledgement = {
+        promise,
+        resolve: () => resolvePromise(true),
+        reject: rejectPromise,
+      };
+      this.terminalAnswerAcknowledgements.set(identity, acknowledgement);
+    }
+
+    const completion = this.permissionCoordinator.completeResponse({
       context,
       completion: {
         result: decision,
@@ -337,6 +394,11 @@ export class ClaudeUnifiedDialogChoiceBroker {
         },
       },
     });
+    if (!acknowledgement || completion !== true) {
+      if (identity) this.terminalAnswerAcknowledgements.delete(identity);
+      return completion;
+    }
+    return acknowledgement.promise;
   }
 
   private async completeSourceOwnedCancellation(requestId: string, reason: string): Promise<void> {

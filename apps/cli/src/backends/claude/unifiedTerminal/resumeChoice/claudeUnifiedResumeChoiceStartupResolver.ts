@@ -12,12 +12,11 @@ import {
 import {
   captureFailureToResult,
   captureScreenState,
-  sendResultToFailure,
 } from '../tuiControls/controlRuntime';
+import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer';
 import {
   getClaudeUnifiedRecognizedDialogRegistryEntry,
   isClaudeUnifiedRegisteredDialogVisible,
-  resolveClaudeUnifiedRegisteredDialogOption,
   resolveClaudeUnifiedVisibleDialog,
   type ClaudeUnifiedRecognizedDialogRegistryEntry,
 } from '../tuiControls/dialogRegistry';
@@ -39,7 +38,7 @@ type StartupDialogAnswerResult =
   | Readonly<{ kind: 'unsupported'; reason?: string | undefined }>;
 
 function controlFailureToStartupDialogResult(
-  failure: ReturnType<typeof sendResultToFailure> | ReturnType<typeof captureFailureToResult>,
+  failure: ReturnType<typeof captureFailureToResult>,
 ): StartupDialogAnswerResult | null {
   if (failure === null) return null;
   if (failure.kind === 'unsupported') return { kind: 'unsupported', reason: failure.reason };
@@ -78,27 +77,20 @@ async function answerStartupDialogOption(params: Readonly<{
   wait: (ms: number) => Promise<void>;
   settleMs: number;
 }>): Promise<StartupDialogAnswerResult> {
-  const before = await captureScreenState(params.port);
-  if (before.kind !== 'state') {
-    return controlFailureToStartupDialogResult(captureFailureToResult(before)) ?? { kind: 'failed', reason: 'capture_failed' };
-  }
   const entry = STARTUP_DIALOGS[params.kind];
-  if (!isClaudeUnifiedRegisteredDialogVisible(before.state, entry)) return { kind: 'not_visible' };
-  const option = resolveClaudeUnifiedRegisteredDialogOption(before.state, entry, params.choice);
-  if (!option) return { kind: 'failed', reason: `startup_dialog_option_missing:${params.kind}:${params.choice}` };
-
-  const sendOptionFailure = controlFailureToStartupDialogResult(
-    sendResultToFailure(await params.port.sendLiteralText(option.answer.text)),
-  );
-  if (sendOptionFailure) return sendOptionFailure;
-
-  await params.wait(params.settleMs);
-  const after = await captureScreenState(params.port);
-  if (after.kind !== 'state') {
-    return controlFailureToStartupDialogResult(captureFailureToResult(after)) ?? { kind: 'failed', reason: 'capture_failed' };
-  }
-  const visibleAfter = isClaudeUnifiedRegisteredDialogVisible(after.state, entry);
-  return { kind: 'answered', stateVisibleAfterAnswer: visibleAfter };
+  const result = await answerClaudeUnifiedRegisteredDialog({
+    port: params.port,
+    dialogId: entry.dialogId,
+    choice: params.choice,
+    settleMs: params.settleMs,
+    wait: params.wait,
+  });
+  if (result.status === 'not_visible') return { kind: 'not_visible' };
+  if (result.status === 'answered') return { kind: 'answered', stateVisibleAfterAnswer: false };
+  return {
+    kind: 'failed',
+    reason: result.status === 'failed' ? result.reason : `startup_dialog_changed:${result.dialog.dialogId}`,
+  };
 }
 
 export function createClaudeUnifiedResumeChoiceStartupResolver(params: Readonly<{
@@ -166,6 +158,11 @@ export function createClaudeUnifiedResumeChoiceStartupResolver(params: Readonly<
         }).finally(() => {
           terminalAnswerInFlight = false;
         });
+        if (result.kind === 'answered') {
+          params.broker.noteTerminalAnswerSucceeded(captured);
+        } else {
+          params.broker.noteTerminalAnswerFailed(captured);
+        }
         if (result.kind !== 'answered' && result.kind !== 'not_visible') {
           userChoiceClosed = true;
         }
@@ -197,6 +194,9 @@ export function createClaudeUnifiedResumeChoiceStartupResolver(params: Readonly<
     }
 
     const visibleDialog = resolveClaudeUnifiedVisibleDialog(screenState);
+    if (visibleDialog && params.broker.hasUnresolvedTerminalAnswerForDialog(visibleDialog)) {
+      return { status: 'waiting_for_user' };
+    }
     if (
       visibleDialog
       && visibleDialog.dialogId !== 'resume_choice'

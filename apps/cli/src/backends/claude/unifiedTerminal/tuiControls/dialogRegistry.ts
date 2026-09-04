@@ -48,7 +48,10 @@ export type ClaudeUnifiedDialogOption = Readonly<{
   choice: string;
   label: string;
   description: string;
-  answer: Readonly<{ kind: 'literal'; text: string }>;
+  answer:
+    | Readonly<{ kind: 'literal'; text: string }>
+    | Readonly<{ kind: 'selection'; targetLabel: string }>
+    | Readonly<{ kind: 'unavailable' }>;
   settingMutation?: ClaudeUnifiedDialogSettingMutation | undefined;
 }>;
 
@@ -99,16 +102,41 @@ function option(
   choice: string,
   label: string,
   description: string,
-  text: string,
+  answer: string | ClaudeUnifiedDialogOption['answer'],
   settingMutation?: ClaudeUnifiedDialogOption['settingMutation'],
 ): ClaudeUnifiedDialogOption {
   return {
     choice,
     label,
     description,
-    answer: { kind: 'literal', text },
+    answer: typeof answer === 'string' ? { kind: 'literal', text: answer } : answer,
     ...(settingMutation ? { settingMutation } : {}),
   };
+}
+
+function resolveSelectionAnswer(
+  state: ClaudeScreenState,
+  fallbackText: string,
+  matchers: readonly RegExp[],
+): ClaudeUnifiedDialogOption['answer'] {
+  const presentation = state.visibleDialogSelection;
+  if (!presentation) return { kind: 'literal', text: fallbackText };
+  const matches = presentation.options.filter((candidate) => (
+    matchers.some((matcher) => matcher.test(candidate.label.trim()))
+  ));
+  if (matches.length !== 1) {
+    return presentation.kind === 'indexed'
+      ? { kind: 'literal', text: fallbackText }
+      : { kind: 'unavailable' };
+  }
+  const match = matches[0]!;
+  return presentation.kind === 'indexed' && match.shortcut
+    ? { kind: 'literal', text: match.shortcut }
+    : { kind: 'selection', targetLabel: match.label };
+}
+
+function exactLabelMatcher(label: string): RegExp {
+  return new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'iu');
 }
 
 const CLAUDE_UNIFIED_UNRECOGNIZED_DIALOG_NOTICE = Object.freeze({
@@ -133,9 +161,9 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     requestReason: 'claude_unified_terminal_switch_model',
     header: 'Claude model',
     question: 'Claude is asking whether to switch models.',
-    options: () => [
-      option('confirm', 'Switch model', 'Confirm Claude\'s model switch.', '1'),
-      option('cancel', 'Keep current model', 'Dismiss the model switch.', '2'),
+    options: (state) => [
+      option('confirm', 'Switch model', 'Confirm Claude\'s model switch.', resolveSelectionAnswer(state, '1', [/^yes\b.*\bswitch\b/iu])),
+      option('cancel', 'Keep current model', 'Dismiss the model switch.', resolveSelectionAnswer(state, '2', [/^no\b/iu, /^keep\b/iu, /^cancel\b/iu])),
     ],
   },
   {
@@ -146,11 +174,13 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     requestReason: 'claude_unified_terminal_usage_limit',
     header: 'Claude usage limit',
     question: 'Claude reached a usage limit. What should it do?',
-    options: (state) => state.visibleNumberedDialog?.options.map((dialogOption) => option(
-      dialogOption.choice,
+    options: (state) => state.visibleDialogSelection?.options.map((dialogOption, index) => option(
+      dialogOption.shortcut ?? `option_${index + 1}`,
       dialogOption.label,
-      'Send this exact visible choice to Claude.',
-      dialogOption.choice,
+      'Choose this exact visible option in Claude.',
+      dialogOption.shortcut
+        ? { kind: 'literal', text: dialogOption.shortcut }
+        : { kind: 'selection', targetLabel: dialogOption.label },
     )) ?? [],
   },
   {
@@ -166,24 +196,24 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     requestReason: 'claude_unified_terminal_resume_choice',
     header: 'Claude resume',
     question: 'How should Claude resume this session?',
-    options: () => [
-      option('resume_from_summary', 'Resume from summary', 'Resume faster from Claude\'s saved summary.', '1'),
+    options: (state) => [
+      option('resume_from_summary', 'Resume from summary', 'Resume faster from Claude\'s saved summary.', resolveSelectionAnswer(state, '1', [/^resume from summary\b/iu])),
       option(
         'always_resume_from_summary',
         'Always resume from summary',
         'Resume from Claude\'s saved summary now and remember this choice.',
-        '1',
+        resolveSelectionAnswer(state, '1', [/^resume from summary\b/iu]),
         {
           settingId: 'claudeUnifiedTerminalResumeChoice',
           value: 'resume_from_summary',
         },
       ),
-      option('resume_full_session', 'Resume full session', 'Load the full session context.', '2'),
+      option('resume_full_session', 'Resume full session', 'Load the full session context.', resolveSelectionAnswer(state, '2', [/^resume full session\b/iu])),
       option(
         'always_resume_full_session',
         'Always resume full session',
         'Load the full session context now and remember this choice.',
-        '2',
+        resolveSelectionAnswer(state, '2', [/^resume full session\b/iu]),
         {
           settingId: 'claudeUnifiedTerminalResumeChoice',
           value: 'resume_full_session',
@@ -205,7 +235,7 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
       dialogOption.choice === 'switch_model'
         ? 'Send Claude the chooser option to switch models and continue.'
         : 'Send Claude the chooser option to edit the prompt and retry.',
-      String(index + 1),
+      resolveSelectionAnswer(state, String(index + 1), [exactLabelMatcher(dialogOption.label)]),
     )),
   },
   {
@@ -223,9 +253,9 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
           'confirm',
           target ? `Switch to ${target}` : 'Change effort',
           'Apply the effort-level change in Claude.',
-          '1',
+          resolveSelectionAnswer(state, '1', [/^yes\b.*(?:switch|change)/iu]),
         ),
-        option('cancel', 'Keep current effort', 'Dismiss the effort-level change.', '2'),
+        option('cancel', 'Keep current effort', 'Dismiss the effort-level change.', resolveSelectionAnswer(state, '2', [/^no\b/iu, /^keep\b/iu, /^cancel\b/iu])),
       ];
     },
   },
@@ -241,21 +271,21 @@ export const CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY: readonly ClaudeUnifiedRe
     requestReason: 'claude_unified_terminal_trust_folder',
     header: 'Trust this folder',
     question: 'Claude needs your permission to trust and run code from this folder.',
-    options: () => [
-      option('trust_once', 'Trust and proceed', 'Trust this workspace for this prompt.', '1'),
+    options: (state) => [
+      option('trust_once', 'Trust and proceed', 'Trust this workspace for this prompt.', resolveSelectionAnswer(state, '1', [/^yes\b.*(?:trust|proceed)/iu])),
       option(
         'always_trust_happier_workspaces',
         'Always trust Happier workspaces',
         'Trust this prompt and remember the choice for future Claude workspaces opened by Happier.',
-        '1',
+        resolveSelectionAnswer(state, '1', [/^yes\b.*(?:trust|proceed)/iu]),
         { settingId: 'claudeUnifiedTerminalWorkspaceTrust', value: 'always_trust_happier_workspaces' },
       ),
-      option('reject_once', 'Do not trust', 'Reject this workspace for this prompt.', '2'),
+      option('reject_once', 'Do not trust', 'Reject this workspace for this prompt.', resolveSelectionAnswer(state, '2', [/^no\b.*exit/iu])),
       option(
         'always_reject_happier_workspaces',
         'Always reject Happier workspaces',
         'Reject this prompt and remember the choice for future Claude workspaces opened by Happier.',
-        '2',
+        resolveSelectionAnswer(state, '2', [/^no\b.*exit/iu]),
         { settingId: 'claudeUnifiedTerminalWorkspaceTrust', value: 'always_reject_happier_workspaces' },
       ),
     ],
@@ -336,7 +366,9 @@ export function resolveClaudeUnifiedVisibleDialog(state: ClaudeScreenState): Cla
           choice,
           label,
           'Send this exact visible choice to Claude.',
-          choice,
+          state.visibleDialogSelection?.kind === 'focused'
+            ? { kind: 'selection', targetLabel: label }
+            : { kind: 'literal', text: choice },
         )),
       };
     }
@@ -408,7 +440,7 @@ export function getClaudeUnifiedDialogIdentity(dialog: ClaudeUnifiedVisibleDialo
     options: dialog.options.map((candidate) => ({
       choice: candidate.choice,
       label: candidate.label,
-      answer: candidate.answer.text,
+      answer: candidate.answer,
       settingMutation: candidate.settingMutation ?? null,
     })),
   });

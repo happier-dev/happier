@@ -145,6 +145,29 @@ describe('Claude unified recognized dialog registry', () => {
     });
   });
 
+  it('turns a hidden-index unknown confirmation into label-targeted choices', () => {
+    const dialog = resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState([
+      'Allow external CLAUDE.md file imports?',
+      '',
+      'External imports:',
+      '/home/test/shared/AGENTS.md',
+      '',
+      '❯ No, disable external imports',
+      '  Yes, allow external imports',
+      '',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n')));
+
+    expect(dialog).toMatchObject({
+      kind: 'unrecognized',
+      mode: 'generic',
+      options: [
+        { choice: 'option_1', label: 'No, disable external imports', answer: { kind: 'selection', targetLabel: 'No, disable external imports' } },
+        { choice: 'option_2', label: 'Yes, allow external imports', answer: { kind: 'selection', targetLabel: 'Yes, allow external imports' } },
+      ],
+    });
+  });
+
   it('includes exact context and visible choices in the request identity', () => {
     const first = resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(UNKNOWN_DIALOG));
     const changedContext = resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(

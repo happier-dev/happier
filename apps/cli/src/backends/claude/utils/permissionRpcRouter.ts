@@ -23,7 +23,9 @@ export type PermissionRpcConsumerOutcome =
 
 export type PermissionRpcConsumer = {
   name: string;
-  tryHandlePermissionRpc: (payload: PermissionRpcPayload) => PermissionRpcConsumerOutcome;
+  tryHandlePermissionRpc: (
+    payload: PermissionRpcPayload,
+  ) => PermissionRpcConsumerOutcome | Promise<PermissionRpcConsumerOutcome>;
 };
 
 export type PermissionRpcRouterResult =
@@ -55,7 +57,7 @@ export class ClaudePermissionRpcRouter {
       if (!parsed.success) {
         throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID);
       }
-      const result = this.dispatch({ id: parsed.data.id, approved: true, structuredAnswersV1: parsed.data.structuredAnswersV1 });
+      const result = await this.dispatch({ id: parsed.data.id, approved: true, structuredAnswersV1: parsed.data.structuredAnswersV1 });
       if (!result.ok) {
         throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER);
       }
@@ -67,7 +69,7 @@ export class ClaudePermissionRpcRouter {
     this.consumers.set(consumer.name, consumer);
   }
 
-  private dispatch(payload: PermissionRpcPayload): PermissionRpcRouterResult {
+  private async dispatch(payload: PermissionRpcPayload): Promise<PermissionRpcRouterResult> {
     const requestId = typeof payload?.id === 'string' ? payload.id : '';
     if (!requestId) {
       return {
@@ -81,7 +83,7 @@ export class ClaudePermissionRpcRouter {
     let failedConsumer: string | null = null;
     for (const consumer of this.consumers.values()) {
       try {
-        const outcome = normalizeConsumerOutcome(consumer.tryHandlePermissionRpc(payload));
+        const outcome = normalizeConsumerOutcome(await consumer.tryHandlePermissionRpc(payload));
         if (outcome === 'handled') {
           return { ok: true };
         }

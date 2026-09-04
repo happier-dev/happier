@@ -102,6 +102,27 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
     await broker.dispose();
   });
 
+  it('keeps readiness paused after terminal actuation fails while the same dialog remains visible', async () => {
+    const { session } = createPermissionHandlerSessionStub('workspace-trust-failed-answer');
+    const broker = new ClaudeUnifiedDialogChoiceBroker(session);
+    const screenState = parseClaudeScreenState(TRUST_FOLDER_DIALOG);
+    const dialog = resolveClaudeUnifiedVisibleDialog(screenState)!;
+    broker.noteTerminalAnswerFailed(dialog);
+    const resolver = createClaudeUnifiedResumeChoiceStartupResolver({
+      choice: 'ask_every_time',
+      broker,
+      port: createFakeControlPort({ captures: [TRUST_FOLDER_DIALOG] }),
+      wait: async () => undefined,
+      settleMs: 1,
+    });
+
+    await expect(resolver({
+      screenState,
+      observedAtMs: 1,
+      abortSignal: new AbortController().signal,
+    })).resolves.toEqual({ status: 'waiting_for_user' });
+  });
+
   it('auto-answers resume-from-summary through terminal control', async () => {
     const { session } = createPermissionHandlerSessionStub('resume-choice-session');
     const broker = new ClaudeUnifiedDialogChoiceBroker(session);
@@ -325,14 +346,13 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
     await vi.waitFor(() => {
       expect(broker.hasPendingChoice()).toBe(false);
     });
-    await Promise.resolve();
-    await Promise.resolve();
-
-    await expect(resolver({
-      screenState: parseClaudeScreenState(RESUME_DIALOG),
-      observedAtMs: 2,
-      abortSignal: new AbortController().signal,
-    })).resolves.toEqual({ status: 'unhandled' });
+    await vi.waitFor(async () => {
+      await expect(resolver({
+        screenState: parseClaudeScreenState(RESUME_DIALOG),
+        observedAtMs: 2,
+        abortSignal: new AbortController().signal,
+      })).resolves.toEqual({ status: 'unhandled' });
+    });
 
     expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual([]);
     expect(client.getAgentStateSnapshot().completedRequests.claude_resume_choice_1).toMatchObject({

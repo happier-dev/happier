@@ -4,8 +4,8 @@ import { logger } from '@/ui/logger';
 import {
   captureFailureToResult,
   captureScreenState,
-  sendResultToFailure,
 } from '../tuiControls/controlRuntime';
+import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer';
 import {
   resolveClaudeUnifiedVisibleDialog,
   getClaudeUnifiedDialogIdentity,
@@ -42,54 +42,6 @@ function captureFailureResult(
   return { kind: 'failed', reason: failure?.kind ?? 'capture_failed' };
 }
 
-async function answerClaudeUnifiedDialogChoice(params: Readonly<{
-  port: TerminalControlPort;
-  decision: ClaudeUnifiedDialogChoiceDecision;
-  wait: (ms: number) => Promise<void>;
-  settleMs: number;
-  verifyPollIntervalMs: number;
-  verifyPollTimeoutMs: number;
-  dialog: ClaudeUnifiedVisibleDialog;
-}>): Promise<
-  | Readonly<{ kind: 'answered' }>
-  | Readonly<{ kind: 'not_visible' }>
-  | Readonly<{ kind: 'dialog_changed'; dialog: ClaudeUnifiedVisibleDialog }>
-  | Readonly<{ kind: 'failed' }>
-> {
-  if (params.dialog.kind === 'unrecognized' && params.dialog.mode !== 'generic') return { kind: 'failed' };
-  const before = await captureScreenState(params.port);
-  if (before.kind !== 'state') return { kind: 'failed' };
-  const dialog = resolveClaudeUnifiedVisibleDialog(before.state);
-  if (!dialog) return { kind: 'not_visible' };
-  if (getClaudeUnifiedDialogIdentity(dialog) !== getClaudeUnifiedDialogIdentity(params.dialog)) {
-    return { kind: 'dialog_changed', dialog };
-  }
-  const expected = params.dialog.options.find((option) => option.choice === params.decision.choice);
-  const selected = expected && dialog.options.find((option) => (
-    option.choice === expected.choice
-    && option.label === expected.label
-    && option.answer.text === expected.answer.text
-  ));
-  if (!selected) return { kind: 'dialog_changed', dialog };
-
-  const literalFailure = sendResultToFailure(await params.port.sendLiteralText(selected.answer.text));
-  if (literalFailure) return { kind: 'failed' };
-
-  const verifyPollIntervalMs = Math.max(1, params.verifyPollIntervalMs);
-  const maxVerifyPolls = Math.max(1, Math.ceil(params.verifyPollTimeoutMs / verifyPollIntervalMs));
-  const expectedIdentity = getClaudeUnifiedDialogIdentity(params.dialog);
-  for (let poll = 0; poll < maxVerifyPolls; poll += 1) {
-    await params.wait(poll === 0 ? params.settleMs : verifyPollIntervalMs);
-    const after = await captureScreenState(params.port);
-    if (after.kind !== 'state') return { kind: 'failed' };
-    const remaining = resolveClaudeUnifiedVisibleDialog(after.state);
-    if (!remaining || getClaudeUnifiedDialogIdentity(remaining) !== expectedIdentity) {
-      return { kind: 'answered' };
-    }
-  }
-  return { kind: 'failed' };
-}
-
 export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
   broker: ClaudeUnifiedDialogChoiceBroker;
   port: TerminalControlPort;
@@ -112,6 +64,8 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
   let answerTask: Promise<void> | null = null;
   let answerTaskIdentity: string | null = null;
   let abortController: AbortController | null = null;
+  const automaticAttemptedIdentities = new Set<string>();
+  const manualFailedIdentities = new Set<string>();
 
   const dialogIsOwned = (dialog: ClaudeUnifiedVisibleDialog): boolean => {
     if (dialog.owner === null) return false;
@@ -153,23 +107,32 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
       : params.broker.requestDialogChoice({ dialog, signal }))
       .then(async (decision) => {
         if (disposed) return;
-        const result = await answerClaudeUnifiedDialogChoice({
+        const result = await answerClaudeUnifiedRegisteredDialog({
           port: params.port,
-          decision,
+          dialogId: dialog.dialogId,
+          expectedIdentity: getClaudeUnifiedDialogIdentity(dialog),
+          choice: decision.choice,
           wait: params.wait,
           settleMs: params.settleMs,
           verifyPollIntervalMs: params.verifyPollIntervalMs,
           verifyPollTimeoutMs: params.verifyPollTimeoutMs,
-          dialog,
         });
-        if (result.kind === 'not_visible') {
+        if (result.status === 'not_visible') {
+          params.broker.noteTerminalAnswerFailed(dialog);
           params.broker.noteDialogResolvedInTerminal('claude_dialog_resolved_in_terminal');
-        } else if (result.kind === 'dialog_changed') {
+        } else if (result.status === 'answered') {
+          params.broker.noteTerminalAnswerSucceeded(dialog);
+        } else if (result.status === 'dialog_changed') {
+          params.broker.noteTerminalAnswerFailed(dialog);
           params.broker.cancelPendingChoice('claude_unified_dialog_changed');
           if (!dialogIsOwned(result.dialog)) startAnswerTask(result.dialog);
-        } else if (result.kind === 'failed') {
+        } else if (result.status === 'failed') {
+          params.broker.noteTerminalAnswerFailed(dialog);
+          if (automaticDecision) automaticAttemptedIdentities.add(identity);
+          else manualFailedIdentities.add(identity);
           logger.debug('[unified]: failed to answer Claude unified terminal dialog', {
             dialogId: decision.dialogId,
+            reason: result.reason,
           });
         }
       })
@@ -222,9 +185,15 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
       return { kind: 'owned', dialogId: dialog.dialogId };
     }
 
-    const automaticDecision = params.broker.resolveAutomaticDialogChoice(dialog);
+    const identity = getClaudeUnifiedDialogIdentity(dialog);
+    if (manualFailedIdentities.has(identity)) {
+      return { kind: 'failed', reason: 'dialog_answer_failed_requires_terminal' };
+    }
+    const automaticDecision = automaticAttemptedIdentities.has(identity)
+      ? null
+      : params.broker.resolveAutomaticDialogChoice(dialog);
     const alreadyPending = params.broker.hasPendingChoiceForDialog(dialog)
-      && answerTaskIdentity === getClaudeUnifiedDialogIdentity(dialog);
+      && answerTaskIdentity === identity;
     const started = startAnswerTask(dialog, automaticDecision);
     return {
       kind: alreadyPending || !started
