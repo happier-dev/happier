@@ -261,6 +261,32 @@ describe('useNewSessionMachinePathState', () => {
         await hook.unmount();
     });
 
+    it('does not let initial machine preselection race persisted preference during hydration', async () => {
+        const initial = {
+            machines: [],
+            recentMachinePaths: [],
+            machineIdParam: null,
+            pathParam: null,
+            persistedMachineId: 'machine-preferred',
+            persistedPath: '/repo/preferred',
+        } satisfies HookParams;
+        const hook = await renderMachinePathState(initial);
+
+        await hook.rerender({
+            ...initial,
+            machines: toMachines(
+                { id: 'machine-default', metadata: { homeDir: '/default' }, activeAt: Date.now() - 10_000 },
+                { id: 'machine-preferred', metadata: { homeDir: '/preferred' }, activeAt: Date.now() - 10_000 },
+            ),
+        });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: 'machine-preferred',
+            selectedPath: '/repo/preferred',
+        });
+        await hook.unmount();
+    });
+
     it('tracks a typed draft path separately from the committed selectedPath until the path is committed', async () => {
         const now = Date.now();
 

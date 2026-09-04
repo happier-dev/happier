@@ -84,12 +84,19 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const resolvePersistedMachineId = React.useCallback((): string | null => {
         const persistedMachineId = normalizeMachineIdParam(params.persistedMachineId);
         if (!persistedMachineId) return null;
-        return resolveMachineId(persistedMachineId);
-    }, [params.persistedMachineId, resolveMachineId]);
+        // Persistence hydration can precede the first complete machine snapshot. Once the
+        // preferred machine is present, preserve that exact preference; resolveMachineId may
+        // otherwise replace it with the first currently-online machine.
+        return params.machines.some((machine) => machine.id === persistedMachineId)
+            ? persistedMachineId
+            : null;
+    }, [params.machines, params.persistedMachineId]);
 
     const [selectedMachineId, setSelectedMachineIdState] = React.useState<string | null>(() => {
         return resolvePersistedMachineId() ?? resolveMachineId(null);
     });
+    const selectedMachineIdRef = React.useRef<string | null>(selectedMachineId);
+    selectedMachineIdRef.current = selectedMachineId;
     const hasUserSelectedMachineRef = React.useRef(false);
     const selectedMachineOnlineSeenByIdRef = React.useRef<Map<string, boolean>>(new Map());
     const lastAppliedPersistedMachineIdRef = React.useRef<string>('');
@@ -181,7 +188,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
         }
 
         lastAppliedPersistedMachineIdRef.current = reconciledPersistedMachineId;
-        if (reconciledPersistedMachineId === selectedMachineId) {
+        if (reconciledPersistedMachineId === selectedMachineIdRef.current) {
             return;
         }
 
@@ -196,13 +203,16 @@ export function useNewSessionMachinePathState(params: Readonly<{
         getPersistedPathForMachine,
         params.machineIdParam,
         resolvePersistedMachineId,
-        selectedMachineId,
     ]);
 
     // Ensure a machine is pre-selected once machines have loaded (wizard expects this).
     React.useEffect(() => {
         if (selectedMachineId !== null) return;
         if (params.machines.length === 0) return;
+        // Let persisted reconciliation own hydration when its preferred machine is available.
+        // Otherwise this fallback can enqueue a competing selection in the same effect flush,
+        // causing the persisted effect to run again against a stale selectedMachineId.
+        if (resolvePersistedMachineId() !== null) return;
         const machineIdToUse = resolveMachineId(null);
         const trimmedPath = normalizePathParam(params.pathParam);
 
