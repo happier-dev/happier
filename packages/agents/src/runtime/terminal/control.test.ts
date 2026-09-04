@@ -15,8 +15,17 @@ describe('terminal control contract', () => {
     expect(TERMINAL_SHIFT_TAB_SEQUENCE).not.toContain('S-Tab');
   });
 
-  it('enumerates the supported special keys including ShiftTab', () => {
-    const expected: readonly TerminalSpecialKey[] = ['Enter', 'Escape', 'Tab', 'ShiftTab', 'CtrlC', 'Backspace'];
+  it('enumerates the supported special keys including navigation and ShiftTab', () => {
+    const expected: readonly TerminalSpecialKey[] = [
+      'Enter',
+      'Escape',
+      'ArrowUp',
+      'ArrowDown',
+      'Tab',
+      'ShiftTab',
+      'CtrlC',
+      'Backspace',
+    ];
     expect([...TERMINAL_SPECIAL_KEYS]).toEqual(expected);
     expect(TERMINAL_SPECIAL_KEYS).toContain('ShiftTab');
   });

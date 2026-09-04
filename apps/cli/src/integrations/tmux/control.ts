@@ -24,6 +24,8 @@ export type TmuxControlCommandExecutor = (
 const TMUX_NAMED_SPECIAL_KEYS: Readonly<Partial<Record<TerminalSpecialKey, string>>> = Object.freeze({
   Enter: 'Enter',
   Escape: 'Escape',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
   Tab: 'Tab',
   CtrlC: 'C-c',
   Backspace: 'BSpace',

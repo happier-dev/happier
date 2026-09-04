@@ -26,4 +26,6 @@ export const TERMINAL_SPECIAL_KEY_RAW_SEQUENCES: Readonly<
   ShiftTab: TERMINAL_SHIFT_TAB_SEQUENCE,
   CtrlC: '\u0003',
   Backspace: '\u007f',
+  ArrowUp: '\u001b[A',
+  ArrowDown: '\u001b[B',
 });

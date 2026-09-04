@@ -79,6 +79,10 @@ function resolveSpecialKeyBytes(key: TerminalSpecialKey): string {
       return '\r';
     case 'Escape':
       return '\u001b';
+    case 'ArrowUp':
+      return '\u001b[A';
+    case 'ArrowDown':
+      return '\u001b[B';
     case 'Tab':
       return '\t';
     case 'ShiftTab':

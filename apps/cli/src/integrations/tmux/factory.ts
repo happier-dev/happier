@@ -2,6 +2,8 @@ import { formatTmuxSessionIdentifier, TmuxSessionIdentifierError } from './ident
 import { TmuxUtilities } from './TmuxUtilities';
 import type { TmuxSessionIdentifier } from './types';
 
+const TMUX_AVAILABILITY_PROBE_TIMEOUT_MS = 60_000;
+
 // Global instance for consistent usage
 const tmuxUtilsByKey = new Map<string, TmuxUtilities>();
 
@@ -39,7 +41,12 @@ export function getTmuxUtilities(
 export async function isTmuxAvailable(): Promise<boolean> {
   try {
     const utils = new TmuxUtilities();
-    const result = await utils.executeTmuxCommand(['list-sessions']);
+    const result = await Promise.race([
+      utils.executeTmuxCommand(['list-sessions']),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), TMUX_AVAILABILITY_PROBE_TIMEOUT_MS);
+      }),
+    ]);
     return result !== null;
   } catch {
     return false;

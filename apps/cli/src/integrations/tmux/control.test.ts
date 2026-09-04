@@ -87,6 +87,19 @@ describe('createTmuxTerminalControlPort', () => {
     ]);
   });
 
+  it('sends selection arrows as named keys', async () => {
+    const { executor, calls } = recordingExecutor();
+    const port = createTmuxTerminalControlPort({ executor, target: TARGET });
+
+    await port.sendSpecialKey('ArrowUp');
+    await port.sendSpecialKey('ArrowDown');
+
+    expect(calls).toEqual([
+      ['send-keys', '-t', TARGET, 'Up'],
+      ['send-keys', '-t', TARGET, 'Down'],
+    ]);
+  });
+
   it('sends ShiftTab as the raw ESC [ Z sequence and NEVER a named S-Tab', async () => {
     const { executor, calls } = recordingExecutor();
     const port = createTmuxTerminalControlPort({ executor, target: TARGET });
