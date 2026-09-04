@@ -321,28 +321,28 @@ describe('claudeUnifiedTerminalLauncher', () => {
 
       opts.onInFlightSteerAvailabilitySnapshot?.({ available: true, reason: null });
       await consumer.drainPending({ reason: 'test-exact-steer-available' });
-      expect(materializeNextPendingMessageSafely).toHaveBeenLastCalledWith({
+      expect(materializeNextPendingMessageSafely).toHaveBeenLastCalledWith(expect.objectContaining({
         reconcileWhenEmpty: 'force',
         activeTurnSteerability: 'steerable',
         pendingQueueDeliveryTiming: 'after_foreground_ready',
-      });
+      }));
 
       // A stale positive publication is presentation only. The request-scoped recapture is the
       // sole claim proof and must be able to revoke it immediately before materialization.
       opts.onInFlightSteerAvailabilitySnapshot?.({ available: true, reason: null });
       await consumer.drainPending({ reason: 'test-exact-steer-unavailable' });
-      expect(materializeNextPendingMessageSafely).toHaveBeenLastCalledWith({
+      expect(materializeNextPendingMessageSafely).toHaveBeenLastCalledWith(expect.objectContaining({
         reconcileWhenEmpty: 'force',
         activeTurnSteerability: 'unsteerable',
         pendingQueueDeliveryTiming: 'after_foreground_ready',
-      });
+      }));
 
       await consumer.drainPending({ reason: 'test-pre-claim-steer-refresh' });
-      expect(materializeNextPendingMessageSafely).toHaveBeenLastCalledWith({
+      expect(materializeNextPendingMessageSafely).toHaveBeenLastCalledWith(expect.objectContaining({
         reconcileWhenEmpty: 'force',
         activeTurnSteerability: 'steerable',
         pendingQueueDeliveryTiming: 'after_foreground_ready',
-      });
+      }));
       expect(refreshAvailability).toHaveBeenCalledTimes(3);
       unregisterRefresh();
     });
@@ -376,7 +376,9 @@ describe('claudeUnifiedTerminalLauncher', () => {
     };
     mocks.runClaudeUnifiedTerminalSession.mockImplementationOnce(async (opts: {
       onTerminalHostReady?: (params: { handle: TerminalHostHandle; terminal: NonNullable<TerminalAttachmentInfo['terminal']> }) => void;
+      publishTerminalHostMetadata?: (terminal: NonNullable<TerminalAttachmentInfo['terminal']>) => void | Promise<void>;
     }) => {
+      await opts.publishTerminalHostMetadata?.(terminal);
       opts.onTerminalHostReady?.({ handle, terminal });
     });
 
@@ -1709,11 +1711,11 @@ describe('claudeUnifiedTerminalLauncher', () => {
       },
     });
 
-    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith(expect.objectContaining({
       reconcileWhenEmpty: 'skip',
       activeTurnSteerability: 'unsteerable',
       pendingQueueDeliveryTiming: 'after_foreground_ready',
-    });
+    }));
   });
 
   it('attempts pending materialization while parked after host death (queued messages must not require a manual Send now)', async () => {
@@ -3147,6 +3149,94 @@ describe('claudeUnifiedTerminalLauncher', () => {
     });
     expect(session.onThinkingChange).toHaveBeenCalledWith(false);
     expect(session.client.flush).toHaveBeenCalled();
+  });
+
+  it('pauses durable rows after repeated readiness timeouts instead of redelivering them forever', async () => {
+    setProcessTty(false);
+    const session = createSession();
+    const readinessError = new ClaudeUnifiedTerminalReadinessTimeoutError({
+      timeoutMs: 15_000,
+      handle: {
+        kind: 'tmux',
+        sessionName: 'happier-claude-readiness-loop',
+        paneId: '0',
+        attachMetadata: {
+          attachStrategy: 'terminal_host',
+          topology: 'shared',
+          locality: 'same_machine',
+          liveProbe: 'required',
+        },
+      },
+      diagnostics: {
+        elapsedMs: 15_000,
+        hostAlive: true,
+        sessionStartObserved: false,
+        lastLivenessPaneAlive: true,
+        lastScreenTail: '❯ No, exit\n  Yes, I accept\nEnter to confirm · Esc to cancel',
+      },
+    });
+    const blockPendingMessageDelivery = session.client.blockPendingMessageDelivery;
+    if (!blockPendingMessageDelivery) throw new Error('test fixture missing blockPendingMessageDelivery');
+    let rowsBlocked = false;
+    vi.mocked(blockPendingMessageDelivery).mockImplementation(async () => {
+      rowsBlocked = true;
+      return true;
+    });
+    vi.mocked(session.queue.size).mockReturnValue(1);
+    vi.mocked(session.queue.waitForMessagesAndGetAsString).mockImplementation((async (abortSignal?: AbortSignal) => {
+      if (!rowsBlocked) {
+        return {
+          message: 'poisoned startup message',
+          mode: { permissionMode: 'default' },
+          hash: 'readiness-loop',
+          maxUserMessageSeq: 9,
+          userMessageLocalIds: ['local-readiness-loop'],
+        };
+      }
+      return await new Promise((resolveWait) => {
+        if (abortSignal?.aborted) return resolveWait(null);
+        abortSignal?.addEventListener('abort', () => resolveWait(null), { once: true });
+      });
+    }) as never);
+    mocks.runClaudeUnifiedTerminalSession.mockImplementation(async (runOpts: {
+      nextMessage: () => Promise<{
+        message: string;
+        mode: { permissionMode: string };
+        maxUserMessageSeq?: number | null;
+        userMessageLocalIds?: readonly string[] | null;
+      } | null>;
+      returnUnconsumedMessage?: (input: {
+        message: string;
+        mode: { permissionMode: string };
+        maxUserMessageSeq?: number | null;
+        userMessageLocalIds?: readonly string[] | null;
+      }) => void;
+    }) => {
+      const batch = await runOpts.nextMessage();
+      if (!batch) throw new Error('expected pending readiness-timeout batch');
+      runOpts.returnUnconsumedMessage?.(batch);
+      throw readinessError;
+    });
+
+    const abortController = new AbortController();
+    const result = claudeUnifiedTerminalLauncher(session, {
+      initialMode: {
+        permissionMode: 'default',
+        claudeUnifiedTerminalHost: 'tmux',
+      },
+      signal: abortController.signal,
+    });
+
+    await vi.waitFor(() => {
+      expect(blockPendingMessageDelivery).toHaveBeenCalledWith({
+        localIds: ['local-readiness-loop'],
+        reason: 'terminal_host_unreachable',
+      });
+    });
+    expect(mocks.runClaudeUnifiedTerminalSession).toHaveBeenCalledTimes(4);
+
+    abortController.abort();
+    await expect(result).resolves.toEqual({ type: 'exit', code: 1 });
   });
 
   it('surfaces terminal-host startup failures as structured runtime issues and exits without generic fatal handling', async () => {
