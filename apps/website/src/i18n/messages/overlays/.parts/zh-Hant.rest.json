@@ -179,7 +179,7 @@
   "faq.FAQ_ITEMS.shutdown.q": "如果這個專案停掉了呢？",
   "faq.FAQ_ITEMS.shutdown.a.0": "授權是 MIT，中繼站可以自行架設，所以失效模式是「你自己執行它」，而不是「你失去你的工作」。無論如何你的工作階段都活在你自己的電腦上 — Happier 是蓋在上面的用戶端。",
   "faq.FAQ_ITEMS.server.q": "我需要一台伺服器嗎？",
-  "faq.FAQ_ITEMS.server.a.0": "不需要。在跑你程式碼的那台電腦上安裝 CLI，用 QR code 配對一台裝置，就完成了 — Happier 託管的中繼站會免費處理其餘的部分。",
+  "faq.FAQ_ITEMS.server.a.0": "不需要。在執行程式碼的電腦上安裝 CLI，並完成 `happier setup`。引導式設定預設會在登入前選擇 Happier Cloud，接著註冊這台電腦並設定其背景服務。",
   "faq.FAQ_ITEMS.server.a.1": "執行自己的中繼站是選項，不是必要條件。`happier relay host install` 會把它設定成受管理的服務；另外也有 Docker 映像檔和一個 runner。你可以把它綁到 localhost、你的區域網路或公開網際網路，並透過 Tailscale、SSH 通道或直接的 HTTPS 連上它。",
   "faq.FAQ_ITEMS.agents.q": "Happier 支援哪些代理程式？",
   "faq.FAQ_ITEMS.agents.a.0": "十三個內建：Claude Code、Codex、OpenCode、Cursor、Gemini、Copilot、Qwen、Kimi、Auggie、Kilo、Kiro、Pi 和 Grok。除了這些之外，Custom ACP 後端接受任何會說 Agent Client Protocol 的 CLI，而一旦你定義好它，它就會出現在代理程式選擇器裡，和內建的並列。",

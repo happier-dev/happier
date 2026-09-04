@@ -179,7 +179,7 @@
   "faq.FAQ_ITEMS.shutdown.q": "如果这个项目停掉了怎么办？",
   "faq.FAQ_ITEMS.shutdown.a.0": "许可是 MIT，relay 可以自托管，所以失败的形态是“你自己运行它”，而不是“你丢了你的工作”。无论如何，你的会话都在你自己的电脑上 —— Happier 是它们之上的一个客户端。",
   "faq.FAQ_ITEMS.server.q": "我需要一台服务器吗？",
-  "faq.FAQ_ITEMS.server.a.0": "不需要。在运行你代码的那台电脑上安装 CLI，用二维码配对一台设备，就完成了 —— 剩下的由 Happier 托管的 relay 免费完成。",
+  "faq.FAQ_ITEMS.server.a.0": "不需要。在运行代码的电脑上安装 CLI，并完成 `happier setup`。引导式设置默认会在登录前选择 Happier Cloud，然后注册这台电脑并配置其后台服务。",
   "faq.FAQ_ITEMS.server.a.1": "运行自己的 relay 是一个选项，不是要求。`happier relay host install` 会把它设置为一个受管理的服务；此外还有一个 Docker 镜像和一个 runner。你可以把它绑定到 localhost、你的局域网或公网，并通过 Tailscale、SSH 隧道或直接的 HTTPS 访问它。",
   "faq.FAQ_ITEMS.agents.q": "Happier 支持哪些智能体？",
   "faq.FAQ_ITEMS.agents.a.0": "有 13 个作为内置项提供：Claude Code、Codex、OpenCode、Cursor、Gemini、Copilot、Qwen、Kimi、Auggie、Kilo、Kiro、Pi 和 Grok。除此之外，Custom ACP 后端接受任何讲 Agent Client Protocol 的 CLI，定义好之后，它会和内置项并排出现在智能体选择器里。",
