@@ -764,6 +764,7 @@ export class AcpBackend implements AgentBackend {
   private readonly sessionUpdateShapeLogger = createEventShapeLoggerForLog({ logger, scope: 'acp-backend' });
   private connection: AcpClientConnection | null = null;
   private acpSessionId: string | null = null;
+  private agentCapabilities: InitializeResponse['agentCapabilities'] | null = null;
   private disposed = false;
   private replayCapture: AcpReplayCapture | null = null;
   /** Sole tool lifecycle/merge/timeout/finalization owner. */
@@ -954,6 +955,7 @@ export class AcpBackend implements AgentBackend {
     this.process = null;
     this.connection = null;
     this.acpSessionId = null;
+    this.agentCapabilities = null;
 
     connection?.close();
 
@@ -1575,6 +1577,8 @@ export class AcpBackend implements AgentBackend {
 
     logger.debug(`[AcpBackend] Initialize completed`);
 
+    this.agentCapabilities = (initResponse as InitializeResponse | null)?.agentCapabilities ?? null;
+
     if (this.options.authentication) {
       const advertisedMethodIds = new Set<string>();
       const methods = (initResponse as InitializeResponse | null)?.authMethods ?? [];
@@ -1639,6 +1643,14 @@ export class AcpBackend implements AgentBackend {
     throw error;
   }
 }
+
+  /**
+   * Whether the connected agent advertised ACP `session/load` support in its
+   * initialize capabilities. False until initialize completes.
+   */
+  supportsSessionLoad(): boolean {
+    return this.agentCapabilities?.loadSession === true;
+  }
 
   async startSession(initialPrompt?: string): Promise<StartSessionResult> {
     if (this.disposed) {
