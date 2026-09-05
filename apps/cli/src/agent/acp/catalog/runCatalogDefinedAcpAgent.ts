@@ -1,6 +1,6 @@
 import React from 'react';
 
-import type { AgentId } from '@happier-dev/agents';
+import type { AgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
 import { AGENTS_CORE, getProviderCliRuntimeSpec } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
@@ -67,7 +67,7 @@ export async function runCatalogDefinedAcpAgent(
         messageBuffer,
         mcpServers,
         permissionHandler,
-        sessionIdentity: AGENTS_CORE[agentId].resume.vendorResume === 'unsupported'
+        sessionIdentity: (AGENTS_CORE[agentId].resume.vendorResume as VendorResumeSupportLevel) === 'unsupported'
           ? { kind: 'runtime-only', reason: 'vendor-resume-unsupported' }
           : { kind: 'manifest-metadata' },
         onThinkingChange: setThinking,

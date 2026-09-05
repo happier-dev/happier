@@ -1,5 +1,5 @@
 import { buildBackendTargetKey } from '@happier-dev/protocol';
-import type { AgentId } from '../types.js';
+import type { AgentId, VendorResumeSupportLevel } from '../types.js';
 import { isAbsolutePathLike } from '../path/isAbsolutePathLike.js';
 import { AGENTS_CORE } from '../manifest.js';
 import { isCodexVendorResumeBackendEnabled } from '../providerSettings/definitions/codex.js';
@@ -103,11 +103,14 @@ export function evaluateVendorResumeEligibility(input: Readonly<{
   }
 
   const resumeConfig = AGENTS_CORE[input.agentId]?.resume;
-  if (!resumeConfig || resumeConfig.vendorResume === 'unsupported') {
+  // Widened via `as`: the literal union in AGENTS_CORE only reflects the agents declared
+  // today, while this guard must keep holding for future agents that declare 'unsupported'.
+  const vendorResume = resumeConfig?.vendorResume as VendorResumeSupportLevel | undefined;
+  if (!resumeConfig || vendorResume === 'unsupported') {
     return { eligible: false, reasonCode: 'agent_unsupported' };
   }
 
-  if (resumeConfig.vendorResume === 'experimental') {
+  if (vendorResume === 'experimental') {
     const experimentalResumePolicy = 'experimentalResumePolicy' in resumeConfig
       ? resumeConfig.experimentalResumePolicy
       : undefined;

@@ -14,7 +14,7 @@ import {
 } from '@/settings/notifications/permissionRequestPush';
 import { createAgentSessionMediaPersister } from '@/session/sessionMedia/createAgentSessionMediaPersister';
 import { createSessionMediaAccessPolicy } from '@/session/sessionMedia/createSessionMediaAccessPolicy';
-import { AGENTS_CORE, getProviderCliRuntimeSpec, isAgentMediaCapabilitySupported } from '@happier-dev/agents';
+import { AGENTS_CORE, getProviderCliRuntimeSpec, isAgentMediaCapabilitySupported, type VendorResumeSupportLevel } from '@happier-dev/agents';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import { createVendorResumeIdMetadataPublisher } from '@/session/metadata/createVendorResumeIdMetadataPublisher';
@@ -125,7 +125,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
       return { kind: 'persist-bound' as const, persistBound: params.sessionIdentity.persistBound };
     }
     if (params.sessionIdentity.kind === 'runtime-only'
-      && AGENTS_CORE[params.provider].resume.vendorResume !== 'unsupported') {
+      && (AGENTS_CORE[params.provider].resume.vendorResume as VendorResumeSupportLevel) !== 'unsupported') {
       throw new Error(`Agent ${params.provider} advertises vendor resume and cannot use runtime-only session identity`);
     }
     return params.sessionIdentity;

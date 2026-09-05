@@ -138,8 +138,8 @@ describe('createVendorResumeIdMetadataPublisher', () => {
     expect(updateMetadata).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects an empty bound identity and an agent without a vendor resume field', async () => {
-    const updateMetadata = vi.fn(async () => {});
+  it('rejects an empty bound identity and publishes customAcpSessionId for configured ACP backends', async () => {
+    const updateMetadata = vi.fn(async (_updater: (metadata: Metadata) => Metadata) => {});
     const publisher = createVendorResumeIdMetadataPublisher({
       agentId: 'qwen',
       getMetadataSnapshot: () => createTestMetadata(),
@@ -152,10 +152,21 @@ describe('createVendorResumeIdMetadataPublisher', () => {
     })).rejects.toThrow(/bound vendor session identity/i);
     expect(updateMetadata).not.toHaveBeenCalled();
 
-    expect(() => createVendorResumeIdMetadataPublisher({
+    // customAcp now declares customAcpSessionId for capability-gated configured-backend
+    // resume, so publisher construction no longer throws for it.
+    const customAcpPublisher = createVendorResumeIdMetadataPublisher({
       agentId: 'customAcp',
       getMetadataSnapshot: () => createTestMetadata(),
       updateMetadata,
-    })).toThrow(/does not declare a vendor resume metadata field/i);
+    });
+    await customAcpPublisher.persistBound({
+      generation: 0,
+      operation: 'create',
+      vendorSessionId: 'acp-session-1',
+    });
+    expect(updateMetadata).toHaveBeenCalledTimes(1);
+    const updater = updateMetadata.mock.calls[0]?.[0];
+    expect(typeof updater).toBe('function');
+    expect(updater?.(createTestMetadata())).toMatchObject({ customAcpSessionId: 'acp-session-1' });
   });
 });

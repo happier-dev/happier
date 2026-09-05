@@ -554,6 +554,7 @@ export type Metadata = {
     serviceIds: ConnectedServiceId[],
   },
   codexSessionId?: string, // Codex session/conversation ID (uuid)
+  customAcpSessionId?: string, // Configured ACP backend session ID (vendor resume)
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
   agentRuntimeDescriptorV1?: unknown,
   // Compact, count-only workflow activity headline (CWF3). The live invalidation pointer to durable

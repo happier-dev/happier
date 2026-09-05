@@ -35,6 +35,36 @@ describe('vendorResumePolicy', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('grok', { grokSessionId: ' grok-session ' })).toBe('grok-session');
   });
 
+  it('gates configured ACP backend resume on a runtime-persisted session id', () => {
+    expect(AGENTS_CORE.customAcp.resume).toEqual({
+      vendorResume: 'experimental',
+      vendorResumeIdField: 'customAcpSessionId',
+      experimentalResumePolicy: 'runtime_checked',
+    });
+    expect(resolveVendorResumeIdFromSessionMetadata('customAcp', { customAcpSessionId: ' acp-session ' })).toBe('acp-session');
+    expect(resolveVendorResumeIdFromSessionMetadata('customAcp', { customAcpSessionId: '   ' })).toBeNull();
+  });
+
+  it('allows configured ACP backend sessions with a persisted session id and lets runtime load failures surface later', () => {
+    expect(
+      evaluateVendorResumeEligibility({
+        agentId: 'customAcp',
+        metadata: { customAcpSessionId: 'acp-session' },
+        accountSettings: {},
+      }),
+    ).toEqual({ eligible: true, vendorResumeId: 'acp-session' });
+  });
+
+  it('rejects configured ACP backend resume when the adapter never persisted a session id', () => {
+    expect(
+      evaluateVendorResumeEligibility({
+        agentId: 'customAcp',
+        metadata: { flavor: 'acp:some-adapter' },
+        accountSettings: {},
+      }),
+    ).toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });
+  });
+
   it('prefers vendor session ids from agentRuntimeDescriptorV1 over legacy top-level metadata', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('codex', {
       agentRuntimeDescriptorV1: {
