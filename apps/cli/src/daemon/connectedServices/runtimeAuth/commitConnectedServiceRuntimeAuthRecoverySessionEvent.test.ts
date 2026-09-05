@@ -2,8 +2,57 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import * as sessionSockets from '@/api/session/sockets';
 
 describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
+  it('persists the scheduler wait before acknowledging its visible event', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    let metadata: Record<string, unknown> = { path: '/project', unrelated: true };
+    const socket = createApiSessionSocketStub({
+      onConnect: (connected) => connected.trigger('connect'),
+      emit: (event, args) => {
+        if (event !== 'update-metadata') return;
+        const request = args[0] as { metadata: string };
+        metadata = JSON.parse(request.metadata) as Record<string, unknown>;
+        const ack = args[1] as (value: unknown) => void;
+        ack({ result: 'success', version: 2, metadata: request.metadata });
+      },
+    });
+    // Session-scoped socket construction is the network boundary; metadata CAS remains real.
+    vi.spyOn(sessionSockets, 'createSessionScopedSocket').mockReturnValue(socket as unknown as ReturnType<typeof sessionSockets.createSessionScopedSocket>);
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { session: {
+      id: 'sess-wait', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+      metadata: JSON.stringify(metadata), metadataVersion: 1, encryptionMode: 'plain',
+      agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+    } } });
+    vi.spyOn(axios, 'post').mockImplementationOnce(async () => {
+      expect(metadata).toMatchObject({ unrelated: true, sessionUsageLimitRecoveryV1: {
+        status: 'waiting', nextCheckAtMs: 31000, runtimeAuthRecoveryAttemptId: 'attempt-wait',
+      } });
+      return { status: 200, data: { didWrite: true, message: { id: 'msg', seq: 2, localId: 'event', createdAt: 2 } } };
+    });
+    const { commitConnectedServiceRuntimeAuthRecoverySessionEvent } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
+    await commitConnectedServiceRuntimeAuthRecoverySessionEvent({
+      credentials: { token: 'test', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      sessionId: 'sess-wait', attemptId: 'attempt-wait', transition: 'scheduled',
+      event: {
+        type: 'connected-service-runtime-auth-recovery', status: 'retry_scheduled', serviceId: 'openai-codex', terminal: false,
+        nextRetryAtMs: 31000,
+        diagnostic: { code: 'recovery_retry_scheduled', source: 'runtime_auth_recovery', failurePhase: 'runtime_auth_recovery',
+          serviceId: 'openai-codex', retryable: true, suggestedActions: ['retry'] },
+      },
+      recoveryIntent: {
+        v: 2, sessionId: 'sess-wait', attemptId: 'attempt-wait', serviceId: 'openai-codex',
+        profileId: 'primary', groupId: 'pool', status: 'waiting', armedAtMs: 1000,
+        nextRetryAtMs: 31000, attemptCount: 1, maxAttempts: 3, switchesThisTurn: 0,
+        classification: { kind: 'usage_limit', serviceId: 'openai-codex', profileId: 'primary', groupId: 'pool',
+          resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' },
+        failurePhase: 'handler', failureReason: 'usage_limit', lastError: 'no_eligible_member', lastErrorClassification: null,
+      },
+    });
+    expect(metadata).toHaveProperty('sessionUsageLimitRecoveryV1');
+  });
   it('uses durable attempt and transition identity for deterministic replay-safe local ids', async () => {
     const module = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent') as typeof import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent') & {
       buildRuntimeAuthRecoveryAttemptTransitionLocalId: (input: { attemptId: string; transition: string }) => string;
@@ -32,12 +81,10 @@ describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
     envScope.restore();
     envScope = createEnvKeyScope(['HAPPIER_SERVER_URL']);
     vi.restoreAllMocks();
-    vi.resetModules();
   });
 
   it('rejects a missing session snapshot so durable delivery remains pending without an HTTP commit ACK', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
-    vi.resetModules();
     const {
       commitConnectedServiceRuntimeAuthRecoverySessionEvent,
     } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
@@ -84,7 +131,6 @@ describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
 
   it('commits typed runtime-auth recovery dead-letter events through the session event outbox owner', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
-    vi.resetModules();
     const {
       commitConnectedServiceRuntimeAuthRecoverySessionEvent,
     } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
@@ -193,7 +239,6 @@ describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
 
   it('uses a deterministic local id for repeated runtime-auth recovery events', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
-    vi.resetModules();
     const {
       commitConnectedServiceRuntimeAuthRecoverySessionEvent,
     } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
@@ -276,7 +321,6 @@ describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
 
   it('does not treat retry schedule drift as a new runtime-auth recovery event row', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
-    vi.resetModules();
     const {
       commitConnectedServiceRuntimeAuthRecoverySessionEvent,
     } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
@@ -374,7 +418,6 @@ describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
 
   it('reuses the same local id when the same runtime-auth recovery incident is retried', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
-    vi.resetModules();
     const {
       commitConnectedServiceRuntimeAuthRecoverySessionEvent,
     } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');

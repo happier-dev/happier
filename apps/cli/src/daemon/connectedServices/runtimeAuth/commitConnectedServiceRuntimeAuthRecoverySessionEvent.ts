@@ -7,6 +7,9 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
+import { buildRuntimeAuthUsageLimitRecoveryMetadataUpdater } from './projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
 import {
   encryptSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
@@ -74,6 +77,7 @@ export async function commitConnectedServiceRuntimeAuthRecoverySessionEvent(para
   event: unknown;
   attemptId?: string;
   transition?: string;
+  recoveryIntent?: RuntimeAuthRecoveryIntent;
 }>): Promise<void> {
   const event = parseRuntimeAuthRecoveryEvent(params.event);
   if (!event) return;
@@ -86,6 +90,19 @@ export async function commitConnectedServiceRuntimeAuthRecoverySessionEvent(para
     const error = new Error('Runtime-auth recovery session not found');
     (error as { code?: string }).code = 'runtime_auth_recovery_session_not_found';
     throw error;
+  }
+
+  const updater = params.recoveryIntent
+    ? buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent: params.recoveryIntent })
+    : null;
+  if (updater) {
+    await updateSessionMetadataWithRetry({
+      token: params.credentials.token,
+      credentials: params.credentials,
+      sessionId: params.sessionId,
+      rawSession,
+      updater,
+    });
   }
 
   const eventId = params.attemptId && params.transition

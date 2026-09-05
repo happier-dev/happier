@@ -644,6 +644,7 @@ export async function commitRuntimeAuthRecoveryDiagnosticForDaemon(input: Readon
     transcriptEvent: unknown;
     attemptId: string;
     transition: string;
+    recoveryIntent?: RuntimeAuthRecoveryIntent;
   }>;
 }>): Promise<void> {
   await commitConnectedServiceRuntimeAuthRecoverySessionEvent({
@@ -652,6 +653,7 @@ export async function commitRuntimeAuthRecoveryDiagnosticForDaemon(input: Readon
     event: input.delivery.transcriptEvent,
     attemptId: input.delivery.attemptId,
     transition: input.delivery.transition,
+    recoveryIntent: input.delivery.recoveryIntent,
   });
 }
 

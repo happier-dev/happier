@@ -842,6 +842,12 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       reason: 'waiting',
     });
     if (settlement.status === 'stale') return { status: 'inactive' };
+    this.deps.onDelayed?.({
+      sessionId,
+      intent: settlement.intent,
+      retryAtMs: this.deps.getNextRetryAtMs(settlement.intent) ?? nowMs,
+      reason: outcome.lastError ?? 'recovery_waiting',
+    });
     return { status: 'waiting' };
   }
 

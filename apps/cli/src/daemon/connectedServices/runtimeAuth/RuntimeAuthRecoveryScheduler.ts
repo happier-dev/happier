@@ -1,4 +1,5 @@
 import type { DaemonServerWorkErrorClassification, DaemonServerWorkErrorKind } from '@/daemon/serverWork/types';
+import { isDeepStrictEqual } from 'node:util';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 import {
   DurableBackoffRecoveryScheduler,
@@ -45,6 +46,7 @@ export type RuntimeAuthRecoveryPendingVisibleEvent = Readonly<{
 
 export type RuntimeAuthRecoveryVisibleEventDelivery = RuntimeAuthRecoveryPendingVisibleEvent & Readonly<{
   sessionId: string;
+  recoveryIntent: RuntimeAuthRecoveryIntent;
 }>;
 
 export type RuntimeAuthRecoveryIntakeResult = Readonly<{
@@ -339,6 +341,31 @@ function buildTerminalRuntimeAuthIntent(input: Readonly<{
         [{ attemptId: input.intent.attemptId, transition: 'terminal', transcriptEvent }],
       ),
     } : {}),
+  };
+}
+
+function withRuntimeAuthWaitPresentation(intent: RuntimeAuthRecoveryIntent): RuntimeAuthRecoveryIntent {
+  if (!intent.attemptId) return intent;
+  const transcriptEvent = buildRuntimeAuthRecoveryTranscriptEvent({
+    status: 'retry_scheduled',
+    classification: intent.classification,
+    uxDiagnostic: buildRuntimeAuthRecoveryScheduledUxDiagnostic({
+      classification: intent.classification,
+      nextRetryAtMs: intent.nextRetryAtMs,
+      reason: intent.lastError,
+    }),
+    nextRetryAtMs: intent.nextRetryAtMs,
+    attempt: intent.attemptCount,
+    terminal: false,
+    reason: intent.lastError ?? 'awaiting_limit_reset',
+  });
+  if (!transcriptEvent) return intent;
+  return {
+    ...intent,
+    lastSettledTransition: 'scheduled',
+    pendingVisibleEvents: mergeRuntimeAuthRecoveryPendingVisibleEvents(intent.pendingVisibleEvents, [
+      { attemptId: intent.attemptId, transition: 'scheduled', transcriptEvent },
+    ]),
   };
 }
 
@@ -1173,7 +1200,7 @@ export class RuntimeAuthRecoveryScheduler {
         lastSettledTransition: mergeRuntimeAuthRecoveryTransition(intent.lastSettledTransition, 'working'),
         attemptCount,
       }),
-      markWaiting: (intent, input) => ({
+      markWaiting: (intent, input) => withRuntimeAuthWaitPresentation({
         ...intent,
         v: 2,
         status: intent.status === 'resumed_awaiting_proof' ? 'resumed_awaiting_proof' : 'waiting',
@@ -1356,12 +1383,6 @@ export class RuntimeAuthRecoveryScheduler {
               nextRetryAtMs: disposition.nextRetryAtMs,
               lastError: disposition.reason,
               exhaustOnMaxAttempt: false,
-              intent: {
-                ...intent,
-                status: 'waiting',
-                nextRetryAtMs: disposition.nextRetryAtMs,
-                lastError: disposition.reason,
-              },
             };
           }
           if (disposition?.kind === 'terminal') {
@@ -1544,6 +1565,7 @@ export class RuntimeAuthRecoveryScheduler {
           nextRetryAtMs: retryAtMs,
           classification: intent.lastErrorClassification,
           failureKind: intent.classification.kind,
+          transcriptEvent: intent.pendingVisibleEvents?.find((event) => event.transition === 'scheduled')?.transcriptEvent,
         });
       },
     });
@@ -1577,7 +1599,8 @@ export class RuntimeAuthRecoveryScheduler {
     for (const intent of this.hydratePassive()) {
       const recoveryKey = buildRecoveryKeyForIntent(intent);
       for (const pending of intent.pendingVisibleEvents ?? []) {
-        await deliver({ sessionId: intent.sessionId, ...pending });
+        const current = this.readByKeyPassive(recoveryKey) ?? intent;
+        await deliver({ sessionId: intent.sessionId, ...pending, recoveryIntent: current });
         await this.acknowledgePendingVisibleEvent({ recoveryKey, pending });
         delivered += 1;
       }
@@ -1635,6 +1658,7 @@ export class RuntimeAuthRecoveryScheduler {
       const pendingVisibleEvents = intent.pendingVisibleEvents?.filter((candidate) => (
         candidate.attemptId !== input.pending.attemptId
         || candidate.transition !== input.pending.transition
+        || !isDeepStrictEqual(candidate.transcriptEvent, input.pending.transcriptEvent)
       ));
       const { pendingVisibleEvents: _previous, ...rest } = intent;
       return {
@@ -1829,13 +1853,13 @@ export class RuntimeAuthRecoveryScheduler {
     });
     if (disposition?.kind !== 'durable_wait') return null;
     const nextRetryAtMs = disposition.nextRetryAtMs;
-    const waiting: RuntimeAuthRecoveryIntent = {
+    const waiting = withRuntimeAuthWaitPresentation({
       ...intent,
       status: 'waiting',
       attemptCount,
       nextRetryAtMs,
       lastError: disposition.reason,
-    };
+    });
     const settlement = await this.scheduler.upsertConditionallyByKey({
       sessionId: waiting.sessionId,
       recoveryKey: input.recoveryKey,
@@ -1856,6 +1880,7 @@ export class RuntimeAuthRecoveryScheduler {
       nextRetryAtMs,
       classification: waiting.lastErrorClassification,
       failureKind: waiting.classification.kind,
+      transcriptEvent: waiting.pendingVisibleEvents?.find((event) => event.transition === 'scheduled')?.transcriptEvent,
     });
     return waiting;
   }
