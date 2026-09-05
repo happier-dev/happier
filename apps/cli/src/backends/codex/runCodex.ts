@@ -108,6 +108,7 @@ import { resolveProviderPromptFailureDeliveryReason } from '@/agent/runtime/prov
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { resolveReadyNotificationAssistantText } from '@/agent/runtime/readyNotificationAssistantText';
+import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 import type { ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
 import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
@@ -1409,6 +1410,19 @@ export async function runCodex(opts: {
             ? Object.assign(error, { happierNativeResumeIdentityMismatch: true })
             : error;
     };
+    const failStrictCodexResume = async (message: string, cause: unknown): Promise<never> => {
+        messageBuffer.addMessage(message, 'status');
+        session.sendSessionEvent({ type: 'message', message });
+        await surfacePrimarySessionRuntimeIssue({
+            provider: 'codex',
+            session,
+            sessionSeq: session.getLastObservedMessageSeq(),
+            cause: 'status_error',
+            error: cause,
+            allocateTurnWhenIdle: true,
+        });
+        throw createCodexResumeError(message, cause);
+    };
 
 	    if (codexAcpFallbackToMcpMessage && codexAcpFallbackToMcpMessage !== initialCodexAcpFallbackToMcpMessage) {
 	        session.sendSessionEvent({ type: 'message', message: codexAcpFallbackToMcpMessage });
@@ -2276,9 +2290,7 @@ export async function runCodex(opts: {
                                   `Reason: ${reason}\n` +
                                   `Fix: ensure Codex ${remoteResumeBackendLabel} can run on this machine, then retry.\n` +
                                   `Note: Happier refuses to start a new Codex session when --resume was requested.`;
-                            messageBuffer.addMessage(message, 'status');
-                            session.sendSessionEvent({ type: 'message', message });
-                            throw createCodexResumeError(message, e);
+                            await failStrictCodexResume(message, e);
                         }
                     }
 
@@ -2597,9 +2609,7 @@ export async function runCodex(opts: {
                                           `Reason: ${reason}\n` +
                                           `Fix: ensure Codex ${remoteResumeBackendLabel} can run on this machine, then retry.\n` +
                                           `Note: Happier refuses to start a new Codex session when --resume was requested.`;
-                                    messageBuffer.addMessage(message, 'status');
-                                    session.sendSessionEvent({ type: 'message', message });
-                                    throw createCodexResumeError(message, e);
+                                    await failStrictCodexResume(message, e);
                                 }
 
                                 logger.debug('[Codex ACP] Resume failed; starting a new session instead', e);
