@@ -22,6 +22,28 @@ Notes:
 
 ## Release flow (maintainers)
 
+Run the private conductor on the configured macOS authority. The canonical
+wrapper in this environment is
+`/Users/leeroy/Documents/Development/happier/maintainers-tools/bin/hmaint`;
+invoke it directly and prove it with
+`/Users/leeroy/Documents/Development/happier/maintainers-tools/bin/hmaint --help`.
+From the managed Linux VM, keep source work in the authoritative VM checkout
+and route the same wrapper through an existing configured 0.3 checkout:
+
+```bash
+cd <absolute-0.3-checkout>
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  /Users/leeroy/Documents/Development/happier/maintainers-tools/bin/hmaint \
+  release bootstrap --repo <absolute-macOS-checkout> --json
+```
+
+Invoke the launcher from the intended repository-relative working directory;
+it projects that directory remotely and does not accept a launcher-level
+`--cwd` option. If the launcher, configured `mac-host` target, wrapper, or
+Mac-visible target checkout cannot be proved, fail closed. Do not guess another
+checkout, copy credentials into the VM, install a VM-local conductor, or use a
+personal GitHub login.
+
 ### Preview release (dev → preview)
 
 When you want to publish/deploy a new preview build:
@@ -92,7 +114,14 @@ succeed.
 
 Use GitHub's failed-job rerun while workflow control is unchanged. After a
 control fix, resume from the prior combined run; each channel reads its own
-terminal status artifact and reuses only that channel's verified work.
+terminal status artifact and reuses only that channel's verified work. Exact
+per-channel resume facts are not available until those child workflows resolve
+their respective status artifacts. The earlier shared source-validation pass
+therefore conservatively treats CLI, stack, and server as requested whenever a
+combined resume ID is present. This may run a platform-service gate that a
+website-only or otherwise non-binary resume does not ultimately consume, but it
+cannot waive or bypass a required gate. Do not duplicate the resume resolver in
+the parent workflow to remove this conservative check.
 
 Issue availability is tracked by the mutually exclusive `stage:source`,
 `stage:dev`, `stage:preview`, and `stage:stable` labels documented in
@@ -105,6 +134,12 @@ post-preview dev changes to a preview candidate. Failed and dry-run releases
 move nothing. The reconciler re-reads each snapshotted issue, preserves
 unrelated labels, and skips closed or manually restaged issues. It never
 comments on or closes an issue.
+
+`website` and `docs` are independent release targets. Either may be selected
+without the other, and each has its own change decision, deploy job, status
+surface, and recovery evidence. Combined preview-and-production combines
+channels; it forwards the selected target set to both channels and does not
+couple website and docs publication.
 
 ### Public release contract and approval boundary
 
@@ -164,11 +199,20 @@ merely from the existence of a versioned candidate:
 Unrelated UI, documentation, notes-only, or internally compatible changes do
 not pay these heavy costs merely because release propagation produced a server
 or CLI version. Unnecessary checks are skipped automatically with a reason.
-An explicit maintainer may refine the heavy suite selection or waive exact-SHA
-CI with a bounded reason; the workflow records that evidence as `WAIVED`, not
-`PASS`. Candidate identity, artifact integrity, signatures, authorization, and
-irreversible-data admission remain hard target contracts rather than release
-checkboxes.
+An explicit maintainer may refine the heavy suite selection or waive supported
+evidence with a bounded reason; the workflow records that evidence as `WAIVED`,
+never `PASS`. The exact boundaries are:
+
+| Override | May waive | Does not waive |
+| --- | --- | --- |
+| `waive_ci` with a reason | exact-SHA source CI plus source-only MySQL and platform-service checks | trust-root checks, candidate identity, signing, artifact verification, binary smoke, or publication authorization |
+| `waive_validation_suites` with a reason | target-registered risk suites other than the two hard suites | `artifact-verify` and `binary-smoke` |
+
+When `plugin_sdk` or `sdk` publication is selected, exact-SHA CI cannot be
+waived at all. The external SDK authentication-readiness waiver is a separate
+named admission fact and does not waive release validation. Candidate identity,
+artifact integrity, signatures, authorization, and irreversible-data admission
+remain hard target contracts rather than release checkboxes.
 
 The public API comparator supplies mechanical facts; it does not choose SemVer
 or create a second approval workflow. The maintainer reviews those facts during
@@ -204,8 +248,9 @@ Run individual suites through `release-validate --suite ...` with their
 suite-specific sources; `release-validate --profile <id> --dry-run` only prints
 the profile's dispatchable suite IDs.
 
-Passing preparation is not a release go-ahead. A human must explicitly dispatch
-the hosted release with its confirmation phrase. A Qualified V4 activation is
+Passing preparation is not a release go-ahead. A human must explicitly
+authorize the exact candidate and confirmation phrase; the private conductor
+then owns the hosted dispatch. A Qualified V4 activation is
 an irreversible migration and requires its own explicit approval; the ordinary
 branch-promotion confirmation does not authorize it. The workflow resolves and
 records the release source SHA before it publishes or promotes release outputs;
@@ -275,26 +320,11 @@ long builds, notarization, store submission, and publication every 5–20 minute
 and use step-level progress plus the owning timeout; duration alone is not
 failure evidence.
 
-For a corrected non-secret Linux lane, use the existing manual test dispatcher
-instead of copying the CI workflow. The default is GitHub-hosted runners:
-
-```bash
-gh workflow run tests-dispatch.yml \
-  --repo happier-dev/happier \
-  --ref v0.3 \
-  -f profile=custom \
-  -f runner_pool=github \
-  -f custom_checks=release_contracts \
-  -f installers_channel=stable \
-  -f providers_preset=all \
-  -f providers_tier=smoke
-```
-
-This is focused diagnostic evidence at the corrected SHA; it does not replace
-the final canonical exact-SHA CI required by release policy. Blacksmith is only
-an explicitly approved, budget-checked accelerator for this same non-secret
-Linux graph. It has no automatic fallback. Do not select a Blacksmith pool
-while its included credits are exhausted; use `runner_pool=github`.
+For a corrected non-secret Linux lane, follow the exact manual-dispatch,
+exact-SHA binding, runner-pool, and failed-job rerun recipes in
+`skills/happier-ci-stabilize/SKILL.md`. Focused dispatch remains diagnostic
+evidence and does not replace the final canonical exact-SHA CI required by
+release policy.
 
 For a complete release-workflow correction batch, first collect the terminal
 attempt once and retain raw logs under `/tmp`:
@@ -329,6 +359,36 @@ without `.github/workflows/`; do not add a long-lived `NPM_TOKEN` fallback.
 top-level caller is absent or mismatched in npm's trusted-publisher
 configuration. Verify the package/version in the registry after publication
 rather than relying only on the workflow badge.
+
+### Immutable and rolling binary releases
+
+For CLI, stack, server-runtime, and UI-web binary releases:
+
+1. Bind the authorized source commit once.
+2. Publish the version-tagged immutable Release first. Existing immutable tags,
+   assets, and bytes must match; they are never moved or clobbered.
+3. Download and verify the complete checksummed and signed immutable asset set.
+4. Promote those exact bytes into the rolling Release, then download them again
+   and verify byte equality, checksums, and the minisign signature.
+5. Create or reuse the SHA-qualified
+   `happier-rolling-staging-<rolling-tag>-<source-sha>` draft, replace its asset
+   set with the complete unversioned rolling payload, and audit that draft by
+   Release ID. Remove older staging drafts for the same rolling tag.
+6. Preserve an existing predecessor under
+   `happier-rolling-backup-<rolling-tag>`, move the audited staging Release onto
+   the real rolling tag, verify the public Release and tag, then remove staging
+   and backup refs. If an interrupted attempt left only the backup visible,
+   restore the predecessor before retrying.
+
+The immutable version-tagged Release remains available throughout. A same-SHA
+retry reuses and re-audits the same staging draft or recognizes an already exact
+rolling Release; it does not append blindly to a partial Release or create a
+second publication owner. After an interrupted rolling upload, rerun the owning
+publisher with the same channel and immutable `retry_version`, leaving
+`source_ref=auto` so recovery derives the authorized SHA from the immutable tag.
+Only the latest published immutable version for that product/channel is an
+eligible retry; recovery copies its verified bytes and does not rebuild, assign
+a new version, re-sign, or mutate the immutable Release.
 
 ### Best-effort TestFlight distribution
 

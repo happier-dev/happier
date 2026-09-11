@@ -15,11 +15,27 @@ bootstrap contract:
 hmaint release bootstrap --repo <absolute checkout> --json
 ```
 
-`hmaint` is an access-controlled maintainer-tool installation, not a public npm
-fallback. If it is unavailable, obtain the approved `@happier-dev/maintainer-cli`
-installation, verify `hmaint --help` exposes `release bootstrap`, then rerun the
-command above. Do not copy private runbooks or recreate their shell workflow in
-this repository.
+`hmaint` is an access-controlled maintainer tool, not a public npm fallback. On
+the configured macOS authority, invoke
+`/Users/leeroy/Documents/Development/happier/maintainers-tools/bin/hmaint`
+directly and prove that exact wrapper with
+`/Users/leeroy/Documents/Development/happier/maintainers-tools/bin/hmaint --help`.
+From the managed Linux VM, use an existing configured 0.3 checkout and invoke
+its launcher from the intended repository-relative working directory:
+
+```bash
+cd <absolute-0.3-checkout>
+./apps/stack/bin/hstack-exec --target=mac-host -- \
+  /Users/leeroy/Documents/Development/happier/maintainers-tools/bin/hmaint \
+  release bootstrap --repo <absolute-macOS-checkout> --json
+```
+
+The launcher projects the invocation directory remotely and has no
+launcher-level `--cwd` option. If the launcher, configured `mac-host` target,
+canonical Mac wrapper, or Mac-visible target checkout cannot be proved, fail
+closed. Do not resolve another copy from `PATH`, copy private runbooks, install
+a second conductor, fall back to a VM-local conductor or personal GitHub login,
+or recreate the release workflow in this repository.
 
 Use that response to choose the supported release profile and follow the
 maintainer-owned approval/dispatch flow. Do not treat this skill as permission
@@ -33,6 +49,11 @@ workflow runs both channels concurrently. Each channel still builds and verifies
 artifacts because preview and production embed different policy environments;
 the fast path removes duplicate orchestration and operator waiting, not those
 channel-specific bytes.
+
+Channel combination does not combine product targets. `website` and `docs` are
+independent entries in the target-owned release target set: either may be
+selected without the other, and each retains its own plan, job, status surface,
+and recovery evidence in both single-channel and combined operations.
 
 Before any release-note/version commit, the private conductor must inspect the
 complete proposed release diff once and use the target-owned

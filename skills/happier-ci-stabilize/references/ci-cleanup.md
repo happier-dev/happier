@@ -19,7 +19,7 @@ Do not raise timeouts globally. Fix deterministic contract failures, deadlocks/l
 ## Workflow simplification
 
 - Keep one canonical command per lane and let local/manual/automatic workflows call it.
-- Keep runner-pool selection as a reusable-workflow input rather than copying workflows for Blacksmith.
+- Keep runner-pool selection as a reusable-workflow input rather than copying workflows for Blacksmith. GitHub is the default. Blacksmith has no automatic fallback; after an unavailable or exhausted explicitly approved run, create a new otherwise-identical `tests-dispatch.yml` run with `runner_pool=github`.
 - Use matrices only for real platform/configuration differences.
 - Keep result aggregators tiny and free of dependency installation.
 - Cache only reproducible inputs; never let a cache own generated-output freshness.

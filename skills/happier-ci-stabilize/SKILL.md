@@ -23,7 +23,7 @@ Read [failure-collection.md](references/failure-collection.md) for a failing run
 4. **Cluster before fixing.** Collapse aggregator failures and many test symptoms into their originating signature and canonical owner. One stale shared harness can fail dozens of scenarios; do not count those as dozens of defects.
 5. **Classify from evidence.** Use one of: production defect, test drift, harness/mock drift, release-control/configuration drift, external-contract change, infrastructure/resource failure, or inconclusive. A timeout is a symptom until logs and step timing establish the cause.
 6. **Correct one coherent batch.** Reproduce the smallest owner-level failure locally, prove RED for the intended contract, fix the canonical owner, and update or remove only assertions/harnesses invalidated by that same cause. Preserve unrelated dirty work.
-7. **Validate once per widening boundary.** Run all corrected focused tests together, then each affected package/lane, then canonical CI once for the coherent batch. Use the manual Blacksmith runner pool for approved non-secret Linux lanes when fast hosted feedback is useful; keep runner-sensitive, secret-bearing, macOS, and Windows lanes on their proven runners.
+7. **Validate once per widening boundary.** Run all corrected focused tests together, then each affected package/lane, then canonical CI once for the coherent batch. Default manual dispatches to GitHub-hosted runners. Use a Blacksmith pool only with explicit current approval and confirmed included budget for eligible non-secret Linux lanes; keep runner-sensitive, secret-bearing, macOS, Windows, and self-hosted lanes on their canonical runners.
 8. **Recover instead of rebuilding.** Choose native failed-job rerun, verified-candidate resume, or fresh release from the decision table in `nightly-recovery.md`. Never reuse artifacts after candidate/source bytes change.
 9. **Monitor proportionally.** Poll ordinary transitions in roughly 1-2 minutes only when a result is expected immediately. Poll dependency installs, full suites, builds, signing, notarization, store submission, and publication every 5-20 minutes. Long duration alone is not failure evidence.
 10. **Close from independent evidence.** Require the canonical CI result for the exact SHA. For a nightly, also inspect `happier-release-status`, immutable candidate identities, promoted-reference verification, rolling tags, and the terminal status owner. A green top-level badge alone is not the release proof.
@@ -52,6 +52,35 @@ Use `gh run rerun <run-id> --repo happier-dev/happier --failed` only when the
 workflow and source SHA are unchanged and the failed mutation is safe to retry.
 After a control-only fix, use the release owner's verified resume path instead;
 a failed-job rerun cannot execute code from a newer SHA.
+
+For a focused 0.3 hosted diagnostic, use the current manual wrapper and replace
+only the check list and optional UI E2E spec list with values accepted by that
+workflow:
+
+```bash
+gh workflow run tests-dispatch.yml \
+  --repo happier-dev/happier \
+  --ref v0.3 \
+  -f profile=custom \
+  -f runner_pool=github \
+  -f custom_checks=release_contracts \
+  -f installers_channel=stable \
+  -f providers_preset=all \
+  -f providers_tier=smoke
+```
+
+`--ref` selects the workflow ref, not an arbitrary checkout SHA. Immediately
+bind the created run ID and prove its `headSha` equals the intended 40-character
+commit before using the run as exact-SHA evidence:
+
+```bash
+gh run view <run-id> --repo happier-dev/happier \
+  --json databaseId,attempt,event,headBranch,headSha,status,conclusion,workflowName,url
+```
+
+Blacksmith never fails over automatically. If an explicitly approved Blacksmith
+run is unavailable or exhausted, create a new otherwise-identical manual run
+with `runner_pool=github`; do not claim that the first run migrated pools.
 
 ## Make one run expose more failures
 
