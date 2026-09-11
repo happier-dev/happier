@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import type { RouteOptions } from "fastify";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -91,6 +92,28 @@ function externalActionJsonPayloadWithByteLength(byteLength: number): string {
 }
 
 describe("registerExternalActionRoutes", () => {
+    it("registers the public Action ingress with its explicit hot-endpoint rate limit", async () => {
+        let rateLimit: unknown;
+        const app = createApp({
+            beforeRegister: (instance) => {
+                instance.addHook("onRoute", (route: RouteOptions) => {
+                    if (route.method === "POST" && route.url === "/v1/actions/:actionId") {
+                        rateLimit = route.config?.rateLimit;
+                    }
+                });
+            },
+        });
+        await app.ready();
+        try {
+            expect(rateLimit).toEqual(expect.objectContaining({
+                max: expect.any(Number),
+                timeWindow: expect.any(String),
+            }));
+        } finally {
+            await app.close();
+        }
+    });
+
     it("accepts a verified PAT, relays only the outer envelope, and forwards server-stamped provenance", async () => {
         const dispatch = vi.fn(async () => dispatchedResponse({
             v: 1 as const,

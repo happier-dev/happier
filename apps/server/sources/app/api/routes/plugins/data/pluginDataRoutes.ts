@@ -270,7 +270,7 @@ export function pluginDataRoutes(app: Fastify): void {
             }));
         } catch (error) {
             if (error instanceof PluginCollectionMutationOperationError) {
-                return await reply.code(statusForMutationError(error.code)).send({ error: error.code });
+                return await reply.code(statusForMutationError(error.code)).send(error.toWireError());
             }
             throw error;
         }

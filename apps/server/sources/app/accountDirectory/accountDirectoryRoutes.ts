@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FastifyReply } from "fastify";
 import { type Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { requirePresentUser } from "@/app/api/utils/requirePresentUser";
@@ -37,12 +38,12 @@ type RequestAuthority = Readonly<{ authAuthority?: unknown; authTokenKind?: unkn
  * are intentionally limited to these exact handlers; all other routes remain
  * protected by the canonical admission owner.
  */
-async function requireAccountDirectoryAuthority(request: RequestAuthority, reply: { code: (code: number) => { send: (value: unknown) => unknown } }): Promise<unknown> {
-    if (request.authAuthority === "present_user" || request.authTokenKind === "account_directory") return undefined;
-    return reply.code(403).send({ error: "account_directory_authority_required" });
+async function requireAccountDirectoryAuthority(request: RequestAuthority, reply: FastifyReply): Promise<void> {
+    if (request.authAuthority === "present_user" || request.authTokenKind === "account_directory") return;
+    reply.code(403).send({ error: "account_directory_authority_required" });
 }
 
-function sendAccountDirectoryError(reply: { code: (code: number) => { send: (value: unknown) => unknown } }, error: unknown): unknown {
+function sendAccountDirectoryError(reply: FastifyReply, error: unknown): void {
     if (error instanceof AccountDirectoryError) {
         const codeMap: Record<string, string> = {
             not_found: "directory_unavailable",
@@ -53,7 +54,8 @@ function sendAccountDirectoryError(reply: { code: (code: number) => { send: (val
             assertion_client_key_mismatch: "invalid_client_key",
             assertion_issuer_untrusted: "invalid_issuer",
         };
-        return reply.code(error.statusCode).send({ error: codeMap[error.code] ?? error.code });
+        reply.code(error.statusCode).send({ error: codeMap[error.code] ?? error.code });
+        return;
     }
     throw error;
 }
@@ -67,7 +69,8 @@ export function registerAccountDirectoryRoutes(app: Fastify): void {
         try {
             return reply.send(await readAccountDirectoryMe(request.userId));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 
@@ -79,7 +82,8 @@ export function registerAccountDirectoryRoutes(app: Fastify): void {
         try {
             return reply.send(await listAccountHomeDirectory(request.userId));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 
@@ -96,7 +100,8 @@ export function registerAccountDirectoryRoutes(app: Fastify): void {
                 connectionDescriptor: request.body.connectionDescriptor,
             }));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 
@@ -109,7 +114,8 @@ export function registerAccountDirectoryRoutes(app: Fastify): void {
             await deleteAccountHomeDirectoryEntry({ accountId: request.userId, homeServerIdentityId: request.params.homeServerIdentityId });
             return reply.send(await listAccountHomeDirectory(request.userId));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 
@@ -121,7 +127,8 @@ export function registerAccountDirectoryRoutes(app: Fastify): void {
         try {
             return reply.send(await setPreferredAccountHome({ accountId: request.userId, homeServerIdentityId: request.body.homeServerIdentityId }));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 
@@ -137,7 +144,8 @@ export function registerAccountDirectoryRoutes(app: Fastify): void {
                 clientBoxPublicKeyBase64: request.body.clientBoxPublicKeyBase64,
             }));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 }
@@ -151,12 +159,13 @@ export function registerAccountDirectoryLinkRoutes(app: Fastify): void {
         try {
             await upsertAccountDirectoryLink({
                 accountId: request.userId,
-                issuerServerIdentityId: request.params.issuerServerIdentityId,
                 ...request.body,
+                issuerServerIdentityId: request.params.issuerServerIdentityId,
             });
             return reply.send({ ok: true });
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 
@@ -169,7 +178,8 @@ export function registerAccountDirectoryLinkRoutes(app: Fastify): void {
             await deleteAccountDirectoryLink({ accountId: request.userId, issuerServerIdentityId: request.params.issuerServerIdentityId });
             return reply.send({ ok: true });
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 }
@@ -183,10 +193,11 @@ export function registerHomeLoginRoute(app: Fastify): void {
         ]), response: { 200: HomeLoginRedemptionResponseV1Schema, 401: ErrorResponseSchema, 429: ErrorResponseSchema } },
     }, async (request, reply) => {
         try {
-            const body = request.body as { assertion?: unknown };
-            return reply.send(await redeemHomeLoginAssertion({ assertion: body.assertion ?? request.body }));
+            const assertion = "assertion" in request.body ? request.body.assertion : request.body;
+            return reply.send(await redeemHomeLoginAssertion({ assertion }));
         } catch (error) {
-            return sendAccountDirectoryError(reply, error);
+            sendAccountDirectoryError(reply, error);
+            return;
         }
     });
 }

@@ -14,7 +14,7 @@ export class AccountDirectoryError extends Error {
     readonly code: AccountDirectoryErrorCode;
     readonly statusCode: number;
 
-    constructor(code: AccountDirectoryErrorCode, message = code, statusCode?: number) {
+    constructor(code: AccountDirectoryErrorCode, message: string = code, statusCode?: number) {
         super(message);
         this.name = "AccountDirectoryError";
         this.code = code;

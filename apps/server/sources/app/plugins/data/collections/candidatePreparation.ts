@@ -134,6 +134,15 @@ type CandidatePreparationProspectiveStage = Readonly<{
     targetProjection: Prisma.InputJsonValue;
 }>;
 
+type CandidatePreparationLiveRow = Readonly<{
+    id: string;
+    rowId: string;
+    revision: number;
+    contractId: string;
+    schemaVersion: number;
+    contractDigest: string;
+}>;
+
 type CandidatePreparationStageItemResult = PluginCollectionCandidatePreparationStageResultV1["results"][number];
 
 type CandidatePreparationErrorCode =
@@ -847,6 +856,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
     targetContracts: readonly PluginCollectionContractRefV1[];
 }>): Promise<void> {
     if (!input.currentIntent || input.targetReleaseVersion === null) return;
+    const targetReleaseVersion = input.targetReleaseVersion;
     const currentIntent = promotionIntent(input.currentIntent);
     if (currentIntent.pluginId !== input.pluginId || currentIntent.desiredVersion === null) {
         promotionNotReady();
@@ -897,7 +907,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
         if (!sourceRef || refsMatch(sourceRef, targetRef)) {
             let lastRowId: string | null = null;
             for (;;) {
-                const rows = await input.tx.pluginCollectionRow.findMany({
+                const rows: CandidatePreparationLiveRow[] = await input.tx.pluginCollectionRow.findMany({
                     where: {
                         ...liveRowWhere,
                         ...(lastRowId ? { id: { gt: lastRowId } } : {}),
@@ -951,7 +961,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                 targetContractId: target.id,
                 targetSchemaVersion: target.ref.schemaVersion,
                 targetContractDigest: target.ref.contractDigest,
-                candidateReleaseVersion: input.targetReleaseVersion,
+                candidateReleaseVersion: targetReleaseVersion,
             },
             _count: { _all: true },
             having: { candidateIdentity: { _count: { equals: liveRowCount } } },
@@ -981,7 +991,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
         let maximumPromotedRevision = 0;
         let lastRowId: string | null = null;
         for (;;) {
-            const liveRows = await input.tx.pluginCollectionRow.findMany({
+            const liveRows: CandidatePreparationLiveRow[] = await input.tx.pluginCollectionRow.findMany({
                 where: {
                     ...liveRowWhere,
                     ...(lastRowId ? { id: { gt: lastRowId } } : {}),
@@ -1012,7 +1022,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                     targetContractId: target.id,
                     targetSchemaVersion: target.ref.schemaVersion,
                     targetContractDigest: target.ref.contractDigest,
-                    candidateReleaseVersion: input.targetReleaseVersion,
+                    candidateReleaseVersion: targetReleaseVersion,
                     candidateIdentity: selectedCandidateIdentity,
                     sourceRowDbId: { in: liveRows.map((row) => row.id) },
                 },
@@ -1044,7 +1054,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                         source: source.ref,
                         target: target.ref,
                         candidate: {
-                            releaseVersion: input.targetReleaseVersion,
+                            releaseVersion: targetReleaseVersion,
                             artifactDigest: candidateArtifactDigest.data,
                         },
                     },
@@ -1113,7 +1123,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
         let promotedLiveRows = 0;
         lastRowId = null;
         for (;;) {
-            const liveRows = await input.tx.pluginCollectionRow.findMany({
+            const liveRows: CandidatePreparationLiveRow[] = await input.tx.pluginCollectionRow.findMany({
                 where: {
                     ...liveRowWhere,
                     contractId: source.id,
@@ -1144,7 +1154,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                     targetContractId: target.id,
                     targetSchemaVersion: target.ref.schemaVersion,
                     targetContractDigest: target.ref.contractDigest,
-                    candidateReleaseVersion: input.targetReleaseVersion,
+                    candidateReleaseVersion: targetReleaseVersion,
                     candidateIdentity: selectedCandidateIdentity,
                     sourceRowDbId: { in: liveRows.map((row) => row.id) },
                 },
@@ -1176,7 +1186,7 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                         source: source.ref,
                         target: target.ref,
                         candidate: {
-                            releaseVersion: input.targetReleaseVersion,
+                            releaseVersion: targetReleaseVersion,
                             artifactDigest: candidateArtifactDigest.data,
                         },
                     },

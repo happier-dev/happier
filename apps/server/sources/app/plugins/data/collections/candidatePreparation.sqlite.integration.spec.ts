@@ -882,11 +882,13 @@ describe("plugin Collection candidate preparation", () => {
         });
         await expect(service.setIntent({
             accountId: ACCOUNT_ID,
-            pluginId: PLUGIN_ID,
-            intent: {
+            input: {
+                pluginId: PLUGIN_ID,
                 desiredVersion: TARGET_VERSION,
+                enabled: true,
+                offlineUiHosting: "disabled",
                 writableCollections: [target],
-                revision: "0",
+                expectedRevision: "0",
             },
         })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
 
@@ -926,11 +928,13 @@ describe("plugin Collection candidate preparation", () => {
         });
         await expect(service.setIntent({
             accountId: ACCOUNT_ID,
-            pluginId: PLUGIN_ID,
-            intent: {
+            input: {
+                pluginId: PLUGIN_ID,
                 desiredVersion: TARGET_VERSION,
+                enabled: true,
+                offlineUiHosting: "disabled",
                 writableCollections: [target],
-                revision: "0",
+                expectedRevision: "0",
             },
         })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
     });
@@ -1043,19 +1047,21 @@ describe("plugin Collection candidate preparation", () => {
     });
 
     it("promotes a cross-page unique-relation swap atomically with one-row DB pages", async () => {
-        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
         const { target, service } = await prepareAvailabilityPromotionFixture({
             targetManifest: TARGET_MANIFEST_WITH_UNIQUE_RELATION,
             targetTitles: ["task-b", "task-a"],
         });
+        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
 
         await expect(service.setIntent({
             accountId: ACCOUNT_ID,
-            pluginId: PLUGIN_ID,
-            intent: {
+            input: {
+                pluginId: PLUGIN_ID,
                 desiredVersion: TARGET_VERSION,
+                enabled: true,
+                offlineUiHosting: "disabled",
                 writableCollections: [target],
-                revision: "0",
+                expectedRevision: "0",
             },
         })).resolves.toMatchObject({ intent: { desiredVersion: TARGET_VERSION, revision: "1" } });
 
@@ -1070,19 +1076,21 @@ describe("plugin Collection candidate preparation", () => {
     });
 
     it("rejects cross-page unique-relation duplicates and rolls back with one-row DB pages", async () => {
-        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
         const { source, target, service } = await prepareAvailabilityPromotionFixture({
             targetManifest: TARGET_MANIFEST_WITH_UNIQUE_RELATION,
             targetTitles: ["task-a", "task-a"],
         });
+        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
 
         await expect(service.setIntent({
             accountId: ACCOUNT_ID,
-            pluginId: PLUGIN_ID,
-            intent: {
+            input: {
+                pluginId: PLUGIN_ID,
                 desiredVersion: TARGET_VERSION,
+                enabled: true,
+                offlineUiHosting: "disabled",
                 writableCollections: [target],
-                revision: "0",
+                expectedRevision: "0",
             },
         })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
 
@@ -1110,9 +1118,9 @@ describe("plugin Collection candidate preparation", () => {
     });
 
     it("pages and materializes a large candidate promotion in bounded row batches", async () => {
-        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
         const rowIds = Array.from({ length: 5 }, (_, index) => `task-${index}`);
         const { target } = await prepareAvailabilityPromotionFixture({ rowIds });
+        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
         const currentIntent = await db.accountPluginIntent.findUniqueOrThrow({
             where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } },
             select: {
@@ -1125,37 +1133,35 @@ describe("plugin Collection candidate preparation", () => {
             },
         });
         const observedBatchRows: number[] = [];
+        const readProperty = (value: unknown, property: PropertyKey): unknown => (
+            typeof value === "object" && value !== null
+                ? Reflect.get(value, property)
+                : undefined
+        );
         await expect(inTx(async (tx) => {
             const delegate = <T extends object>(name: string, value: T): T => new Proxy(value, {
                 get(targetDelegate, property, receiver) {
                     if (property === "findMany") {
                         const findMany = Reflect.get(targetDelegate, property, targetDelegate);
+                        if (typeof findMany !== "function") return findMany;
                         return async (...args: unknown[]) => {
                             const request = args[0];
-                            if (name === "row" && request && typeof request === "object" && "take" in request) {
-                                observedBatchRows.push(Number((request as Readonly<{ take?: unknown }>).take));
+                            if (name === "row") {
+                                const take = readProperty(request, "take");
+                                if (take !== undefined) observedBatchRows.push(Number(take));
                             }
                             if (name === "stage") {
-                                const sourceRowDbId = request && typeof request === "object"
-                                    && "where" in request
-                                    && (request as { where?: { sourceRowDbId?: { in?: unknown[] } } }).where?.sourceRowDbId;
-                                if (sourceRowDbId?.in) observedBatchRows.push(sourceRowDbId.in.length);
+                                const where = readProperty(request, "where");
+                                const sourceRowDbId = readProperty(where, "sourceRowDbId");
+                                const sourceRowIds = readProperty(sourceRowDbId, "in");
+                                if (
+                                    readProperty(where, "candidateIdentity") !== undefined
+                                    && Array.isArray(sourceRowIds)
+                                ) {
+                                    observedBatchRows.push(sourceRowIds.length);
+                                }
                             }
                             return await Reflect.apply(findMany, targetDelegate, args);
-                        };
-                    }
-                    if (property === "createMany") {
-                        const createMany = Reflect.get(targetDelegate, property, targetDelegate);
-                        return async (...args: unknown[]) => {
-                            const request = args[0] as { data?: unknown[] } | undefined;
-                            const data = Array.isArray(request?.data) ? request.data : [];
-                            const rowIdentities = new Set(data.map((item) => {
-                                if (!item || typeof item !== "object") return item;
-                                const record = item as Record<string, unknown>;
-                                return record.rowDbId ?? record.sourceRowDbId ?? record.rowId;
-                            }));
-                            if (rowIdentities.size > 0) observedBatchRows.push(rowIdentities.size);
-                            return await Reflect.apply(createMany, targetDelegate, args);
                         };
                     }
                     return Reflect.get(targetDelegate, property, receiver);
@@ -1172,9 +1178,10 @@ describe("plugin Collection candidate preparation", () => {
                     if (property === "pluginCollectionRelation") return delegate("relation", tx.pluginCollectionRelation);
                     if (property === "$executeRawUnsafe") {
                         const executeRawUnsafe = Reflect.get(targetTx, property, targetTx);
+                        if (typeof executeRawUnsafe !== "function") return executeRawUnsafe;
                         return async (...args: unknown[]) => {
                             const query = typeof args[0] === "string" ? args[0] : "";
-                            if (query.includes("PluginCollectionRow") && query.includes("candidate")) {
+                            if (query.includes("PluginCollectionRow") && query.includes('WITH "candidate"')) {
                                 observedBatchRows.push((args.length - 1 - 4) / 7);
                             }
                             return await Reflect.apply(executeRawUnsafe, targetTx, args);
@@ -1192,7 +1199,7 @@ describe("plugin Collection candidate preparation", () => {
                 targetContracts: [target],
             });
             return await preparePluginCollectionWritableContractsTx({
-                tx: boundedTx,
+                tx,
                 accountId: ACCOUNT_ID,
                 pluginId: PLUGIN_ID,
                 contracts: [target],

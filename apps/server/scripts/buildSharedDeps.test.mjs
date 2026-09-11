@@ -41,15 +41,18 @@ test('server source tests verify generated schemas without rebuilding shared run
   );
 });
 
-test('server ordinary typecheck checks source without entering the build lifecycle', () => {
-  assert.match(
-    packageJson.scripts['typecheck:local'],
-    /scripts\/runTypeScriptCli\.mjs --noEmit$/,
-  );
-  assert.doesNotMatch(
-    packageJson.scripts['typecheck:local'],
-    /\b(?:yarn|build|build:shared|generate:providers)\b/,
-  );
+test('server build delegates prerequisite preparation to the canonical postinstall owner', () => {
+  assert.match(packageJson.scripts.prebuild, /\bpostinstall:real\b/);
+});
+
+test('server broad source typechecks check provider clients before compiling', () => {
+  for (const scriptName of ['typecheck:local', 'typecheck:source:finite']) {
+    assert.match(
+      packageJson.scripts[scriptName],
+      /^yarn -s generate:providers:check && node .*scripts\/runTypeScriptCli\.mjs --noEmit$/,
+    );
+    assert.doesNotMatch(packageJson.scripts[scriptName], /\bbuild:shared\b/);
+  }
 });
 
 test('server ordinary integration entries route through hstack without runtime preparation', () => {

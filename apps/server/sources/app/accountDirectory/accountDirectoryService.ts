@@ -138,9 +138,6 @@ export async function upsertAccountHomeDirectoryEntry(params: Readonly<{
     if (body.connectionDescriptor.homeServerIdentityId !== params.homeServerIdentityId) {
         throw new AccountDirectoryError("invalid_request", "Home identity does not match descriptor");
     }
-    if (body.canonicalServerUrl && body.canonicalServerUrl !== body.connectionDescriptor.canonicalServerUrl) {
-        throw new AccountDirectoryError("invalid_request", "Canonical URL does not match descriptor");
-    }
     const row = await directoryDb().accountHomeDirectoryEntry.upsert?.({
         where: { accountId_homeServerIdentityId: { accountId: params.accountId, homeServerIdentityId: params.homeServerIdentityId } },
         create: {
@@ -172,7 +169,7 @@ export async function deleteAccountHomeDirectoryEntry(params: Readonly<{ account
     });
 }
 
-export async function setPreferredAccountHome(params: Readonly<{ accountId: string; homeServerIdentityId: string }>): ReturnType<typeof listAccountHomeDirectory> {
+export async function setPreferredAccountHome(params: Readonly<{ accountId: string; homeServerIdentityId: string | null }>): ReturnType<typeof listAccountHomeDirectory> {
     if (params.homeServerIdentityId === null) {
         await db.account.update({ where: { id: params.accountId }, data: { preferredHomeServerIdentityId: null } });
         return listAccountHomeDirectory(params.accountId);

@@ -150,8 +150,12 @@ export function registerExternalActionRoutes(
         Body: unknown;
     }>("/v1/actions/:actionId", {
         bodyLimit: EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
-        config: { allowApiToken: true, cors: false, connectionAuthFailureError: "invalid_token" },
-        rateLimit: resolveApiHotEndpointRateLimit(process.env, "actions"),
+        config: {
+            allowApiToken: true,
+            cors: false,
+            connectionAuthFailureError: "invalid_token",
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "actions"),
+        },
         errorHandler: (error, _request, reply) => {
             if (isFastifyBodyLimitError(error)) {
                 sendExternalActionHttpError(reply, "request_too_large");

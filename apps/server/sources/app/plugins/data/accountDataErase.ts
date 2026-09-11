@@ -52,6 +52,20 @@ type CollectionChange = Readonly<{
     revision: number;
 }>;
 
+type CollectionEraseLiveRow = Readonly<{
+    id: string;
+    collectionId: string;
+    contractDigest: string;
+    revision: number;
+}>;
+
+type CollectionEraseHistoricalTombstone = Readonly<{
+    id: string;
+    contentEnvelope: unknown;
+}>;
+
+type CollectionEraseIdRow = Readonly<{ id: string }>;
+
 /**
  * Tombstones one or more server-owned reserved Account KV rows through the
  * sole UserKV CAS owner. Existing tombstones are intentionally not written a
@@ -189,7 +203,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     let tombstonedRowCount = 0;
     let lastLiveRowId: string | null = null;
     for (;;) {
-        const liveRows = await input.tx.pluginCollectionRow.findMany({
+        const liveRows: CollectionEraseLiveRow[] = await input.tx.pluginCollectionRow.findMany({
             where: {
                 accountId: input.accountId,
                 pluginId,
@@ -227,7 +241,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     let scrubbedHistoricalTombstoneContentCount = 0;
     let lastHistoricalTombstoneId: string | null = null;
     for (;;) {
-        const historicalTombstones = await input.tx.pluginCollectionRow.findMany({
+        const historicalTombstones: CollectionEraseHistoricalTombstone[] = await input.tx.pluginCollectionRow.findMany({
             where: {
                 accountId: input.accountId,
                 pluginId,
@@ -255,7 +269,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     let deletedProjectionCount = 0;
     let lastProjectionId: string | null = null;
     for (;;) {
-        const projections = await input.tx.pluginCollectionProjection.findMany({
+        const projections: CollectionEraseIdRow[] = await input.tx.pluginCollectionProjection.findMany({
             where: {
                 accountId: input.accountId,
                 pluginId,
@@ -276,7 +290,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     let resetIndexStateCount = 0;
     let lastIndexStateId: string | null = null;
     for (;;) {
-        const indexStates = await input.tx.pluginCollectionIndexState.findMany({
+        const indexStates: CollectionEraseIdRow[] = await input.tx.pluginCollectionIndexState.findMany({
             where: {
                 accountId: input.accountId,
                 pluginId,
@@ -308,7 +322,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     let retiredRelationCount = 0;
     let lastRelationId: string | null = null;
     for (;;) {
-        const relations = await input.tx.pluginCollectionRelation.findMany({
+        const relations: CollectionEraseIdRow[] = await input.tx.pluginCollectionRelation.findMany({
             where: {
                 accountId: input.accountId,
                 sourcePluginId: pluginId,
