@@ -606,7 +606,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
   ] as const;
 
   it.each(hostStampedServerInventoryCases)(
-    'rejects caller-supplied server identity for %s',
+    'drops caller-supplied server identity and binds host-stamped identity for %s',
     async (actionId, dependencyName, actionInput) => {
       const deps = createDeps();
       const executor = createActionExecutor(deps);
@@ -615,12 +615,11 @@ describe('createActionExecutor (inventory/discovery)', () => {
         actionId,
         { ...actionInput, serverId: 'caller-controlled' },
         { serverId: 'host-stamped' },
-      )).resolves.toEqual({
-        ok: false,
-        errorCode: 'invalid_parameters',
-        error: 'invalid_parameters',
+      )).resolves.toMatchObject({ ok: true });
+      expect(deps[dependencyName]).toHaveBeenCalledWith({
+        ...actionInput,
+        serverId: 'host-stamped',
       });
-      expect(deps[dependencyName]).not.toHaveBeenCalled();
     },
   );
 
@@ -726,7 +725,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
-  it('rejects undeclared fields for agents.models.list', async () => {
+  it('drops additive undeclared fields for agents.models.list', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
@@ -737,12 +736,13 @@ describe('createActionExecutor (inventory/discovery)', () => {
       providerTraceId: 'preview-field',
     });
 
-    expect(res).toEqual({
-      ok: false,
-      errorCode: 'invalid_parameters',
-      error: 'invalid_parameters',
+    expect(res).toMatchObject({ ok: true });
+    expect(deps.agentsModelsList).toHaveBeenCalledWith({
+      agentId: 'codex',
+      backendTargetKey: 'backend:codex',
+      machineId: 'm1',
+      limit: 2,
     });
-    expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });
 
   it('routes configured ACP backendTargetKey through agents.models.list', async () => {

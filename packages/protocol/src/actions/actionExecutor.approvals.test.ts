@@ -1351,6 +1351,7 @@ describe('createActionExecutor (approvals)', () => {
       decision: 'approve',
     }, {
       surface: 'ui',
+      authority: 'present_user',
     });
 
     expect(res).toEqual({
@@ -1388,6 +1389,7 @@ describe('createActionExecutor (approvals)', () => {
       decision: 'approve',
     }, {
       surface: 'ui',
+      authority: 'present_user',
     });
 
     expect(res).toEqual({
@@ -1421,6 +1423,7 @@ describe('createActionExecutor (approvals)', () => {
       decision: 'approve',
     }, {
       surface: 'ui',
+      authority: 'present_user',
     });
 
     expect(res).toEqual({

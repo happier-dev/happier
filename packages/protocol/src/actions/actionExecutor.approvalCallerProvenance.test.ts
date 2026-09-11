@@ -169,7 +169,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-plugin-spawn-1',
       decision: 'approve',
-    }, { surface: 'ui' })).resolves.toMatchObject({
+    }, { surface: 'ui', authority: 'present_user' })).resolves.toMatchObject({
       ok: true,
       result: {
         status: 'executed',
@@ -227,7 +227,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-plugin-spawn-legacy-1',
       decision: 'approve',
-    }, { surface: 'ui' })).resolves.toMatchObject({
+    }, { surface: 'ui', authority: 'present_user' })).resolves.toMatchObject({
       ok: true,
       result: {
         status: 'failed',
@@ -321,7 +321,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-session-agent-predecessor-1',
       decision: 'approve',
-    }, { surface: 'ui' })).resolves.toMatchObject({
+    }, { surface: 'ui', authority: 'present_user' })).resolves.toMatchObject({
       ok: true,
       result: { status: 'executed', execution: { ok: true } },
     });

@@ -883,6 +883,7 @@ describe('session.spawn_new canonical execution', () => {
       decision: 'approve',
     }, {
       surface: 'ui',
+      authority: 'present_user',
       serverId: canonicalInput.executionTarget.serverId,
       signal: controller.signal,
     })).resolves.toEqual({ ok: true, result: targetDecisionResult });
@@ -916,6 +917,7 @@ describe('session.spawn_new canonical execution', () => {
       decision: 'approve',
     }, {
       surface: 'ui',
+      authority: 'present_user',
       signal: controller.signal,
     })).resolves.toEqual({ ok: true, result: { ok: true, status: 'executed' } });
 

@@ -30,6 +30,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
 
     await expect(executor.execute('plugin.webhook.endpoint.ensure', ensureInput, {
       surface: 'ui',
+      authority: 'present_user',
       actionCaller: { kind: 'host' },
       signal: controller.signal,
     })).resolves.toEqual({
@@ -60,7 +61,7 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
     await expect(executor.execute('plugin.webhook.endpoint.ensure', {
       ...ensureInput,
       serverId: 'caller-controlled-server',
-    }, { surface: 'ui' })).resolves.toEqual({
+    }, { surface: 'ui', authority: 'present_user' })).resolves.toEqual({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',

@@ -298,7 +298,7 @@ describe('createActionExecutor execution interception', () => {
     await executor.execute(
       'approval.request.decide',
       { artifactId: 'approval-1', decision: 'approve' },
-      { surface: 'cli', actionCaller: { kind: 'host' } },
+      { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
     );
 
     expect(sessionTitleSet).toHaveBeenCalledOnce();

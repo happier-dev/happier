@@ -140,7 +140,7 @@ describe('durable subagent custody v1 contract', () => {
     }).success).toBe(false);
   });
 
-  it('canonicalizes every strict JSON shape within bounds without invoking hostile values', () => {
+  it('canonicalizes every strict JSON shape without inventing an aggregate bound or invoking hostile values', () => {
     const accessor = Object.defineProperty({}, 'secret', {
       enumerable: true,
       get: () => { throw new Error('must not execute'); },
@@ -164,7 +164,7 @@ describe('durable subagent custody v1 contract', () => {
     expect(() => serializeSessionSubagentCustodyDetailV1(overDepth as never)).not.toThrow();
     expect(() => serializeSessionSubagentCustodyDetailV1(
       Array.from({ length: 4_096 }, () => 'x'.repeat(255)),
-    )).toThrow();
+    )).not.toThrow();
   });
 
   it('binds encrypted fingerprint input to the exact session and custody scope', () => {

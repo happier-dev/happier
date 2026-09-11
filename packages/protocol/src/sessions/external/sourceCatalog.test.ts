@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { assertBackendExternalSessionSourceReferences } from '../../plugins/backendExternalSessionSourceReferences.js';
+import { MAX_AGENT_ROUTING_ID_BYTES } from '../../agents/agentIdV1.js';
 import {
   EXTERNAL_SESSIONS_AGENT_IDS,
   EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1,
@@ -34,12 +35,12 @@ describe('sourceCatalog', () => {
   });
 
   it('rejects noncanonical singular contextual Agent ids without trimming', () => {
-    const exact = ':agent/v1?x=1'.padEnd(128, 'a');
+    const exact = ':agent/v1?x=1'.padEnd(MAX_AGENT_ROUTING_ID_BYTES, 'a');
 
     expect(ExternalSessionAgentIdSchema.parse(exact)).toBe(exact);
     expect(ExternalSessionAgentIdSchema.safeParse(' codex ').success).toBe(false);
     expect(ExternalSessionAgentIdSchema.safeParse('').success).toBe(false);
-    expect(ExternalSessionAgentIdSchema.safeParse('a'.repeat(129)).success).toBe(false);
+    expect(ExternalSessionAgentIdSchema.safeParse('a'.repeat(MAX_AGENT_ROUTING_ID_BYTES + 1)).success).toBe(false);
   });
 
   it('owns the strict singular contextual source id and logical ref', () => {

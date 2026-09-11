@@ -207,6 +207,7 @@ describe('Review Comment structural/sensitive content', () => {
       evidence: source.evidence,
       transitions: source.transitions,
       fingerprint: source.fingerprint,
+      linkedRefs: source.linkedRefs,
       suggestedFix: source.suggestedFix,
       metadata: source.metadata,
     });
