@@ -185,6 +185,7 @@ const PluginAgentAcpStderrStatusErrorRuleV2Schema =
   }).strict();
 
 const PluginAgentAcpStderrRulesV2Schema = z.object({
+  authenticationErrorDetail: z.string().trim().min(1).optional(),
   suppress: z.array(PluginAgentAcpStderrMatchRuleV2Schema)
     .min(1)
     .optional(),
@@ -192,7 +193,7 @@ const PluginAgentAcpStderrRulesV2Schema = z.object({
     .min(1)
     .optional(),
 }).strict().refine(
-  (value) => value.suppress !== undefined || value.statusErrors !== undefined,
+  (value) => value.authenticationErrorDetail !== undefined || value.suppress !== undefined || value.statusErrors !== undefined,
   'ACP stderr rules must declare at least one rule.',
 );
 

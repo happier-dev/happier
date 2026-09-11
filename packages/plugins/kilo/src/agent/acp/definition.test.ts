@@ -23,5 +23,9 @@ describe('Kilo ACP runtime definition', () => {
       mcp: { policy: 'pass_through' },
     });
     expect(KILO_ACP_RUNTIME_DEFINITION).not.toHaveProperty('permissionOptionSelection');
+    expect(KILO_ACP_RUNTIME_DEFINITION.stderrRules.statusErrors)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.stringContaining('Authentication error') })]));
+    expect(KILO_ACP_RUNTIME_DEFINITION.stderrRules.authenticationErrorDetail)
+      .toBe('Authentication error. Configure Kilo credentials (for example: `kilo auth login`).');
   });
 });

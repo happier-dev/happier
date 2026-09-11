@@ -221,7 +221,11 @@ function resolveToolKindTimeoutMs(
 export function createAcpTransportHandlerFromDefinition(
   definition: AcpTransportBehaviorDefinition,
 ): TransportHandler {
-  const base = new DefaultTransport(definition.backendId);
+  const authenticationErrorDetail = definition.stderrRules?.authenticationErrorDetail?.trim();
+  const base = new DefaultTransport(
+    definition.backendId,
+    authenticationErrorDetail ? { authenticationErrorDetail } : undefined,
+  );
   const baseHandler: TransportHandler = base;
   const timeouts = definition.timeouts;
   const initMs = readPositiveMs(timeouts?.initMs);

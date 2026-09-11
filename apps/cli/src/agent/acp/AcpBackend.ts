@@ -60,6 +60,7 @@ import {
   type StderrContext,
   DefaultTransport,
 } from '../transport';
+import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 import {
   type HandlerContext,
   type SessionUpdate,
@@ -886,18 +887,18 @@ export class AcpBackend implements CatalogAcpBackend, ExecutionRunHostRuntime {
 
             const analysisText = trimmed.length > 5000 ? trimmed.slice(0, 5000) : trimmed;
             const lower = analysisText.toLowerCase();
+            const outputFailure = classifyProviderOutputFailure(analysisText);
             const looksLikeError =
-              lower.startsWith('error') ||
+              lower.startsWith('error:') ||
               lower.includes('error:') ||
               lower.includes('exception') ||
               lower.includes('traceback') ||
               lower.includes('invalid_request') ||
               lower.includes('invalid request') ||
-              lower.includes('unauthorized') ||
               lower.includes('forbidden') ||
               lower.includes('permission denied') ||
-              (/\b(4\d\d|5\d\d)\b/.test(lower) &&
-                (lower.includes('http') || lower.includes('status') || lower.includes('error') || lower.includes('request'))) ||
+              outputFailure.authenticationError ||
+              outputFailure.providerStatusFailure ||
               (lower.includes('exceeds') && lower.includes('bytes') && trimmed.includes('>'));
             if (!looksLikeError) return;
 

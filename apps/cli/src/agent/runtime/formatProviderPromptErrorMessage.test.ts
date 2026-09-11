@@ -30,4 +30,18 @@ describe('formatProviderPromptErrorMessage', () => {
     expect(formatted).not.toContain('provider-refresh-token');
     expect(formatted).not.toContain('stack');
   });
+
+  it('adds an auth hint for a contextual HTTP 401 failure', () => {
+    expect(formatProviderPromptErrorMessage(
+      new Error('Request failed with status code 401'),
+      { authHint: 'Run provider login.' },
+    )).toContain('\n\nRun provider login.');
+  });
+
+  it('does not add an auth hint for an incidental 401 identifier', () => {
+    expect(formatProviderPromptErrorMessage(
+      new Error('[agy-acp] WARN: failed to decode gen_metadata 401: cant skip wire type 6'),
+      { authHint: 'Run provider login.' },
+    )).not.toContain('Run provider login.');
+  });
 });

@@ -533,6 +533,9 @@ Agent declaration's strict `catalog.codingPromptBehavior` and
 `catalog.resumeChecklist` fields. For a declarative ACP Agent, the optional
 strict `runtime.definition` carries only `modelConfigOptionId`, bounded
 `stderrRules`, and the MCP input policy; Kiro is the current positive consumer.
+The host owns authentication classification across ACP Agents;
+`stderrRules.authenticationErrorDetail` only customizes the resulting status
+message, while `suppress` and `statusErrors` cover other bounded stderr cases.
 For Session-capable Agents the host derives finite Runs from the registered
 Session factory. Plugin authors do not register or own a second Run lifecycle.
 

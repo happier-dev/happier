@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
+import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 
 export type PrimarySessionRuntimeIssueCause =
   | 'status_error'
@@ -82,7 +83,7 @@ function refineStatusErrorSource(input: ClassifyPrimarySessionRuntimeIssueInput)
   if (/\btemporar(?:y|ily)\s+limiting\s+requests\b/u.test(text) && /\bnot\s+your\s+usage\s+limit\b/u.test(text)) {
     return 'agent_status_error';
   }
-  if (/\b(unauthorized|unauthenticated|authentication|auth|login required|not logged in|api key|401|403)\b/u.test(text)) {
+  if (classifyProviderOutputFailure(text).authenticationError) {
     return 'auth_error';
   }
   if (/\b(quota|usage limit|rate limit|limit reached|max turns|insufficient credits|credits exhausted|billing)\b/u.test(text)) {

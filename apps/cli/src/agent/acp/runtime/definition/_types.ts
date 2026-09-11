@@ -111,6 +111,7 @@ export type HostAcpStderrMatchRule = Readonly<{
 }>;
 
 export type HostAcpStderrRules = Readonly<{
+  authenticationErrorDetail?: string;
   suppress?: readonly HostAcpStderrMatchRule[];
   statusErrors?: readonly (HostAcpStderrMatchRule & Readonly<{ detail: string }>)[];
 }>;

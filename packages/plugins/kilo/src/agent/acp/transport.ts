@@ -8,22 +8,11 @@ export const KILO_ACP_TIMEOUTS = ACP_AGENT_CLI_TRANSPORT_TIMEOUTS;
 export const KILO_ACP_TOOL_NAME_INFERENCE = createAcpToolNameInferencePreset();
 
 export const KILO_ACP_STDERR_RULES = Object.freeze({
+  authenticationErrorDetail: 'Authentication error. Configure Kilo credentials (for example: `kilo auth login`).',
   suppress: [{
     includes: ['models.dev', 'unable to connect'],
   }],
   statusErrors: [{
-    includes: ['authentication'],
-    detail: 'Authentication error. Configure Kilo credentials (for example: `kilo auth login`).',
-  }, {
-    includes: ['unauthorized'],
-    detail: 'Authentication error. Configure Kilo credentials (for example: `kilo auth login`).',
-  }, {
-    includes: ['api key'],
-    detail: 'Authentication error. Configure Kilo credentials (for example: `kilo auth login`).',
-  }, {
-    includes: ['401'],
-    detail: 'Authentication error. Configure Kilo credentials (for example: `kilo auth login`).',
-  }, {
     includes: ['model not found'],
     detail: 'Model not found. Check available models in your CLI (for example: `kilo models`).',
   }, {

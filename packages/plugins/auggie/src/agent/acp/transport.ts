@@ -55,24 +55,3 @@ export const AUGGIE_TOOL_NAME_INFERENCE = Object.freeze({
   investigationToolIdPatterns: ['investigat', 'index', 'search'],
   investigationToolKinds: ['investigation'],
 } satisfies NonNullable<AuggieAcpRuntimeDefinition['toolNameInference']>);
-
-export const AUGGIE_STDERR_RULES = Object.freeze({
-  statusErrors: [
-    {
-      includes: ['unauthorized'],
-      detail: 'Authentication error. Run `auggie login` or set AUGMENT_SESSION_AUTH in your environment.',
-    },
-    {
-      includes: ['authentication'],
-      detail: 'Authentication error. Run `auggie login` or set AUGMENT_SESSION_AUTH in your environment.',
-    },
-    {
-      includes: ['api key'],
-      detail: 'Authentication error. Run `auggie login` or set AUGMENT_SESSION_AUTH in your environment.',
-    },
-    {
-      includes: ['token'],
-      detail: 'Authentication error. Run `auggie login` or set AUGMENT_SESSION_AUTH in your environment.',
-    },
-  ],
-} satisfies NonNullable<AuggieAcpRuntimeDefinition['stderrRules']>);

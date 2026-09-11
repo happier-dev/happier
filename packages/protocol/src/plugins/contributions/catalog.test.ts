@@ -26,6 +26,7 @@ describe('plugin contribution catalog', () => {
       definition: {
         modelConfigOptionId: 'model',
         stderrRules: {
+          authenticationErrorDetail: 'Authenticate with the provider CLI.',
           suppress: [{
             includes: ['known harmless ACP notification'],
           }],

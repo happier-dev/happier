@@ -10,19 +10,8 @@ export const COPILOT_ACP_TOOL_NAME_INFERENCE = createAcpToolNameInferencePreset(
 });
 
 export const COPILOT_ACP_STDERR_RULES = Object.freeze({
+  authenticationErrorDetail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
   statusErrors: [{
-    includes: ['authentication'],
-    detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
-  }, {
-    includes: ['unauthorized'],
-    detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
-  }, {
-    includes: ['not logged in'],
-    detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
-  }, {
-    includes: ['401'],
-    detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
-  }, {
     includes: ['model not found'],
     detail: 'Model not found. Check available models with `copilot models`.',
   }, {

@@ -17,6 +17,7 @@ import type {
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { filterJsonObjectOrArrayLine } from './utils/jsonStdoutFilter';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 
 /**
  * Default timeout values (in milliseconds)
@@ -44,9 +45,15 @@ const DEFAULT_TIMEOUTS = {
  */
 export class DefaultTransport implements TransportHandler {
   readonly agentName: string;
+  private readonly authenticationErrorDetail: string;
 
-  constructor(agentName: string = 'generic-acp') {
+  constructor(
+    agentName: string = 'generic-acp',
+    options?: Readonly<{ authenticationErrorDetail?: string }>,
+  ) {
     this.agentName = agentName;
+    this.authenticationErrorDetail = options?.authenticationErrorDetail
+      ?? 'Authentication error. Configure your provider CLI credentials, then retry.';
   }
 
   /**
@@ -71,6 +78,7 @@ export class DefaultTransport implements TransportHandler {
     if (!trimmed) return { message: null, suppress: true };
 
     const lower = trimmed.toLowerCase();
+    const outputFailure = classifyProviderOutputFailure(trimmed);
 
     // During long-running investigations, keep stderr as diagnostics but avoid noisy UI errors.
     if (context.hasActiveInvestigation) {
@@ -87,23 +95,11 @@ export class DefaultTransport implements TransportHandler {
     // Be conservative: stderr may contain unrelated text that mentions "authentication" or "API keys"
     // (e.g. documentation snippets, prompts, or structured payloads). Prefer common error phrasing
     // and status-code signals instead of raw substring matches.
-    const looksLikeAuthError =
-      lower.includes('unauthorized') ||
-      trimmed.includes('401') ||
-      lower.includes('authentication failed') ||
-      lower.includes('authentication error') ||
-      lower.includes('invalid api key') ||
-      lower.includes('missing api key') ||
-      lower.includes('no api key') ||
-      lower.includes('api key not set') ||
-      lower.includes('api_key') ||
-      /\b(openai|anthropic|codex|gemini|google)_(api|access)_key\b/i.test(trimmed);
-
-    if (looksLikeAuthError) {
+    if (outputFailure.authenticationError) {
       const message: AgentMessage = {
         type: 'status',
         status: 'error',
-        detail: 'Authentication error. Configure your provider CLI credentials, then retry.',
+        detail: this.authenticationErrorDetail,
       };
       return { message };
     }
@@ -147,11 +143,9 @@ export class DefaultTransport implements TransportHandler {
       lower.includes('statuscode') ||
       lower.includes('request failed') ||
       lower.includes('bad request') ||
-      (lower.includes('http') && (lower.includes(' 4') || lower.includes(' 5'))) ||
-      (/\b(4\d\d|5\d\d)\b/.test(lower) && lower.includes('error'));
+      outputFailure.providerStatusFailure;
 
     const looksLikeStackOrException =
-      lower.startsWith('error') ||
       lower.includes('exception') ||
       lower.includes('traceback') ||
       lower.includes('stack trace');

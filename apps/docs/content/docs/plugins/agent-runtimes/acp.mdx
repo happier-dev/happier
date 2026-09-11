@@ -31,6 +31,12 @@ executable, arguments, environment, endpoint, headers, and transport timeouts.
 Agent title and description remain top-level Agent fields, and Session
 capabilities remain on the Agent capability declaration.
 
+The host classifies authentication failures consistently across ACP Agents.
+Set `stderrRules.authenticationErrorDetail` only to replace the status message
+shown after that host-owned classification; it does not add plugin-specific
+matching. Keep `suppress` and `statusErrors` for other bounded, data-only stderr
+rules.
+
 Omitting `mcp` keeps MCP input out of the ACP launch. Declare
 `mcp: { policy: 'pass_through' }` only when the Agent should receive the
 host-provided MCP servers.

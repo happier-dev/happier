@@ -54,6 +54,7 @@ export type AgentAcpStderrStatusErrorRule = AgentAcpStderrMatchRule & Readonly<{
 }>;
 
 export type AgentAcpStderrRules = Readonly<{
+  authenticationErrorDetail?: string;
   suppress?: readonly AgentAcpStderrMatchRule[];
   statusErrors?: readonly AgentAcpStderrStatusErrorRule[];
 }>;

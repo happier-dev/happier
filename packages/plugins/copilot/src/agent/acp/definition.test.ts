@@ -12,15 +12,12 @@ describe('Copilot ACP backend definition', () => {
         investigationToolIdPatterns: ['task'],
         investigationToolKinds: ['task'],
       },
-      stderrRules: {
-        statusErrors: expect.arrayContaining([
-          expect.objectContaining({
-            includes: ['authentication'],
-            detail: 'Authentication error. Run `copilot login` to authenticate with GitHub.',
-          }),
-        ]),
-      },
+      stderrRules: expect.any(Object),
       mcp: { policy: 'pass_through' },
     });
+    expect(COPILOT_ACP_RUNTIME_DEFINITION.stderrRules.statusErrors)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.stringContaining('Authentication error') })]));
+    expect(COPILOT_ACP_RUNTIME_DEFINITION.stderrRules.authenticationErrorDetail)
+      .toBe('Authentication error. Run `copilot login` to authenticate with GitHub.');
   });
 });

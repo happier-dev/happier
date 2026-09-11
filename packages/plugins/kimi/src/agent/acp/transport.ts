@@ -27,27 +27,6 @@ export const KIMI_TOOL_NAME_INFERENCE = Object.freeze({
   unknownToolNames: ['other', 'unknown', 'unknown tool'],
 } satisfies NonNullable<AgentAcpRuntimeDefinition['toolNameInference']>);
 
-export const KIMI_STDERR_RULES = Object.freeze({
-  statusErrors: [
-    {
-      includes: ['401'],
-      detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-    },
-    {
-      includes: ['invalid_authentication'],
-      detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-    },
-    {
-      includes: ['unauthorized'],
-      detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-    },
-    {
-      includes: ['api key'],
-      detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
-    },
-  ],
-} satisfies NonNullable<AgentAcpRuntimeDefinition['stderrRules']>);
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>

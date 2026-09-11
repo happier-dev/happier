@@ -1,12 +1,7 @@
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { classifyProviderOutputFailure } from './classifyProviderOutputFailure';
 
-const AUTH_ERROR_KEYWORDS = ['unauthorized', 'authentication', 'api key', 'token', '401'] as const;
 const PROVIDER_PROMPT_ERROR_MAX_CHARS = 4_000;
-
-function looksLikeAuthError(text: string): boolean {
-  const lower = text.toLowerCase();
-  return AUTH_ERROR_KEYWORDS.some((kw) => lower.includes(kw));
-}
 
 function formatProviderPromptErrorSummary(error: unknown): string {
   if (error instanceof Error) {
@@ -58,7 +53,7 @@ export function formatProviderPromptErrorMessage(error: unknown, opts?: { authHi
       ? formatted
       : `Error: ${formatted}`;
 
-  if (opts?.authHint && looksLikeAuthError(formatted)) {
+  if (opts?.authHint && classifyProviderOutputFailure(formatted).authenticationError) {
     return `${base}\n\n${opts.authHint}`;
   }
   return base;

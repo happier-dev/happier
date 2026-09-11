@@ -580,4 +580,26 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
       code: 'agent_session_error',
     });
   });
+
+  it('keeps incidental 401 identifiers out of auth issue classification', () => {
+    expect(classifyPrimarySessionRuntimeIssue({
+      cause: 'status_error',
+      error: new Error('[agy-acp] WARN: failed to decode gen_metadata 401: cant skip wire type 6'),
+      occurredAt: 1_000,
+    })).toMatchObject({
+      source: 'agent_status_error',
+      code: 'agent_status_error',
+    });
+  });
+
+  it('classifies contextual HTTP 401 failures as auth issues', () => {
+    expect(classifyPrimarySessionRuntimeIssue({
+      cause: 'status_error',
+      error: new Error('Request failed with status code 401'),
+      occurredAt: 1_000,
+    })).toMatchObject({
+      source: 'auth_error',
+      code: 'auth_error',
+    });
+  });
 });

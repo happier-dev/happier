@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AcpBackend } from '../AcpBackend';
+import { DefaultTransport } from '@/agent/transport/DefaultTransport';
 import type { AgentMessage } from '../../core';
 import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
 import { createAcpTestTransportHandler } from '../testkit/subprocessHarness';
@@ -1652,6 +1653,94 @@ describe('AcpBackend.waitForResponseComplete', () => {
         await expect(backend.waitForResponseComplete(250)).rejects.toThrow(/auth invalid/);
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('continues the in-flight turn when stderr contains an incidental 401 identifier', async () => {
+    await withTempDir('happier-acp-benign-401-stderr-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        stderrAfterPromptText: '[agy-acp] WARN: failed to decode gen_metadata 401: cant skip wire type 6',
+      });
+      const defaultTransport = new DefaultTransport('generic');
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: createAcpTestTransportHandler({
+          idleTimeoutMs: 1,
+          handleStderr: (text, context) => defaultTransport.handleStderr(text, context),
+          filterStdoutLine: (line) => defaultTransport.filterStdoutLine(line),
+        }),
+      });
+
+      try {
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+        await expect(backend.waitForResponseComplete(1_000)).resolves.toBeUndefined();
+      } finally {
+        await backend.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('continues the in-flight turn when dropped stdout contains an incidental 401 identifier', async () => {
+    await withTempDir('happier-acp-benign-401-stdout-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        stdoutAfterPromptText: 'error decoding gen_metadata 401: cant skip wire type 6',
+      });
+      const defaultTransport = new DefaultTransport('generic');
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: createAcpTestTransportHandler({
+          idleTimeoutMs: 1,
+          handleStderr: (text, context) => defaultTransport.handleStderr(text, context),
+          filterStdoutLine: (line) => defaultTransport.filterStdoutLine(line),
+        }),
+      });
+
+      try {
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+        await expect(backend.waitForResponseComplete(1_000)).resolves.toBeUndefined();
+      } finally {
+        await backend.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('fails the in-flight turn promptly for contextual 401 stderr', async () => {
+    await withTempDir('happier-acp-auth-401-stderr-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        stderrAfterPromptText: 'Request failed with status code 401',
+        emitMessageChunkAfterPrompt: false,
+      });
+      const defaultTransport = new DefaultTransport('generic');
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: createAcpTestTransportHandler({
+          idleTimeoutMs: 1,
+          handleStderr: (text, context) => defaultTransport.handleStderr(text, context),
+          filterStdoutLine: (line) => defaultTransport.filterStdoutLine(line),
+        }),
+      });
+
+      try {
+        const started = await backend.startSession();
+        await backend.sendPrompt(started.sessionId, 'hi');
+        await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow(/Authentication error/);
+      } finally {
+        await backend.dispose().catch(() => {});
       }
     });
   }, 20_000);
