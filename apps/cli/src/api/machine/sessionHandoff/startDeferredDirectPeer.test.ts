@@ -48,7 +48,6 @@ describe('prepareDeferredDirectPeerStart', () => {
     const recordDeferredStartFailure = vi.fn();
 
     const prepared = await prepareDeferredDirectPeerStart({
-      activeServerDir: '/tmp/happier-session-handoff-deferred-direct-peer-test',
       handoffId: 'handoff_deferred_direct_peer_no_workspace',
       request,
       metadata: {

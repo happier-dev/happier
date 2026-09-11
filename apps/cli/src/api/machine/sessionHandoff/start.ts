@@ -388,7 +388,6 @@ export function createSessionHandoffStartActionHandler(
 
         try {
           const deferredDirectPeerStart = await claimMaintenance.race(() => prepareDeferredDirectPeerStart({
-            activeServerDir,
             handoffId,
             request: parsed.data,
             metadata,
