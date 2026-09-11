@@ -68,6 +68,32 @@ echo Linux
   );
   await chmod(unameStubPath, 0o755);
 
+  const awkLookup = spawnSync('sh', ['-c', 'command -v awk'], { encoding: 'utf8' });
+  assert.equal(awkLookup.status, 0, `failed to resolve awk: ${String(awkLookup.stderr ?? '')}`);
+  const realAwkPath = String(awkLookup.stdout ?? '').trim();
+  assert.notEqual(realAwkPath, '', 'expected awk to be available for installer tests');
+  const awkStubPath = join(binDir, 'awk');
+  await writeFile(
+    awkStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${HAPPIER_TEST_GNU_AWK_WARNINGS:-0}" = "1" ]]; then
+  for arg in "$@"; do
+    value="\${arg#re=}"
+    if [[ "$arg" = re=* ]]; then
+      while [[ "$value" = *'\\.'* ]]; do
+        echo "awk: warning: escape sequence '\\.' treated as plain '.'" >&2
+        value="\${value#*\\.}"
+      done
+    fi
+  done
+fi
+exec "$HAPPIER_TEST_REAL_AWK" "$@"
+`,
+    'utf8',
+  );
+  await chmod(awkStubPath, 0o755);
+
   // Build two tarballs to simulate a rolling release tag that contains multiple versions.
   // The installer should select a consistent set of assets (tarball + matching checksums/sig),
   // not mix checksums from a newer version with a tarball from an older one.
@@ -357,6 +383,8 @@ printf '%s' '${releaseJson}'
     HAPPIER_GITHUB_TOKEN: '',
     GITHUB_TOKEN: '',
     HAPPIER_TEST_LOG: logPath,
+    HAPPIER_TEST_GNU_AWK_WARNINGS: '',
+    HAPPIER_TEST_REAL_AWK: realAwkPath,
     ...installerEnvOverrides,
   };
 
@@ -456,6 +484,16 @@ test('install.sh prints download and extraction progress so large installs do no
     assert.match(scenario.stdout, /- \[✓\] Downloading minisign signature/);
     assert.match(scenario.stdout, /- \[\.\.\] Extracting payload/);
     assert.match(scenario.stdout, /- \[✓\] Extracting payload/);
+  } finally {
+    await scenario.cleanup();
+  }
+});
+
+test('install.sh keeps release asset regexes portable across awk implementations', async () => {
+  const scenario = await runInstallerScenario({ HAPPIER_TEST_GNU_AWK_WARNINGS: '1' });
+  try {
+    assert.equal(scenario.stderr.trim(), '');
+    assert.match(scenario.stdout, /Signature verified\./);
   } finally {
     await scenario.cleanup();
   }

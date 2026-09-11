@@ -326,8 +326,9 @@ json_lookup_asset_url() {
       matched="${url}"
       matched_sort_key="${sort_key}"
     fi
-  done < <(printf '%s' "$json" | tr '{},' '\n\n\n' | awk -v re="$name_regex" '
+  done < <(printf '%s' "$json" | tr '{},' '\n\n\n' | HAPPIER_INSTALLER_AWK_ASSET_REGEX="$name_regex" awk '
     BEGIN {
+      re = ENVIRON["HAPPIER_INSTALLER_AWK_ASSET_REGEX"]
       in_assets = 0
       name = ""
     }
