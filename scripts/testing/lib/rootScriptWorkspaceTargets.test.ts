@@ -41,6 +41,24 @@ test('follows the Stack executor and root script delegation to the real workspac
   ]);
 });
 
+test('resolves the declarative shared-package runner without a second package list', () => {
+  const targets = resolveRootScriptWorkspaceTargets(
+    {
+      test: 'yarn -s test:shared-packages:local',
+      'test:shared-packages:local': 'node --experimental-strip-types scripts/testing/runSharedPackageTests.ts',
+    },
+    'test',
+  );
+
+  assert.ok(targets.some((target) => target.packageName === '@happier-dev/peer-transport'));
+  assert.ok(targets.some((target) => target.packageName === '@happier-dev/release-runtime'));
+  assert.ok(targets.some((target) => target.workspaceDirectory === 'packages/relay-server'));
+  assert.ok(!targets.some((target) => target.packageName === '@happier-dev/website'));
+  assert.ok(!targets.some(
+    (target) => target.packageName === 'privacy-kit' && target.scriptName === 'test:runtime:bun',
+  ));
+});
+
 test('stops instead of looping when root scripts delegate to each other', () => {
   const targets = resolveRootScriptWorkspaceTargets(
     { test: 'yarn -s test:alias', 'test:alias': 'yarn -s test && yarn workspace privacy-kit test' },

@@ -356,7 +356,11 @@ function collectRootUnitLaneWorkflowIssues(
   scripts: Readonly<Record<string, string>>,
 ): WorkflowScriptParityIssue[] {
   const issues: WorkflowScriptParityIssue[] = [];
-  const workflowTargets = scanYarnInvocations(input.workflowText).workspaceTargets
+  const workflowScan = scanYarnInvocations(input.workflowText);
+  const workflowTargets = [
+    ...workflowScan.workspaceTargets,
+    ...workflowScan.rootScriptRefs.flatMap((scriptName) => resolveRootScriptWorkspaceTargets(scripts, scriptName)),
+  ]
     .filter((target) => target.scriptName.startsWith('test'));
   const seen = new Set<string>();
   const finitePublicSdkTaskRuns = /\byarn(?:\s+-s)?\s+check:public-sdk:finite(?:\s|$)/u.test(input.workflowText);

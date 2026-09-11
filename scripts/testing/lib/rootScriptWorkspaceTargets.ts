@@ -1,3 +1,5 @@
+import { selectSharedPackageTestCommands } from './sharedPackageTestCommands.ts';
+
 /**
  * Derives which workspaces a root script actually executes.
  *
@@ -176,7 +178,13 @@ export function resolveRootScriptWorkspaceTargets(
   rootScriptName: string,
 ): readonly WorkspaceScriptTarget[] {
   return collectReachableScriptBodies(scripts, rootScriptName)
-    .flatMap((body) => scanYarnInvocations(body).workspaceTargets);
+    .flatMap((body) => {
+      const directTargets = scanYarnInvocations(body).workspaceTargets;
+      if (!body.includes('scripts/testing/runSharedPackageTests.ts')) return directTargets;
+      const declaredTargets = selectSharedPackageTestCommands('local').flatMap(({ args }) =>
+        scanYarnInvocations(`yarn ${args.join(' ')}`).workspaceTargets);
+      return [...directTargets, ...declaredTargets];
+    });
 }
 
 /**

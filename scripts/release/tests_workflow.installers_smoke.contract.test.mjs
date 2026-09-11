@@ -20,6 +20,11 @@ test('tests workflow gates installer smoke on existing release tags (bootstrap-f
   });
 
   for (const block of installerJobs) {
+    const workspaceBuildIndex = block.indexOf('node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs');
+    const validationIndex = block.indexOf('node scripts/pipeline/run.mjs release-validate');
+    assert.ok(workspaceBuildIndex >= 0, 'installer smoke jobs should prepare the shared workspace packages imported by validation');
+    assert.match(block, /ensureWorkspacePackagesBuiltCli\.mjs[^\n]*@happier-dev\/cli-common[^\n]*@happier-dev\/release-runtime/);
+    assert.ok(workspaceBuildIndex < validationIndex, 'workspace packages must be prepared before importing the release validator');
     assert.match(block, /node scripts\/pipeline\/run\.mjs release-validate/, 'installer smoke jobs should call the unified release-validation runner');
     assert.match(block, /--suite installers-smoke/, 'installer smoke jobs should declare the installers-smoke suite');
     assert.match(block, /--source "\$\{INSTALLERS_SOURCE\}"|--source "\$env:INSTALLERS_SOURCE"/, 'installer smoke jobs should route source selection through workflow env');

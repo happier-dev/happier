@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { ROOT_TYPECHECK_COMMANDS } from '../runTypecheck.ts';
 import { collectWorkflowScriptParityReport } from './workflowScriptParity.ts';
 
 const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -342,33 +343,34 @@ test('wires shared SDK packages into the default root validation lanes', () => {
   };
   const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
   const unitLane = packageJson.scripts?.['test:unit:local'] ?? '';
+  const sharedPackageOwner = readFileSync(
+    join(ROOT_DIR, 'scripts/testing/lib/sharedPackageTestCommands.ts'),
+    'utf8',
+  );
+  const typecheckCommandText = ROOT_TYPECHECK_COMMANDS.flatMap((command) => command.args).join(' ');
 
-  assert.match(unitLane, /yarn workspace @happier-dev\/voice-modelpacks test/);
-  assert.match(unitLane, /yarn workspace @happier-dev\/terminal-native test/);
-  assert.match(unitLane, /yarn workspace @happier-dev\/sherpa-native test/);
-  assert.match(unitLane, /yarn workspace @happier-dev\/support test/);
-  assert.match(unitLane, /yarn workspace @happier-dev\/peer-mediation test/);
+  assert.match(unitLane, /yarn -s test:shared-packages:local/);
+  assert.match(sharedPackageOwner, /'@happier-dev\/voice-modelpacks', 'test'/);
+  assert.match(sharedPackageOwner, /'@happier-dev\/terminal-native', 'test'/);
+  assert.match(sharedPackageOwner, /'@happier-dev\/sherpa-native', 'test'/);
+  assert.match(sharedPackageOwner, /'@happier-dev\/support', 'test'/);
+  assert.match(sharedPackageOwner, /'@happier-dev\/peer-mediation', 'test'/);
   assert.match(unitLane, /yarn workspace @happier-dev\/plugin-sdk test/);
   assert.match(unitLane, /yarn workspace @happier-dev\/plugin-ui test/);
   // The published Channels protocol package sat outside every ordinary lane while the lane-map
   // unit fixture asserted the opposite from a root command it wrote itself. These two assertions
   // read the real root script and the real workflow, so the fixture can no longer be friendlier
   // than the commands CI actually runs.
-  assert.match(unitLane, /yarn workspace @happier-dev\/channels-protocol test/);
-  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /turbo run typecheck:source:finite/);
-  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /--filter=@happier-dev\/terminal-native/);
+  assert.match(sharedPackageOwner, /'@happier-dev\/channels-protocol', 'test'/);
+  assert.match(typecheckCommandText, /turbo run typecheck:source:finite/);
+  assert.match(typecheckCommandText, /--filter=@happier-dev\/terminal-native/);
   assert.match(
     packageJson.scripts?.['build:packages'] ?? '',
     /@happier-dev\/support/,
     'Support source compilation is reused as its typecheck evidence before the source-only Turbo lane',
   );
-  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /--filter=@happier-dev\/plugin-ui/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/voice-modelpacks test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/terminal-native test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/sherpa-native test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/support test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/peer-mediation test/);
-  assert.match(workflowText, /yarn workspace @happier-dev\/channels-protocol test/);
+  assert.match(typecheckCommandText, /--filter=@happier-dev\/plugin-ui/);
+  assert.match(workflowText, /yarn -s test:shared-packages:local/);
   assert.match(workflowText, /yarn -s check:public-sdk:finite/);
   assert.doesNotMatch(workflowText, /yarn workspace @happier-dev\/plugin-sdk test/);
   assert.doesNotMatch(workflowText, /yarn workspace @happier-dev\/plugin-ui test/);
@@ -456,7 +458,7 @@ test('keeps targeted reusable CI callers from inheriting plugin workspace covera
   const targetedWorkflowPaths = [
     '.github/workflows/providers-contracts.yml',
     '.github/workflows/release-verify.yml',
-    '.github/workflows/release.yml',
+    '.github/workflows/release-source-validation.yml',
     '.github/workflows/self-host-e2e.yml',
     '.github/workflows/stress-tests.yml',
   ];
@@ -465,7 +467,7 @@ test('keeps targeted reusable CI callers from inheriting plugin workspace covera
     const workflowText = readFileSync(join(ROOT_DIR, workflowPath), 'utf8');
     assert.match(
       workflowText,
-      /uses: \.\/\.github\/workflows\/tests\.yml[\s\S]*?with:[\s\S]*?run_plugin_workspaces: false/,
+      /uses: \.\/\.github\/workflows\/tests\.yml[\s\S]*?with:[\s\S]*?run_shared_packages: false[\s\S]*?run_plugin_workspaces: false/,
       workflowPath,
     );
   }
@@ -485,5 +487,16 @@ test('keeps the plugin workspace runner contract in the wiring self-test lane', 
   assert.match(
     packageJson.scripts?.['test:wiring:self'] ?? '',
     /scripts\/testing\/runPluginWorkspaceTests\.test\.ts/,
+  );
+});
+
+test('keeps the shared-package aggregate runner contract in the wiring self-test lane', () => {
+  const packageJson = JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string | undefined>;
+  };
+
+  assert.match(
+    packageJson.scripts?.['test:wiring:self'] ?? '',
+    /scripts\/testing\/runSharedPackageTests\.test\.ts/,
   );
 });

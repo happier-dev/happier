@@ -123,6 +123,7 @@ jobs:
     with:
       select_jobs_explicitly: true
       run_ui: false
+      run_shared_packages: false
       run_plugin_workspaces: false
       run_server: false
       run_cli: false

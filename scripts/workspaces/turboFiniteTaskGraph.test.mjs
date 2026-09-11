@@ -40,7 +40,7 @@ test('the finite Turbo graph is activated through the current package manager wi
   }
   assert.equal(
     rootPackage.scripts['typecheck:inner'],
-    'yarn -s build:packages && yarn -s prepare:typecheck:workspaces && turbo run typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/sdk && turbo run typecheck:source:finite --filter=@happier-dev/terminal-native --filter=@happier-dev/plugin-ui --filter=@happier-dev/app --filter=@happier-dev/cli --filter=@happier-dev/server --filter=@happier-dev/tests',
+    'node --experimental-strip-types scripts/testing/runTypecheck.ts',
   );
   assert.equal(
     rootPackage.scripts['prepare:typecheck:workspaces'],

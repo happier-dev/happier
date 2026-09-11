@@ -44,6 +44,10 @@ on:
         required: false
         default: true
         type: boolean
+      run_shared_packages:
+        required: false
+        default: false
+        type: boolean
       run_plugin_workspaces:
         required: false
         default: true
@@ -135,6 +139,10 @@ on:
       run_binary_smoke:
         required: false
         default: true
+        type: boolean
+      run_build_smoke:
+        required: false
+        default: false
         type: boolean
       checkout_sha:
         required: false
@@ -696,14 +704,28 @@ jobs:
           fi
 
   shared-packages-unit:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_shared_packages }}
     needs: [trusted_ref_guard]
     name: Shared Package Unit Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
-    timeout-minutes: 20
+    timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      # cli-stable is discovery-only evidence for website compatibility claims;
+      # it is not release authorization or a publication identity.
+      - name: Checkout released agent baseline (stable discovery)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: happier-dev/happier
+          ref: cli-stable
+          path: .ci/released-cli-stable
+          sparse-checkout: |
+            packages/agents/src
+          persist-credentials: false
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
@@ -757,30 +779,9 @@ jobs:
 
       - name: Run shared package unit tests
         if: ${{ !cancelled() }}
-        run: |
-          yarn workspace privacy-kit test
-          yarn workspace privacy-kit test:runtime:bun
-          yarn workspace @happier-dev/voice-modelpacks test
-          yarn workspace @happier-dev/peer-mediation test
-          yarn workspace @happier-dev/transfers test
-          yarn workspace @happier-dev/terminal-native test
-          yarn workspace @happier-dev/sherpa-native test
-          yarn workspace @happier-dev/agents test
-          yarn workspace @happier-dev/cli-common test
-          yarn workspace @happier-dev/support test
-          yarn workspace @happier-dev/connection-supervisor test
-          yarn workspace @happier-dev/bootstrap test
-          # The Channels protocol package tests its own published artifact, so its
-          # copy-isolation and publication-boundary files need `dist` to exist first.
-          yarn workspace @happier-dev/channels-protocol build
-          yarn workspace @happier-dev/channels-protocol test
-          yarn workspace @happier-dev/triage-protocol test
-          yarn workspace @happier-dev/triage-sources test
-          yarn workspace @happier-dev/ssh-native test
-          yarn workspace @happier-dev/audio-stream-native test
-          yarn workspace docs test
-          yarn workspace docs check:content
-          yarn --cwd packages/relay-server test
+        env:
+          HAPPIER_SHIPPED_TREE: ${{ github.workspace }}/.ci/released-cli-stable
+        run: yarn -s test:shared-packages:local --mode ci
 
       - name: Run current-source Plugin Platform author and runtime contracts
         if: ${{ !cancelled() }}
@@ -1031,6 +1032,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: yarn workspace @happier-dev/cli test:integration
 
+      - name: Run slow tests
+        if: ${{ !cancelled() && matrix.part == 1 }}
+        run: yarn workspace @happier-dev/cli test:slow
+
   stack:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
     needs: [trusted_ref_guard]
@@ -1142,6 +1147,9 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Prepare release validation workspaces
+        run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
+
       - name: Run unified installer smoke
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1190,6 +1198,9 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Prepare release validation workspaces
+        run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
 
       - name: Run unified installer smoke
         env:
@@ -1240,6 +1251,10 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Prepare release validation workspaces
+        shell: pwsh
+        run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
 
       - name: Run unified installer smoke
         shell: pwsh
@@ -1377,6 +1392,74 @@ jobs:
             --platform linux \
             --source git-ref-build \
             --ref "$CHECKOUT_SHA"
+
+  build-smoke:
+    if: ${{ !inputs.select_jobs_explicitly || inputs.run_build_smoke }}
+    needs: [trusted_ref_guard]
+    name: Release Build Smoke (Linux)
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
+    timeout-minutes: 120
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Build and run the HStack release binary
+        run: node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
+
+      - name: Build the UI web release bundle
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/pipeline/run.mjs release-build-ui-web-bundle
+          --channel preview
+          --version 0.0.0-ci.${{ github.run_id }}
+
+      - name: Build the public website
+        if: ${{ !cancelled() }}
+        run: yarn workspace @happier-dev/website build
+
+      - name: Build the documentation site
+        if: ${{ !cancelled() }}
+        run: yarn workspace docs build
 
   cli-update-continuity:
     if: ${{ inputs.run_cli_update_continuity }}
@@ -1992,6 +2075,8 @@ jobs:
           command -v opencode && opencode --version
 
       - name: Run daemon integration suite (with light server)
+        env:
+          HAPPIER_CLI_DAEMON_SPAWN_STOP_STRESS_INTEGRATION: "1"
         run: |
           set -euo pipefail
 
@@ -2035,6 +2120,7 @@ jobs:
           node scripts/pipeline/run.mjs testing-create-auth-credentials
 
           yarn --cwd apps/cli -s vitest run --config vitest.integration.config.ts src/daemon/daemon.integration.test.ts
+          yarn --cwd apps/cli -s vitest run --config vitest.slow.config.ts src/daemon/daemon.spawnStop.stress.slow.test.ts
 
       - name: Dump server logs (on failure)
         if: failure()
@@ -2239,13 +2325,18 @@ jobs:
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
           WORKFLOW_FILE: tests.yml
+          RUNNER_POOL: ${{ inputs.runner_pool || 'github' }}
         run: |
           set -euo pipefail
           test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          if [ "$RUNNER_POOL" = "github" ]; then
+            exit 0
+          fi
           case "$WORKFLOW_REF" in
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
-            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/v0.3") ;;
             *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
           esac
       - name: Resolve runner pool

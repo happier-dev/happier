@@ -11,6 +11,8 @@ test('manual tests dispatch exposes and forwards release-validation custom check
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests-dispatch.yml'), 'utf8');
 
   for (const checkName of [
+    'run_shared_packages',
+    'run_build_smoke',
     'run_cli_update_continuity',
     'run_daemon_continuity',
     'run_session_continuity',
@@ -33,6 +35,26 @@ test('manual tests dispatch exposes and forwards release-validation custom check
     );
   }
 
+  assert.match(
+    raw,
+    /custom_checks:[\s\S]*?shared_packages/,
+    'tests-dispatch.yml should document the shared-package lane in custom_checks',
+  );
+  assert.match(
+    raw,
+    /if has shared_packages; then run_shared_packages=true; fi/,
+    'tests-dispatch.yml should let operators request the shared-package lane directly',
+  );
+  assert.match(
+    raw,
+    /custom_checks:[\s\S]*?build_smoke/,
+    'tests-dispatch.yml should document the source build-smoke lane in custom_checks',
+  );
+  assert.match(
+    raw,
+    /if has build_smoke; then run_build_smoke=true; fi/,
+    'tests-dispatch.yml should let operators request the source build-smoke lane',
+  );
   assert.match(
     raw,
     /custom_checks:[\s\S]*?run_release_assets_docker/,

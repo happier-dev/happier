@@ -21,6 +21,7 @@ jobs:
       select_jobs_explicitly: true
       run_ui_e2e: false
       run_ui: false
+      run_shared_packages: false
       run_plugin_workspaces: false
       run_server: false
       run_server_db_contract: false
