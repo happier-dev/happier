@@ -5,6 +5,7 @@ import type {
 
 export type CodexAppServerRollbackPlan = Readonly<{
     numTurns: number;
+    beforeTurnId: string | null;
     targetUserMessageSeq: number;
     affectedTurnIds: readonly string[];
     range: Readonly<{
@@ -25,6 +26,7 @@ export function resolveCodexAppServerRollbackPlanFromSessionTurns(params: Readon
         if (!latest) return null;
         return {
             numTurns: 1,
+            beforeTurnId: readProviderTurnId(latest.turn),
             targetUserMessageSeq: latest.startUserMessageSeq,
             affectedTurnIds: [latest.turn.turnId],
             range: {
@@ -47,6 +49,7 @@ export function resolveCodexAppServerRollbackPlanFromSessionTurns(params: Readon
 
     return {
         numTurns: affectedTurns.length,
+        beforeTurnId: readProviderTurnId(target.turn),
         targetUserMessageSeq: target.startUserMessageSeq,
         affectedTurnIds: affectedTurns.map((turn) => turn.turn.turnId),
         range: {
@@ -65,6 +68,16 @@ type RollbackEligibleTurn = Readonly<{
 
 function readNonNegativeInteger(value: unknown): number | null {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function readProviderTurnId(turn: CodexAppServerSessionTurn): string | null {
+    const providerCheckpoint = turn.rollback?.providerCheckpoint;
+    if (typeof providerCheckpoint === 'string' && providerCheckpoint.trim()) {
+        return providerCheckpoint.trim();
+    }
+    return typeof turn.agentTurnId === 'string' && turn.agentTurnId.trim()
+        ? turn.agentTurnId.trim()
+        : null;
 }
 
 function readRollbackEligibleTurn(turn: CodexAppServerSessionTurn): RollbackEligibleTurn | null {

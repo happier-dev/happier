@@ -13,6 +13,7 @@ import type {
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { CodexAppServerEvent } from './core.js';
+import { createCodexAppServerRpcError } from './compatibility.js';
 
 const clientState = vi.hoisted(() => {
   const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
@@ -53,6 +54,7 @@ const clientState = vi.hoisted(() => {
   let rejectNextThreadResume: Error | null = null;
   let nextThreadResumeResult: unknown | null = null;
   let rejectNextThreadRead: Error | null = null;
+  let rejectNextThreadRevert: Error | null = null;
   let deferNextLoginStart = false;
   let deferredLoginStart: {
     promise: Promise<unknown>;
@@ -115,6 +117,7 @@ const clientState = vi.hoisted(() => {
       rejectNextThreadResume = null;
       nextThreadResumeResult = null;
       rejectNextThreadRead = null;
+      rejectNextThreadRevert = null;
       deferNextLoginStart = false;
       deferredLoginStart = null;
     },
@@ -178,6 +181,9 @@ const clientState = vi.hoisted(() => {
     rejectNextThreadRead(error: Error) {
       rejectNextThreadRead = error;
     },
+    rejectNextThreadRevert(error: Error) {
+      rejectNextThreadRevert = error;
+    },
     deferNextLoginStart() {
       deferNextLoginStart = true;
     },
@@ -240,6 +246,14 @@ const clientState = vi.hoisted(() => {
           throw error;
         }
         return threadReadResult;
+      }
+      if (method === 'thread/revert') {
+        if (rejectNextThreadRevert) {
+          const error = rejectNextThreadRevert;
+          rejectNextThreadRevert = null;
+          throw error;
+        }
+        return {};
       }
       if (method === 'thread/rollback') {
         return {};
@@ -1944,7 +1958,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     expect(runtime.isTurnInFlight()).toBe(false);
   });
 
-  it('rolls back the latest completed app-server turn through the native thread rollback RPC', async () => {
+  it('rolls back the latest completed app-server turn before its exact provider checkpoint', async () => {
     const runtime = createRuntime({
       processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
     });
@@ -1971,10 +1985,10 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     });
 
     expect(clientState.requests).toContainEqual({
-      method: 'thread/rollback',
+      method: 'thread/revert',
       params: {
         threadId: 'thread-1',
-        numTurns: 1,
+        beforeTurnId: 'turn-1',
       },
     });
     expect(events).toContainEqual(expect.objectContaining({
@@ -1990,6 +2004,53 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       turnId: 'codex-turn-1',
       agentTurnId: 'turn-1',
     }));
+  });
+
+  it('uses the exact native provider checkpoint and falls back only when thread/revert is absent', async () => {
+    const runtime = createRuntime({
+      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
+    });
+    await runtime.send({ v: 1, text: 'establish the provider thread' }, {
+      turnId: 'host-turn-1',
+      userMessageSeq: 7,
+    });
+    const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
+    emitNotification('turn/completed', completedTurn('provider-turn-1'));
+    await completion;
+
+    const request = {
+      operationId: 'rollback-exact',
+      providerSessionId: 'thread-1',
+      target: { kind: 'beforeTurn', turnId: 'host-turn-1' },
+      affectedTurns: [
+        { turnId: 'host-turn-1', providerCheckpoint: 'provider-turn-1' },
+        { turnId: 'host-turn-2', providerCheckpoint: 'provider-turn-2' },
+      ],
+      runtimeIncarnationId: 'runtime-1',
+    } satisfies AgentSessionConversationRollbackRequest;
+
+    await expect(runtime.rollbackNativeConversation(request)).resolves.toEqual({ status: 'applied' });
+    expect(clientState.requests).toContainEqual({
+      method: 'thread/revert',
+      params: { threadId: 'thread-1', beforeTurnId: 'provider-turn-1' },
+    });
+
+    const unavailable = createCodexAppServerRpcError({ method: 'thread/revert', code: -32601 });
+    unavailable.name = 'JsonRpcApplicationError';
+    clientState.rejectNextThreadRevert(unavailable);
+    await expect(runtime.rollbackNativeConversation(request)).resolves.toEqual({ status: 'applied' });
+    expect(clientState.requests.slice(-2)).toEqual([
+      { method: 'thread/revert', params: { threadId: 'thread-1', beforeTurnId: 'provider-turn-1' } },
+      { method: 'thread/rollback', params: { threadId: 'thread-1', numTurns: 2 } },
+    ]);
+
+    const fallbackCount = clientState.requests.filter(({ method }) => method === 'thread/rollback').length;
+    clientState.rejectNextThreadRevert(new Error('transport timed out'));
+    await expect(runtime.rollbackNativeConversation(request)).resolves.toEqual({
+      status: 'outcomeUnknown',
+      diagnostic: { code: 'codex_rollback_outcome_unknown', severity: 'error' },
+    });
+    expect(clientState.requests.filter(({ method }) => method === 'thread/rollback')).toHaveLength(fallbackCount);
   });
 
   it('publishes the provider turn checkpoint without requiring a host transcript sequence', async () => {

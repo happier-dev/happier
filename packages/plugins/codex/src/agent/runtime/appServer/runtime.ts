@@ -67,6 +67,7 @@ import {
   type DisposableCodexAppServerClient,
 } from './client.js';
 import {
+  isCodexAppServerDefinitiveMethodNotFoundError,
   isCodexAppServerInvalidParamsError,
   isCodexAppServerNoActiveTurnToInterruptError,
 } from './compatibility.js';
@@ -156,6 +157,29 @@ function serializeCodexAppServerPolicy(policy: CodexAppServerPolicy | null): str
     stringifyPolicyField(policy.sandbox),
     stringifyPolicyField(policy.sandboxPolicy),
   ].join('\u0000');
+}
+
+async function requestConversationRollback(params: Readonly<{
+  client: DisposableCodexAppServerClient;
+  threadId: string;
+  beforeTurnId: string | null;
+  numTurns: number;
+}>): Promise<void> {
+  if (params.beforeTurnId) {
+    try {
+      await params.client.request('thread/revert', {
+        threadId: params.threadId,
+        beforeTurnId: params.beforeTurnId,
+      });
+      return;
+    } catch (error) {
+      if (!isCodexAppServerDefinitiveMethodNotFoundError(error, 'thread/revert')) throw error;
+    }
+  }
+  await params.client.request('thread/rollback', {
+    threadId: params.threadId,
+    numTurns: params.numTurns,
+  });
 }
 
 type CodexAppServerMcpServerConfig = Readonly<{
@@ -2669,8 +2693,10 @@ export function createCodexAppServerRuntime(
     }
     const appServerClient = await ensureClient();
     try {
-      await appServerClient.request('thread/rollback', {
+      await requestConversationRollback({
+        client: appServerClient,
         threadId: activeThreadId,
+        beforeTurnId: rollbackPlan.beforeTurnId,
         numTurns: rollbackPlan.numTurns,
       });
     } catch (error) {
@@ -2717,7 +2743,9 @@ export function createCodexAppServerRuntime(
         diagnostic: { code: 'codex_rollback_session_unavailable', severity: 'error' },
       };
     }
-    if (request.affectedTurns.some((turn) => typeof turn.providerCheckpoint !== 'string')) {
+    const providerCheckpoints = request.affectedTurns.map((turn) => trimStringValue(turn.providerCheckpoint));
+    const beforeTurnId = providerCheckpoints[0] ?? null;
+    if (!beforeTurnId || providerCheckpoints.some((checkpoint) => !checkpoint)) {
       return {
         status: 'unavailable',
         retryable: false,
@@ -2726,8 +2754,10 @@ export function createCodexAppServerRuntime(
     }
     try {
       const appServerClient = await ensureClient();
-      await appServerClient.request('thread/rollback', {
+      await requestConversationRollback({
+        client: appServerClient,
         threadId,
+        beforeTurnId,
         numTurns: request.affectedTurns.length,
       });
       return { status: 'applied' };

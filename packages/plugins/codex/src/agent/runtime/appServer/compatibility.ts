@@ -71,6 +71,11 @@ export function isCodexAppServerMethodNotFoundError(error: unknown): boolean {
     return /method\s+not\s+found/i.test(readMessage(error));
 }
 
+export function isCodexAppServerDefinitiveMethodNotFoundError(error: unknown, method: string): boolean {
+    return isCodexAppServerApplicationRejectionForMethod(error, method)
+        && readCode(error) === -32601;
+}
+
 export function isCodexAppServerInvalidParamsError(error: unknown): boolean {
     const code = readCode(error);
     if (code === -32602 || code === 'InvalidParams' || code === 'invalid_params') return true;

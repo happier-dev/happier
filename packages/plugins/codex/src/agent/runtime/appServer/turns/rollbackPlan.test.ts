@@ -39,6 +39,11 @@ describe('resolveCodexAppServerRollbackPlanFromSessionTurns', () => {
                         startSeqInclusive: 10,
                         endSeqInclusive: 20,
                     },
+                    rollback: {
+                        state: 'eligible',
+                        providerCheckpoint: 'provider-checkpoint-1',
+                        updatedAt: 200,
+                    },
                 }),
             ],
         });
@@ -59,6 +64,7 @@ describe('resolveCodexAppServerRollbackPlanFromSessionTurns', () => {
         })).toBeNull();
         expect(plan).toEqual({
             numTurns: 1,
+            beforeTurnId: 'provider-checkpoint-1',
             targetUserMessageSeq: 11,
             affectedTurnIds: ['session-turn-1'],
             range: {
@@ -83,6 +89,7 @@ describe('resolveCodexAppServerRollbackPlanFromSessionTurns', () => {
                 }),
                 createTurn({
                     turnId: 'target-turn',
+                    agentTurnId: 'provider-target-turn',
                     transcriptAnchors: {
                         startUserMessageSeq: 30,
                         startSeqInclusive: 29,
@@ -100,6 +107,7 @@ describe('resolveCodexAppServerRollbackPlanFromSessionTurns', () => {
             ],
         })).toEqual({
             numTurns: 2,
+            beforeTurnId: 'provider-target-turn',
             targetUserMessageSeq: 30,
             affectedTurnIds: ['target-turn', 'latest-turn'],
             range: {
