@@ -48,6 +48,13 @@ function createNpmPackedCliTarball(tmpDir, {
       name: '@happier-dev/cli',
       version: '1.2.3',
       files: files ?? ['tools/archives'],
+      happier: {
+        managedRuntimePublication: {
+          v: 1,
+          mode: 'complete',
+          unavailableProviderRefs: [],
+        },
+      },
     })}\n`,
     'utf8',
   );

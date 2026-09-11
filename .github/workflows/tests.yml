@@ -320,6 +320,7 @@ jobs:
               - 'packages/plugin-sdk/**'
               - 'packages/plugin-ui/**'
               - 'packages/sdk/**'
+              - 'scripts/ci/select-ui-e2e-shard.mjs'
               - 'package.json'
               - 'yarn.lock'
 
@@ -377,25 +378,25 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$UI_E2E_SPECS" ]; then
-            yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/18
-            exit 0
+            selected_specs="$(node scripts/ci/select-ui-e2e-shard.mjs --shard "${{ matrix.shard }}/18")"
+            mapfile -t specs <<< "$selected_specs"
+          else
+            IFS=',' read -r -a requested_specs <<< "$UI_E2E_SPECS"
+            specs=()
+            for raw_spec in "${requested_specs[@]}"; do
+              spec="${raw_spec#"${raw_spec%%[![:space:]]*}"}"
+              spec="${spec%"${spec##*[![:space:]]}"}"
+              case "$spec" in
+                packages/tests/suites/ui-e2e/*.spec.ts) ;;
+                *) echo "::error::Invalid UI E2E spec path: $spec" >&2; exit 1 ;;
+              esac
+              if [ ! -f "$spec" ]; then
+                echo "::error::UI E2E spec does not exist: $spec" >&2
+                exit 1
+              fi
+              specs+=("$spec")
+            done
           fi
-
-          IFS=',' read -r -a requested_specs <<< "$UI_E2E_SPECS"
-          specs=()
-          for raw_spec in "${requested_specs[@]}"; do
-            spec="${raw_spec#"${raw_spec%%[![:space:]]*}"}"
-            spec="${spec%"${spec##*[![:space:]]}"}"
-            case "$spec" in
-              packages/tests/suites/ui-e2e/*.spec.ts) ;;
-              *) echo "::error::Invalid UI E2E spec path: $spec" >&2; exit 1 ;;
-            esac
-            if [ ! -f "$spec" ]; then
-              echo "::error::UI E2E spec does not exist: $spec" >&2
-              exit 1
-            fi
-            specs+=("$spec")
-          done
           if [ "${#specs[@]}" -eq 0 ]; then
             echo "::error::ui_e2e_specs did not contain any spec paths" >&2
             exit 1
@@ -1636,6 +1637,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1675,6 +1678,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1714,6 +1719,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1755,6 +1762,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020

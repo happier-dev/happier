@@ -46,6 +46,46 @@ describe('ensureCliDistSnapshotNodeModules', () => {
 
     const snapshotFile = join(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'node_modules', '@noble', 'hashes', 'hmac.js');
     expect(readFileSync(snapshotFile, 'utf8')).toContain('initial');
+  });
+
+  it('backfills exact workspace package exports that live outside dist', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-workspace-exports-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common'), { recursive: true });
+    mkdirSync(join(rootDir, 'packages', 'cli-common'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    const packageJson = JSON.stringify({
+      name: '@happier-dev/cli-common',
+      exports: {
+        '.': './dist/index.js',
+        './processInstance': {
+          types: './processInstance.d.mts',
+          import: './processInstance.mjs',
+          default: './processInstance.mjs',
+        },
+      },
+    }, null, 2);
+    writeFileSync(join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common', 'package.json'), packageJson, 'utf8');
+    writeFileSync(join(rootDir, 'packages', 'cli-common', 'package.json'), packageJson, 'utf8');
+    writeFileSync(join(rootDir, 'packages', 'cli-common', 'processInstance.mjs'), 'export const marker = "source";\n', 'utf8');
+    writeFileSync(join(rootDir, 'packages', 'cli-common', 'processInstance.d.mts'), 'export declare const marker: string;\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-workspace-exports-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    expect(readFileSync(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'cli-common', 'processInstance.mjs'),
+      'utf8',
+    )).toContain('source');
+    expect(readFileSync(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'cli-common', 'processInstance.d.mts'),
+      'utf8',
+    )).toContain('marker');
 
     writeFileSync(
       join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol', 'node_modules', '@noble', 'hashes', 'hmac.js'),

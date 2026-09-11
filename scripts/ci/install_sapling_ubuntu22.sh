@@ -8,7 +8,14 @@ SAPLING_TAG_URL="${SAPLING_TAG//+/%2B}"
 SAPLING_DOWNLOAD_URL="https://github.com/facebook/sapling/releases/download/${SAPLING_TAG_URL}/${SAPLING_ASSET}"
 SAPLING_ASSET_PATH="/tmp/${SAPLING_ASSET}"
 
-curl -fsSL -o "${SAPLING_ASSET_PATH}" "${SAPLING_DOWNLOAD_URL}"
+curl -fsSL \
+  --retry 4 \
+  --retry-delay 5 \
+  --retry-max-time 300 \
+  --connect-timeout 30 \
+  --max-time 180 \
+  -o "${SAPLING_ASSET_PATH}" \
+  "${SAPLING_DOWNLOAD_URL}"
 echo "${SAPLING_SHA256}  ${SAPLING_ASSET_PATH}" | sha256sum --check --strict
 
 if command -v sudo >/dev/null 2>&1; then

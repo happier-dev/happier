@@ -28,7 +28,16 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
   assert.match(uiE2eJob, /shard:\s*\$\{\{ fromJSON\(inputs\.ui_e2e_specs != ''/);
   assert.match(uiE2eJob, /name:\s*UI E2E \(Playwright\) \/ shard \$\{\{ matrix\.shard \}\}\/18/);
   assert.match(uiE2eJob, /\[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18\]/);
-  assert.match(uiE2eJob, /--shard=\$\{\{ matrix\.shard \}\}\/18/);
+  assert.match(
+    uiE2eJob,
+    /select-ui-e2e-shard\.mjs --shard "\$\{\{ matrix\.shard \}\}\/18"/,
+    'UI E2E should use the weighted selector instead of Playwright count-based sharding',
+  );
+  assert.match(
+    uiE2eJob,
+    /- 'scripts\/ci\/select-ui-e2e-shard\.mjs'/,
+    'changes to the weighted selector must schedule the UI E2E lane that consumes it',
+  );
   assert.match(uiE2eJob, /ui-e2e-playwright-artifacts-shard-\$\{\{ matrix\.shard \}\}-of-18/);
 
   assert.match(

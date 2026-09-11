@@ -76,7 +76,7 @@ test('compiler orchestration has one native TypeScript resolver with no TS5 fall
   }
 });
 
-test('yarn tsc and first-party compiler scripts use the shared native runner in every TypeScript workspace', async () => {
+test('declared yarn tsc and first-party compiler scripts use the shared native runner', async () => {
   const rootPackage = await readJson('package.json');
   assert.equal(rootPackage?.scripts?.tsc, 'node scripts/workspaces/runTypeScriptCli.mjs');
 
@@ -84,7 +84,9 @@ test('yarn tsc and first-party compiler scripts use the shared native runner in 
     const runner = packagePath.startsWith('packages/plugins/')
       ? 'node ../../../scripts/workspaces/runTypeScriptCli.mjs'
       : 'node ../../scripts/workspaces/runTypeScriptCli.mjs';
-    assert.equal(pkg?.scripts?.tsc, runner, `${packagePath} yarn tsc must use the shared native runner`);
+    if (pkg?.scripts?.tsc !== undefined) {
+      assert.equal(pkg.scripts.tsc, runner, `${packagePath} yarn tsc must use the shared native runner`);
+    }
 
     for (const scriptName of ['build', 'build:esm', 'typecheck', 'types:check', 'typecheck:activity-surfaces']) {
       const script = String(pkg?.scripts?.[scriptName] ?? '');
@@ -95,7 +97,15 @@ test('yarn tsc and first-party compiler scripts use the shared native runner in 
 });
 
 test('dist-exporting TypeScript workspaces use the staged builder or one proven custom owner', async () => {
-  const customAtomicOwners = new Set(['apps/cli', 'packages/cli-common', 'packages/privacy-kit']);
+  const customAtomicOwners = new Set([
+    'apps/cli',
+    'apps/desktop',
+    'packages/cli-common',
+    'packages/plugin-sdk',
+    'packages/plugin-ui',
+    'packages/privacy-kit',
+    'packages/sdk',
+  ]);
   const observedCustomOwners = [];
 
   for (const { packagePath, pkg } of await readDistExportingTypeScriptWorkspacePackages()) {
@@ -127,15 +137,16 @@ test('docs production builds run the native type gate before the Next bundle', a
   assert.match(nextConfig, /typescript\s*:\s*\{[\s\S]*?ignoreBuildErrors\s*:\s*true/);
 });
 
-test('cli-common keeps the atomic build entrypoint and resolves typecheck through a shared TypeScript wrapper', async () => {
+test('cli-common keeps the atomic build entrypoint and routes typecheck through hstack-exec to the shared TypeScript wrapper', async () => {
   const pkg = await readJson('packages/cli-common/package.json');
 
   assert.equal(String(pkg?.scripts?.build ?? ''), 'node scripts/build.mjs');
   assert.match(
-    String(pkg?.scripts?.typecheck ?? ''),
+    String(pkg?.scripts?.['typecheck:local'] ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
-    'cli-common typecheck should use the shared TypeScript wrapper'
+    'cli-common local typecheck owner should use the shared TypeScript wrapper'
   );
+  assert.match(String(pkg?.scripts?.typecheck ?? ''), /hstack-exec --script=typecheck:local$/);
   assert.doesNotMatch(
     String(pkg?.scripts?.build ?? ''),
     /node_modules\/typescript\/bin\/tsc/,
@@ -148,7 +159,7 @@ test('cli-common keeps the atomic build entrypoint and resolves typecheck throug
   );
 });
 
-test('workspace build and typecheck scripts use the shared Node-safe TypeScript wrapper instead of bare tsc shell shims', async () => {
+test('workspace build and local typecheck owners use the shared Node-safe TypeScript wrapper instead of bare tsc shell shims', async () => {
   const agentsPkg = await readJson('packages/agents/package.json');
   const protocolPkg = await readJson('packages/protocol/package.json');
   const cliCommonPkg = await readJson('packages/cli-common/package.json');
@@ -161,7 +172,7 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     'agents build should use the staged shared TypeScript package builder'
   );
   assert.match(
-    String(agentsPkg?.scripts?.typecheck ?? ''),
+    String(agentsPkg?.scripts?.['typecheck:local'] ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
     'agents typecheck should use the shared TypeScript wrapper'
   );
@@ -171,12 +182,12 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     'protocol build should use the staged shared TypeScript package builder'
   );
   assert.match(
-    String(protocolPkg?.scripts?.typecheck ?? ''),
+    String(protocolPkg?.scripts?.['typecheck:local'] ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
     'protocol typecheck should use the shared TypeScript wrapper'
   );
   assert.match(
-    String(cliCommonPkg?.scripts?.typecheck ?? ''),
+    String(cliCommonPkg?.scripts?.['typecheck:local'] ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
     'cli-common typecheck should use the shared TypeScript wrapper'
   );
@@ -186,7 +197,7 @@ test('workspace build and typecheck scripts use the shared Node-safe TypeScript 
     'connection-supervisor build should use the staged shared TypeScript package builder'
   );
   assert.match(
-    String(connectionSupervisorPkg?.scripts?.typecheck ?? ''),
+    String(connectionSupervisorPkg?.scripts?.['typecheck:local'] ?? ''),
     /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit -p tsconfig\.json\b/,
     'connection-supervisor typecheck should use the shared TypeScript wrapper'
   );

@@ -58,12 +58,12 @@ test('release workflow uses compact grouped inputs', async () => {
     assert.equal(inputs[legacyKey], undefined, `workflow_dispatch input ${legacyKey} should be removed from the compact manual surface`);
   }
 
-  const dispatch = parsed.jobs.ci.steps.find((step) => step?.id === 'dispatch');
+  const dispatch = parsed.jobs.release_preflight.steps.find((step) => step?.id === 'dispatch');
   assert.equal(dispatch.env.PUBLIC_SDK_RELEASE_APPROVAL, '${{ inputs.public_sdk_release_approval }}');
-  assert.equal(parsed.jobs.ci.outputs.sdk_auth_readiness, '${{ steps.dispatch.outputs.sdk_auth_readiness }}');
+  assert.equal(parsed.jobs.release_preflight.outputs.sdk_auth_readiness, '${{ steps.dispatch.outputs.sdk_auth_readiness }}');
   assert.equal(
     parsed.jobs.release_admission.steps.at(-1).env.SDK_AUTH_READINESS,
-    '${{ needs.ci.outputs.sdk_auth_readiness }}',
+    '${{ needs.release_preflight.outputs.sdk_auth_readiness }}',
   );
 });
 
@@ -83,8 +83,8 @@ test('release workflow resolves the public profile internally before CI and plan
   );
   assert.doesNotMatch(resolverStep?.run ?? '', /CHECKS_PROFILE/);
 
-  assert.deepEqual(parsed.jobs.ci.needs, ['resolve_validation_profile']);
-  assert.equal(parsed.jobs.ci.if, "${{ needs.resolve_validation_profile.result == 'success' }}");
+  assert.deepEqual(parsed.jobs.release_preflight.needs, ['resolve_validation_profile']);
+  assert.equal(parsed.jobs.release_preflight.if, "${{ needs.resolve_validation_profile.result == 'success' }}");
   assert.ok(parsed.jobs.plan.needs.includes('resolve_validation_profile'));
   assert.equal(parsed.jobs.plan.outputs.validation_profile, '${{ needs.resolve_validation_profile.outputs.profile }}');
   assert.equal(parsed.jobs.plan.outputs.checks_profile, '${{ needs.resolve_validation_profile.outputs.checks_profile }}');
@@ -112,7 +112,8 @@ test('release workflow derives promotion inputs from confirm and uses compact de
   assert.match(raw, /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',website,'\)/);
   assert.match(raw, /contains\(format\(',\{0\},', inputs\.deploy_targets\), ',docs,'\)/);
 
-  assert.match(raw, /desktop_mode:\s*\$\{\{\s*inputs\.desktop_mode\s*\}\}/);
+  assert.equal(parsed.jobs.deploy_ui.with.desktop_mode, '${{ needs.deploy_plan.outputs.deploy_ui_desktop_mode }}');
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_desktop_mode), /inputs\.desktop_mode/);
   assert.doesNotMatch(raw, /desktop_build:\s*\$\{\{ inputs\.desktop_mode != 'none' \}\}/);
   assert.doesNotMatch(raw, /desktop_publish_release:\s*\$\{\{ inputs\.desktop_mode == 'build_and_publish' \}\}/);
   assert.doesNotMatch(raw, /expo_builder:\s*eas_cloud/);

@@ -13,6 +13,7 @@ import {
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const BASELINE_REF = 'refs/qualified-v4-payload-baseline';
+const RETRY_SOURCE_REF = 'refs/qualified-v4-payload-candidate';
 
 /**
  * Resolve the npm-publication facts for the source checkout selected by the
@@ -28,8 +29,8 @@ export function resolveQualifiedV4NpmCliPayloadAdmission(input) {
   }
 
   const sourceRef = String(input.sourceRef ?? '').trim();
-  if (sourceRef !== 'HEAD') {
-    throw new Error('--source-ref must be HEAD');
+  if (sourceRef !== 'HEAD' && sourceRef !== RETRY_SOURCE_REF) {
+    throw new Error(`--source-ref must be HEAD or ${RETRY_SOURCE_REF}`);
   }
 
   const sourceSha = String(input.sourceSha ?? '').trim();
@@ -85,6 +86,11 @@ export async function admitQualifiedV4NpmCliPayload(input, dependencies = {}) {
   const runGit = dependencies.runGit ?? ((args, options) => git(repoRoot, args, options));
   const runAdmission = dependencies.runAdmission
     ?? runQualifiedConnectedAccountsV4ActivationAdmission;
+
+  if (resolved.sourceRef === RETRY_SOURCE_REF) {
+    runGit(['fetch', '--no-tags', '--depth=1', 'origin', resolved.sourceSha]);
+    runGit(['update-ref', RETRY_SOURCE_REF, 'FETCH_HEAD']);
+  }
 
   const sourceAtRef = String(
     runGit(['rev-parse', '--verify', `${resolved.sourceRef}^{commit}`]).stdout ?? '',

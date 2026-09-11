@@ -238,6 +238,24 @@ function readPackageNameFromPackageJson(packageJsonPath: string): string | null 
   }
 }
 
+function collectExactPackageExportPaths(value: unknown, output: Set<string>): void {
+  if (typeof value === 'string') {
+    if (!value.startsWith('./') || value.includes('*')) return;
+    const relativePath = value.slice(2);
+    if (!relativePath || relativePath.split(/[\\/]/).includes('..')) return;
+    output.add(relativePath);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectExactPackageExportPaths(entry, output);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    collectExactPackageExportPaths(entry, output);
+  }
+}
+
 type WorkspacePackageInfo = {
   packageDir: string;
   packageJsonPath: string;
@@ -340,9 +358,10 @@ function ensureRootNodeModulesFallback(snapshotDistDir: string, rootDir: string)
   }
 }
 
-function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir: string): void {
-  for (const { packageJsonPath, scopePackageName } of collectWorkspacePackageInfos(rootDir)) {
-    const snapshotPackageJsonPath = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'package.json');
+function ensureWorkspacePackageSurfaces(snapshotNodeModulesDir: string, rootDir: string): void {
+  for (const { packageDir, packageJsonPath, scopePackageName } of collectWorkspacePackageInfos(rootDir)) {
+    const snapshotPackageDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName);
+    const snapshotPackageJsonPath = resolve(snapshotPackageDir, 'package.json');
     if (writesThroughSymlinkedNodeModulesPath(snapshotPackageJsonPath)) continue;
     try {
       const sourceManifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
@@ -352,8 +371,25 @@ function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir
         `${JSON.stringify(sanitizeBundledPackageJson(sourceManifest), null, 2)}\n`,
         'utf8',
       );
+
+      const exactExportPaths = new Set<string>();
+      collectExactPackageExportPaths(sourceManifest.exports, exactExportPaths);
+      for (const relativeExportPath of exactExportPaths) {
+        if (relativeExportPath === 'dist' || relativeExportPath.startsWith('dist/')) continue;
+        const sourcePath = resolve(packageDir, relativeExportPath);
+        if (!existsSync(sourcePath)) continue;
+        const destPath = resolve(snapshotPackageDir, relativeExportPath);
+        if (writesThroughSymlinkedNodeModulesPath(destPath)) continue;
+        mkdirSync(dirname(destPath), { recursive: true });
+        cpSync(sourcePath, destPath, {
+          recursive: true,
+          dereference: true,
+          preserveTimestamps: true,
+          force: true,
+        });
+      }
     } catch {
-      // Best-effort only. Tests can still use the bundled manifest copied before this repair.
+      // Best-effort only. Tests can still use the bundled package surface copied before this repair.
     }
   }
 }
@@ -616,7 +652,7 @@ export function ensureCliDistSnapshotNodeModules(params: {
       resolve(cliNodeModulesDir, '@happier-dev'),
     );
     if (firstPartyClosureMode === 'workspace-overlay') {
-      ensureWorkspacePackageManifests(snapshotNodeModulesDir, params.rootDir);
+      ensureWorkspacePackageSurfaces(snapshotNodeModulesDir, params.rootDir);
       ensureWorkspacePackageDistTrees(snapshotNodeModulesDir, params.rootDir);
       ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
       ensureCopiedNodeModulesEntries(cliNodeModulesDir, snapshotNodeModulesDir, new Set(['@happier-dev']));

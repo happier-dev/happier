@@ -108,7 +108,7 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   );
   assert.match(
     release,
-    /publish_ui_web:[\s\S]*?\(needs\.resolve_resume\.outputs\.ui_web_requested == 'true' \|\| contains\(format\(',\{0\},', inputs\.deploy_targets\), ',ui,'\) \|\| inputs\.force_deploy == true \|\| needs\.plan\.outputs\.changed_ui == 'true' \|\| needs\.plan\.outputs\.changed_shared == 'true'\)/,
+    /publish_ui_web_needed:\s*\$\{\{[^\n]*needs\.resolve_resume\.outputs\.ui_web_requested == 'true'[^\n]*contains\(format\(',\{0\},', inputs\.deploy_targets\), ',ui,'\)[^\n]*inputs\.force_deploy == true[^\n]*steps\.plan\.outputs\.changed_ui == 'true'[^\n]*steps\.plan\.outputs\.changed_shared == 'true'[^\n]*\}\}[\s\S]*?publish_ui_web:[\s\S]*?needs\.plan\.outputs\.publish_ui_web_needed == 'true'/,
     'UI web artifacts should publish when relay Docker needs a fresh embedded UI bundle',
   );
   assert.match(
@@ -119,7 +119,7 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(release, /publish_docker:/);
   assert.match(
     release,
-    /publish_docker:[\s\S]*?needs:\s*\[plan, release_admission, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web\]/,
+    /publish_docker:[\s\S]*?needs:\s*\[resolve_resume, plan, release_admission, prepare_release_candidate, verify_release_candidates, publish_cli_binaries, publish_server_runtime, promote_cli_binaries, promote_server_runtime, promote_ui_web\]/,
     'publish_docker should wait for candidate verification and the promoted CLI/server/UI artifacts it embeds',
   );
   assert.match(

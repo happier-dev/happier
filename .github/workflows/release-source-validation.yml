@@ -1,0 +1,287 @@
+name: RELEASE — Validate exact source once
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      source_branch:
+        required: true
+        type: string
+      base_refs:
+        required: true
+        type: string
+      dry_run:
+        required: true
+        type: boolean
+      waive_ci:
+        required: true
+        type: boolean
+      deploy_targets:
+        required: true
+        type: string
+      force_deploy:
+        required: true
+        type: boolean
+      resume_cli_requested:
+        required: false
+        default: false
+        type: boolean
+      resume_stack_requested:
+        required: false
+        default: false
+        type: boolean
+      resume_server_requested:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      source_sha:
+        value: ${{ jobs.results.outputs.source_sha }}
+      ci_result:
+        value: ${{ jobs.results.outputs.ci_result }}
+      mysql_result:
+        value: ${{ jobs.results.outputs.mysql_result }}
+      platform_result:
+        value: ${{ jobs.results.outputs.platform_result }}
+      trust_roots_result:
+        value: ${{ jobs.results.outputs.trust_roots_result }}
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  source_plan:
+    name: Bind source and select shared validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      run_mysql: ${{ steps.selection.outputs.run_mysql }}
+      run_platform: ${{ steps.selection.outputs.run_platform }}
+      run_trust_roots: ${{ steps.selection.outputs.run_trust_roots }}
+    steps:
+      - name: Checkout trusted source-validation control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Checkout exact authorized release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.source_sha }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Bind source and union changed paths across target channels
+        id: source
+        working-directory: release-source
+        env:
+          BASE_REFS: ${{ inputs.base_refs }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          checkout_sha="$(git rev-parse HEAD)"
+          test "$checkout_sha" = "$SOURCE_SHA"
+          IFS=',' read -ra requested_base_refs <<< "$BASE_REFS"
+          base_shas=()
+          for raw_ref in "${requested_base_refs[@]}"; do
+            base_ref="${raw_ref//[[:space:]]/}"
+            case "$base_ref" in
+              dev|preview|main) ;;
+              *) echo "Unsupported release-validation base ref '$base_ref'." >&2; exit 1 ;;
+            esac
+            git fetch origin "refs/heads/$base_ref:refs/remotes/origin/$base_ref"
+            base_shas+=("$(git rev-parse "origin/$base_ref")")
+          done
+          [ "${#base_shas[@]}" -gt 0 ] || { echo 'At least one release-validation base ref is required.' >&2; exit 1; }
+          joined_base_shas="$(IFS=,; echo "${base_shas[*]}")"
+          node ../scripts/pipeline/release/compute-changed-components.mjs \
+            --bases "$joined_base_shas" \
+            --head "$checkout_sha" \
+            --out "$GITHUB_OUTPUT"
+          echo "source_sha=$checkout_sha" >> "$GITHUB_OUTPUT"
+      - name: Select source gates from the canonical unioned risk plan
+        id: selection
+        env:
+          DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
+          FORCE_DEPLOY: ${{ inputs.force_deploy }}
+          CHANGED_UI: ${{ steps.source.outputs.changed_ui }}
+          CHANGED_CLI: ${{ steps.source.outputs.changed_cli }}
+          CHANGED_CLI_STACK_SHARED: ${{ steps.source.outputs.changed_cli_stack_shared }}
+          CHANGED_SERVER: ${{ steps.source.outputs.changed_server }}
+          CHANGED_SHARED: ${{ steps.source.outputs.changed_shared }}
+          CHANGED_STACK: ${{ steps.source.outputs.changed_stack }}
+          RESUME_CLI_REQUESTED: ${{ inputs.resume_cli_requested }}
+          RESUME_STACK_REQUESTED: ${{ inputs.resume_stack_requested }}
+          RESUME_SERVER_REQUESTED: ${{ inputs.resume_server_requested }}
+          RISK_MYSQL_CONTRACT: ${{ steps.source.outputs.risk_mysql_contract }}
+          RISK_PLATFORM_SERVICES: ${{ steps.source.outputs.risk_platform_services }}
+          RISK_TRUST_ROOTS: ${{ steps.source.outputs.risk_trust_roots }}
+        run: node scripts/pipeline/release/resolve-source-validation-plan.mjs
+
+  ci:
+    name: Verify exact-SHA CI evidence
+    needs: source_plan
+    if: ${{ inputs.dry_run != true && inputs.waive_ci != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout trusted source-validation control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Verify successful existing CI for exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.source_plan.outputs.source_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-existing-ci.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow tests.yml \
+            --source-sha "$SOURCE_SHA" \
+            --source-branch "$SOURCE_BRANCH"
+
+  mysql:
+    name: Server DB Contract (MySQL 8)
+    needs: [source_plan, ci]
+    if: ${{ always() && inputs.dry_run != true && inputs.waive_ci != true && needs.source_plan.result == 'success' && needs.ci.result == 'success' && needs.source_plan.outputs.run_mysql == 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/extended-db-tests.yml
+    with:
+      checkout_sha: ${{ needs.source_plan.outputs.source_sha }}
+      run_e2e_postgres: false
+      run_e2e_mysql: false
+      run_db_contract_postgres: false
+      run_db_contract_mysql: true
+
+  platform:
+    name: Platform service validation
+    needs: [source_plan, ci]
+    if: ${{ always() && inputs.dry_run != true && inputs.waive_ci != true && needs.source_plan.result == 'success' && needs.ci.result == 'success' && needs.source_plan.outputs.run_platform == 'true' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/tests.yml
+    with:
+      checkout_sha: ${{ needs.source_plan.outputs.source_sha }}
+      select_jobs_explicitly: true
+      run_ui_e2e: false
+      run_mobile_e2e_android: false
+      run_mobile_e2e_ios: false
+      run_ui: false
+      run_plugin_workspaces: false
+      run_server: false
+      run_server_db_contract: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_e2e_core_slow: false
+      run_providers: false
+      run_stress: false
+      run_release_contracts: false
+      run_installers_smoke: false
+      run_artifact_verify: false
+      run_binary_smoke: false
+      run_cli_update_continuity: false
+      run_daemon_continuity: false
+      run_session_continuity: false
+      run_release_assets_docker: false
+      run_self_host_systemd: true
+      run_self_host_launchd: true
+      run_self_host_schtasks: true
+      run_self_host_daemon: true
+
+  trust_roots:
+    name: Installer and updater trust-root validation
+    needs: [source_plan, ci]
+    if: ${{ always() && inputs.dry_run != true && needs.source_plan.result == 'success' && (inputs.waive_ci == true || needs.ci.result == 'success') && needs.source_plan.outputs.run_trust_roots == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact authorized release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ needs.source_plan.outputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Validate installer and updater trust roots
+        run: |
+          set -euo pipefail
+          node --test scripts/release/installers_security.test.mjs
+          node scripts/pipeline/run.mjs release-sync-installers --check
+          node scripts/pipeline/run.mjs tauri-validate-updater-pubkey --config-path apps/ui/src-tauri/tauri.conf.json
+
+  results:
+    name: Project exact source-validation evidence
+    if: ${{ always() }}
+    needs: [source_plan, ci, mysql, platform, trust_roots]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.evidence.outputs.source_sha }}
+      ci_result: ${{ steps.evidence.outputs.ci_result }}
+      mysql_result: ${{ steps.evidence.outputs.mysql_result }}
+      platform_result: ${{ steps.evidence.outputs.platform_result }}
+      trust_roots_result: ${{ steps.evidence.outputs.trust_roots_result }}
+    steps:
+      - name: Verify and project source-validation results
+        id: evidence
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          WAIVE_CI: ${{ inputs.waive_ci }}
+          SOURCE_PLAN_RESULT: ${{ needs.source_plan.result }}
+          SOURCE_SHA: ${{ needs.source_plan.outputs.source_sha }}
+          CI_RESULT: ${{ needs.ci.result }}
+          RUN_MYSQL: ${{ needs.source_plan.outputs.run_mysql }}
+          MYSQL_RESULT: ${{ needs.mysql.result }}
+          RUN_PLATFORM: ${{ needs.source_plan.outputs.run_platform }}
+          PLATFORM_RESULT: ${{ needs.platform.result }}
+          RUN_TRUST_ROOTS: ${{ needs.source_plan.outputs.run_trust_roots }}
+          TRUST_ROOTS_RESULT: ${{ needs.trust_roots.result }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_PLAN_RESULT" = success
+          if [ "$DRY_RUN" != true ]; then
+            if [ "$WAIVE_CI" != true ]; then test "$CI_RESULT" = success; fi
+            if [ "$RUN_MYSQL" = true ]; then test "$MYSQL_RESULT" = success; fi
+            if [ "$RUN_PLATFORM" = true ]; then test "$PLATFORM_RESULT" = success; fi
+            if [ "$RUN_TRUST_ROOTS" = true ]; then test "$TRUST_ROOTS_RESULT" = success; fi
+          fi
+          {
+            echo "source_sha=$SOURCE_SHA"
+            echo "ci_result=$CI_RESULT"
+            echo "mysql_result=$MYSQL_RESULT"
+            echo "platform_result=$PLATFORM_RESULT"
+            echo "trust_roots_result=$TRUST_ROOTS_RESULT"
+          } >> "$GITHUB_OUTPUT"

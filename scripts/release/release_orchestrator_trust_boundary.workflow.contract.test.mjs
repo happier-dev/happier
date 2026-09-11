@@ -175,7 +175,7 @@ test('final exact-SHA release workflow has no post-admission version-bump mutati
 
 test('public exact-SHA release admission consumes already-materialized versions without a manual bump input', async () => {
   const workflow = await loadReleaseWorkflow();
-  const validation = workflow.jobs.ci.steps.find((step) => step?.name === 'Validate release dispatch');
+  const validation = workflow.jobs.release_preflight.steps.find((step) => step?.name === 'Validate release dispatch');
   assert.match(validation?.run ?? '', /validate-release-dispatch\.mjs/);
 
   assert.equal(runReleaseInputValidation({ BUMP: 'none', DRY_RUN: 'false' }).status, 0);

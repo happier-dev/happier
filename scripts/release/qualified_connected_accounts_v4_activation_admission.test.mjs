@@ -28,7 +28,7 @@ const present = Object.fromEntries(
 const rollbackSupportPresent = Object.freeze({
   qualifiedAccountsV4: true,
   qualifiedConfigurationKind9: true,
-  sessionMetadataLayout1Kind10: true,
+  sessionMetadataLayout1Kind26: true,
   publicManagedProviderRuntime: true,
 });
 const rollbackSupportAbsent = Object.fromEntries(

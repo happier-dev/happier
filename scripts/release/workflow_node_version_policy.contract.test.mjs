@@ -4,6 +4,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import YAML from 'yaml';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const workflowsDir = join(repoRoot, '.github', 'workflows');
@@ -36,7 +38,7 @@ test('workflows that run pipeline scripts set up Node 22', async () => {
   }
 });
 
-test('release workflows pin Yarn via Corepack (avoid runner drift)', async () => {
+test('release jobs that execute Yarn pin it via Corepack', async () => {
   const expected = /corepack prepare yarn@1\.22\.22 --activate/;
   const files = [
     'release.yml',
@@ -50,6 +52,16 @@ test('release workflows pin Yarn via Corepack (avoid runner drift)', async () =>
 
   for (const file of files) {
     const raw = await readFile(join(workflowsDir, file), 'utf8');
-    assert.match(raw, expected, `${file} should pin Yarn via corepack prepare yarn@1.22.22`);
+    const parsed = YAML.parse(raw);
+    for (const [jobName, job] of Object.entries(parsed.jobs ?? {})) {
+      if (job.uses) continue;
+      const commands = (job.steps ?? []).map((step) => String(step.run ?? '')).join('\n');
+      if (!/(^|[\s;&|])yarn(?:\s|$)/mu.test(commands)) continue;
+      assert.match(
+        commands,
+        expected,
+        `${file} job '${jobName}' should pin Yarn before executing it`,
+      );
+    }
   }
 });

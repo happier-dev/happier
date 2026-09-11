@@ -33,6 +33,20 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
     'stack_requested',
     'server_requested',
     'ui_web_requested',
+    'deploy_ui_requested',
+    'deploy_ui_complete',
+    'deploy_server_complete',
+    'deploy_website_complete',
+    'deploy_docs_complete',
+    'docker_complete',
+    'npm_complete',
+    'cli_rolling_complete',
+    'stack_rolling_complete',
+    'server_rolling_complete',
+    'ui_web_rolling_complete',
+    'deploy_ui_web_requested',
+    'deploy_ui_expo_action',
+    'deploy_ui_desktop_mode',
   ]) {
     assert.ok(parsed.on.workflow_call.outputs[output], `missing resume output ${output}`);
   }
@@ -90,6 +104,10 @@ test('nightly resume pins the prior source, reuses completed immutable candidate
   assert.equal(parsed.jobs.release_verify.with.verify_stack_release, "${{ needs.resolve_resume.outputs.stack_version == '' }}");
   assert.equal(parsed.jobs.release_verify.with.verify_server_release, "${{ needs.resolve_resume.outputs.server_version == '' }}");
   assert.equal(parsed.jobs.release_verify.with.verify_ui_web_release, "${{ needs.resolve_resume.outputs.ui_web_version == '' }}");
+  assert.ok(
+    parsed.jobs.release_verify.needs.includes('resolve_resume'),
+    'nightly candidate verification must declare the resume evidence it reads',
+  );
   assert.equal(parsed.jobs.release_verify.with.risk_cli_upgrade, "${{ needs.resolve_validation_risk.outputs.risk_cli_upgrade == 'true' }}");
   assert.equal(parsed.jobs.release_verify.with.risk_session_continuity, "${{ needs.resolve_validation_risk.outputs.risk_session_continuity == 'true' }}");
   assert.equal(parsed.jobs.release_verify.with.risk_relay_upgrade, false);
@@ -113,7 +131,14 @@ test('full release resume binds the prior run to the same operation and authoriz
   const parsed = workflow('release.yml');
   assert.ok(parsed.on.workflow_dispatch.inputs.resume_run_id);
   assert.equal(parsed.jobs.resolve_resume.uses, './.github/workflows/resolve-release-resume.yml');
-  assert.equal(parsed.jobs.resolve_resume.with.expected_workflow, '.github/workflows/release.yml');
+  assert.equal(
+    parsed.jobs.resolve_resume.with.expected_workflow,
+    "${{ inputs.combined_preview_production == true && '.github/workflows/release-preview-and-production.yml' || '.github/workflows/release.yml' }}",
+  );
+  assert.equal(
+    parsed.jobs.resolve_resume.with.status_artifact_name,
+    "${{ inputs.combined_preview_production == true && inputs.environment == 'preview' && 'happier-release-status-preview' || 'happier-release-status' }}",
+  );
   assert.equal(parsed.jobs.resolve_resume.with.expected_source_sha, '${{ inputs.authorized_promotion_source_sha }}');
   assert.equal(parsed.jobs.resolve_resume.with.expected_operation_id, '${{ inputs.hmaint_operation_id }}');
   assert.ok(needs(parsed.jobs.plan).includes('resolve_resume'));
@@ -121,7 +146,8 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.match(parsed.jobs.plan.outputs.publish_cli_binaries_needed, /needs\.resolve_resume\.outputs\.cli_requested/);
   assert.match(parsed.jobs.plan.outputs.publish_stack, /needs\.resolve_resume\.outputs\.stack_requested/);
   assert.match(parsed.jobs.plan.outputs.publish_server_runtime_needed, /needs\.resolve_resume\.outputs\.server_requested/);
-  assert.match(parsed.jobs.publish_ui_web.if, /needs\.resolve_resume\.outputs\.ui_web_requested/);
+  assert.match(parsed.jobs.plan.outputs.publish_ui_web_needed, /needs\.resolve_resume\.outputs\.ui_web_requested/);
+  assert.match(parsed.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed == 'true'/);
   for (const [jobName, output] of [
     ['publish_cli_binaries', 'cli_version'],
     ['publish_hstack_binaries', 'stack_version'],
@@ -131,6 +157,9 @@ test('full release resume binds the prior run to the same operation and authoriz
     assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'));
     assert.equal(parsed.jobs[jobName].with.resume_version, `\${{ needs.resolve_resume.outputs.${output} }}`);
   }
+  assert.equal(parsed.jobs.publish_npm.with.cli_version, '${{ needs.publish_cli_binaries.outputs.version }}');
+  assert.equal(parsed.jobs.publish_npm.with.stack_version, '${{ needs.publish_hstack_binaries.outputs.version }}');
+  assert.equal(parsed.jobs.publish_npm.with.server_version, '${{ needs.publish_server_runtime.outputs.version }}');
   assert.equal(parsed.jobs.verify_release_candidates.with.verify_cli_release, "${{ needs.publish_cli_binaries.result == 'success' && needs.resolve_resume.outputs.cli_version == '' }}");
   assert.equal(parsed.jobs.verify_release_candidates.with.verify_stack_release, "${{ needs.publish_hstack_binaries.result == 'success' && needs.resolve_resume.outputs.stack_version == '' }}");
   assert.equal(parsed.jobs.verify_release_candidates.with.verify_server_release, "${{ needs.publish_server_runtime.result == 'success' && needs.resolve_resume.outputs.server_version == '' }}");
@@ -140,6 +169,32 @@ test('full release resume binds the prior run to the same operation and authoriz
   const projection = parsed.jobs.release_status.steps.find((step) => String(step.name).includes('Project release status facts'));
   assert.equal(projection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
   assert.equal(projection.env.SERVER_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.server_verified }}');
+  for (const [jobName, output] of [
+    ['promote_cli_binaries', 'cli_rolling_complete'],
+    ['promote_hstack_binaries', 'stack_rolling_complete'],
+    ['promote_server_runtime', 'server_rolling_complete'],
+    ['promote_ui_web', 'ui_web_rolling_complete'],
+    ['deploy_server', 'deploy_server_complete'],
+    ['deploy_website', 'deploy_website_complete'],
+    ['deploy_docs', 'deploy_docs_complete'],
+    ['publish_docker', 'docker_complete'],
+    ['publish_npm', 'npm_complete'],
+  ]) {
+    assert.ok(needs(parsed.jobs[jobName]).includes('resolve_resume'), jobName);
+    assert.match(String(parsed.jobs[jobName].if), new RegExp(`needs\\.resolve_resume\\.outputs\\.${output} != 'true'`));
+  }
+  assert.ok(needs(parsed.jobs.deploy_ui).includes('resolve_resume'));
+  assert.match(String(parsed.jobs.deploy_ui.if), /needs\.deploy_plan\.outputs\.deploy_ui_resume_complete != 'true'/);
+  assert.equal(parsed.jobs.release_verify.with.verify_deploy_server, "${{ needs.deploy_server.result == 'success' || needs.resolve_resume.outputs.deploy_server_complete == 'true' }}");
+  assert.equal(parsed.jobs.release_verify.with.verify_deploy_website, "${{ needs.deploy_website.result == 'success' || needs.resolve_resume.outputs.deploy_website_complete == 'true' }}");
+  assert.equal(parsed.jobs.release_verify.with.verify_deploy_docs, "${{ needs.deploy_docs.result == 'success' || needs.resolve_resume.outputs.deploy_docs_complete == 'true' }}");
+  assert.equal(parsed.jobs.release_verify.with.verify_cli_release, "${{ needs.promote_cli_binaries.result == 'success' || needs.resolve_resume.outputs.cli_rolling_complete == 'true' }}");
+  assert.equal(parsed.jobs.release_verify.with.verify_stack_release, "${{ needs.promote_hstack_binaries.result == 'success' || needs.resolve_resume.outputs.stack_rolling_complete == 'true' }}");
+  assert.equal(parsed.jobs.release_verify.with.verify_server_release, "${{ needs.promote_server_runtime.result == 'success' || needs.resolve_resume.outputs.server_rolling_complete == 'true' }}");
+  assert.equal(parsed.jobs.release_verify.with.verify_ui_web_release, "${{ needs.promote_ui_web.result == 'success' || needs.resolve_resume.outputs.ui_web_rolling_complete == 'true' }}");
+  assert.equal(projection.env.DEPLOY_UI_RESUME_COMPLETE, '${{ needs.deploy_plan.outputs.deploy_ui_resume_complete }}');
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /deploy_ui_expo_action ==[\s\S]*inputs\.ui_expo_action/);
+  assert.match(String(parsed.jobs.deploy_plan.outputs.deploy_ui_resume_complete), /deploy_ui_desktop_mode ==[\s\S]*inputs\.desktop_mode/);
 });
 
 test('failed aggregate verification independently certifies successful immutable siblings for resume', () => {

@@ -122,7 +122,7 @@ test('release workflow fans a versioned Stack target through immutable publicati
 test('release workflow plans preview-to-main promotions from preview instead of dev', async () => {
   const raw = await loadWorkflow('release.yml');
   const workflow = parse(raw);
-  const ci = workflow.jobs.ci;
+  const ci = workflow.jobs.release_preflight;
   const validation = ci.steps.find((step) => step.id === 'dispatch');
   const plan = workflow.jobs.plan;
   const planningCheckout = plan.steps.find((step) => step.name === 'Checkout authorized release planning source');
@@ -131,8 +131,8 @@ test('release workflow plans preview-to-main promotions from preview instead of 
   assert.equal(validation.env.CONFIRM, '${{ inputs.confirm }}');
   assert.equal(validation.env.ENVIRONMENT, '${{ inputs.environment }}');
   assert.equal(ci.outputs.source_ref, '${{ steps.dispatch.outputs.source_ref }}');
-  assert.equal(planningCheckout.with.ref, '${{ inputs.authorized_promotion_source_sha || needs.ci.outputs.source_ref }}');
-  assert.match(raw, /COMPARE_LABEL:\s*\$\{\{\s*needs\.ci\.outputs\.compare_label\s*\}\}/);
+  assert.equal(planningCheckout.with.ref, '${{ inputs.authorized_promotion_source_sha || needs.release_preflight.outputs.source_ref }}');
+  assert.match(raw, /COMPARE_LABEL:\s*\$\{\{\s*needs\.release_preflight\.outputs\.compare_label\s*\}\}/);
   assert.match(raw, /commits to release \(\$COMPARE_LABEL\)/, 'release plan summary should describe the actual compared branch range');
   assert.match(
     raw,
@@ -363,7 +363,7 @@ test('publish-github-release delegates release creation + asset upload to the pi
 test('promote-ui native_submit uses the shared Expo submit script (handles preview credential gaps)', async () => {
   const promoteUi = await loadWorkflow('promote-ui.yml');
   assert.match(promoteUi, /uses:\s*\.\/\.github\/workflows\/build-ui-mobile-local\.yml/);
-  assert.match(promoteUi, /action:\s*\$\{\{\s*inputs\.expo_action == 'native_submit' && 'build_and_submit' \|\| 'build_only'\s*\}\}/);
+  assert.match(promoteUi, /action:\s*\$\{\{\s*\(inputs\.expo_action == 'native_submit' \|\| inputs\.expo_action == 'full'\) && 'build_and_submit' \|\| 'build_only'\s*\}\}/);
 
   const buildUiMobileLocal = await loadWorkflow('build-ui-mobile-local.yml');
   assert.match(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);

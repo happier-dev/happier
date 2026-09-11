@@ -70,6 +70,30 @@ Notes:
   snapshotted `stage:source` and `stage:dev` issues to `stage:stable`; it does
   not claim that unrelated preview-only corrections were included.
 
+### Combined preview and production release (dev → both)
+
+When the same approved source must ship to both channels without a second
+operator cycle, use the private conductor target `preview-and-production`.
+It dispatches `release-preview-and-production.yml`, which snapshots source/dev
+issue eligibility once and invokes the canonical `release.yml` for preview and
+production in parallel.
+
+The two calls share the exact source SHA, release notes, CI evidence, explicit
+approvals, and one unioned source-risk validation pass. The shared validator
+computes changes against both channel bases, then runs each applicable MySQL,
+platform-service, and trust-root gate once. Each channel independently admits
+that evidence against the same bound SHA. They do not share built artifacts:
+preview and production
+embed different feature-policy environments, so each channel must build and
+verify its own bytes. Same-channel releases still serialize; the two channel
+calls use separate non-cancelling concurrency groups. The outer workflow moves
+its source/dev issue snapshot directly to `stage:stable` only after both calls
+succeed.
+
+Use GitHub's failed-job rerun while workflow control is unchanged. After a
+control fix, resume from the prior combined run; each channel reads its own
+terminal status artifact and reuses only that channel's verified work.
+
 Issue availability is tracked by the mutually exclusive `stage:source`,
 `stage:dev`, `stage:preview`, and `stage:stable` labels documented in
 `docs/issue-triage.md`. Ordinary current-`dev` nightlies perform `source → dev`.
@@ -220,6 +244,107 @@ attempt may reuse only individually verified immutable candidates from the
 named completed origin run. Release-output-affecting byte changes require new release outputs. One failed sibling product does not invalidate independently
 verified immutable candidates from successful products.
 
+Use this decision table instead of restarting the full graph:
+
+| Evidence | Recovery |
+| --- | --- |
+| Same control SHA; transient runner, download, read-only API, or safely recoverable external failure | `gh run rerun <run-id> --failed` |
+| Corrected workflow control, test, or validation; unchanged candidate bytes; terminal origin with verified candidates | `hmaint release resume` from the richest valid origin |
+| Changed source, package/build dependency, signing input, or immutable candidate bytes | Prepare a fresh release |
+| Ambiguous publication mutation | Inspect the canonical remote state, then use the owning recovery-aware job; never blind-retry |
+
+The terminal release-status artifact is the canonical recovery record. A
+control-only resume can preserve exact-source verified immutable candidates and
+already successful rolling projections, UI/server/website/docs deployments,
+Docker publication, and npm publication. The resumed run still performs its
+actor/source checks, exact candidate verification, and final external-reference
+verification; reuse avoids duplicate work but is not a validation bypass.
+
+UI deployment evidence is reusable only when its recorded web, Expo, and
+desktop intent exactly matches the resumed request. Public SDK npm publication
+reruns unless exact package-version integrity can be reconstructed from the
+status evidence. A generic npm-success bit cannot safely authorize skipping an
+unknown package set. The resolver and terminal status projector are the only
+owners of these decisions; workflows must not infer completion independently
+from skipped jobs.
+
+Allow independent jobs to finish so one attempt exposes every reachable
+failure. Publication and trust-dependent jobs still remain gated by real
+prerequisites: a consumer cannot be tested before its candidate exists. Poll
+long builds, notarization, store submission, and publication every 5–20 minutes
+and use step-level progress plus the owning timeout; duration alone is not
+failure evidence.
+
+For a corrected non-secret Linux lane, use the existing manual test dispatcher
+instead of copying the CI workflow. The default is GitHub-hosted runners:
+
+```bash
+gh workflow run tests-dispatch.yml \
+  --repo happier-dev/happier \
+  --ref v0.3 \
+  -f profile=custom \
+  -f runner_pool=github \
+  -f custom_checks=release_contracts \
+  -f installers_channel=stable \
+  -f providers_preset=all \
+  -f providers_tier=smoke
+```
+
+This is focused diagnostic evidence at the corrected SHA; it does not replace
+the final canonical exact-SHA CI required by release policy. Blacksmith is only
+an explicitly approved, budget-checked accelerator for this same non-secret
+Linux graph. It has no automatic fallback. Do not select a Blacksmith pool
+while its included credits are exhausted; use `runner_pool=github`.
+
+For a complete release-workflow correction batch, first collect the terminal
+attempt once and retain raw logs under `/tmp`:
+
+```bash
+gh run view <run-id> --repo happier-dev/happier \
+  --json databaseId,attempt,event,headBranch,headSha,status,conclusion,workflowName,url
+node skills/happier-ci-stabilize/scripts/collect-actions-failures.mjs \
+  --repo happier-dev/happier --run-id <run-id> --attempt <attempt>
+```
+
+Iterate on the exact failing test files with `node --test`, run the affected
+package lane, then run `yarn -s test:release:contracts` once for the coherent
+batch. Dispatch canonical exact-SHA CI only after that local widening passes.
+This exposes all failures reachable from the current inputs without repeatedly
+paying for the whole hosted graph. A later consumer whose required candidate was
+not produced remains genuinely unreachable; resume the verified candidate after
+the controlling fix rather than rebuilding successful siblings.
+
+### npm trusted-publishing identity
+
+npm validates the top-level calling workflow identity for OIDC publication
+through a reusable workflow. Every npm package published by this release graph
+must therefore trust both supported callers in `happier-dev/happier`:
+
+- `release.yml` for an individual preview or production operation;
+- `release-preview-and-production.yml` for the coordinated combined operation.
+
+Both use the `release-shared` GitHub environment. Register the workflow filename
+without `.github/workflows/`; do not add a long-lived `NPM_TOKEN` fallback.
+`ENEEDAUTH` across otherwise-authorized npm publisher jobs usually means the
+top-level caller is absent or mismatched in npm's trusted-publisher
+configuration. Verify the package/version in the registry after publication
+rather than relying only on the workflow badge.
+
+### Best-effort TestFlight distribution
+
+The native iOS build/submission and App Store processing/group attachment are
+separate phases. After the signed build is submitted, the mobile workflow writes
+its exact EAS build id or local IPA build identity and dispatches the existing
+`retry_testflight_distribution` recovery action from the current trusted control
+checkout. Release promotion therefore does not hold a runner or the whole
+release open while Apple processes a build.
+
+The reconciliation run validates the source ref, environment, profile, app id,
+and build identity before querying App Store Connect. A skipped fingerprint
+build is an explicit no-op. A failed reconciliation remains visible and can be
+retried with the same recovery action; it must not trigger another native build
+or cause already verified product candidates to be rebuilt.
+
 Self-hosted relays upgrade independently. The release contract never holds a
 fleet at a barrier, coordinates a migration, or declares a global cutover. A
 specific released migration can still have its own documented operator
@@ -323,8 +448,10 @@ The reset option exists for rare cases where you intentionally want `target` to 
 
 For the server, database migrations should be automated as part of the deployment runtime:
 
-- Run `prisma migrate deploy` at container startup (entrypoint) or via an explicit platform “pre-deploy” hook.
-- Running migrations from *both* API and worker is acceptable as long as you expect contention and handle it (Prisma uses a DB lock to serialize migrations; the non-holder should wait/retry).
+- For a single unmanaged container, the default entrypoint may run the provider's migration deploy command before server startup.
+- For health-managed or multi-replica deployments, run `run-server --migrate-only` once in an explicit, blocking platform pre-deploy operation. Start API and worker replicas with `RUN_MIGRATIONS=0` only after it succeeds.
+- When a platform cannot run and await a blocking pre-deploy operation, designate exactly one API service as the migration owner and set `RUN_MIGRATIONS=0` on workers and all other replicas. Protect that owner with start-first rollout, rollback on failure, and sufficient health-check startup grace; webhook acceptance alone does not prove migration or deployment completion.
+- Do not rely on API and worker startup races as migration ownership. Prisma's database lock serializes contenders, but it cannot preserve the winning migration when an orchestrator terminates that container.
 - Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.
 
 ### Irreversible Qualified Connected Accounts V4 activation

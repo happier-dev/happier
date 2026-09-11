@@ -46,7 +46,7 @@ on:
         default: true
         type: boolean
       expo_action:
-        description: "Deploy (Expo) — Action (requires EXPO_TOKEN secret)"
+        description: "Deploy (Expo) — Action (full includes OTA + native submit + APK)"
         required: true
         default: none
         type: choice
@@ -55,6 +55,7 @@ on:
           - ota
           - native
           - native_submit
+          - full
       release_notes_id:
         description: "Release notes — Exact approved project release ID"
         required: true
@@ -131,6 +132,7 @@ env:
 
 jobs:
   trusted_ref_guard:
+    timeout-minutes: 240
     name: Trusted workflow ref guard
     permissions:
       contents: read
@@ -153,6 +155,7 @@ jobs:
           esac
 
   release_actor_guard:
+    timeout-minutes: 240
     needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
@@ -173,13 +176,14 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   resolve_source:
+    timeout-minutes: 240
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
-      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
     steps:
       - name: Checkout trusted workflow control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -251,6 +255,7 @@ jobs:
             --source-ref "$SOURCE_REF" --remote origin --github-output "$GITHUB_OUTPUT"
 
   apply_bump:
+    timeout-minutes: 240
     needs: [release_actor_guard, resolve_source]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -326,6 +331,7 @@ jobs:
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   validate_candidate:
+    timeout-minutes: 240
     needs: [apply_bump]
     runs-on: ubuntu-latest
     permissions:
@@ -349,8 +355,9 @@ jobs:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-      - name: Enable Corepack
+      - name: Enable Corepack Yarn
         run: |
+          set -euo pipefail
           corepack enable
           corepack prepare yarn@1.22.22 --activate
       - name: Install candidate dependencies
@@ -413,7 +420,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Prepare Android OTA artifact without credentials
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -423,7 +430,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Prepare iOS OTA artifact without credentials
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -433,7 +440,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/ios" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Upload prepared OTA artifacts
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
@@ -443,6 +450,7 @@ jobs:
           retention-days: 1
 
   promote:
+    timeout-minutes: 240
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -470,8 +478,9 @@ jobs:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-      - name: Enable Corepack
+      - name: Enable Corepack Yarn
         run: |
+          set -euo pipefail
           corepack enable
           corepack prepare yarn@1.22.22 --activate
       - name: Install trusted promotion dependencies
@@ -487,7 +496,7 @@ jobs:
           name: ui-release-notes-${{ needs.apply_bump.outputs.release_sha }}
           path: ${{ runner.temp }}/release-notes-assets
       - name: Download prepared OTA artifacts
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
@@ -518,24 +527,24 @@ jobs:
           node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
             --in-dir "$RUNNER_TEMP/release-notes-assets" --repo happier-dev/happier-assets --tag release-notes
       - name: Publish Android OTA from validated bytes
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+          UPDATE_MESSAGE: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform android \
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --expected-source-sha "$RELEASE_SHA" \
             --message "$UPDATE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
       - name: Publish iOS OTA from validated bytes
-        if: inputs.expo_action == 'ota'
+        if: inputs.expo_action == 'ota' || inputs.expo_action == 'full'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
-          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+          UPDATE_MESSAGE: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
         run: |
           node scripts/pipeline/expo/ota-update.mjs \
             --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform ios \
@@ -600,9 +609,10 @@ jobs:
 
   mobile_native:
     name: Mobile native (local runner)
-    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
+      actions: write
       contents: write
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit
@@ -611,16 +621,17 @@ jobs:
       environment: ${{ inputs.environment }}
       platform: all
       profile: auto
-      action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
+      action: ${{ (inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') && 'build_and_submit' || 'build_only' }}
       publish_apk_release: "false"
       release_message: ${{ needs.promote.outputs.release_notes_expo_message }}
       release_notes_id: ${{ inputs.release_notes_id }}
 
   mobile_apk_release:
     name: Mobile APK release (local runner)
-    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
+    if: ${{ needs.promote.result == 'success' && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit' || inputs.expo_action == 'full') }}
     needs: [promote]
     permissions:
+      actions: write
       contents: write
     uses: ./.github/workflows/build-ui-mobile-local.yml
     secrets: inherit

@@ -446,7 +446,7 @@ test('preview release forwards one complete CLI candidate identity and binds it 
     /inputs\.candidate_run_id != ''/,
     'selecting a candidate must not be silently ignored when no CLI diff is detected',
   );
-  const inputValidation = jobs.ci.steps.find((step) => step.name === 'Validate release dispatch');
+  const inputValidation = jobs.release_preflight.steps.find((step) => step.name === 'Validate release dispatch');
   assert.ok(inputValidation, 'release input validation step');
   assert.match(inputValidation.run, /validate-release-dispatch\.mjs/);
 

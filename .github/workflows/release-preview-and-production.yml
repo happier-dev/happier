@@ -1,0 +1,300 @@
+name: RELEASE — Publish preview + production together
+run-name: ${{ inputs.hmaint_operation_id != '' && format('RELEASE — Preview + production ({0}, {1})', inputs.hmaint_operation_id, inputs.hmaint_attempt_id) || 'RELEASE — Preview + production (manual)' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      validation_profile:
+        description: "Release validation contract shared by both channel runs"
+        required: true
+        type: choice
+        default: stable
+        options:
+          - integrated
+          - stable
+      waive_ci:
+        description: "Maintainer override — waive exact-SHA source CI"
+        required: true
+        default: false
+        type: boolean
+      approve_public_sdk_release:
+        description: "Maintainer approval — publish the exact public SDK candidate in both channels"
+        required: false
+        default: false
+        type: boolean
+      public_sdk_release_approval:
+        description: 'Public SDK detail JSON shared by both channel releases'
+        required: false
+        default: "{}"
+        type: string
+      include_validation_suites:
+        description: "Validation — additional suite IDs to require"
+        required: false
+        default: ""
+        type: string
+      waive_validation_suites:
+        description: "Maintainer override — risk-selected suite IDs to waive"
+        required: false
+        default: ""
+        type: string
+      override_reason:
+        description: "Maintainer override — required reason for waived evidence or SDK approval"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Safety — Run checks and show plans, but do not push/deploy"
+        required: true
+        default: false
+        type: boolean
+      deploy_targets:
+        description: "Deploy — Comma-separated targets: ui,server,website,docs,cli,stack,server_runner"
+        required: true
+        default: ui,server,website,docs
+        type: string
+      force_deploy:
+        description: "Deploy — Force enabled targets even when unchanged"
+        required: true
+        default: false
+        type: boolean
+      ui_expo_action:
+        description: "Deploy — UI Expo action"
+        required: true
+        default: none
+        type: choice
+        options: [none, ota, native, native_submit, full]
+      desktop_mode:
+        description: "Deploy — Desktop artifacts mode"
+        required: true
+        default: none
+        type: choice
+        options: [none, build_only, build_and_publish]
+      qualified_v4_activation_approval:
+        description: "Irreversible migration — approval applies independently to both target environments"
+        required: true
+        default: false
+        type: boolean
+      authorized_promotion_source_sha:
+        description: "Safety — exact dev SHA approved for both channels"
+        required: true
+        type: string
+      workflow_control_sha:
+        description: "Safety — dispatcher-observed dev workflow SHA"
+        required: false
+        default: ""
+        type: string
+      hmaint_operation_id:
+        description: "Safety — conductor operation ID"
+        required: false
+        default: ""
+        type: string
+      hmaint_attempt_id:
+        description: "Safety — conductor execution attempt identity"
+        required: false
+        default: attempt_1
+        type: string
+      release_notes_id:
+        description: "Release notes — exact approved project release ID"
+        required: true
+        type: string
+      resume_run_id:
+        description: "Prior combined release run whose channel candidates should be reused"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  id-token: write
+  issues: write
+  packages: write
+  pull-requests: read
+
+concurrency:
+  group: release-unified-preview-and-production
+  cancel-in-progress: false
+
+jobs:
+  snapshot_release_issues:
+    name: Snapshot source issues before either channel advances
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      eligible: ${{ steps.snapshot.outputs.eligible }}
+      source_issues_json: ${{ steps.snapshot.outputs.source_issues_json }}
+      dev_issues_json: ${{ steps.snapshot.outputs.dev_issues_json }}
+    steps:
+      - name: Checkout trusted combined-release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Snapshot issues eligible for the exact dev candidate
+        id: snapshot
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = true ]; then
+            {
+              echo 'eligible=false'
+              echo 'source_issues_json=[]'
+              echo 'dev_issues_json=[]'
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:source')"
+          dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:dev')"
+          {
+            echo "source_issues_json=$source_issues_json"
+            echo "dev_issues_json=$dev_issues_json"
+            echo 'eligible=true'
+          } >> "$GITHUB_OUTPUT"
+
+  source_validation:
+    name: Validate shared exact source once
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/release-source-validation.yml
+    with:
+      source_sha: ${{ inputs.authorized_promotion_source_sha }}
+      source_branch: dev
+      base_refs: preview,main
+      dry_run: ${{ inputs.dry_run }}
+      waive_ci: ${{ inputs.waive_ci }}
+      deploy_targets: ${{ inputs.deploy_targets }}
+      force_deploy: ${{ inputs.force_deploy }}
+      resume_cli_requested: ${{ inputs.resume_run_id != '' }}
+      resume_stack_requested: ${{ inputs.resume_run_id != '' }}
+      resume_server_requested: ${{ inputs.resume_run_id != '' }}
+
+  release_preview:
+    name: Publish preview channel
+    needs: [snapshot_release_issues, source_validation]
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      issues: write
+      packages: write
+      pull-requests: read
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+    with:
+      validation_profile: ${{ inputs.validation_profile }}
+      waive_ci: ${{ inputs.waive_ci }}
+      approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
+      public_sdk_release_approval: ${{ inputs.public_sdk_release_approval }}
+      include_validation_suites: ${{ inputs.include_validation_suites }}
+      waive_validation_suites: ${{ inputs.waive_validation_suites }}
+      override_reason: ${{ inputs.override_reason }}
+      dry_run: ${{ inputs.dry_run }}
+      environment: preview
+      deploy_targets: ${{ inputs.deploy_targets }}
+      force_deploy: ${{ inputs.force_deploy }}
+      ui_expo_action: ${{ inputs.ui_expo_action }}
+      desktop_mode: ${{ inputs.desktop_mode }}
+      qualified_v4_activation_approval: ${{ inputs.qualified_v4_activation_approval }}
+      authorized_promotion_source_sha: ${{ inputs.authorized_promotion_source_sha }}
+      workflow_control_sha: ${{ inputs.workflow_control_sha }}
+      hmaint_operation_id: ${{ inputs.hmaint_operation_id }}
+      hmaint_attempt_id: ${{ inputs.hmaint_attempt_id }}
+      release_notes_id: ${{ inputs.release_notes_id }}
+      resume_run_id: ${{ inputs.resume_run_id }}
+      confirm: release dev to preview
+      combined_preview_production: true
+      shared_source_validation: true
+      shared_source_validation_sha: ${{ needs.source_validation.outputs.source_sha }}
+      shared_ci_result: ${{ needs.source_validation.outputs.ci_result }}
+      shared_mysql_result: ${{ needs.source_validation.outputs.mysql_result }}
+      shared_platform_result: ${{ needs.source_validation.outputs.platform_result }}
+      shared_trust_roots_result: ${{ needs.source_validation.outputs.trust_roots_result }}
+
+  release_production:
+    name: Publish production channel
+    needs: [snapshot_release_issues, source_validation]
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      issues: write
+      packages: write
+      pull-requests: read
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+    with:
+      validation_profile: ${{ inputs.validation_profile }}
+      waive_ci: ${{ inputs.waive_ci }}
+      approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
+      public_sdk_release_approval: ${{ inputs.public_sdk_release_approval }}
+      include_validation_suites: ${{ inputs.include_validation_suites }}
+      waive_validation_suites: ${{ inputs.waive_validation_suites }}
+      override_reason: ${{ inputs.override_reason }}
+      dry_run: ${{ inputs.dry_run }}
+      environment: production
+      deploy_targets: ${{ inputs.deploy_targets }}
+      force_deploy: ${{ inputs.force_deploy }}
+      ui_expo_action: ${{ inputs.ui_expo_action }}
+      desktop_mode: ${{ inputs.desktop_mode }}
+      qualified_v4_activation_approval: ${{ inputs.qualified_v4_activation_approval }}
+      authorized_promotion_source_sha: ${{ inputs.authorized_promotion_source_sha }}
+      workflow_control_sha: ${{ inputs.workflow_control_sha }}
+      hmaint_operation_id: ${{ inputs.hmaint_operation_id }}
+      hmaint_attempt_id: ${{ inputs.hmaint_attempt_id }}
+      release_notes_id: ${{ inputs.release_notes_id }}
+      resume_run_id: ${{ inputs.resume_run_id }}
+      confirm: release dev to main
+      combined_preview_production: true
+      shared_source_validation: true
+      shared_source_validation_sha: ${{ needs.source_validation.outputs.source_sha }}
+      shared_ci_result: ${{ needs.source_validation.outputs.ci_result }}
+      shared_mysql_result: ${{ needs.source_validation.outputs.mysql_result }}
+      shared_platform_result: ${{ needs.source_validation.outputs.platform_result }}
+      shared_trust_roots_result: ${{ needs.source_validation.outputs.trust_roots_result }}
+
+  advance_release_issues:
+    name: Advance jointly released issues to stable
+    if: ${{ always() && inputs.dry_run != true && needs.snapshot_release_issues.outputs.eligible == 'true' && needs.release_preview.result == 'success' && needs.release_production.result == 'success' }}
+    needs: [snapshot_release_issues, release_preview, release_production]
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted combined-release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Advance the initially eligible issues directly to stable
+        env:
+          DEV_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.dev_issues_json }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.source_issues_json }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$SOURCE_ISSUES_JSON" \
+            --from-stage "stage:source" \
+            --to-stage "stage:stable"
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$DEV_ISSUES_JSON" \
+            --from-stage "stage:dev" \
+            --to-stage "stage:stable"

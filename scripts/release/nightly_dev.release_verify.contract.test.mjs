@@ -16,7 +16,7 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
   const workflow = YAML.parse(raw);
   const releaseVerifyWorkflow = YAML.parse(releaseVerifyRaw);
 
-  assert.match(raw, /release_verify:[\s\S]*?needs:\s*\[prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk\]/);
+  assert.match(raw, /release_verify:[\s\S]*?needs:\s*\[resolve_resume, prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk\]/);
   assert.match(
     raw,
     /release_verify:[\s\S]*?channel:\s*dev/,

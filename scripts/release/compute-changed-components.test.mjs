@@ -100,3 +100,36 @@ test('compute-changed-components treats plugin SDK changes as UI and plugin-pair
   assert.equal(output.risk_plugin_sdk_package_changed, 'true');
   assert.equal(output.risk_plugin_runtime_compatibility, 'false');
 });
+
+test('compute-changed-components unions paths across multiple release bases', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-compute-changed-multiple-bases-'));
+  git(dir, ['init']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+
+  await writeFile(join(dir, 'README.md'), 'shared head\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'shared head']);
+  const head = git(dir, ['rev-parse', 'HEAD']);
+
+  git(dir, ['checkout', '-b', 'preview-base']);
+  await mkdir(join(dir, 'apps', 'cli'), { recursive: true });
+  await writeFile(join(dir, 'apps', 'cli', 'README.md'), 'preview-only\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'preview base']);
+  const previewBase = git(dir, ['rev-parse', 'HEAD']);
+
+  git(dir, ['checkout', '-b', 'production-base', head]);
+  await mkdir(join(dir, 'apps', 'server'), { recursive: true });
+  await writeFile(join(dir, 'apps', 'server', 'README.md'), 'production-only\n', 'utf8');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'production base']);
+  const productionBase = git(dir, ['rev-parse', 'HEAD']);
+
+  const script = resolve(process.cwd(), 'scripts', 'pipeline', 'release', 'compute-changed-components.mjs');
+  const res = run(dir, process.execPath, [script, '--bases', `${previewBase},${productionBase}`, '--head', head]);
+  assert.equal(res.status, 0, res.stderr || res.stdout);
+  const parsed = JSON.parse(String(res.stdout).trim());
+  assert.equal(parsed.changed_cli, 'true');
+  assert.equal(parsed.changed_server, 'true');
+});

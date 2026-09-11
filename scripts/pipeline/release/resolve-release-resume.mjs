@@ -18,10 +18,29 @@ const RESUMABLE_SURFACE_PRODUCTS = new Map([
   ['server-immutable-candidate', 'server'],
   ['ui-web-immutable-candidate', 'ui-web'],
 ]);
+const RESUMABLE_COMPLETION_SURFACES = new Map([
+  ['deploy_docs', 'deployDocs'],
+  ['deploy_server', 'deployServer'],
+  ['deploy_ui', 'deployUi'],
+  ['deploy_website', 'deployWebsite'],
+  ['docker', 'docker'],
+  ['npm', 'npm'],
+]);
+const RESUMABLE_VERIFIED_COMPLETION_SURFACES = new Map([
+  ['cli_rolling_release', 'cliRolling'],
+  ['hstack_rolling_release', 'stackRolling'],
+  ['server_rolling_release', 'serverRolling'],
+  ['ui_web_rolling_release', 'uiWebRolling'],
+]);
 const TRUSTED_RELEASE_CONTROL_BRANCHES = new Set(['dev', 'preview', 'main']);
 const RESUMABLE_WORKFLOW_EVENTS = new Map([
   ['.github/workflows/nightly-dev.yml', new Set(['schedule', 'workflow_dispatch'])],
   ['.github/workflows/release.yml', new Set(['workflow_dispatch'])],
+  ['.github/workflows/release-preview-and-production.yml', new Set(['workflow_dispatch'])],
+]);
+const STANDARD_RELEASE_WORKFLOWS = new Set([
+  '.github/workflows/release.yml',
+  '.github/workflows/release-preview-and-production.yml',
 ]);
 
 /** @param {unknown} value @param {string} label */
@@ -45,6 +64,19 @@ function requiredSha(value, label) {
   const sha = requiredString(value, label).toLowerCase();
   if (!SHA_PATTERN.test(sha)) throw new Error(`[release] ${label} must be a full commit SHA`);
   return sha;
+}
+
+/** @param {unknown} value @param {string} label */
+function requiredBoolean(value, label) {
+  if (typeof value !== 'boolean') throw new Error(`[release] ${label} must be boolean`);
+  return value;
+}
+
+/** @param {unknown} value @param {string} label @param {readonly string[]} allowed */
+function requiredChoice(value, label, allowed) {
+  const selected = requiredString(value, label);
+  if (!allowed.includes(selected)) throw new Error(`[release] ${label} is unsupported`);
+  return selected;
 }
 
 /** @param {unknown} value @param {string} label */
@@ -79,7 +111,7 @@ function flattenArtifacts(value) {
  * @param {{
  *   originRun: unknown;
  *   artifacts: unknown;
- *   expected: { repository: string; workflowPath: string; channel: string; sourceSha?: string; operationId?: string };
+ *   expected: { repository: string; workflowPath: string; channel: string; sourceSha?: string; operationId?: string; statusArtifactName?: string };
  * }} input
  */
 export function inspectReleaseResumeOrigin(input) {
@@ -112,11 +144,12 @@ export function inspectReleaseResumeOrigin(input) {
     throw new Error('[release] resume origin URL does not bind the expected repository and run ID');
   }
 
+  const statusArtifactName = String(input.expected.statusArtifactName ?? '').trim() || 'happier-release-status';
   const matches = flattenArtifacts(input.artifacts)
     .map((entry) => asRecord(entry, 'artifact'))
-    .filter((artifact) => artifact.name === 'happier-release-status');
+    .filter((artifact) => artifact.name === statusArtifactName);
   if (matches.length !== 1) {
-    throw new Error('[release] resume origin must contain exactly one happier-release-status artifact');
+    throw new Error(`[release] resume origin must contain exactly one ${statusArtifactName} artifact`);
   }
   const artifact = matches[0];
   if (artifact.expired !== false) throw new Error('[release] resume status artifact is expired');
@@ -138,7 +171,7 @@ export function inspectReleaseResumeOrigin(input) {
  *   artifacts: unknown;
  *   downloadedDigest: string;
  *   status: unknown;
- *   expected: { repository: string; workflowPath: string; channel: string; sourceSha?: string; operationId?: string };
+ *   expected: { repository: string; workflowPath: string; channel: string; sourceSha?: string; operationId?: string; statusArtifactName?: string };
  * }} input
  */
 export function resolveReleaseResume(input) {
@@ -182,8 +215,80 @@ export function resolveReleaseResume(input) {
   const versions = { cli: '', stack: '', server: '', 'ui-web': '' };
   /** @type {Record<'cli' | 'stack' | 'server' | 'ui-web', boolean>} */
   const requested = { cli: false, stack: false, server: false, 'ui-web': false };
+  /** @type {Record<'cliRolling' | 'deployDocs' | 'deployServer' | 'deployUi' | 'deployWebsite' | 'docker' | 'npm' | 'serverRolling' | 'stackRolling' | 'uiWebRolling', boolean>} */
+  const completed = {
+    cliRolling: false,
+    deployDocs: false,
+    deployServer: false,
+    deployUi: false,
+    deployWebsite: false,
+    docker: false,
+    npm: false,
+    serverRolling: false,
+    stackRolling: false,
+    uiWebRolling: false,
+  };
+  const seenCompletionSurfaces = new Set();
+  let requestedDeployUi = false;
+  const resumeInputs = {
+    deployUi: { deployWeb: false, expoAction: 'none', desktopMode: 'none' },
+  };
+  let completedNpmAccepted = false;
+  let expandedNpmIntegrityRequested = false;
   for (const [index, rawSurface] of status.surfaces.entries()) {
     const surface = asRecord(rawSurface, `resume status surface ${index}`);
+    const surfaceId = String(surface.id ?? '');
+    const verifiedCompletionKey = RESUMABLE_VERIFIED_COMPLETION_SURFACES.get(surfaceId);
+    if (verifiedCompletionKey && surface.requested === true && surface.state === 'complete' && surface.result === 'success') {
+      const identity = asRecord(surface.identity, `completed ${surfaceId} identity`);
+      if (requiredSha(identity.sourceSha, `completed ${surfaceId} source SHA`) !== statusSourceSha) {
+        throw new Error(`[release] completed ${surfaceId} source SHA does not match the release`);
+      }
+      if (identity.verified !== true) {
+        throw new Error(`[release] completed ${surfaceId} must carry verified identity evidence`);
+      }
+      completed[/** @type {'cliRolling' | 'serverRolling' | 'stackRolling' | 'uiWebRolling'} */ (verifiedCompletionKey)] = true;
+    }
+    if (['npm_plugin_sdk', 'npm_plugin_ui', 'npm_sdk'].includes(surfaceId) && surface.requested === true) {
+      expandedNpmIntegrityRequested = true;
+    }
+    const completionKey = RESUMABLE_COMPLETION_SURFACES.get(surfaceId);
+    if (completionKey) {
+      if (seenCompletionSurfaces.has(surfaceId)) {
+        throw new Error(`[release] duplicate resumable completion surface: ${surfaceId}`);
+      }
+      if (typeof surface.requested !== 'boolean') {
+        throw new Error(`[release] resumable completion surface ${surfaceId} must declare requested as boolean`);
+      }
+      seenCompletionSurfaces.add(surfaceId);
+      if (surfaceId === 'deploy_ui' && surface.requested === true) {
+        requestedDeployUi = true;
+        try {
+          const identity = asRecord(surface.identity, 'requested deploy_ui identity');
+          if (requiredSha(identity.sourceSha, 'requested deploy_ui source SHA') !== statusSourceSha) {
+            throw new Error('requested deploy_ui source SHA does not match the release');
+          }
+          resumeInputs.deployUi = {
+            deployWeb: requiredBoolean(identity.deployWeb, 'requested deploy_ui deployWeb'),
+            expoAction: requiredChoice(identity.expoAction, 'requested deploy_ui expoAction', ['none', 'ota', 'native', 'native_submit', 'full']),
+            desktopMode: requiredChoice(identity.desktopMode, 'requested deploy_ui desktopMode', ['none', 'build_only', 'build_and_publish']),
+          };
+        } catch (error) {
+          throw new Error(`[release] cannot reconstruct requested deploy_ui intent: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    }
+    if (completionKey && surface.requested === true && surface.state === 'published' && surface.result === 'accepted') {
+      const identity = asRecord(surface.identity, `completed ${surfaceId} identity`);
+      if (requiredSha(identity.sourceSha, `completed ${surfaceId} source SHA`) !== statusSourceSha) {
+        throw new Error(`[release] completed ${surfaceId} source SHA does not match the release`);
+      }
+      if (identity.verified !== false) {
+        throw new Error(`[release] completed ${surfaceId} must carry accepted, non-verified identity evidence`);
+      }
+      if (completionKey === 'npm') completedNpmAccepted = true;
+      else completed[/** @type {'deployDocs' | 'deployServer' | 'deployUi' | 'deployWebsite' | 'docker'} */ (completionKey)] = true;
+    }
     const declaredProduct = RESUMABLE_SURFACE_PRODUCTS.get(String(surface.id ?? ''));
     if (declaredProduct && surface.requested === true) {
       requested[/** @type {'cli' | 'stack' | 'server' | 'ui-web'} */ (declaredProduct)] = true;
@@ -203,11 +308,18 @@ export function resolveReleaseResume(input) {
     if (versions[key]) throw new Error(`[release] duplicate resumable ${product} candidate`);
     versions[key] = requiredString(identity.version, `resumable ${product} version`);
   }
+  completed.npm = completedNpmAccepted && !expandedNpmIntegrityRequested;
   const validated = validateCandidateVersions({ channel: input.expected.channel, versions });
   if (!Object.values(validated.versions).some(Boolean)) {
     throw new Error('[release] resume origin contains no verified immutable candidates to reuse');
   }
-  return { sourceSha: statusSourceSha, versions: validated.versions, requested };
+  return {
+    sourceSha: statusSourceSha,
+    versions: validated.versions,
+    requested,
+    completed,
+    ...(STANDARD_RELEASE_WORKFLOWS.has(input.expected.workflowPath) ? { requestedDeployUi, resumeInputs } : {}),
+  };
 }
 
 /** @param {string} path */
@@ -236,6 +348,7 @@ export async function main(argv = process.argv.slice(2)) {
       'expected-channel': { type: 'string' },
       'expected-source-sha': { type: 'string', default: '' },
       'expected-operation-id': { type: 'string', default: '' },
+      'status-artifact-name': { type: 'string', default: 'happier-release-status' },
       'github-output': { type: 'string' },
     },
     allowPositionals: false,
@@ -248,6 +361,7 @@ export async function main(argv = process.argv.slice(2)) {
     channel: String(values['expected-channel'] ?? ''),
     sourceSha: String(values['expected-source-sha'] ?? ''),
     operationId: String(values['expected-operation-id'] ?? ''),
+    statusArtifactName: String(values['status-artifact-name'] ?? ''),
   };
   const outputPath = String(values['github-output'] ?? '');
   if (!outputPath) throw new Error('[release] --github-output is required');
@@ -279,6 +393,20 @@ export async function main(argv = process.argv.slice(2)) {
       stack_requested: String(resolved.requested.stack),
       server_requested: String(resolved.requested.server),
       ui_web_requested: String(resolved.requested['ui-web']),
+      deploy_ui_requested: String(resolved.requestedDeployUi ?? false),
+      deploy_docs_complete: String(resolved.completed.deployDocs),
+      deploy_server_complete: String(resolved.completed.deployServer),
+      deploy_ui_complete: String(resolved.completed.deployUi),
+      deploy_website_complete: String(resolved.completed.deployWebsite),
+      docker_complete: String(resolved.completed.docker),
+      npm_complete: String(resolved.completed.npm),
+      cli_rolling_complete: String(resolved.completed.cliRolling),
+      stack_rolling_complete: String(resolved.completed.stackRolling),
+      server_rolling_complete: String(resolved.completed.serverRolling),
+      ui_web_rolling_complete: String(resolved.completed.uiWebRolling),
+      deploy_ui_web_requested: String(resolved.resumeInputs?.deployUi.deployWeb ?? false),
+      deploy_ui_expo_action: resolved.resumeInputs?.deployUi.expoAction ?? 'none',
+      deploy_ui_desktop_mode: resolved.resumeInputs?.deployUi.desktopMode ?? 'none',
     });
     return resolved;
   }

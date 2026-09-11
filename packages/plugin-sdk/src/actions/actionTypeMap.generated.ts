@@ -23445,7 +23445,7 @@ export type PluginActionResultById = {
                 flow: {
                     flowId: string;
                     flowKind: 'bounded_transfer' | 'tcp_tunnel' | 'voice_media' | 'live_stream' | 'machine_rpc';
-                    routeKind?: 'loopback_direct' | 'lan_direct' | 'tailscale_serve_direct' | 'server_relay' | undefined;
+                    routeKind?: 'loopback_direct' | 'lan_direct' | 'tailscale_serve_direct' | 'server_relay' | 'iroh_peer' | undefined;
                     tunnelId?: string | undefined;
                     substreamId?: string | undefined;
                     streamId?: string | undefined;
@@ -23525,7 +23525,7 @@ export type PluginActionResultById = {
                 flow: {
                     flowId: string;
                     flowKind: 'bounded_transfer' | 'tcp_tunnel' | 'voice_media' | 'live_stream' | 'machine_rpc';
-                    routeKind?: 'loopback_direct' | 'lan_direct' | 'tailscale_serve_direct' | 'server_relay' | undefined;
+                    routeKind?: 'loopback_direct' | 'lan_direct' | 'tailscale_serve_direct' | 'server_relay' | 'iroh_peer' | undefined;
                     tunnelId?: string | undefined;
                     substreamId?: string | undefined;
                     streamId?: string | undefined;

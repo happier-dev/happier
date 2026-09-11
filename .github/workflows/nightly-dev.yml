@@ -310,7 +310,7 @@ jobs:
 
   release_verify:
     name: Verify exact immutable nightly candidates
-    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
+    needs: [resolve_resume, prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
@@ -391,6 +391,9 @@ jobs:
   ui_mobile:
     name: UI mobile (dev)
     needs: [prepare_release_candidate, release_verify]
+    permissions:
+      actions: write
+      contents: write
     uses: ./.github/workflows/publish-ui-mobile-dev.yml
     secrets: inherit
     with:

@@ -47,12 +47,12 @@ function assertPayloadAdmissionInvocation(step, expectedChannelExpression, {
     source,
     /node scripts\/pipeline\/release\/admit-qualified-v4-npm-cli-payload\.mjs/,
   );
-  assert.match(source, new RegExp(`--candidate-ref ${candidateRef}`));
+  assert.match(source, new RegExp(`--source-ref ${candidateRef}`));
   if (candidateSha) {
-    assert.equal(step.env?.CANDIDATE_SHA, candidateSha);
-    assert.match(source, /--candidate-sha "\$CANDIDATE_SHA"/);
+    assert.equal(step.env?.SOURCE_SHA, candidateSha);
+    assert.match(source, /--source-sha "\$SOURCE_SHA"/);
   } else {
-    assert.doesNotMatch(source, /--candidate-sha/);
+    assert.doesNotMatch(source, /--source-sha/);
   }
   assert.doesNotMatch(source, /\b(?:case|git|baseline_ref|deploy_environment)\b/);
 }

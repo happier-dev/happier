@@ -7,6 +7,7 @@ import {
 } from './admit-qualified-v4-npm-cli-payload.mjs';
 
 const sourceSha = 'a'.repeat(40);
+const retrySourceRef = 'refs/qualified-v4-payload-candidate';
 
 test('npm Qualified V4 admission maps only the supported npm release rings', () => {
   assert.deepEqual(resolveQualifiedV4NpmCliPayloadAdmission({
@@ -84,4 +85,31 @@ test('admission rejects a checkout that is not the release source before reading
     /expected release source SHA/,
   );
   assert.deepEqual(calls, [['rev-parse', '--verify', 'HEAD^{commit}']]);
+});
+
+test('publication retry rebinds the exact admitted source before re-reading the deployed baseline', async () => {
+  const calls = [];
+  await admitQualifiedV4NpmCliPayload({
+    channel: 'preview',
+    sourceRef: retrySourceRef,
+    sourceSha,
+  }, {
+    repoRoot: '/repo',
+    runGit(args, options) {
+      calls.push({ args, options });
+      if (args[0] === 'rev-parse') return { status: 0, stdout: `${sourceSha}\n` };
+      if (args[0] === 'ls-remote') return { status: 2, stdout: '' };
+      return { status: 0, stdout: '' };
+    },
+    async runAdmission() {
+      return { status: 'pre-activation' };
+    },
+  });
+
+  assert.deepEqual(calls.map(({ args }) => args), [
+    ['fetch', '--no-tags', '--depth=1', 'origin', sourceSha],
+    ['update-ref', retrySourceRef, 'FETCH_HEAD'],
+    ['rev-parse', '--verify', `${retrySourceRef}^{commit}`],
+    ['ls-remote', '--exit-code', '--heads', 'origin', 'refs/heads/deploy/preview/server'],
+  ]);
 });

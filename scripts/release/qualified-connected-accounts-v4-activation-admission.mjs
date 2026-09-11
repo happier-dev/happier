@@ -46,18 +46,18 @@ export const QUALIFIED_CONNECTED_ACCOUNTS_V4_ROLLBACK_SUPPORT = Object.freeze([
     label: 'qualified Connected Account configuration cipher kind 9',
     checks: Object.freeze([
       Object.freeze({
-        path: 'packages/protocol/src/crypto/accountScopedCipher.ts',
+        path: 'packages/protocol/src/crypto/accountScopedCipherEnvelope.ts',
         content: 'qualified_connected_account_configuration: 9,',
       }),
     ]),
   }),
   Object.freeze({
-    key: 'sessionMetadataLayout1Kind10',
-    label: 'Session metadata layout 1 and owner-metadata cipher kind 10',
+    key: 'sessionMetadataLayout1Kind26',
+    label: 'Session metadata layout 1 and owner-metadata cipher kind 26',
     checks: Object.freeze([
       Object.freeze({
-        path: 'packages/protocol/src/crypto/accountScopedCipher.ts',
-        content: 'session_owner_metadata: 10,',
+        path: 'packages/protocol/src/crypto/accountScopedCipherEnvelope.ts',
+        content: 'session_owner_metadata: 26,',
       }),
       Object.freeze({
         path: 'packages/protocol/src/sessions/metadata/sessionMetadataEnvelopesV1.ts',

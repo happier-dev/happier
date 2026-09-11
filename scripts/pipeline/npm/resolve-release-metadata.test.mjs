@@ -1,7 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveNpmReleaseMetadata } from './resolve-release-metadata.mjs';
+import { resolveNpmReleaseMetadata, resolveNpmVersionSources } from './resolve-release-metadata.mjs';
+
+test('resolveNpmVersionSources reuses admitted candidate versions and allocates only missing requests', () => {
+  assert.deepEqual(
+    resolveNpmVersionSources({
+      requested: {
+        cli: true,
+        stack: true,
+        server: true,
+        pluginSdk: true,
+        sdk: false,
+        channelsProtocol: true,
+      },
+      suppliedVersions: {
+        cli: '1.2.3-preview.7',
+        stack: '',
+        server: '7.8.9-preview.7',
+      },
+    }),
+    {
+      allocationRequested: {
+        cli: false,
+        stack: true,
+        server: false,
+        pluginSdk: true,
+        sdk: false,
+        channelsProtocol: true,
+      },
+      reusedVersions: {
+        cli: '1.2.3-preview.7',
+        server: '7.8.9-preview.7',
+      },
+    },
+  );
+});
 
 test('resolveNpmReleaseMetadata returns only requested package versions and source identity', () => {
   assert.deepEqual(

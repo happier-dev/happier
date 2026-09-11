@@ -194,8 +194,10 @@ export function isBuildCompleteForPublishSurface(product, builds, candidate, pub
   ));
   if (publishSurface === 'npm') {
     const npmPackages = getNpmPackages(product);
-    const immutableComplete = npmPackages.every((npmPackage) => matches('npm', npmPackage));
-    if (!immutableComplete) return false;
+    const immutableComplete = npmPackages.length > 1
+      ? npmPackages.every((npmPackage) => matches('npm', npmPackage))
+      : matches('npm');
+    if (!immutableComplete || npmPackages.length <= 1) return immutableComplete;
     return npmPackages.every(
       (npmPackage) => completion.npmDistTagsByPackage.get(npmPackage)?.[completion.finalNpmDistTag] === candidate.version,
     );
@@ -449,7 +451,7 @@ export async function resolveRollingPublishVersion(opts) {
   const npmPackages = getNpmPackages(product);
   const npmAvailability = new Map();
   const npmDistTagsByPackage = new Map();
-  const finalNpmDistTag = publishSurface === 'npm'
+  const finalNpmDistTag = publishSurface === 'npm' && npmPackages.length > 1
     ? resolveRollingNpmDistTag(opts.channel)
     : '';
 
@@ -565,6 +567,7 @@ export async function resolveRollingPublishVersion(opts) {
 
   if (
     publishSurface === 'npm'
+    && npmPackages.length > 1
     && !npmPackages.every((npmPackage) => npmAvailability.get(npmPackage) === true)
   ) {
     throw new Error(

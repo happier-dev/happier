@@ -83,6 +83,21 @@ on:
         required: false
         default: false
         type: boolean
+      cli_version:
+        description: "Already-admitted CLI candidate version to reuse"
+        required: false
+        default: ""
+        type: string
+      stack_version:
+        description: "Already-admitted Stack candidate version to reuse"
+        required: false
+        default: ""
+        type: string
+      server_version:
+        description: "Already-admitted server candidate version to reuse"
+        required: false
+        default: ""
+        type: string
       publish_plugin_sdk:
         description: "Publish (Plugin SDK) — Publish the lockstep plugin-sdk/plugin-ui pair to npm"
         required: false
@@ -187,6 +202,13 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+          cache: yarn
+          cache-dependency-path: yarn.lock
       - name: Resolve release inputs
         id: release_inputs
         env:
@@ -197,6 +219,9 @@ jobs:
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          INPUT_CLI_VERSION: ${{ inputs.cli_version }}
+          INPUT_STACK_VERSION: ${{ inputs.stack_version }}
+          INPUT_SERVER_VERSION: ${{ inputs.server_version }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
           INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
@@ -210,6 +235,9 @@ jobs:
             --publish-cli "$INPUT_PUBLISH_CLI" \
             --publish-stack "$INPUT_PUBLISH_STACK" \
             --publish-server "$INPUT_PUBLISH_SERVER" \
+            --cli-version "$INPUT_CLI_VERSION" \
+            --stack-version "$INPUT_STACK_VERSION" \
+            --server-version "$INPUT_SERVER_VERSION" \
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
             --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
@@ -233,14 +261,6 @@ jobs:
             --source-ref HEAD \
             --source-sha "$SOURCE_SHA" \
             --summary-file "$GITHUB_STEP_SUMMARY"
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-          registry-url: https://registry.npmjs.org
-          cache: yarn
-          cache-dependency-path: yarn.lock
 
       - name: Setup Corepack (Yarn 1.22.22)
         run: |
@@ -543,6 +563,17 @@ jobs:
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
+
+      - name: Re-admit Qualified V4 npm CLI payload publication
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          node scripts/pipeline/release/admit-qualified-v4-npm-cli-payload.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --source-ref refs/qualified-v4-payload-candidate \
+            --source-sha "$SOURCE_SHA" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: npm publish (cli tarball) (pipeline)
         env:

@@ -19,7 +19,7 @@ Read [failure-collection.md](references/failure-collection.md) for a failing run
 
 1. **Bind exact identity.** Record repository, workflow, run ID, attempt, event, head SHA, status, and branch. Do not diagnose “latest” after the branch has moved.
 2. **Collect the whole reachable failure set.** Let independent jobs reach terminal state unless continued execution is unsafe, produces conflicting publication writes, or a proven wedged job blocks the corrected run. Do not begin a rerun from the first red annotation while other independent lanes can still expose failures.
-3. **Use the collector.** Run `scripts/collect-actions-failures.mjs` after the attempt is terminal. It paginates all jobs and retains full failed-job logs outside the repository while returning compact evidence. Keep the working inventory in the conversation or `/tmp`, not a repository ledger.
+3. **Use the collector.** Run `node skills/happier-ci-stabilize/scripts/collect-actions-failures.mjs --repo happier-dev/happier --run-id <run-id> [--attempt <n>]` after the attempt is terminal. It paginates all jobs and retains full failed-job logs outside the repository while returning compact evidence. Keep the working inventory in the conversation or `/tmp`, not a repository ledger.
 4. **Cluster before fixing.** Collapse aggregator failures and many test symptoms into their originating signature and canonical owner. One stale shared harness can fail dozens of scenarios; do not count those as dozens of defects.
 5. **Classify from evidence.** Use one of: production defect, test drift, harness/mock drift, release-control/configuration drift, external-contract change, infrastructure/resource failure, or inconclusive. A timeout is a symptom until logs and step timing establish the cause.
 6. **Correct one coherent batch.** Reproduce the smallest owner-level failure locally, prove RED for the intended contract, fix the canonical owner, and update or remove only assertions/harnesses invalidated by that same cause. Preserve unrelated dirty work.
@@ -27,6 +27,31 @@ Read [failure-collection.md](references/failure-collection.md) for a failing run
 8. **Recover instead of rebuilding.** Choose native failed-job rerun, verified-candidate resume, or fresh release from the decision table in `nightly-recovery.md`. Never reuse artifacts after candidate/source bytes change.
 9. **Monitor proportionally.** Poll ordinary transitions in roughly 1-2 minutes only when a result is expected immediately. Poll dependency installs, full suites, builds, signing, notarization, store submission, and publication every 5-20 minutes. Long duration alone is not failure evidence.
 10. **Close from independent evidence.** Require the canonical CI result for the exact SHA. For a nightly, also inspect `happier-release-status`, immutable candidate identities, promoted-reference verification, rolling tags, and the terminal status owner. A green top-level badge alone is not the release proof.
+
+### Narrow iteration commands
+
+Inspect one bound attempt before changing code:
+
+```bash
+gh run view <run-id> --repo happier-dev/happier \
+  --json databaseId,attempt,event,headBranch,headSha,status,conclusion,workflowName,url
+node skills/happier-ci-stabilize/scripts/collect-actions-failures.mjs \
+  --repo happier-dev/happier --run-id <run-id> --attempt <attempt>
+```
+
+Run the smallest local owner test while iterating, then every affected test file
+together. For release-workflow changes, widen once to the complete contract lane
+and preserve its raw TAP outside the repository:
+
+```bash
+node --test <affected-test-file> [...]
+yarn -s test:release:contracts > /tmp/release-contracts.tap 2>&1
+```
+
+Use `gh run rerun <run-id> --repo happier-dev/happier --failed` only when the
+workflow and source SHA are unchanged and the failed mutation is safe to retry.
+After a control-only fix, use the release owner's verified resume path instead;
+a failed-job rerun cannot execute code from a newer SHA.
 
 ## Make one run expose more failures
 

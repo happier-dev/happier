@@ -42,7 +42,12 @@ test('the Ubuntu slow gate prepares and runs the two exact server-v0.2.1 regress
 
 test('normal release orchestration leaves the exact published-server regressions to diff-selected validation', () => {
   const releaseWorkflow = workflow('release.yml');
-  assert.equal(releaseWorkflow.jobs.ci.with.run_e2e_core_slow, false);
+  const sourceValidation = workflow('release-source-validation.yml');
+  assert.equal(releaseWorkflow.jobs.source_validation.uses, './.github/workflows/release-source-validation.yml');
+  assert.equal(releaseWorkflow.jobs.mysql_db_contract, undefined);
+  assert.equal(releaseWorkflow.jobs.platform_service_validation, undefined);
+  assert.equal(releaseWorkflow.jobs.trust_root_validation, undefined);
+  assert.equal(sourceValidation.jobs.platform.with.run_e2e_core_slow, false);
 
   const stable = resolveReleaseValidationProfile('stable');
   assert.equal(stable?.checksProfile, 'full');

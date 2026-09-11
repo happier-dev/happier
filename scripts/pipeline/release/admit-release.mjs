@@ -180,21 +180,32 @@ export function admitNpmPublication(input) {
 }
 
 /**
- * @param {{ checksProfile: string; environment: string; publishServerRuntimeNeeded: boolean;
- * publishCliBinariesNeeded: boolean; risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
+ * @param {{ checksProfile: string; environment: string; dryRun?: boolean; plannedSourceSha: string;
+ * validatedSourceSha: string; ciResult: string; publishServerRuntimeNeeded: boolean;
+ * publishCliBinariesNeeded: boolean; publishStack?: boolean; sourceChecksWaived?: boolean;
+ * risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
  * gates: { mysql: string; platform: string; trustRoots: string };
  * npmPublication?: Parameters<typeof admitNpmPublication>[0];
  * publicSdkPublication?: Parameters<typeof admitPublicSdkPublication>[0] }} input
  */
 export function admitRelease(input) {
+  if (input.dryRun === true) {
+    return { admitted: true };
+  }
+  if (!input.plannedSourceSha || input.validatedSourceSha !== input.plannedSourceSha) {
+    throw new Error('validated source SHA must exactly match the planned source SHA');
+  }
+  if (!input.sourceChecksWaived && input.ciResult !== 'success') {
+    throw new Error('release publication requires successful exact-SHA CI evidence');
+  }
   if (input.environment === 'production' && input.checksProfile !== 'full') {
     throw new Error('production releases require checks_profile=full');
   }
-  if (input.publishServerRuntimeNeeded && input.risks.mysqlContract && input.gates.mysql !== 'success') {
+  if (!input.sourceChecksWaived && input.publishServerRuntimeNeeded && input.risks.mysqlContract && input.gates.mysql !== 'success') {
     throw new Error('server runtime publication requires a successful MySQL gate');
   }
-  if (input.risks.platformServices && (input.publishServerRuntimeNeeded || input.publishCliBinariesNeeded) && input.gates.platform !== 'success') {
-    throw new Error('server or CLI publication requires successful platform gates');
+  if (!input.sourceChecksWaived && input.risks.platformServices && (input.publishServerRuntimeNeeded || input.publishCliBinariesNeeded || input.publishStack) && input.gates.platform !== 'success') {
+    throw new Error('server, CLI, or stack publication requires successful platform gates');
   }
   if (input.risks.trustRoots && input.gates.trustRoots !== 'success') {
     throw new Error('trust-root changes require successful installer and updater trust validation');
@@ -211,8 +222,14 @@ export function admitReleaseFromEnvironment(env) {
   return admitRelease({
     checksProfile: String(env.CHECKS_PROFILE ?? ''),
     environment: String(env.DEPLOY_ENVIRONMENT ?? ''),
+    dryRun: enabled(env.DRY_RUN),
+    plannedSourceSha: String(env.PLANNED_SOURCE_SHA ?? ''),
+    validatedSourceSha: String(env.VALIDATED_SOURCE_SHA ?? ''),
+    ciResult: String(env.CI_GATE_RESULT ?? ''),
     publishServerRuntimeNeeded: enabled(env.PUBLISH_SERVER_RUNTIME_NEEDED),
     publishCliBinariesNeeded: enabled(env.PUBLISH_CLI_BINARIES_NEEDED),
+    publishStack: enabled(env.PUBLISH_STACK),
+    sourceChecksWaived: enabled(env.WAIVE_SOURCE_CHECKS),
     risks: {
       mysqlContract: enabled(env.RISK_MYSQL_CONTRACT),
       platformServices: enabled(env.RISK_PLATFORM_SERVICES),

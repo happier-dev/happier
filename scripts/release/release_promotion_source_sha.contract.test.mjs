@@ -49,14 +49,72 @@ test('release dry-run JSON resolves the actual promotion source independently of
       kind: 'happier.release-dispatch-plan.v3',
       schemaVersion: 3,
       sourceBranch: 'preview',
+      productionPromotionMode: 'fast-forward',
       authorizedPromotionSourceSha: '3333333333333333333333333333333333333333',
       effectiveDeployTargets: ['ui', 'server', 'website', 'docs'],
+      uiExpoAction: 'none',
+      desktopMode: 'none',
       validationProfile: 'stable',
+      overrides: {
+        waiveCi: false,
+        approvePublicSdkRelease: false,
+        includeValidationSuiteIds: [],
+        waiveValidationSuiteIds: [],
+        reason: '',
+      },
+      publicSdkApproval: {
+        pluginSdkReady: false,
+        pluginSdkApiClassification: '',
+        pluginSdkMigrationNotes: 'not_required',
+        sdkAuthReadiness: 'not_ready',
+        sdkAuthWaiver: '',
+        sdkApiClassification: '',
+        sdkMigrationNotes: 'not_required',
+      },
       operationId: 'rel_candidate_20260809',
       releaseNotesId: '2026-08-09.1',
       resumeRunId: '31506884258',
       approvals: { qualifiedV4Activation: true },
     });
+  } finally {
+    stub.cleanup();
+  }
+});
+
+test('combined preview and production dry-run binds one exact dev source and stable validation profile', () => {
+  const stub = createReleaseCliDryRunEnv();
+  try {
+    const raw = execFileSync(
+      process.execPath,
+      [
+        pipelineCli,
+        'release',
+        '--confirm',
+        'release dev to preview and main',
+        '--repository',
+        'happier-dev/happier',
+        '--deploy-environment',
+        'preview-and-production',
+        '--dry-run',
+        '--json',
+        '--operation-id',
+        'rel_combined_20260907',
+        '--release-notes-id',
+        '2026-09-07.1',
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...stub.env, GH_TOKEN: '', GH_REPO: '', GITHUB_REPOSITORY: '' },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
+      },
+    );
+    const plan = JSON.parse(raw);
+    assert.equal(plan.sourceBranch, 'dev');
+    assert.equal(plan.productionPromotionMode, 'fast-forward');
+    assert.equal(plan.authorizedPromotionSourceSha, '2222222222222222222222222222222222222222');
+    assert.equal(plan.validationProfile, 'stable');
   } finally {
     stub.cleanup();
   }
@@ -141,7 +199,7 @@ test('release workflow admits one authorized promotion-source SHA and passes it 
   assert.match(raw, /run-name:\s*\$\{\{ inputs\.hmaint_operation_id != '' && format\('RELEASE — Publish \(\{0\}, \{1\}\)', inputs\.hmaint_operation_id, inputs\.hmaint_attempt_id\) \|\| 'RELEASE — Publish \(manual\)' \}\}/);
   assert.match(
     raw,
-    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ inputs\.authorized_promotion_source_sha \|\| needs\.ci\.outputs\.source_ref \}\}/,
+    /Checkout authorized release planning source[\s\S]*?ref: \$\{\{ inputs\.authorized_promotion_source_sha \|\| needs\.release_preflight\.outputs\.source_ref \}\}/,
   );
   assert.match(raw, /promote_main:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);
   assert.match(raw, /promote_preview:[\s\S]*?source_sha: \$\{\{[^\n]+\}\}/);

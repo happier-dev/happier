@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
@@ -45,16 +46,23 @@ test('build-ui-mobile-local exposes immutable APK retry recovery as a workflow i
 
 test('build-ui-mobile-local passes approved release notes and projects exact retry-candidate notes', () => {
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
+  const workflow = YAML.parse(src);
+  const projectStep = workflow.jobs?.promote_existing_apk?.steps?.find(
+    (step) => step.name === 'Project approved release notes from exact immutable candidate',
+  );
   assert.match(src, /release_message:/);
   assert.match(src, /RELEASE_MESSAGE:\s*\$\{\{\s*inputs\.release_message\s*\}\}/);
   assert.match(src, /--release-message\s+"\$RELEASE_MESSAGE"/);
   assert.match(src, /Project approved release notes from exact immutable candidate/);
-  assert.match(src, /release_notes_github_markdown/);
+  assert.match(src, /release-notes\.md/);
   assert.match(src, /ref: \$\{\{ steps\.source\.outputs\.authorized_sha \}\}[\s\S]*?path: candidate/);
   assert.doesNotMatch(src, /Project approved release notes from exact immutable candidate[\s\S]*?working-directory: candidate/);
   assert.match(src, /candidate_version=.*candidate\/apps\/ui\/package\.json/);
   assert.match(src, /candidate_version.*RETRY_VERSION/);
   assert.match(src, /--changelog "\$GITHUB_WORKSPACE\/candidate\/apps\/ui\/CHANGELOG\.md"/);
-  assert.match(src, /release_notes_github_markdown<<\$\{delimiter\}\\n\$\{value\}\\n\$\{delimiter\}\\n/);
-  assert.match(src, /--release-message\s+"\$RELEASE_MESSAGE"/);
+  assert.match(src, /--release-message-file\s+"\$RUNNER_TEMP\/release-notes\.md"/);
+  assert.doesNotMatch(src, /release_notes_github_markdown<</);
+  assert.doesNotMatch(src, /RELEASE_MESSAGE:\s*\$\{\{\s*steps\.release_notes\.outputs/);
+  assert.equal(projectStep?.env?.RELEASE_NOTES_ID, '${{ inputs.release_notes_id }}');
+  assert.equal(projectStep?.env?.AUTHORIZED_SHA, '${{ steps.source.outputs.authorized_sha }}');
 });

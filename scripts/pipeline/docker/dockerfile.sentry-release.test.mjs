@@ -74,5 +74,6 @@ test("relay-server target is artifact based and keeps the self-host runtime cont
   assert.match(runtimeSection, /\bENV HAPPY_SQLITE_MIGRATIONS_DIR=\/opt\/happier\/server\/prisma\/sqlite\/migrations\b/);
   assert.match(runtimeSection, /\bUSER happier\b/);
   assert.match(runtimeSection, /VOLUME \["\/data"\]/);
-  assert.match(runtimeSection, /CMD \["\/opt\/happier\/server\/happier-server"\]/);
+  assert.match(runtimeSection, /COPY --from=server-builder \/repo\/apps\/server\/scripts\/run-server\.sh \/usr\/local\/bin\/run-server/);
+  assert.match(runtimeSection, /CMD \["run-server", "\/opt\/happier\/server\/happier-server"\]/);
 });

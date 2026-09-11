@@ -46,13 +46,13 @@ test('ui tauri workflows build the bootstrap sidecar before dev/build and cargo 
     );
     assert.match(
         String(uiPackageJson?.scripts?.['test:unit'] ?? ''),
-        /ensure:workspace:built/,
-        'ui unit test script should ensure internal workspace dist outputs exist before Vitest config imports workspace package exports'
+        /\.\.\/stack\/bin\/hstack-exec --script=test:unit:local$/,
+        'ui unit tests should use the canonical preparation-aware execution boundary'
     );
     assert.match(
         String(uiPackageJson?.scripts?.['test:integration'] ?? ''),
-        /ensure:workspace:built/,
-        'ui integration test script should ensure internal workspace dist outputs exist before Vitest config imports workspace package exports'
+        /\.\.\/stack\/bin\/hstack-exec --script=test:integration:local$/,
+        'ui integration tests should use the canonical preparation-aware execution boundary'
     );
 
     assert.match(

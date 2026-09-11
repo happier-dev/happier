@@ -34,7 +34,7 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
 
   const defaultJobs = {
     'ui-e2e': 'run_ui_e2e',
-    ui: 'run_ui',
+    ui: ['run_ui', true],
     'shared-packages-unit': 'run_ui',
     'plugin-workspaces-unit': 'run_plugin_workspaces',
     server: 'run_server',
@@ -51,10 +51,13 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
     'e2e-core': 'run_e2e_core',
   };
 
-  for (const [job, input] of Object.entries(defaultJobs)) {
+  for (const [job, value] of Object.entries(defaultJobs)) {
+    const [input, aggregate] = Array.isArray(value) ? value : [value, false];
     assert.equal(
       parsed?.jobs?.[job]?.if,
-      `\${{ !inputs.select_jobs_explicitly || inputs.${input} }}`,
+      aggregate
+        ? `\${{ always() && (!inputs.select_jobs_explicitly || inputs.${input}) }}`
+        : `\${{ !inputs.select_jobs_explicitly || inputs.${input} }}`,
       `${job} must obey the explicit reusable-workflow selection boundary`,
     );
   }
@@ -68,7 +71,7 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
   for (const path of [
     '.github/workflows/self-host-e2e.yml',
     '.github/workflows/stress-tests.yml',
-    '.github/workflows/release.yml',
+    '.github/workflows/release-source-validation.yml',
     '.github/workflows/release-verify.yml',
     '.github/workflows/providers-contracts.yml',
     '.github/workflows/tests-dispatch.yml',

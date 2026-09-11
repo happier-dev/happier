@@ -39,21 +39,36 @@ function runGit(args) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const base = String(args.get('--base') ?? '').trim();
+  const bases = String(args.get('--bases') ?? '').trim();
   const head = String(args.get('--head') ?? '').trim();
   const outPath = String(args.get('--out') ?? '').trim();
 
-  if (!base) fail('--base is required');
+  if (base && bases) fail('use either --base or --bases, not both');
+  if (!base && !bases) fail('--base or --bases is required');
   if (!head) fail('--head is required');
 
-  const commitCountRaw = runGit(['rev-list', '--count', `${base}..${head}`]).trim();
-  const commitCount = Number(commitCountRaw);
-  if (!Number.isFinite(commitCount) || commitCount < 0) fail(`Invalid commit count: ${commitCountRaw}`);
+  const baseRefs = (bases || base).split(',').map((value) => value.trim()).filter(Boolean);
+  if (baseRefs.length === 0 || new Set(baseRefs).size !== baseRefs.length) {
+    fail('--base/--bases must contain unique non-empty git revisions');
+  }
 
-  const diffRaw = runGit(['diff', '--name-only', `${base}..${head}`]);
-  const paths = diffRaw
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const changedPaths = new Set();
+  let commitCount;
+  if (baseRefs.length === 1) {
+    const commitCountRaw = runGit(['rev-list', '--count', `${baseRefs[0]}..${head}`]).trim();
+    commitCount = Number(commitCountRaw);
+    if (!Number.isFinite(commitCount) || commitCount < 0) fail(`Invalid commit count: ${commitCountRaw}`);
+  } else {
+    const commits = new Set();
+    for (const baseRef of baseRefs) {
+      for (const commit of runGit(['rev-list', `${baseRef}..${head}`]).split('\n').map((value) => value.trim()).filter(Boolean)) commits.add(commit);
+    }
+    commitCount = commits.size;
+  }
+  for (const baseRef of baseRefs) {
+    for (const changedPath of runGit(['diff', '--name-only', `${baseRef}..${head}`]).split('\n').map((value) => value.trim()).filter(Boolean)) changedPaths.add(changedPath);
+  }
+  const paths = [...changedPaths].sort();
 
   const classified = classifyChangedPaths(paths);
   const versioned = deriveVersionedComponentChanges(classified);

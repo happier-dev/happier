@@ -42,7 +42,7 @@ test('release workflow verifies immutable candidates before promoting preview or
   assert.doesNotMatch(releaseVerify.if, /inputs\.checks_profile/);
   assert.match(
     releaseVerify.if,
-    /needs\.promote_cli_binaries\.result == 'success' \|\| needs\.promote_cli_binaries\.result == 'skipped'/,
+    /needs\.promote_cli_binaries\.result == 'success' \|\| needs\.resolve_resume\.outputs\.cli_rolling_complete == 'true'/,
   );
   assert.match(
     raw,
@@ -51,8 +51,8 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
-    'release.yml should compute canonical publication decisions after profile resolution and general CI',
+    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, release_preflight\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.release_preflight\.result == 'success'/,
+    'release.yml should compute channel publication decisions after request validation and resume resolution',
   );
   assert.match(
     raw,
@@ -113,25 +113,20 @@ test('post-promotion verification receives the selected server runtime probe URL
   );
 });
 
-test('release validation retains a risk-selected pre-publication platform gate while post-publication verification stays profile-bounded', async () => {
-  const [raw, testsRaw] = await Promise.all([
+test('release validation delegates one risk-selected pre-publication platform gate while post-publication verification stays profile-bounded', async () => {
+  const [raw, sourceValidationRaw, testsRaw] = await Promise.all([
     readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
+    readFile(join(repoRoot, '.github', 'workflows', 'release-source-validation.yml'), 'utf8'),
     readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8'),
   ]);
   const workflow = YAML.parse(raw);
+  const sourceValidation = YAML.parse(sourceValidationRaw);
   const testsWorkflow = YAML.parse(testsRaw);
-  const prePublicationGate = workflow.jobs.platform_service_validation.with.run_self_host_systemd;
+  const prePublicationGate = sourceValidation.jobs.platform.with.run_self_host_systemd;
 
-  assert.equal(workflow.jobs.platform_service_validation.uses, './.github/workflows/tests.yml');
-  assert.match(workflow.jobs.platform_service_validation.if, /needs\.plan\.outputs\.risk_platform_services == 'true'/);
-  assert.match(
-    workflow.jobs.platform_service_validation.if,
-    /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/,
-  );
-  assert.match(
-    workflow.jobs.platform_service_validation.if,
-    /needs\.plan\.outputs\.publish_cli_binaries_needed == 'true'/,
-  );
+  assert.equal(workflow.jobs.source_validation.uses, './.github/workflows/release-source-validation.yml');
+  assert.equal(sourceValidation.jobs.platform.uses, './.github/workflows/tests.yml');
+  assert.match(sourceValidation.jobs.platform.if, /needs\.source_plan\.outputs\.run_platform == 'true'/);
 
   for (const inputName of [
     'run_self_host_systemd',
@@ -139,9 +134,9 @@ test('release validation retains a risk-selected pre-publication platform gate w
     'run_self_host_schtasks',
     'run_self_host_daemon',
   ]) {
-    assert.equal(workflow.jobs.ci.with, undefined, 'release admission should reuse exact-SHA push CI rather than dispatch another general matrix');
+    assert.equal(workflow.jobs.release_preflight.with, undefined, 'release preflight must not dispatch another general CI matrix');
     assert.equal(
-      workflow.jobs.platform_service_validation.with[inputName],
+      sourceValidation.jobs.platform.with[inputName],
       prePublicationGate,
       `release pre-publication platform gates should share one applicability decision`,
     );
@@ -177,35 +172,28 @@ test('release validation retains a risk-selected pre-publication platform gate w
   );
 });
 
-test('database-affecting server releases invoke the existing MySQL 8 contract workflow before release mutation', async () => {
-  const [releaseRaw, extendedDbRaw] = await Promise.all([
+test('database-affecting server releases invoke the shared MySQL 8 source contract before release mutation', async () => {
+  const [releaseRaw, sourceValidationRaw, extendedDbRaw] = await Promise.all([
     readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'),
+    readFile(join(repoRoot, '.github', 'workflows', 'release-source-validation.yml'), 'utf8'),
     readFile(join(repoRoot, '.github', 'workflows', 'extended-db-tests.yml'), 'utf8'),
   ]);
   const release = YAML.parse(releaseRaw);
+  const sourceValidation = YAML.parse(sourceValidationRaw);
   const extendedDb = YAML.parse(extendedDbRaw);
-  const mysqlGate = release.jobs.mysql_db_contract;
+  const mysqlGate = sourceValidation.jobs.mysql;
 
   assert.equal(
     mysqlGate.uses,
     './.github/workflows/extended-db-tests.yml',
     'release should reuse the existing extended database workflow',
   );
-  assert.doesNotMatch(mysqlGate.if, /checks_profile/, 'MySQL validation should not disappear from integrated server releases');
-  assert.match(
-    mysqlGate.if,
-    /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/,
-    'MySQL validation should use the canonical actual server publication decision',
-  );
-  assert.match(mysqlGate.if, /needs\.plan\.outputs\.risk_mysql_contract == 'true'/);
-  assert.doesNotMatch(
-    mysqlGate.if,
-    /dry_run/,
-    'a full dry-run should still execute validation while the existing mutation jobs remain disabled',
-  );
+  assert.match(mysqlGate.if, /needs\.source_plan\.outputs\.run_mysql == 'true'/);
+  assert.match(mysqlGate.if, /inputs\.dry_run != true/);
   assert.deepEqual(
     mysqlGate.with,
     {
+      checkout_sha: '${{ needs.source_plan.outputs.source_sha }}',
       run_e2e_postgres: false,
       run_e2e_mysql: false,
       run_db_contract_postgres: false,
@@ -215,8 +203,8 @@ test('database-affecting server releases invoke the existing MySQL 8 contract wo
   );
 
   assert.ok(
-    mysqlGate.needs.includes('plan'),
-    'MySQL validation should run after canonical release planning',
+    mysqlGate.needs.includes('source_plan'),
+    'MySQL validation should run after canonical source-gate planning',
   );
   for (const mutationJobName of ['promote_preview', 'promote_main']) {
     const mutationJob = release.jobs[mutationJobName];
@@ -227,9 +215,7 @@ test('database-affecting server releases invoke the existing MySQL 8 contract wo
       `${mutationJobName} should stop when canonical admission rejects the applicable gates`,
     );
   }
-  assert.ok(release.jobs.release_admission.needs.includes('mysql_db_contract'));
-  assert.ok(release.jobs.release_admission.needs.includes('platform_service_validation'));
-  assert.ok(release.jobs.release_admission.needs.includes('trust_root_validation'));
+  assert.deepEqual(release.jobs.release_admission.needs, ['release_preflight', 'plan', 'source_validation']);
 
   for (const [inputName, jobName] of [
     ['run_e2e_postgres', 'e2e-postgres'],
@@ -290,13 +276,14 @@ test('detected and forced server or CLI publication cannot bypass canonical rele
     'CLI publisher should consume the canonical CLI publication decision',
   );
 
-  for (const gateJobName of ['mysql_db_contract', 'platform_service_validation', 'release_verify']) {
-    assert.doesNotMatch(
-      JSON.stringify(workflow.jobs[gateJobName]),
-      /deploy_targets/,
-      `${gateJobName} must not reimplement publication applicability from requested targets`,
-    );
-  }
+  assert.equal(workflow.jobs.mysql_db_contract, undefined);
+  assert.equal(workflow.jobs.platform_service_validation, undefined);
+  assert.equal(workflow.jobs.trust_root_validation, undefined);
+  assert.match(
+    JSON.stringify(workflow.jobs.source_validation),
+    /release-source-validation\.yml/,
+    'source-gate applicability must have one reusable workflow owner',
+  );
 });
 
 test('publication admission requires full stable checks and risk-selected server evidence', async () => {
@@ -307,8 +294,8 @@ test('publication admission requires full stable checks and risk-selected server
 
   assert.ok(admission, 'release.yml should have one canonical release admission job');
   assert.ok(admission.needs.includes('plan'));
-  assert.ok(admission.needs.includes('ci'));
-  assert.ok(admission.needs.includes('trust_root_validation'));
+  assert.ok(admission.needs.includes('release_preflight'));
+  assert.ok(admission.needs.includes('source_validation'));
   assert.equal(workflow.on.workflow_dispatch.inputs.approve_public_sdk_release.type, 'boolean');
   assert.equal(workflow.on.workflow_dispatch.inputs.public_sdk_release_approval.type, 'string');
   assert.equal(workflow.on.workflow_dispatch.inputs.public_sdk_release_approval.default, '{}');
@@ -318,7 +305,7 @@ test('publication admission requires full stable checks and risk-selected server
     'the exact packed public SDK candidate must consume the reviewed maintainer decision',
   );
   assert.equal(workflow.jobs.release_admission.steps.at(-1).env.SDK_API_CLASSIFICATION,
-    '${{ needs.ci.outputs.sdk_api_classification }}');
+    '${{ needs.release_preflight.outputs.sdk_api_classification }}');
   assert.match(
     workflow.jobs.release_admission.steps.map((step) => step.run ?? '').join('\n'),
     /scripts\/pipeline\/release\/admit-release\.mjs/u,
@@ -332,9 +319,10 @@ test('publication admission requires full stable checks and risk-selected server
   );
   assert.doesNotMatch(admissionScript, /RISK_TRUST_ROOTS.*TRUST_ROOT_GATE_RESULT.*success/s);
 
-  const trustGate = workflow.jobs.trust_root_validation;
-  assert.match(trustGate.if, /needs\.plan\.outputs\.risk_trust_roots == 'true'/);
-  assert.equal(trustGate.steps[0].with.ref, '${{ inputs.authorized_promotion_source_sha }}');
+  const sourceValidation = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release-source-validation.yml'), 'utf8'));
+  const trustGate = sourceValidation.jobs.trust_roots;
+  assert.match(trustGate.if, /needs\.source_plan\.outputs\.run_trust_roots == 'true'/);
+  assert.equal(trustGate.steps[0].with.ref, '${{ needs.source_plan.outputs.source_sha }}');
   assert.match(
     trustGate.steps.map((step) => step.run ?? '').join('\n'),
     /installers_security\.test\.mjs[\s\S]*tauri-validate-updater-pubkey/,
@@ -441,14 +429,17 @@ test('release workflow consumes the public validation profile, projects exact-ca
   const candidate = workflow.jobs.prepare_release_candidate;
   const candidateVerifier = workflow.jobs.verify_release_candidates;
   const status = workflow.jobs.release_status;
-  const ciScripts = workflow.jobs.ci.steps.map((step) => step.run ?? '').join('\n');
+  const preflightScripts = workflow.jobs.release_preflight.steps.map((step) => step.run ?? '').join('\n');
+  const sourceValidation = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release-source-validation.yml'), 'utf8'));
+  const ciScripts = sourceValidation.jobs.ci.steps.map((step) => step.run ?? '').join('\n');
 
   assert.deepEqual(inputs.validation_profile.options, ['integrated', 'stable']);
   assert.equal(inputs.validation_profile.default, 'integrated');
   assert.equal(inputs.checks_profile, undefined);
-  assert.match(ciScripts, /scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
+  assert.match(preflightScripts, /scripts\/pipeline\/release\/validate-release-dispatch\.mjs/);
+  assert.doesNotMatch(preflightScripts, /scripts\/pipeline\/release\/verify-existing-ci\.mjs/);
   assert.match(ciScripts, /scripts\/pipeline\/release\/verify-existing-ci\.mjs/);
-  assert.doesNotMatch(ciScripts, /candidate_identity_count|Unknown confirmation phrase|Unknown deploy_targets entry/);
+  assert.doesNotMatch(preflightScripts, /candidate_identity_count|Unknown confirmation phrase|Unknown deploy_targets entry/);
   assert.match(
     workflow.jobs.resolve_validation_profile.steps.map((step) => step.run ?? '').join('\n'),
     /scripts\/pipeline\/release-validation\/resolve-profile\.mjs/,
@@ -520,6 +511,6 @@ test('release workflow consumes the public validation profile, projects exact-ca
   );
   assert.equal(
     status.steps.find((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@')).with.name,
-    'happier-release-status',
+    "${{ inputs.combined_preview_production == true && inputs.environment == 'preview' && 'happier-release-status-preview' || 'happier-release-status' }}",
   );
 });

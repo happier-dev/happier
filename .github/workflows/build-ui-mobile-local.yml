@@ -46,13 +46,15 @@ on:
           - production
           - production-apk
       action:
-        description: "Build native binaries, submit store builds, or publish OTA"
+        description: "Build native binaries, submit/resubmit store builds, resume TestFlight distribution, or publish OTA"
         required: true
         type: choice
         default: build_only
         options:
           - build_only
           - build_and_submit
+          - retry_android_store_submit
+          - retry_testflight_distribution
           - ota
       publish_apk_release:
         description: "Deploy (Android APK only) — Publish APK to GitHub Releases (auto publishes only when an APK is produced)"
@@ -65,6 +67,31 @@ on:
           - "false"
       retry_version:
         description: "Production version — Reproject an existing immutable APK release without rebuilding"
+        required: false
+        default: ""
+        type: string
+      retry_testflight_eas_build_id:
+        description: "TestFlight retry — Exact existing EAS iOS build ID (resolved without rebuilding)"
+        required: false
+        default: ""
+        type: string
+      retry_testflight_build_number:
+        description: "TestFlight retry — Existing App Store Connect build number (no IPA rebuild)"
+        required: false
+        default: ""
+        type: string
+      retry_testflight_app_version:
+        description: "TestFlight retry — Existing App Store Connect app version (no IPA rebuild)"
+        required: false
+        default: ""
+        type: string
+      retry_store_run_id:
+        description: "Android submit retry — Origin GitHub Actions run containing the preserved AAB"
+        required: false
+        default: ""
+        type: string
+      retry_store_source_sha:
+        description: "Android submit retry — Exact source SHA bound to the preserved AAB"
         required: false
         default: ""
         type: string
@@ -107,6 +134,26 @@ on:
         required: false
         default: ""
         type: string
+      retry_testflight_eas_build_id:
+        required: false
+        default: ""
+        type: string
+      retry_testflight_build_number:
+        required: false
+        default: ""
+        type: string
+      retry_testflight_app_version:
+        required: false
+        default: ""
+        type: string
+      retry_store_run_id:
+        required: false
+        default: ""
+        type: string
+      retry_store_source_sha:
+        required: false
+        default: ""
+        type: string
       release_message:
         required: false
         default: ""
@@ -129,7 +176,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-ui-mobile-local-${{ github.ref }}
+  group: build-ui-mobile-local-${{ github.repository }}-${{ inputs.source_ref }}-${{ inputs.environment }}-${{ inputs.platform }}-${{ inputs.profile }}-${{ inputs.action }}-${{ inputs.publish_apk_release }}
   cancel-in-progress: false
 
 env:
@@ -137,6 +184,7 @@ env:
 
 jobs:
   trusted_ref_guard:
+    timeout-minutes: 240
     name: Trusted workflow ref guard
     permissions:
       contents: read
@@ -159,6 +207,7 @@ jobs:
           esac
 
   release_actor_guard:
+    timeout-minutes: 240
     needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
@@ -179,8 +228,9 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   validate_expo_token:
+    timeout-minutes: 240
     name: Validate EXPO_TOKEN
-    if: ${{ inputs.retry_version == '' && (inputs.action == 'ota' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'retry_testflight_distribution' && (inputs.action == 'ota' || inputs.action == 'retry_android_store_submit' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
@@ -194,8 +244,9 @@ jobs:
           fi
 
   validate_apple_api_private_key:
+    timeout-minutes: 240
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ ((inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios')) || inputs.action == 'retry_testflight_distribution') && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production') }}
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
@@ -209,13 +260,18 @@ jobs:
           fi
 
   build_android:
+    timeout-minutes: 240
     name: Build (android)
-    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     environment: release-shared
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.candidate_sha }}
+      app_version: ${{ steps.candidate.outputs.app_version }}
+      has_apk: ${{ steps.apk.outputs.has_apk }}
     env:
       EAS_CLI_VERSION: 18.0.1
       APP_ENV: ${{ inputs.environment }}
@@ -228,17 +284,6 @@ jobs:
           ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
 
-      - name: Create GitHub App token (APK publishing)
-        id: app_token
-        if: ${{ inputs.publish_apk_release != 'false' }}
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -246,7 +291,18 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
-      - name: Enable Corepack (Yarn)
+      - name: Bind built candidate identity
+        id: candidate
+        run: |
+          set -euo pipefail
+          candidate_sha="$(git rev-parse HEAD)"
+          app_version="$(node -p "require('./apps/ui/package.json').version")"
+          canonical_semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          [[ "$candidate_sha" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$app_version" =~ $canonical_semver_re ]]
+          printf 'candidate_sha=%s\napp_version=%s\n' "$candidate_sha" "$app_version" >> "$GITHUB_OUTPUT"
+
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -265,12 +321,6 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
-          RELEASE_MESSAGE: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs ui-mobile-release \
@@ -281,22 +331,120 @@ jobs:
             --native-build-mode local \
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
-            --publish-apk-release "${{ inputs.publish_apk_release }}" \
-            --release-message "$RELEASE_MESSAGE" \
+            --publish-apk-release false \
             --secrets-source env
 
+      - name: Persist Android candidate identity for recovery
+        if: ${{ always() }}
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha }}
+          APP_VERSION: ${{ steps.candidate.outputs.app_version }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/ui-mobile
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            writeFileSync("dist/ui-mobile/candidate-identity.json", `${JSON.stringify({
+              schemaVersion: 1,
+              candidateSha: process.env.CANDIDATE_SHA,
+              appVersion: process.env.APP_VERSION,
+              environment: process.env.RELEASE_ENVIRONMENT,
+              platform: "android",
+            }, null, 2)}\n`);
+          '
+
+      - name: Locate built APK candidate
+        id: apk
+        if: ${{ inputs.publish_apk_release == 'true' || (inputs.publish_apk_release == 'auto' && (inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'production')) }}
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist/ui-mobile -type f -name '*.apk' -print)
+          if [ "${#apks[@]}" -gt 1 ]; then
+            echo "Expected at most one built APK candidate; found ${#apks[@]}." >&2
+            exit 1
+          fi
+          printf 'has_apk=%s\n' "$([ "${#apks[@]}" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Upload mobile build artifact
+        if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-mobile-${{ inputs.environment }}-android
           path: dist/ui-mobile/**
           retention-days: 7
 
+  publish_android_apk:
+    timeout-minutes: 240
+    name: Sign and publish Android APK
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') && needs.build_android.outputs.has_apk == 'true' }}
+    needs: [release_actor_guard, build_android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Download built APK candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ui-mobile-${{ inputs.environment }}-android
+          path: dist/ui-mobile
+
+      - name: Create GitHub App token (APK publishing)
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Sign and publish APK with trusted control
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+          APP_VERSION: ${{ needs.build_android.outputs.app_version }}
+          AUTHORIZED_SHA: ${{ needs.build_android.outputs.candidate_sha }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist/ui-mobile -type f -name '*.apk' -print)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "Expected exactly one built APK candidate; found ${#apks[@]}." >&2
+            exit 1
+          fi
+          node scripts/pipeline/expo/publish-apk-release.mjs \
+            --environment "${{ inputs.environment }}" \
+            --apk-path "${apks[0]}" \
+            --version "$APP_VERSION" \
+            --target-sha "$AUTHORIZED_SHA" \
+            --release-message "$RELEASE_MESSAGE"
+
   build_ios:
+    timeout-minutes: 240
     name: Build (ios)
-    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.retry_version == '' && inputs.action != 'ota' && inputs.action != 'retry_android_store_submit' && inputs.action != 'retry_testflight_distribution' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: macos-26
+    permissions:
+      actions: write
+      contents: read
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
@@ -323,6 +471,15 @@ jobs:
           ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
           fetch-depth: 0
 
+      - name: Checkout trusted deferred TestFlight control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .testflight-control
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Setup Xcode (pin)
         uses: ./.github/actions/setup-xcode
         with:
@@ -335,7 +492,7 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -356,9 +513,10 @@ jobs:
       - name: EAS build (local runner) (pipeline)
         env:
           RELEASE_MESSAGE: ${{ inputs.release_message }}
+          HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs ui-mobile-release \
+          node .testflight-control/scripts/pipeline/run.mjs ui-mobile-release \
             --environment "${{ inputs.environment }}" \
             --action "${{ inputs.action == 'build_and_submit' && 'native_submit' || 'native' }}" \
             --platform "${EAS_PLATFORM}" \
@@ -367,17 +525,230 @@ jobs:
             --build-json "/tmp/eas_build_${EAS_PLATFORM}.json" \
             --out-dir "dist/ui-mobile" \
             --publish-apk-release false \
+            --testflight-distribution-mode deferred \
             --release-message "$RELEASE_MESSAGE" \
             --secrets-source env
 
+      - name: Dispatch exact TestFlight reconciliation
+        if: ${{ inputs.action == 'build_and_submit' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+        run: |
+          set -euo pipefail
+          node .testflight-control/scripts/pipeline/expo/dispatch-testflight-reconciliation.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-ref "$GITHUB_REF_NAME" \
+            --source-sha "$(git rev-parse HEAD)" \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --profile "$RELEASE_PROFILE" \
+            --build-json "/tmp/eas_build_${EAS_PLATFORM}.json"
+
       - name: Upload mobile build artifact
+        if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-mobile-${{ inputs.environment }}-ios
           path: dist/ui-mobile/**
           retention-days: 7
 
+  retry_android_store_submit:
+    timeout-minutes: 30
+    name: Resume Android store submission (preserved AAB)
+    if: ${{ inputs.action == 'retry_android_store_submit' }}
+    needs: [release_actor_guard, validate_expo_token]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Bind origin run and source identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETRY_STORE_RUN_ID: ${{ inputs.retry_store_run_id }}
+          RETRY_STORE_SOURCE_SHA: ${{ inputs.retry_store_source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RETRY_STORE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "retry_store_run_id must be a positive integer." >&2; exit 1; }
+          [[ "$RETRY_STORE_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "retry_store_source_sha must be an exact lowercase commit SHA." >&2; exit 1; }
+          origin_status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RETRY_STORE_RUN_ID}" --jq .status)"
+          origin_head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RETRY_STORE_RUN_ID}" --jq .head_sha)"
+          [ "$origin_status" = completed ] || { echo "Origin run $RETRY_STORE_RUN_ID is not completed." >&2; exit 1; }
+          printf 'ORIGIN_HEAD_SHA=%s\n' "$origin_head_sha" >> "$GITHUB_ENV"
+
+      - name: Download preserved Android build artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.retry_store_run_id }}
+          name: ui-mobile-${{ inputs.environment }}-android
+          path: retry-artifact
+
+      - name: Verify candidate identity and resubmit exact AAB
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_CLI_VERSION: 18.0.1
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+          RETRY_STORE_SOURCE_SHA: ${{ inputs.retry_store_source_sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t aabs < <(find retry-artifact -type f -name '*.aab' -print)
+          if [ "${#aabs[@]}" -ne 1 ]; then
+            echo "Expected exactly one preserved Android AAB; found ${#aabs[@]}." >&2
+            exit 1
+          fi
+          if [ -f retry-artifact/candidate-identity.json ]; then
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const identity = JSON.parse(readFileSync("retry-artifact/candidate-identity.json", "utf8"));
+              if (identity.schemaVersion !== 1 || identity.candidateSha !== process.env.RETRY_STORE_SOURCE_SHA || identity.environment !== process.env.RELEASE_ENVIRONMENT || identity.platform !== "android") {
+                throw new Error("Preserved Android artifact identity does not match the authorized retry inputs.");
+              }
+            '
+          elif [ "$ORIGIN_HEAD_SHA" != "$RETRY_STORE_SOURCE_SHA" ]; then
+            echo "Legacy artifact has no candidate identity and its origin run SHA does not match retry_store_source_sha." >&2
+            exit 1
+          fi
+          aab="${aabs[0]}"
+          aab="$(realpath "$aab")"
+          submit_workspace="$RUNNER_TEMP/happier-android-submit"
+          node scripts/pipeline/expo/prepare-static-submit-workspace.mjs \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --profile "$RELEASE_PROFILE" \
+            --out-dir "$submit_workspace"
+          node scripts/pipeline/expo/submit.mjs \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --platform android \
+            --profile "$RELEASE_PROFILE" \
+            --project-dir "$submit_workspace" \
+            --path "$aab" \
+            --wait true
+
+  retry_testflight_distribution:
+    timeout-minutes: 240
+    name: Resume TestFlight distribution (existing build)
+    if: ${{ inputs.action == 'retry_testflight_distribution' }}
+    needs: [release_actor_guard, validate_apple_api_private_key]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact candidate source for EAS build lookup
+        if: ${{ inputs.retry_testflight_eas_build_id != '' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Attach existing processed build to TestFlight groups
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_PROFILE: ${{ inputs.profile == 'auto' && inputs.environment || inputs.profile }}
+          RETRY_TESTFLIGHT_EAS_BUILD_ID: ${{ inputs.retry_testflight_eas_build_id }}
+          RETRY_TESTFLIGHT_BUILD_NUMBER: ${{ inputs.retry_testflight_build_number }}
+          RETRY_TESTFLIGHT_APP_VERSION: ${{ inputs.retry_testflight_app_version }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_CLI_VERSION: 18.0.1
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS }}
+          APP_STORE_CONNECT_PUBLICDEV_SUBMIT_BETA_REVIEW: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_SUBMIT_BETA_REVIEW }}
+          APP_STORE_CONNECT_PUBLICDEV_WAIT_PROCESSING: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_WAIT_PROCESSING }}
+          APP_STORE_CONNECT_PUBLICDEV_PROCESSING_TIMEOUT_SECONDS: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_PROCESSING_TIMEOUT_SECONDS }}
+          APP_STORE_CONNECT_PREVIEW_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PREVIEW_EXTERNAL_GROUPS }}
+          APP_STORE_CONNECT_PREVIEW_SUBMIT_BETA_REVIEW: ${{ vars.APP_STORE_CONNECT_PREVIEW_SUBMIT_BETA_REVIEW }}
+          APP_STORE_CONNECT_PREVIEW_WAIT_PROCESSING: ${{ vars.APP_STORE_CONNECT_PREVIEW_WAIT_PROCESSING }}
+          APP_STORE_CONNECT_PREVIEW_PROCESSING_TIMEOUT_SECONDS: ${{ vars.APP_STORE_CONNECT_PREVIEW_PROCESSING_TIMEOUT_SECONDS }}
+          APP_STORE_CONNECT_PRODUCTION_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PRODUCTION_EXTERNAL_GROUPS }}
+          APP_STORE_CONNECT_PRODUCTION_SUBMIT_BETA_REVIEW: ${{ vars.APP_STORE_CONNECT_PRODUCTION_SUBMIT_BETA_REVIEW }}
+          APP_STORE_CONNECT_PRODUCTION_WAIT_PROCESSING: ${{ vars.APP_STORE_CONNECT_PRODUCTION_WAIT_PROCESSING }}
+          APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS: ${{ vars.APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RETRY_TESTFLIGHT_EAS_BUILD_ID" ]; then
+            [[ "$RETRY_TESTFLIGHT_EAS_BUILD_ID" =~ ^[0-9A-Fa-f-]{36}$ ]] || { echo "retry_testflight_eas_build_id must be a UUID." >&2; exit 1; }
+            [ -n "$EXPO_TOKEN" ] || { echo "EXPO_TOKEN is required to resolve retry_testflight_eas_build_id." >&2; exit 1; }
+            cd candidate
+          else
+            [[ "$RETRY_TESTFLIGHT_BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "retry_testflight_build_number must be a positive integer." >&2; exit 1; }
+            [[ "$RETRY_TESTFLIGHT_APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || { echo "retry_testflight_app_version must be a semantic version." >&2; exit 1; }
+          fi
+
+          case "$RELEASE_ENVIRONMENT" in
+            dev)
+              external_groups="$APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS"
+              submit_beta_review="${APP_STORE_CONNECT_PUBLICDEV_SUBMIT_BETA_REVIEW:-auto}"
+              wait_processing="${APP_STORE_CONNECT_PUBLICDEV_WAIT_PROCESSING:-true}"
+              processing_timeout="${APP_STORE_CONNECT_PUBLICDEV_PROCESSING_TIMEOUT_SECONDS:-3600}"
+              ;;
+            preview)
+              external_groups="$APP_STORE_CONNECT_PREVIEW_EXTERNAL_GROUPS"
+              submit_beta_review="${APP_STORE_CONNECT_PREVIEW_SUBMIT_BETA_REVIEW:-auto}"
+              wait_processing="${APP_STORE_CONNECT_PREVIEW_WAIT_PROCESSING:-true}"
+              processing_timeout="${APP_STORE_CONNECT_PREVIEW_PROCESSING_TIMEOUT_SECONDS:-3600}"
+              ;;
+            production)
+              external_groups="$APP_STORE_CONNECT_PRODUCTION_EXTERNAL_GROUPS"
+              submit_beta_review="${APP_STORE_CONNECT_PRODUCTION_SUBMIT_BETA_REVIEW:-auto}"
+              wait_processing="${APP_STORE_CONNECT_PRODUCTION_WAIT_PROCESSING:-true}"
+              processing_timeout="${APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS:-3600}"
+              ;;
+            *)
+              echo "TestFlight distribution retry supports only dev, preview, or production." >&2
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$external_groups" ]; then
+            echo "No external TestFlight groups are configured for $RELEASE_ENVIRONMENT." >&2
+            exit 1
+          fi
+
+          node "$GITHUB_WORKSPACE/scripts/pipeline/expo/testflight-distribute.mjs" \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --profile "$RELEASE_PROFILE" \
+            --external-groups "$external_groups" \
+            --eas-build-id "$RETRY_TESTFLIGHT_EAS_BUILD_ID" \
+            --build-number "$RETRY_TESTFLIGHT_BUILD_NUMBER" \
+            --app-version "$RETRY_TESTFLIGHT_APP_VERSION" \
+            --submit-beta-review "$submit_beta_review" \
+            --wait-processing "$wait_processing" \
+            --processing-timeout-seconds "$processing_timeout" \
+            --eas-cli-version "$EAS_CLI_VERSION"
+
   ota_update:
+    timeout-minutes: 240
     name: OTA update
     if: ${{ inputs.retry_version == '' && inputs.action == 'ota' }}
     needs: [release_actor_guard, validate_expo_token]
@@ -401,7 +772,7 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -428,6 +799,7 @@ jobs:
             --secrets-source env
 
   promote_existing_apk:
+    timeout-minutes: 240
     name: Recover rolling APK projection
     if: ${{ inputs.retry_version != '' }}
     needs: [release_actor_guard]
@@ -453,8 +825,6 @@ jobs:
         id: source
         env:
           RETRY_VERSION: ${{ inputs.retry_version }}
-          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
-          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/github/resolve-authorized-release-source.mjs \
@@ -472,9 +842,10 @@ jobs:
           persist-credentials: false
 
       - name: Project approved release notes from exact immutable candidate
-        id: release_notes
         env:
           RETRY_VERSION: ${{ inputs.retry_version }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
         run: |
           set -euo pipefail
           candidate_version="$(node -p "require('./candidate/apps/ui/package.json').version")"
@@ -488,8 +859,7 @@ jobs:
             --component-version "ui=$RETRY_VERSION" \
             --changelog "$GITHUB_WORKSPACE/candidate/apps/ui/CHANGELOG.md" | \
             node --input-type=module -e '
-              import { appendFileSync } from "node:fs";
-              import { createHash } from "node:crypto";
+              import { writeFileSync } from "node:fs";
               let raw = "";
               for await (const chunk of process.stdin) raw += chunk;
               const bundle = JSON.parse(raw);
@@ -498,8 +868,7 @@ jobs:
               }
               const value = bundle.projections?.github?.markdown;
               if (typeof value !== "string") throw new Error("Missing github_markdown projection");
-              const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`github_markdown:${value}`).digest("hex")}`;
-              appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\n${value}\n${delimiter}\n`);
+              writeFileSync(`${process.env.RUNNER_TEMP}/release-notes.md`, value, { mode: 0o600 });
             '
 
       - name: Create scoped release token
@@ -518,11 +887,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
-          RELEASE_MESSAGE: ${{ steps.release_notes.outputs.release_notes_github_markdown }}
         run: |
           set -euo pipefail
           node scripts/pipeline/expo/publish-apk-release.mjs \
             --environment production \
             --retry-version "$RETRY_VERSION" \
             --target-sha "$AUTHORIZED_SHA" \
-            --release-message "$RELEASE_MESSAGE"
+            --release-message-file "$RUNNER_TEMP/release-notes.md"

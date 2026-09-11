@@ -8,29 +8,28 @@ import YAML from 'yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('release-verify workflow exposes and forwards continuity/update release-validation inputs', async () => {
-  const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release-verify.yml'), 'utf8');
+test('release-verify exposes candidate risks and lets one resolver own the concrete suite selection', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release-verify.yml'), 'utf8'));
 
-  for (const inputName of [
+  for (const inputName of ['risk_cli_upgrade', 'risk_session_continuity', 'risk_relay_upgrade']) {
+    assert.equal(workflow.on.workflow_dispatch.inputs[inputName].default, false);
+    assert.equal(workflow.on.workflow_dispatch.inputs[inputName].type, 'boolean');
+    assert.equal(workflow.on.workflow_call.inputs[inputName].default, false);
+    assert.equal(workflow.on.workflow_call.inputs[inputName].type, 'boolean');
+  }
+  for (const inputName of ['include_validation_suites', 'waive_validation_suites']) {
+    assert.equal(workflow.on.workflow_dispatch.inputs[inputName].default, '');
+    assert.equal(workflow.on.workflow_call.inputs[inputName].default, '');
+  }
+  for (const outputName of [
     'run_cli_update_continuity',
     'run_daemon_continuity',
     'run_session_continuity',
     'run_release_assets_docker',
   ]) {
-    assert.match(
-      raw,
-      new RegExp(`${inputName}:\\n\\s+description: "Verify — .*"\\n\\s+required: true\\n\\s+default: true\\n\\s+type: boolean`),
-      `release-verify workflow_dispatch should expose ${inputName} with a release-verification default`,
-    );
-    assert.match(
-      raw,
-      new RegExp(`${inputName}:\\n\\s+required: false\\n\\s+default: true\\n\\s+type: boolean`),
-      `release-verify workflow_call should expose ${inputName}`,
-    );
-    assert.match(
-      raw,
-      new RegExp(`${inputName}:\\s*\\$\\{\\{ needs\\.resolve_validation_profile\\.outputs\\.${inputName} \\}\\}`),
-      `release-verify should forward the resolved profile value for ${inputName} into tests.yml`,
+    assert.equal(
+      workflow.jobs.verify.with[outputName],
+      `\${{ needs.resolve_validation_profile.outputs.${outputName} }}`,
     );
   }
 });
@@ -97,7 +96,7 @@ test('release-verify workflow supports dev channel and maps installer channel pe
   );
 });
 
-test('release-verify defaults real platform and service validation on and forwards every gate', async () => {
+test('release-verify does not duplicate CI platform-service gates in post-build verification', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release-verify.yml'), 'utf8');
   const workflow = YAML.parse(raw);
 
@@ -107,22 +106,16 @@ test('release-verify defaults real platform and service validation on and forwar
     'run_self_host_schtasks',
     'run_self_host_daemon',
   ]) {
-    assert.equal(
-      workflow.on.workflow_dispatch.inputs[inputName].default,
-      true,
-      `manual release verification should default ${inputName} on`,
-    );
-    assert.equal(
-      workflow.on.workflow_call.inputs[inputName].default,
-      true,
-      `reusable release verification should default ${inputName} on`,
-    );
+    assert.equal(workflow.on.workflow_dispatch.inputs[inputName], undefined);
+    assert.equal(workflow.on.workflow_call.inputs[inputName], undefined);
     assert.equal(
       workflow.jobs.verify.with[inputName],
       `\${{ needs.resolve_validation_profile.outputs.${inputName} }}`,
-      `release verification should forward the resolved profile value for ${inputName} to the real tests workflow job`,
+      `the canonical resolver should explicitly keep ${inputName} off in post-build verification`,
     );
   }
+  const resolver = workflow.jobs.resolve_validation_profile.steps.find((step) => step.id === 'profile');
+  assert.match(resolver.run, /resolve-validation-plan\.mjs/);
 });
 
 test('release-verify requires and checks the exact candidate and distinct build/publication run identities', async () => {

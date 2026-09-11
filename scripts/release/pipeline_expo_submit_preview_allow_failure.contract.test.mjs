@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
@@ -11,7 +11,7 @@ function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
 }
 
-test('expo submit in public prerelease rings is best-effort for a single platform (does not fail the whole pipeline)', () => {
+test('expo submit attempts every requested prerelease platform but reports any submission failure', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-expo-submit-fail-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
@@ -32,21 +32,26 @@ test('expo submit in public prerelease rings is best-effort for a single platfor
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     EXPO_TOKEN: 'test-token',
+    APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n',
   };
 
   for (const environment of ['preview', 'dev']) {
-    const out = execFileSync(
+    const result = spawnSync(
       process.execPath,
       [
         path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
         '--environment',
         environment,
         '--platform',
-        'android',
+        'all',
       ],
       { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
     );
 
-    assert.match(out, new RegExp(`::warning::Expo submit failed for android in ${environment}`));
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stdout, /NPX .*submit --platform ios/);
+    assert.match(result.stdout, /NPX .*submit --platform android/);
+    assert.match(result.stdout, new RegExp(`::warning::Expo submit failed for ios in ${environment}`));
+    assert.match(result.stdout, new RegExp(`::warning::Expo submit failed for android in ${environment}`));
   }
 });

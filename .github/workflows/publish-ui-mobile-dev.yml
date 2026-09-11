@@ -76,6 +76,7 @@ env:
 
 jobs:
   trusted_ref_guard:
+    timeout-minutes: 240
     name: Trusted workflow ref guard
     permissions:
       contents: read
@@ -98,6 +99,7 @@ jobs:
           esac
 
   release_actor_guard:
+    timeout-minutes: 240
     needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
@@ -118,6 +120,7 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   prepare_ota:
+    timeout-minutes: 240
     name: Prepare exact dev OTA bytes without credentials
     needs: [release_actor_guard]
     if: inputs.publish_ota
@@ -146,7 +149,7 @@ jobs:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -188,6 +191,7 @@ jobs:
           retention-days: 1
 
   publish_ota:
+    timeout-minutes: 240
     name: Publish prepared dev OTA bytes from trusted control
     needs: [release_actor_guard, prepare_ota]
     if: inputs.publish_ota
@@ -209,7 +213,7 @@ jobs:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -252,6 +256,7 @@ jobs:
             --message "$RELEASE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
 
   publish:
+    timeout-minutes: 240
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -281,7 +286,7 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -364,10 +369,14 @@ jobs:
           echo "Triggered UI mobile dev lane: OTA + Android APK rolling release + optional TestFlight submit." >> "$GITHUB_STEP_SUMMARY"
 
   ios_cloud:
+    timeout-minutes: 240
     name: iOS TestFlight submit (dev lane) (cloud, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_cloud'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     environment: release-shared
     continue-on-error: true
     env:
@@ -424,7 +433,7 @@ jobs:
             --preflight-only \
             --secrets-source env
 
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -447,9 +456,10 @@ jobs:
           # Prefer the job-scoped GITHUB_TOKEN over the short-lived GitHub App token.
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs ui-mobile-release \
+          node .testflight-preflight-control/scripts/pipeline/run.mjs ui-mobile-release \
             --environment dev \
             --action native_submit \
             --platform ios \
@@ -459,14 +469,32 @@ jobs:
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
+            --testflight-distribution-mode deferred \
             --release-message "${{ inputs.release_message }}" \
             --secrets-source env
 
+      - name: Dispatch exact TestFlight reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .testflight-preflight-control/scripts/pipeline/expo/dispatch-testflight-reconciliation.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-ref "$GITHUB_REF_NAME" \
+            --source-sha "$(git rev-parse HEAD)" \
+            --environment dev \
+            --profile dev \
+            --build-json "/tmp/eas_build.ios.json"
+
   ios_local:
+    timeout-minutes: 240
     name: iOS TestFlight submit (dev lane) (local, best-effort)
     needs: [release_actor_guard]
     if: inputs.submit_ios_testflight && inputs.eas_builder == 'eas_local'
     runs-on: macos-26
+    permissions:
+      actions: write
+      contents: read
     environment: release-shared
     continue-on-error: true
     env:
@@ -523,7 +551,7 @@ jobs:
             --preflight-only \
             --secrets-source env
 
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack Yarn
         run: |
           set -euo pipefail
           corepack enable
@@ -551,9 +579,10 @@ jobs:
           # Prefer the job-scoped GITHUB_TOKEN over the short-lived GitHub App token.
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          HAPPIER_PIPELINE_REPO_ROOT: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs ui-mobile-release \
+          node .testflight-preflight-control/scripts/pipeline/run.mjs ui-mobile-release \
             --environment dev \
             --action native_submit \
             --platform ios \
@@ -564,5 +593,19 @@ jobs:
             --build-json "/tmp/eas_build.ios.json" \
             --out-dir "dist/ui-mobile" \
             --eas-cli-version "${EAS_CLI_VERSION}" \
+            --testflight-distribution-mode deferred \
             --release-message "${{ inputs.release_message }}" \
             --secrets-source env
+
+      - name: Dispatch exact TestFlight reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .testflight-preflight-control/scripts/pipeline/expo/dispatch-testflight-reconciliation.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow-ref "$GITHUB_REF_NAME" \
+            --source-sha "$(git rev-parse HEAD)" \
+            --environment dev \
+            --profile dev \
+            --build-json "/tmp/eas_build.ios.json"
