@@ -310,6 +310,7 @@ export function createHomeLoginAssertionSigningBytesV1(
   const { signatureBase64Url: _signature, ...facts } = input as HomeLoginAssertionV1;
   const parsed = HomeLoginAssertionSigningFactsV1Schema.parse(facts);
   return encodeCanonicalLengthDelimited([
+    ACCOUNT_DIRECTORY_ASSERTION_SIGNING_DOMAIN_V1,
     String(parsed.v),
     parsed.purpose,
     parsed.issuerServerIdentityId,
