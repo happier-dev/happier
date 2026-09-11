@@ -158,7 +158,7 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
     agentId: providerId,
     metadata,
     // No catalog-declared flat slot exists for a contributed Agent; the shared
-    // owner reads the agent-agnostic runtime-descriptor slot instead.
+    // owner reads the generic native-resume identity carrier instead.
     vendorResumeIdField: null,
     linkedSessionCurrentAgent: resolveLinkedSessionCurrentAgent(providerId, contributionRegistry),
   })) {

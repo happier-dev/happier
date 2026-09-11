@@ -123,8 +123,9 @@ function normalizeNonEmptyString(value: unknown): string | null {
  *
  * `null` is the normal answer for a contributed Agent and no longer means its
  * native id is dropped: the identity subscription publishes the id without a
- * flat key and the session-state binding routes it to the agent-agnostic
- * runtime-descriptor slot, which is what the resume readers consult.
+ * flat key and the session-state binding routes it to `nativeResumeIdentityV1`,
+ * which is what the resume readers consult once the descriptor attributes the
+ * identity to the current Agent.
  *
  * (A previous revision also probed `richDefinition.definition.core.resume`.
  * `richDefinition.definition` is a strict `PluginAgentContributionV2` for both
