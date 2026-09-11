@@ -122,6 +122,22 @@ if (false) {
 }
 
 describe('protocol package root exports', () => {
+    it('loads the canonical Action catalog with every registered permission-mediation Action', () => {
+        for (const actionId of [
+            'session.permission.remote.pending.list',
+            'session.permission.remote.respond',
+            'session.permission.remote.grants.list',
+            'session.permission.remote.grants.revoke',
+        ] as const) {
+            expect(protocol.getActionSpec(actionId).id).toBe(actionId);
+        }
+    });
+
+    it('keeps host-private plugin-install decisions out of the public root surface', () => {
+        expect(protocol).not.toHaveProperty('HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD');
+        expect(protocol).not.toHaveProperty('HostPrivatePluginInstallDecisionV1Schema');
+    });
+
     it('exports the canonical qualified connected-Account identity comparator', () => {
         expect(protocol.sameQualifiedConnectedAccountRef)
             .toBe(canonicalSameQualifiedConnectedAccountRef);

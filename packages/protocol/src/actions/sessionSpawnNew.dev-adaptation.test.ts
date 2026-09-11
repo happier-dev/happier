@@ -82,9 +82,9 @@ describe('session.spawn_new dev adaptation', () => {
       ...canonicalInput,
       backendTarget: { kind: 'backend', backendId: 'codex' },
     }],
-    ['secret-bearing environment input', {
+    ['malformed environment variable name', {
       ...canonicalInput,
-      environmentVariables: { API_TOKEN: 'secret' },
+      environmentVariables: { 'not-valid': 'secret' },
     }],
   ])('rejects %s at the canonical boundary', (_label, input) => {
     const spec = getActionSpec('session.spawn_new');

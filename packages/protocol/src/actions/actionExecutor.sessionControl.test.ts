@@ -1121,7 +1121,12 @@ describe('createActionExecutor (session control)', () => {
     const res = await executor.execute(
       'session.spawn_new' as any,
       canonicalSessionSpawnInput,
-      { surface: 'cli', defaultSessionId: null, actionRequestId: 'attempt-1' },
+      {
+        surface: 'cli',
+        authority: 'present_user',
+        defaultSessionId: null,
+        actionRequestId: 'attempt-1',
+      },
     );
 
     expect(res).toMatchObject({
@@ -1460,7 +1465,7 @@ describe('createActionExecutor (session control)', () => {
     const res = await executor.execute(
       'session.permission.respond' as any,
       { sessionId: 's1', decision: 'allow' },
-      { surface: 'cli', defaultSessionId: null },
+      { surface: 'cli', authority: 'present_user', defaultSessionId: null },
     );
 
     expect(res).toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.permission.respond' });
@@ -1687,7 +1692,7 @@ describe('createActionExecutor (session control)', () => {
     const res = await executor.execute(
       'session.user_action.answer' as any,
       { sessionId: 's1', decision: 'approve' },
-      { surface: 'cli', defaultSessionId: null },
+      { surface: 'cli', authority: 'present_user', defaultSessionId: null },
     );
 
     expect(res).toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.user_action.answer' });

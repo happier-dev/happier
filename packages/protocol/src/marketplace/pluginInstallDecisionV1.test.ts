@@ -3,12 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { HostPrivatePluginInstallDecisionV1Schema } from './pluginInstallDecisionV1';
 
 describe('HostPrivatePluginInstallDecisionV1Schema', () => {
-  it('is absent from the protocol root public surface', async () => {
-    const publicProtocol = await import('../index.js');
-    expect(publicProtocol).not.toHaveProperty('HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD');
-    expect(publicProtocol).not.toHaveProperty('HostPrivatePluginInstallDecisionV1Schema');
-  }, 30_000);
-
   it('requires bounded UI-created evidence only for positive decisions', () => {
     expect(HostPrivatePluginInstallDecisionV1Schema.parse({
       v: 1,
