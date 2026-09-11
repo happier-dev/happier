@@ -962,8 +962,11 @@ export async function listDaemonSessions(): Promise<any[]> {
   return result.children || [];
 }
 
-export async function stopDaemonSession(sessionId: string): Promise<StopSessionResult> {
-  const result = await daemonPost('/stop-session', { sessionId });
+export async function stopDaemonSession(
+  sessionId: string,
+  options: DaemonControlRequestOptions = {},
+): Promise<StopSessionResult> {
+  const result = await daemonPost('/stop-session', { sessionId }, options);
   return StopSessionResultSchema.parse(result);
 }
 

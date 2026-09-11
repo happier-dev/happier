@@ -16,8 +16,6 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { 
   listDaemonSessions, 
   stopDaemonSession, 
-  spawnDaemonSession,
-  resolveDaemonSpawnSessionByNonce,
   stopDaemonHttp, 
   notifyDaemonSessionStarted, 
   stopDaemon,
@@ -28,8 +26,11 @@ import { Metadata } from '@/api/types';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { waitForCondition } from '@/testkit/async/waitFor';
-import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
-import { prepareIsolatedDaemonTestHome, type PreparedDaemonTestHome } from './testkit/realIntegration.testkit';
+import {
+  prepareIsolatedDaemonTestHome,
+  spawnDaemonSessionWithResolvedIdentity,
+  type PreparedDaemonTestHome,
+} from './testkit/realIntegration.testkit';
 
 type WaitForOptions = {
   timeoutMs: number;
@@ -78,50 +79,6 @@ function debugIntegrationPreflight(message: string): void {
 
 async function listDaemonSessionsTyped(): Promise<DaemonSessionRecord[]> {
   return (await listDaemonSessions()) as DaemonSessionRecord[];
-}
-
-async function spawnDaemonSessionWithResolvedIdentity(
-  request: SpawnDaemonSessionRequest,
-): Promise<{ success: true; sessionId: string }> {
-  const response = await spawnDaemonSession(request) as {
-    success?: unknown;
-    sessionId?: unknown;
-    spawnNonce?: unknown;
-  };
-  if (response.success !== true) {
-    throw new Error(`daemon spawn failed: ${JSON.stringify(response)}`);
-  }
-  if (typeof response.sessionId === 'string' && response.sessionId.length > 0) {
-    return { success: true, sessionId: response.sessionId };
-  }
-
-  const spawnNonce = typeof response.spawnNonce === 'string' ? response.spawnNonce.trim() : '';
-  if (!spawnNonce) {
-    throw new Error(`accepted daemon spawn did not provide a resolution nonce: ${JSON.stringify(response)}`);
-  }
-
-  let resolvedSessionId: string | null = null;
-  let terminalError: string | null = null;
-  await waitForCondition(async () => {
-    const resolution = await resolveDaemonSpawnSessionByNonce(spawnNonce);
-    if (resolution.status === 'success') {
-      resolvedSessionId = resolution.sessionId;
-      return true;
-    }
-    if (resolution.status === 'error') {
-      terminalError = `${resolution.errorCode}: ${resolution.errorMessage}`;
-      return true;
-    }
-    return false;
-  }, {
-    ...SESSION_CONSISTENCY_WAIT,
-    label: 'accepted daemon spawn identity resolution',
-  });
-
-  if (!resolvedSessionId) {
-    throw new Error(terminalError ?? `daemon spawn identity did not resolve for nonce ${spawnNonce}`);
-  }
-  return { success: true, sessionId: resolvedSessionId };
 }
 
 function startDaemonProcessForStartSync(): ReturnType<typeof spawn> {
@@ -526,6 +483,9 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const response = await spawnDaemonSessionWithResolvedIdentity({
       directory: '/tmp',
       sessionId: 'spawned-test-456',
+    }, {
+      ...SESSION_CONSISTENCY_WAIT,
+      label: 'accepted daemon spawn identity resolution',
     });
 
     expect(response, `spawnDaemonSession(/tmp) response=${JSON.stringify(response)}`).toHaveProperty('success', true);
@@ -585,6 +545,9 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const spawnResponse = await spawnDaemonSessionWithResolvedIdentity({
       directory: '/tmp',
       sessionId: 'daemon-session-bbb',
+    }, {
+      ...SESSION_CONSISTENCY_WAIT,
+      label: 'accepted daemon spawn identity resolution',
     });
 
     // List all sessions
@@ -628,7 +591,10 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
   it('should update session metadata when webhook is called', { timeout: 60_000 }, async () => {
     // Spawn a session
-    const spawnResponse = await spawnDaemonSessionWithResolvedIdentity({ directory: '/tmp' });
+    const spawnResponse = await spawnDaemonSessionWithResolvedIdentity({ directory: '/tmp' }, {
+      ...SESSION_CONSISTENCY_WAIT,
+      label: 'accepted daemon spawn identity resolution',
+    });
 
     // Verify webhook was processed (session ID updated)
     await waitForSessionById(spawnResponse.sessionId, {
@@ -669,7 +635,10 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
       promises.push(
         // Ensure each request is distinct; otherwise the daemon coalesces identical spawn requests
         // to prevent accidental double-spawns (e.g. user double-clicks).
-        spawnDaemonSessionWithResolvedIdentity({ directory: '/tmp', spawnNonce: randomUUID() })
+        spawnDaemonSessionWithResolvedIdentity({ directory: '/tmp', spawnNonce: randomUUID() }, {
+          ...SESSION_CONSISTENCY_WAIT,
+          label: 'accepted daemon spawn identity resolution',
+        })
       );
     }
 
