@@ -80,11 +80,6 @@ import { createSurfaceContextFixture } from '../ui/surfaceContext.fixture.js';
 
 type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['register']>[1];
 
-// This is the source-authoring harness: the public example entry must resolve
-// against the current source SDK rather than an independently built package
-// artifact. Packed-entry proof remains publisher-owned.
-vi.mock('@happier-dev/plugin-sdk', async () => await import('../index.js'));
-
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../../..', import.meta.url));
 const examplesRoot = join(packageRoot, 'examples');

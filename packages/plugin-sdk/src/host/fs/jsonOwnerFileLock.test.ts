@@ -45,7 +45,10 @@ async function raceForLockHeldBy(pid: number): Promise<Readonly<{ ranEffect: boo
     await withJsonOwnerFileLock(
       {
         lockPath,
-        timeoutMs: 300,
+        // This test exercises the liveness decision, not sub-second filesystem
+        // latency. Durable lock publication exceeded 300ms under the full source
+        // lane while the same ESRCH path remained correct in focused runs.
+        timeoutMs: 1_000,
         pollIntervalMs: 10,
         // Deliberately tiny: the mtime fallback must not be what decides this. A parsed owner
         // record is judged by its pid, so only the liveness rule can authorise a reclaim.

@@ -910,7 +910,7 @@ describe('plugin registration scope targets', () => {
         // Reverse order is attempted, the hung newest disposer cannot starve
         // the older cleanup, and the hung step is diagnosed by its identity.
         await expect(scope.dispose()).rejects.toThrow(
-            /'mcp\.servers\/hung' cleanup timed out after 20ms/u,
+            /cleanup for 'mcp\.servers\/hung' timed out after 20ms/u,
         );
         expect(attempts).toEqual(['hung', 'older']);
         expect(hung).toHaveBeenCalledTimes(1);

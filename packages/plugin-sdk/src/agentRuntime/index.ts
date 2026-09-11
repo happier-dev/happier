@@ -156,6 +156,7 @@ export type {
   AgentConnectedAccountRuntimeAuthAdapterResultV1,
   AgentConnectedAccountRuntimeAuthAdapterV1,
   AgentConnectedAccountRuntimeAuthFailureKind,
+  AgentConnectedAccountRuntimeLimitCategoryV1,
   AgentConnectedAccountRuntimeAuthSelectionV1,
   AgentConnectedAccountRuntimeAuthHotApplyInputV1,
   AgentConnectedAccountRuntimeAuthTargetV1,

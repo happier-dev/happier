@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
+import * as mcpProjection from './projections.js';
+
 const MCP_EXPORT_OWNERS = {
     DetectedMcpServerV1: ['../mcp.js', 'DetectedMcpServerV1'],
     DiscoveryWarning: ['../mcp.js', 'McpDiscoveryWarningV1'],
@@ -217,8 +219,8 @@ describe('MCP package-local publication projection', () => {
         }
     }, 120_000);
 
-    it('adds no runtime wrapper or second registry', async () => {
-        expect(Object.keys(await import('./projections.js')))
+    it('adds no runtime wrapper or second registry', () => {
+        expect(Object.keys(mcpProjection))
             .toEqual(['normalizeDetectedMcpServerV1']);
-    }, 45_000);
+    });
 });

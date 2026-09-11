@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     PluginContributionPointProtocolV1Schema,
     rehydratePluginContributionPointSemanticsV1,
@@ -13,26 +13,6 @@ import { parsePluginManifest, type PluginManifest } from '../manifest.js';
 import type { NotificationsService } from '../notifications.js';
 import type { SecretsService } from '../secrets.js';
 import { createPluginTestkit } from '../testing/index.js';
-
-// The examples must consume the current public source entry; publishing the
-// separately emitted package is a staging concern.
-vi.mock('@happier-dev/plugin-sdk', async () => await import('../index.js'));
-vi.mock('@happier-dev/plugin-sdk/browser', async () => await import('../browser/index.js'));
-vi.mock('@happier-dev/plugin-sdk/http', async () => await import('../http.js'));
-vi.mock('@happier-dev/plugin-sdk/notifications', async () => await import('../notifications/index.js'));
-vi.mock(
-    '@happier-dev/plugin-sdk/protocol',
-    async () => await import('../protocol/index.js'),
-);
-// The canonical Triage source protocol is deliberately source-only in this
-// fixture. Its public import is resolved by Vitest's source module runner;
-// package publication is proved at the publisher boundary. Keep the protocol
-// outside this package's TypeScript program: its authoring contract is checked
-// by the dedicated Triage source authoring fixture project.
-vi.mock(
-    '@happier-dev/triage-protocol/v1',
-    async () => await vi.importActual('../../../triage-protocol/src/v1/index.ts'),
-);
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url));
 const examplesRoot = join(packageRoot, 'examples');
@@ -61,15 +41,33 @@ type ExampleName =
     | 'triage-source-target'
     | 'triage-source-contributor';
 
+const exampleNames = [
+    'action-contract-consumer',
+    'action-contract-producer',
+    'triage-source-contributor',
+    'triage-source-target',
+] as const satisfies readonly ExampleName[];
+let exampleEntries: ReadonlyMap<ExampleName, ExampleActivationEntry> | undefined;
+
+beforeAll(async () => {
+    exampleEntries = new Map(await Promise.all(exampleNames.map(async (name) => {
+        const imported = await import(pathToFileURL(join(examplesRoot, name, 'src', 'index.ts')).href);
+        const entry = imported as Partial<ExampleActivationEntry>;
+        if (!entry.manifest || typeof entry.activate !== 'function') {
+            throw new TypeError(`targeted_contribution_${name}_missing_activation`);
+        }
+        return [name, entry as ExampleActivationEntry] as const;
+    })));
+});
+
 async function loadExample(
     name: ExampleName,
 ): Promise<ExampleActivationEntry> {
-    const imported = await import(pathToFileURL(join(examplesRoot, name, 'src', 'index.ts')).href);
-    const entry = imported as Partial<ExampleActivationEntry>;
-    if (!entry.manifest || typeof entry.activate !== 'function') {
-        throw new TypeError(`targeted_contribution_${name}_missing_activation`);
+    const entry = exampleEntries?.get(name);
+    if (entry === undefined) {
+        throw new Error(`targeted_contribution_${name}_fixture_not_preloaded`);
     }
-    return entry as ExampleActivationEntry;
+    return entry;
 }
 
 function expectTriageSourcePointSemantics(

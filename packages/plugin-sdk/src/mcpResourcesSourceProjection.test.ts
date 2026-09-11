@@ -4,6 +4,9 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
+import * as mcpProjection from './mcp/index.js';
+import * as resourcesProjection from './resources.js';
+
 const MCP_DTO_EXPORTS = [
     'McpAnnotations',
     'McpBlobResourceContents',
@@ -208,8 +211,8 @@ describe('pre-publication MCP and resources source projections', () => {
         );
     }, 45_000);
 
-    it('keeps resources type-only and exposes only the approved MCP normalization value', async () => {
-        expect(Object.keys(await import('./resources.js'))).toEqual([]);
-        expect(Object.keys(await import('./mcp/index.js'))).toEqual(['normalizeDetectedMcpServerV1']);
-    }, 45_000);
+    it('keeps resources type-only and exposes only the approved MCP normalization value', () => {
+        expect(Object.keys(resourcesProjection)).toEqual([]);
+        expect(Object.keys(mcpProjection)).toEqual(['normalizeDetectedMcpServerV1']);
+    });
 });

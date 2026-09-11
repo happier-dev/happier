@@ -20,7 +20,6 @@
     "examples/tracked-action": "advanced-public-preview",
     "examples/triage-source-target": "advanced-public-preview",
     "examples/triage-source-contributor": "advanced-public-preview",
-    "fixtures/action-contract-composition": "conformance-reference",
     "fixtures/authoring-inference": "inference-fixture",
     "fixtures/external-targeted-packages": "conformance-reference"
   }

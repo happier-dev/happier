@@ -146,7 +146,7 @@ if (false) {
       runtime: { kind: 'custom' },
       primary: 'executionRuns',
       capabilities: {
-        executionRuns: { open: ['create'], checkpoint: false, stop: true },
+        executionRuns: { open: ['create' as const], checkpoint: false, stop: true },
       },
     },
   };
@@ -196,13 +196,13 @@ if (false) {
   void customWithoutPrimary;
 
   const mismatchedPrimaryCapability: PluginAgentDefinition = {
-    // @ts-expect-error The sessions primary requires the matching sessions capability.
     declaration: {
       title: 'Mismatched Agent',
       runtime: { kind: 'custom' },
       primary: 'sessions',
       capabilities: {
-        executionRuns: { open: ['create'], checkpoint: false, stop: true },
+        // @ts-expect-error The sessions primary requires the matching sessions capability.
+        executionRuns: { open: ['create' as const], checkpoint: false, stop: true },
       },
     },
     factory: executionRuntime,

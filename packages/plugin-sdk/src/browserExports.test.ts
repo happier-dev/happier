@@ -603,7 +603,6 @@ describe('browser-safe package exports', () => {
             id.includes('node:')
             || id.includes('__vite-browser-external')
             || id.includes('/crypto/accountScopedCipher.')
-            || id.includes('/crypto/canonicalDigest.')
             || id.includes('/plugins/data/collectionsV1.')
             || id.includes('/machines/identity/installationIdentity.')
             || id.includes('/tweetnacl/')

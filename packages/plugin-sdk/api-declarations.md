@@ -46770,10 +46770,20 @@ Declared by `dist/protocol/composerReferenceResolution.d.ts` as `ProtocolCompose
 
 ```ts
 const ProtocolComposerReferenceResolutionV1Schema: Readonly<{
-    parse(value: unknown): ComposerReferenceResolutionV1;
+    parse(value: unknown): Readonly<{
+        id: string;
+        label: string;
+        description?: string;
+        context: string;
+    }>;
     safeParse(value: unknown): Readonly<{
         success: true;
-        data: ComposerReferenceResolutionV1;
+        data: Readonly<{
+            id: string;
+            label: string;
+            description?: string;
+            context: string;
+        }>;
     }> | Readonly<{
         success: false;
         error: unknown;
