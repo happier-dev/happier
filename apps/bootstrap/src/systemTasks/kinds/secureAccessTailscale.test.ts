@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createSecureAccessTailscaleHandler } from './secureAccessTailscale.js';
+
 const tailscaleMocks = vi.hoisted(() => ({
     runTailscaleStatusJson: vi.fn(),
     runTailscaleServeStatus: vi.fn(),
@@ -68,7 +70,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('installs missing tailscale before continuing through the existing secure-access flow', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
         let inspectCalls = 0;
         const ensureInstalled = vi.fn(async () => ({
             outcome: 'ready' as const,
@@ -138,11 +139,9 @@ describe('createSecureAccessTailscaleHandler', () => {
             shareableHttpsUrl: 'https://relay.tailf00.ts.net',
             requiresApproval: null,
         });
-    }, 25_000);
+    });
 
     it('delegates the secure-access serve enable step to the relay-access tailscaleServe provider', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         const abortController = new AbortController();
         const configure = vi.fn(async () => ({
             state: 'enabled' as const,
@@ -210,11 +209,9 @@ describe('createSecureAccessTailscaleHandler', () => {
             serveEnabled: true,
             requiresApproval: null,
         }));
-    }, 15_000);
+    });
 
     it('delegates the secure-access enable step to the relay-access tailscaleFunnel provider when requested', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         const configure = vi.fn(async () => ({
             state: 'enabled' as const,
             shareUrl: 'https://relay.tailf00.ts.net',
@@ -263,11 +260,9 @@ describe('createSecureAccessTailscaleHandler', () => {
             serveEnabled: true,
             requiresApproval: null,
         }));
-    }, 15_000);
+    });
 
     it('appends the serve path to the relay access share URL', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
             descriptor: {
                 id: 'tailscaleServe',
@@ -301,8 +296,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('polls for serve approval and completes when the expected https URL becomes available', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         relayAccessMocks.getRelayAccessProvider.mockReturnValue({
             descriptor: {
                 id: 'tailscaleServe',
@@ -371,7 +364,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('stops serve approval polling at the wall-clock deadline when status checks are slow', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
         const previousPollTimeoutMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS;
         const previousPollIntervalMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS;
         let fakeNow = 0;
@@ -455,7 +447,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('passes the remaining approval poll budget into each status inspection', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
         const previousPollTimeoutMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS;
         const previousPollIntervalMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS;
         let fakeNow = 0;
@@ -541,7 +532,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('uses one approval poll deadline across readiness and relay provider status commands', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
         const previousPollTimeoutMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_TIMEOUT_MS;
         const previousPollIntervalMs = process.env.HAPPIER_TAILSCALE_APPROVAL_POLL_INTERVAL_MS;
         let fakeNow = 0;
@@ -615,8 +605,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('emits a structured needsUserAction prompt when tailscale login requires opening a URL', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         tailscaleMocks.runTailscaleStatusJson
             .mockResolvedValueOnce({
                 backendState: 'NeedsLogin',
@@ -686,8 +674,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('uses the SSH relay host target for Tailscale readiness inspection and relay-access configuration', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         const remoteRunCommand = vi.fn(async () => ({
             command: 'tailscale',
             args: ['status', '--json'],
@@ -803,8 +789,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('prompts for manual install when an SSH relay host is missing tailscale', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         tailscaleMocks.runTailscaleStatusJson.mockRejectedValue(new Error('tailscale cli not found'));
         const remoteRunCommand = vi.fn(async () => ({
             command: 'sh',
@@ -866,8 +850,6 @@ describe('createSecureAccessTailscaleHandler', () => {
     });
 
     it('rejects malformed relay host targets instead of silently falling back to local execution', async () => {
-        const { createSecureAccessTailscaleHandler } = await import('./secureAccessTailscale.js');
-
         const handler = createSecureAccessTailscaleHandler({
             inspectState: vi.fn(async () => ({
                 installed: true,

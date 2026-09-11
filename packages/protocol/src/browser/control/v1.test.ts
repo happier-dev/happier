@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import * as mod from '../index.js';
 
 describe('browser control protocol v1', () => {
-  it('accepts browser navigation commands and rejects shell-only address input commands', async () => {
-    const mod = await import('../index.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('accepts browser navigation commands and rejects shell-only address input commands', () => {
     expect(mod.BrowserCommandV1Schema.safeParse({
       kind: 'openView',
       commandId: 'command_1',
@@ -40,12 +36,7 @@ describe('browser control protocol v1', () => {
     }).success).toBe(false);
   });
 
-  it('rejects non-http navigation URLs at the control boundary', async () => {
-    const mod = await import('../index.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
+  it('rejects non-http navigation URLs at the control boundary', () => {
     expect(mod.BrowserCommandV1Schema.safeParse({
       kind: 'navigate',
       commandId: 'command_1',
@@ -55,12 +46,8 @@ describe('browser control protocol v1', () => {
     }).success).toBe(false);
   });
 
-  it('accepts typed command dispatch results and rejects malformed failures', async () => {
-    const mod = await import('../index.js').catch(() => null);
-
-    expect(mod).not.toBeNull();
-    expect(mod?.BrowserCommandDispatchResultV1Schema).toBeTypeOf('object');
-    if (!mod?.BrowserCommandDispatchResultV1Schema) return;
+  it('accepts typed command dispatch results and rejects malformed failures', () => {
+    expect(mod.BrowserCommandDispatchResultV1Schema).toBeTypeOf('object');
 
     expect(mod.BrowserCommandDispatchResultV1Schema.parse({
       v: 1,

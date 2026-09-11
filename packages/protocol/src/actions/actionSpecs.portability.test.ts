@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { getActionSpec } from './actionSpecs.js';
+import {
+  ExternalSessionOperationStatusInputV1Schema,
+} from '../sessions/external/operationActionSchemasV1.js';
+
 vi.mock('../sessions/external/operationActionsV1.js', () => {
   throw new Error(
     'ActionSpec registry initialized the mixed External Sessions operation owner',
@@ -13,14 +18,9 @@ vi.mock('../machines/peer/mediation/stream/index.js', () => {
 });
 
 describe('ActionSpec registry portability', () => {
-  it('initializes without evaluating mixed socket, persistence, or transport owners', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
-    const {
-      ExternalSessionOperationStatusInputV1Schema,
-    } = await import('../sessions/external/operationActionSchemasV1.js');
-
+  it('initializes without evaluating mixed socket, persistence, or transport owners', () => {
     const spec = getActionSpec('sessions.external.operation.status.get');
     expect(spec.id).toBe('sessions.external.operation.status.get');
     expect(spec.inputSchema).toBe(ExternalSessionOperationStatusInputV1Schema);
-  }, 30_000);
+  });
 });

@@ -21,7 +21,7 @@ describe('Session creation source import order', () => {
     expect(spawn.SessionAuthoringCheckoutCreationDraftV1Schema).toBeDefined();
     expect(spawn.SessionServerStartSpawnDraftV1Schema).toBeDefined();
     expect(preparation.SessionCreationTargetPreparationRequestV1Schema).toBeDefined();
-  });
+  }, 30_000);
 
   it('initializes the Automation recipe graph after creation schemas', async () => {
     vi.resetModules();
@@ -29,5 +29,5 @@ describe('Session creation source import order', () => {
     expect(spawn.SessionAuthoringCheckoutCreationDraftV1Schema).toBeDefined();
     expect(spawn.SessionServerStartSpawnDraftV1Schema).toBeDefined();
     expect(preparation.SessionCreationTargetPreparationRequestV1Schema).toBeDefined();
-  });
+  }, 30_000);
 });

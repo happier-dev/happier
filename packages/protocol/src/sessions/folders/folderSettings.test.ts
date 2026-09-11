@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../../index.js';
+import * as sessions from '@happier-dev/protocol/sessions';
 
 const protocolExports = protocol as Record<string, unknown>;
 
@@ -13,12 +14,10 @@ function getSchema(name: 'SessionFoldersV1Schema' | 'SessionFolderV1Schema') {
 }
 
 describe('session folder settings schemas', () => {
-  it('exports folder settings through the canonical sessions subpath', async () => {
-    const sessions = await import('@happier-dev/protocol/sessions');
-
+  it('exports folder settings through the canonical sessions subpath', () => {
     expect(typeof sessions.SessionFoldersV1Schema.safeParse).toBe('function');
     expect(typeof sessions.SetSessionFolderAssignmentRequestSchema.safeParse).toBe('function');
-  }, 30_000);
+  });
 
   it('parses a remote-dev-compatible sessionFoldersV1 fixture', () => {
     const schema = getSchema('SessionFoldersV1Schema');
