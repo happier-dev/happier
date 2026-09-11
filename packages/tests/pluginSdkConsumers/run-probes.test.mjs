@@ -79,6 +79,18 @@ function createSyntheticInventory(
           default: './dist/host/fs/jsonOwnerFileLock.js',
         },
       },
+      {
+        specifier: './host/ui',
+        sourceModule: 'src/host/ui/index.ts',
+        visibility: 'host',
+        realm: 'any',
+        conditions: {
+          types: './dist/host/ui/index.d.ts',
+          browser: './dist/host/ui/index.js',
+          'react-native': './dist/host/ui/index.js',
+          default: './dist/host/ui/index.js',
+        },
+      },
     ],
     symbols: [
       ...authorSymbols.map(([exportName, kind]) => ({
@@ -90,7 +102,11 @@ function createSyntheticInventory(
         realm: 'any',
       })),
       ...[
+        ['createExecutionRunHostBackendFromSessionRuntime', 'value'],
+        ['createPluginActionHandlerNotStartedError', 'value'],
         ['createPluginRegistrationScope', 'value'],
+        ['readPluginActionInputParser', 'value'],
+        ['readPluginActionResultParser', 'value'],
         ['PluginRegistrationRight', 'type'],
         ['PluginAgentRuntimeRegistration', 'type'],
         ['PluginRuntimeRegistration', 'type'],
@@ -113,6 +129,20 @@ function createSyntheticInventory(
         sourceExport: exportName,
         realm: 'daemon',
       })),
+      ...[
+        ['decodePluginUiClipboardReadResult', 'value'],
+        ['decodePluginUiConfirmResult', 'value'],
+        ['decodePluginUiResourceContent', 'value'],
+        ['encodePluginUiDiagnostic', 'value'],
+        ['PluginUiHostApiDecodeResult', 'type'],
+      ].map(([exportName, kind]) => ({
+        specifier: './host/ui',
+        exportName,
+        kind,
+        sourceModule: 'src/host/ui/hostApiCodecs.ts',
+        sourceExport: exportName,
+        realm: 'any',
+      })),
     ],
   };
 }
@@ -123,7 +153,11 @@ async function writeSyntheticPackedSdk(
   {
     authorDeclaration = 'export type InventoryOnlyName = string;\n',
     registrationDeclaration = [
+      'export declare function createExecutionRunHostBackendFromSessionRuntime(): unknown;',
+      'export declare function createPluginActionHandlerNotStartedError(): unknown;',
       'export declare function createPluginRegistrationScope(): unknown;',
+      'export declare function readPluginActionInputParser(): unknown;',
+      'export declare function readPluginActionResultParser(): unknown;',
       'export interface PluginRegistrationRight {}',
       'export interface PluginAgentRuntimeRegistration {}',
       'export interface PluginRuntimeRegistration {}',
@@ -132,6 +166,14 @@ async function writeSyntheticPackedSdk(
     fileLockDeclaration = [
       'export declare function reclaimJsonOwnerFileLockSnapshot(): void;',
       'export declare function withJsonOwnerFileLock(): void;',
+      '',
+    ].join('\n'),
+    uiDeclaration = [
+      'export declare function decodePluginUiClipboardReadResult(): unknown;',
+      'export declare function decodePluginUiConfirmResult(): unknown;',
+      'export declare function decodePluginUiResourceContent(): unknown;',
+      'export declare function encodePluginUiDiagnostic(): unknown;',
+      'export interface PluginUiHostApiDecodeResult {}',
       '',
     ].join('\n'),
   } = {},
@@ -149,6 +191,7 @@ async function writeSyntheticPackedSdk(
     ['dist/index.d.ts', authorDeclaration],
     ['dist/host/registration/index.d.ts', registrationDeclaration],
     ['dist/host/fs/jsonOwnerFileLock.d.ts', fileLockDeclaration],
+    ['dist/host/ui/index.d.ts', uiDeclaration],
   ]) {
     if (declaration === null) continue;
     const targetPath = join(fixtureRoot, relativePath);
@@ -771,7 +814,11 @@ test('packed declaration classification rejects wrong host symbol kind', async (
     const contract = await probeHarness.readCanonicalAuthorSurfaceInventory(inventoryPath);
     await writeSyntheticPackedSdk(fixtureRoot, contract, {
       registrationDeclaration: [
+        'export declare function createExecutionRunHostBackendFromSessionRuntime(): unknown;',
+        'export declare function createPluginActionHandlerNotStartedError(): unknown;',
         'export type createPluginRegistrationScope = () => unknown;',
+        'export declare function readPluginActionInputParser(): unknown;',
+        'export declare function readPluginActionResultParser(): unknown;',
         'export interface PluginRegistrationRight {}',
         'export interface PluginAgentRuntimeRegistration {}',
         'export interface PluginRuntimeRegistration {}',

@@ -4001,6 +4001,7 @@ fi
 init_daemon_diagnostic_placeholders
 
 echo "[wsrepl-qa] ensure VM exists + port forwarding (reuse-first)..."
+FAILURE_STAGE="ensure_vm"
 {
   echo "date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   echo "vm: ${VM_NAME}"
@@ -4008,6 +4009,7 @@ echo "[wsrepl-qa] ensure VM exists + port forwarding (reuse-first)..."
   echo "lima_yaml: ${LIMA_YAML}"
   ensure_vm_ready
 } 2>&1 | tee "${REPORT_ROOT}/ensure-vm.log"
+FAILURE_STAGE=""
 
 wsrepl_vm_direct_peer_bind_port="$(resolve_wsrepl_vm_direct_peer_bind_port_for_vm "${VM_NAME}")"
 ensure_vm_direct_peer_port_forwarding "${wsrepl_vm_direct_peer_bind_port}"
@@ -4018,6 +4020,7 @@ if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
     extra_root="${REPORT_ROOT}/vms/${safe_extra_vm}"
     mkdir -p "${extra_root}"
     echo "[wsrepl-qa] ensure additional VM exists + port forwarding (reuse-first): ${extra_vm}"
+    FAILURE_STAGE="ensure_vm"
     (
       VM_NAME="${extra_vm}"
       LIMA_HOME_DIR="${LIMA_HOME:-${HOME}/.lima}"
@@ -4027,6 +4030,7 @@ if [[ "${#EXTRA_VM_NAMES[@]}" -gt 0 ]]; then
       extra_vm_direct_peer_bind_port="$(resolve_wsrepl_vm_direct_peer_bind_port_for_vm "${VM_NAME}")"
       ensure_vm_direct_peer_port_forwarding "${extra_vm_direct_peer_bind_port}"
     ) 2>&1 | tee "${extra_root}/ensure-vm.log"
+    FAILURE_STAGE=""
 
     # Best-effort: seed any provider fixtures needed by the Playwright matrix.
     (

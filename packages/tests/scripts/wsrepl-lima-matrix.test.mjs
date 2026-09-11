@@ -1,8 +1,9 @@
 import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, writeFile, chmod, readdir, stat, realpath, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -17,6 +18,27 @@ if (process.env.WSREPL_QA_HOST_DIRECT_PEER_VM_CONNECTIVITY_CHECK === undefined) 
 
 if (process.env.WSREPL_QA_SKIP_HOST_PROVIDER_INSTALL === undefined) {
   process.env.WSREPL_QA_SKIP_HOST_PROVIDER_INSTALL = '1';
+}
+
+if (process.env.HSTACK_PROVISION_PROFILE === undefined) {
+  // These tests execute stubbed Lima guest commands on the host. Keep fresh-VM setup harmless;
+  // provisioning behavior itself is covered by lima-vm.test.mjs.
+  process.env.HSTACK_PROVISION_PROFILE = 'bare';
+}
+
+// The matrix fixtures explicitly provide every Happier identity they exercise. Do not let the
+// developer's active stack override cases that intentionally omit one of these inputs.
+for (const name of ['HAPPIER_SERVER_URL', 'HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']) {
+  delete process.env[name];
+}
+
+// Stubbed `limactl shell` implementations execute guest commands on the host. Remove PATH entries
+// that would make a deliberately missing guest CLI resolve to the developer's ambient installation.
+if (process.env.PATH !== undefined) {
+  process.env.PATH = process.env.PATH
+    .split(delimiter)
+    .filter((entry) => !['happier', 'happier.cmd', 'happier.exe'].some((name) => existsSync(join(entry, name))))
+    .join(delimiter);
 }
 
 const test = (name, options, fn) => {
@@ -1992,12 +2014,14 @@ test('macos wsrepl lima matrix wrapper defaults host happier source to stack run
   const binDir = join(root, 'bin');
   const homeDir = join(root, 'home');
   const reportDir = join(root, 'reports');
+  const failedReportDir = join(root, 'failed-reports');
   const logDir = join(root, 'logs');
   const limaHome = join(homeDir, '.lima');
 
   await mkdir(binDir, { recursive: true });
   await mkdir(homeDir, { recursive: true });
   await mkdir(reportDir, { recursive: true });
+  await mkdir(failedReportDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
 
   const nodeLog = join(logDir, 'node.log');
@@ -2114,7 +2138,11 @@ test('macos wsrepl lima matrix wrapper defaults host happier source to stack run
       'EOF',
       '    exit 0',
       '    ;;',
-      '  stop|start|list|info)',
+      '  start)',
+      '    if [[ "${WSREPL_QA_TEST_FAIL_VM_START:-0}" == "1" ]]; then exit 41; fi',
+      '    exit 0',
+      '    ;;',
+      '  stop|list|info)',
       '    exit 0',
       '    ;;',
       '  shell)',
@@ -2207,6 +2235,25 @@ test('macos wsrepl lima matrix wrapper defaults host happier source to stack run
 
   const resolved = JSON.parse(await readFile(join(reportDir, 'daemon', 'host.happier.resolve.json'), 'utf8'));
   assert.equal(resolved.hostHappierKind, 'stack_runtime');
+
+  const ensureLog = await readFile(join(reportDir, 'ensure-vm.log'), 'utf8');
+  assert.match(ensureLog, /provisioning fresh guest \(bare\)/);
+  assert.doesNotMatch(ensureLog, /\bsudo\b/);
+
+  const failedRes = spawnSync('bash', [scriptPath, 'happy-wsrepl'], {
+    cwd: root,
+    env: {
+      ...env,
+      WSREPL_QA_OUTPUT_DIR: failedReportDir,
+      WSREPL_QA_FORCE_VM_RECONFIGURE: '1',
+      WSREPL_QA_TEST_FAIL_VM_START: '1',
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(failedRes.status, 41, `expected VM start failure\nstdout:\n${failedRes.stdout}\nstderr:\n${failedRes.stderr}`);
+  const failedSummary = JSON.parse(await readFile(join(failedReportDir, 'summary.json'), 'utf8'));
+  assert.equal(failedSummary.failureStage, 'ensure_vm');
 });
 
 test('macos wsrepl lima matrix watchdog probes daemon status using stack-scoped cli home', async () => {

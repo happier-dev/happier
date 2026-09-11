@@ -65,7 +65,12 @@ test('packages/tests stress compose scripts use the node-safe tsx entrypoint run
   );
   assert.match(
     String(packageJson?.scripts?.test ?? ''),
+    /\bhstack-exec\b.*--script=test:local\b/,
+    'expected the default package test lane to delegate through the stack-safe local test entrypoint',
+  );
+  assert.match(
+    String(packageJson?.scripts?.['test:local'] ?? ''),
     /\btest:scripts:self\b/,
-    'expected the default package test lane to include the script self-test lane',
+    'expected the local package test lane to include the script self-test lane',
   );
 });

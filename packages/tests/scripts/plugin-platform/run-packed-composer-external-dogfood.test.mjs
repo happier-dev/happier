@@ -148,6 +148,7 @@ test('Composer dogfood installs its exact pair and declared external dependencie
       '@types/react': '77.6.0',
       '@types/node': '77.7.0',
       '@typescript/native': 'npm:typescript@77.8.0',
+      typescript: '77.8.1',
       '@callstack/repack': '77.9.0',
       '@react-native-community/cli': '77.10.0',
       '@rspack/core': '77.11.0',
