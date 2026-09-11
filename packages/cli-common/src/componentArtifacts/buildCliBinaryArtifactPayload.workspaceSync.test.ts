@@ -314,7 +314,9 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         const compileObservedContents: string[] = [];
         const compileObservedExternals: string[][] = [];
         const prebuiltManagedRuntimePath = join(repoRoot, 'prebuilt', 'happier-cliproxyapi-managed');
+        const prebuiltProcessCustodyRuntimePath = join(repoRoot, 'prebuilt', 'happier-process-custody');
         await writeRepoFile(prebuiltManagedRuntimePath, 'signed managed runtime\n', older);
+        await writeRepoFile(prebuiltProcessCustodyRuntimePath, 'signed process custody runtime\n', older);
         await writeRepoFile(
             join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'CLIProxyAPI-LICENSE'),
             'CLIProxyAPI license\n',
@@ -336,6 +338,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             payloadDir,
             externals: ['fixture-external', 'pino', 'fixture-external'],
             cliProxyApiManagedRuntimeExecutablePath: prebuiltManagedRuntimePath,
+            processCustodyRuntimeExecutablePath: prebuiltProcessCustodyRuntimePath,
             ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => ({
                 ok: true,
                 built: [],
@@ -540,7 +543,9 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         }> = [];
         const compiledEntrypoints: string[] = [];
         const prebuiltManagedRuntimePath = join(repoRoot, 'prebuilt', 'happier-cliproxyapi-managed');
+        const prebuiltProcessCustodyRuntimePath = join(repoRoot, 'prebuilt', 'happier-process-custody');
         await writeRepoFile(prebuiltManagedRuntimePath, 'signed managed runtime\n', older);
+        await writeRepoFile(prebuiltProcessCustodyRuntimePath, 'signed process custody runtime\n', older);
         await writeRepoFile(
             join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'CLIProxyAPI-LICENSE'),
             'CLIProxyAPI license\n',
@@ -565,6 +570,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
                 repoRoot,
                 payloadDir,
                 cliProxyApiManagedRuntimeExecutablePath: prebuiltManagedRuntimePath,
+                processCustodyRuntimeExecutablePath: prebuiltProcessCustodyRuntimePath,
                 ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => ({
                     ok: true,
                     built: [],

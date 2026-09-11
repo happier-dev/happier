@@ -80,6 +80,13 @@ function writeCliProxyApiManagedRuntimeFixture(repoRoot, target) {
   return executablePath;
 }
 
+function writeProcessCustodyRuntimeFixture(repoRoot, target) {
+  const executablePath = join(repoRoot, '.test-fixtures', `happier-process-custody${target.exeExt}`);
+  mkdirSync(join(executablePath, '..'), { recursive: true });
+  writeFileSync(executablePath, 'process custody runtime fixture\n', 'utf8');
+  return executablePath;
+}
+
 function writeCliArtifactFixtures(repoRoot) {
   const cliDir = join(repoRoot, 'apps', 'cli');
   const cliScriptsDir = join(repoRoot, 'apps', 'cli', 'scripts');
@@ -245,6 +252,7 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
     const target = resolveHostCliBinaryTarget(artifacts);
     const executableName = artifacts.resolveExecutableName({ baseName: 'happier', target });
     const cliProxyApiManagedRuntimeExecutablePath = writeCliProxyApiManagedRuntimeFixture(repoRoot, target);
+    const processCustodyRuntimeExecutablePath = writeProcessCustodyRuntimeFixture(repoRoot, target);
 
     let releaseFirstBuild = null;
     const firstBuildRelease = new Promise((resolve) => {
@@ -275,6 +283,7 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
       payloadDir: payloadDirA,
       target,
       cliProxyApiManagedRuntimeExecutablePath,
+      processCustodyRuntimeExecutablePath,
       commandProbe: () => true,
       runCommand,
       compileBinary,
@@ -285,6 +294,7 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
       payloadDir: payloadDirB,
       target,
       cliProxyApiManagedRuntimeExecutablePath,
+      processCustodyRuntimeExecutablePath,
       commandProbe: () => true,
       runCommand,
       compileBinary,

@@ -187,6 +187,17 @@ function writeCliProxyApiManagedRuntimeFixture(repoRoot, target) {
   return executablePath;
 }
 
+function writeProcessCustodyRuntimeFixture(repoRoot, target) {
+  const executablePath = join(
+    repoRoot,
+    '.test-fixtures',
+    `happier-process-custody${target.exeExt}`,
+  );
+  mkdirSync(join(executablePath, '..'), { recursive: true });
+  writeFileSync(executablePath, 'process custody runtime fixture\n', 'utf8');
+  return executablePath;
+}
+
 function prismaEngineFileNameForFixture({ platform = 'linux', arch = 'x64' } = {}) {
   const key = `${platform}-${arch}`;
   switch (key) {
@@ -488,6 +499,7 @@ test('buildCliBinaryArtifactPayload compiles and finalizes a self-contained runt
       payloadDir,
       target,
       cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+      processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
       commandProbe: () => true,
       runCommand: (cmd, args) => {
         runCalls.push({ cmd, args });
@@ -611,6 +623,7 @@ test('buildCliBinaryArtifactPayload compiles and finalizes a self-contained runt
             payloadDir,
             target,
             cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+            processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
             commandProbe: () => true,
             runCommand: () => {},
             compileBinary: async ({ outfile }) => {
@@ -731,11 +744,13 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
     materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
+    const target = resolveHostCliBinaryTarget(artifacts);
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: resolveHostCliBinaryTarget(artifacts),
-      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, resolveHostCliBinaryTarget(artifacts)),
+      target,
+      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+      processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -841,11 +856,13 @@ test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so la
     writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
+    const target = resolveHostCliBinaryTarget(artifacts);
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: resolveHostCliBinaryTarget(artifacts),
-      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, resolveHostCliBinaryTarget(artifacts)),
+      target,
+      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+      processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
       commandProbe: () => true,
       runCommand: async () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -926,11 +943,13 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
     materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
+    const target = resolveHostCliBinaryTarget(artifacts);
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: resolveHostCliBinaryTarget(artifacts),
-      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, resolveHostCliBinaryTarget(artifacts)),
+      target,
+      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+      processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -1008,11 +1027,13 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
     materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
+    const target = resolveHostCliBinaryTarget(artifacts);
     await artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
-      target: resolveHostCliBinaryTarget(artifacts),
-      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, resolveHostCliBinaryTarget(artifacts)),
+      target,
+      cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+      processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });
@@ -1111,6 +1132,7 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
       payloadDir,
       target,
       cliProxyApiManagedRuntimeExecutablePath: writeCliProxyApiManagedRuntimeFixture(repoRoot, target),
+      processCustodyRuntimeExecutablePath: writeProcessCustodyRuntimeFixture(repoRoot, target),
       commandProbe: () => true,
       runCommand: () => {
         mkdirSync(cliDistDir, { recursive: true });

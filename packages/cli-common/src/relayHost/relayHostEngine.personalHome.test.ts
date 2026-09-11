@@ -33,6 +33,7 @@ describe('RelayHostEngine (Personal Home purpose)', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'linux' });
     try {
+      vi.resetModules();
       vi.doMock('node:os', async () => {
         const actual = await vi.importActual<typeof import('node:os')>('node:os');
         return { ...actual, homedir: () => '/tmp/personal-home-engine-test' };

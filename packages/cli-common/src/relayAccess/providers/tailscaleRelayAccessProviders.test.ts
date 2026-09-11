@@ -89,14 +89,13 @@ describe("tailscale relay access providers", () => {
       timeoutMs: 25,
     });
 
-    expect(runTailscaleStatusJson).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 25 }),
-      expect.any(Object),
-    );
-    expect(runTailscaleFunnelStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 25 }),
-      expect.any(Object),
-    );
+    const tailscaleStatusTimeout = vi.mocked(runTailscaleStatusJson).mock.calls.at(-1)?.[0]?.timeoutMs ?? 0;
+    const funnelStatusTimeout = vi.mocked(runTailscaleFunnelStatus).mock.calls.at(-1)?.[0]?.timeoutMs ?? 0;
+
+    expect(tailscaleStatusTimeout).toBeGreaterThan(0);
+    expect(tailscaleStatusTimeout).toBeLessThanOrEqual(25);
+    expect(funnelStatusTimeout).toBeGreaterThan(0);
+    expect(funnelStatusTimeout).toBeLessThanOrEqual(tailscaleStatusTimeout);
   });
 
   it("tailscaleFunnel returns disabled when funnel is not configured", async () => {

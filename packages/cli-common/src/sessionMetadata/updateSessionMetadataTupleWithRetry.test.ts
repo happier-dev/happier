@@ -414,8 +414,16 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         agent: {
           backendMode: 'native',
           providerSessionId: 'claude-session-private',
-          backendId: 'claude',
-          provenance: 'first_party',
+          agentExtra: {
+            owner: 'happier',
+            schemaId: 'happier.hostSessionRuntimeIdentity',
+            v: 1,
+            runtimeHandle: {
+              backendId: 'claude',
+              agentId: 'claude',
+              provenance: 'first_party',
+            },
+          },
         },
       },
     });
@@ -450,8 +458,16 @@ describe('updateSessionMetadataTupleWithRetry', () => {
             v: 1,
             agentId: 'claude',
             agent: {
-              backendId: 'claude',
-              provenance: 'first_party',
+              agentExtra: {
+                owner: 'happier',
+                schemaId: 'happier.hostSessionRuntimeIdentity',
+                v: 1,
+                runtimeHandle: {
+                  backendId: 'claude',
+                  agentId: 'claude',
+                  provenance: 'first_party',
+                },
+              },
             },
           },
         },

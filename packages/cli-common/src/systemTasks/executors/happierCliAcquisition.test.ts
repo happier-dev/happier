@@ -43,6 +43,15 @@ describe('ensureLocalFirstPartyComponentCommand', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'cli-common-cli-acquire-'));
     const happyHomeDir = join(rootDir, '.happier-home');
     const previousCwd = process.cwd();
+    const processEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      HAPPIER_HOME_DIR: happyHomeDir,
+    };
+    delete processEnv.HAPPIER_STACK_REPO_DIR;
+    delete processEnv.HAPPIER_STACK_CLI_ROOT_DIR;
+    for (const envVarName of DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES) {
+      delete processEnv[envVarName];
+    }
 
     const preparePayload = vi.fn(async () => ({
       versionId: '1.2.3',
@@ -66,10 +75,7 @@ describe('ensureLocalFirstPartyComponentCommand', () => {
       const command = await ensureLocalFirstPartyComponentCommand(
         {
           componentId: 'happier-cli',
-          processEnv: {
-            ...process.env,
-            HAPPIER_HOME_DIR: happyHomeDir,
-          },
+          processEnv,
           envVarNames: DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
           releaseRing: 'stable',
         },
@@ -81,10 +87,7 @@ describe('ensureLocalFirstPartyComponentCommand', () => {
 
       const expected = resolveInstalledFirstPartyComponentPaths({
         componentId: 'happier-cli',
-        processEnv: {
-          ...process.env,
-          HAPPIER_HOME_DIR: happyHomeDir,
-        },
+        processEnv,
         releaseRing: 'stable',
       }).binaryPath;
 
