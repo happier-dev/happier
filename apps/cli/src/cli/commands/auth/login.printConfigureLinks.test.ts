@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Settings, StoredCredentials } from '@/persistence';
 import type { ActiveServerStoredTokenValidationResult } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const authAndSetupMachineIfNeededMock = vi.hoisted(() => vi.fn(async () => ({
   machineId: 'm1',
@@ -58,9 +59,12 @@ function createJwtWithSubject(subject: string): string {
   ].join('.');
 }
 
-describe('happier auth login --print-configure-links', () => {
-  const prev = process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
-  const prevWaitTimeout = process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
+describe('happier auth login', () => {
+  const envScope = createEnvKeyScope([
+    'HAPPIER_AUTH_METHOD',
+    'HAPPIER_AUTH_PRINT_CONFIGURE_LINKS',
+    'HAPPIER_AUTH_WAIT_TIMEOUT_MS',
+  ]);
 
   beforeEach(() => {
     // This test relies on per-file module mocks; ensure we never reuse a cached login module
@@ -69,10 +73,7 @@ describe('happier auth login --print-configure-links', () => {
   });
 
   afterEach(() => {
-    if (prev === undefined) delete process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS;
-    else process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS = prev;
-    if (prevWaitTimeout === undefined) delete process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS;
-    else process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = prevWaitTimeout;
+    envScope.restore();
     authAndSetupMachineIfNeededMock.mockReset();
     authAndSetupMachineIfNeededMock.mockResolvedValue({
       machineId: 'm1',
@@ -89,6 +90,68 @@ describe('happier auth login --print-configure-links', () => {
     stopDaemonMock.mockReset();
     isDaemonStopIncompleteErrorMock.mockClear();
     vi.resetModules();
+  });
+
+  it('sets HAPPIER_AUTH_METHOD before running the auth flow', async () => {
+    delete process.env.HAPPIER_AUTH_METHOD;
+    readStoredCredentialsMock.mockResolvedValue({
+      token: 'valid-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+    readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+    let authMethodAtFlowStart: string | undefined;
+    validateStoredAuthTokenAgainstActiveServerMock.mockImplementationOnce(async () => {
+      authMethodAtFlowStart = process.env.HAPPIER_AUTH_METHOD;
+      return { state: 'valid', httpStatus: 200 };
+    });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const { handleAuthLogin } = await import('./login');
+      await handleAuthLogin(['--method', 'web']);
+
+      expect(authMethodAtFlowStart).toBe('web');
+      expect(process.env.HAPPIER_AUTH_METHOD).toBe('web');
+      expect(authAndSetupMachineIfNeededMock).not.toHaveBeenCalled();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('prints a friendly error and exits before auth when --method is invalid', async () => {
+    delete process.env.HAPPIER_AUTH_METHOD;
+
+    class ExitError extends Error {
+      readonly code: number;
+
+      constructor(code: number) {
+        super(`process.exit(${code})`);
+        this.code = code;
+      }
+    }
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
+      throw new ExitError(typeof code === 'number' ? code : 0);
+    }) as typeof process.exit);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const { handleAuthLogin } = await import('./login');
+      let thrown: unknown = null;
+      try {
+        await handleAuthLogin(['--method', 'nope']);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(ExitError);
+      expect((thrown as ExitError).code).toBe(1);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errorSpy.mock.calls[0]?.[0]).toMatch(/Invalid --method/i);
+      expect(authAndSetupMachineIfNeededMock).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('sets HAPPIER_AUTH_PRINT_CONFIGURE_LINKS=1 when flag is present', async () => {
