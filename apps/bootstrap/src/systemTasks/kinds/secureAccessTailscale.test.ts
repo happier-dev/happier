@@ -558,6 +558,7 @@ describe('createSecureAccessTailscaleHandler', () => {
         });
         tailscaleMocks.runTailscaleServeStatus
             .mockResolvedValueOnce('No serve config')
+            .mockResolvedValueOnce('No serve config')
             .mockResolvedValueOnce('https://my-machine.tailnet.ts.net\n|-- / proxy http://127.0.0.1:3005');
         tailscaleMocks.runTailscaleServeEnable.mockResolvedValue({
             approvalUrl: 'https://login.tailscale.com/f/serve?node=node-123',
@@ -585,7 +586,7 @@ describe('createSecureAccessTailscaleHandler', () => {
 
             const readinessPollParams = tailscaleMocks.runTailscaleStatusJson.mock.calls[2]?.[0];
             const providerPollParams = tailscaleMocks.runTailscaleStatusJson.mock.calls[3]?.[0];
-            const servePollParams = tailscaleMocks.runTailscaleServeStatus.mock.calls[1]?.[0];
+            const servePollParams = tailscaleMocks.runTailscaleServeStatus.mock.calls[2]?.[0];
             expect(readinessPollParams?.deadline).toEqual(expect.objectContaining({
                 startedAt: 0,
                 deadlineAt: 25,

@@ -2145,7 +2145,7 @@ describe('createHsetupSystemTaskRegistry', () => {
           stdout: 'To authenticate, visit https://login.tailscale.com/a/example',
         },
       ],
-      serveStatuses: [''],
+      serveStatuses: ['', ''],
       serveEnableOutputs: [
         {
           exitCode: 1,
@@ -2226,6 +2226,7 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['login', '--qr'],
         ['status', '--json'],
         ['status', '--json'],
+        ['serve', 'status'],
         ['serve', 'status'],
         ['serve', '--bg', 'http://127.0.0.1:3005'],
       ]);
