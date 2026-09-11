@@ -151,13 +151,14 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
-  it('keeps Composer media capability negotiation and completed release on the server transfer-control route', async () => {
+  it('keeps Composer media capability negotiation, custody claim, and completed release on the server transfer-control route', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
 
     for (const method of [
       RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1,
+      RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM,
       RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE,
     ]) {
       expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
