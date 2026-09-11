@@ -188,7 +188,7 @@ test('labels public Triage source fixtures as specialist conformance evidence ra
     const readme = normalizedSource(join(exampleRoot, 'README.md'));
     const packageJson = JSON.parse(readFileSync(join(exampleRoot, 'package.json'), 'utf8'));
 
-    assert.match(readme, /held conformance fixture/iu);
+    assert.match(readme, /specialist source example/iu);
     assert.match(readme, /rather than a starter template/u);
     assert.doesNotMatch(readme, /This copyable/u);
     assert.match(packageJson.description, /public Developer Preview fixture/iu);
@@ -220,7 +220,7 @@ test('maps maintained UI references without turning cold-manifest fixtures into 
   const source = normalizedSource(examplesIndexDocPath);
 
   for (const requiredSource of [
-    '`happier plugins create` and `definePlugin(...)` remain the normal authoring path',
+    '`hdev plugins create` and `definePlugin(...)` remain the normal authoring path',
     '`react-native-installed`',
     '`react-native-dev-hot-reload`',
     '`projects-tasks`',
@@ -245,7 +245,7 @@ test('maps maintained UI references without turning cold-manifest fixtures into 
     assert.match(
       source,
       new RegExp(
-        `\\]\\(https://github\\.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/${exampleName}\\)`,
+        `\\]\\(https://github\\.com/happier-dev/happier/tree/v0\\.3/packages/plugin-sdk/examples/${exampleName}\\)`,
         'u',
       ),
     );

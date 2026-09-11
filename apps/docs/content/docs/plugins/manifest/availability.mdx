@@ -22,8 +22,8 @@ by itself prove that the current platform loaded it or that it was published.
 Likewise, `not-recorded` does not infer the opposite state.
 
 At the time this page was generated: **37 of 45 contribution families**,
-**13 of 19 services**, **9 of 13 host-access capabilities**
-and **44 of 45 SDK entrypoints** are available.
+**12 of 19 services**, **9 of 13 host-access capabilities**
+and **45 of 46 SDK entrypoints** are available.
 
 ## Evidence recorded by the capability matrix
 
@@ -38,8 +38,8 @@ and **44 of 45 SDK entrypoints** are available.
 | `browserActions` | `available` | `present` | `packages/plugin-sdk/examples/action-contract-producer/src/index.ts` | `not-recorded` | `not-published` |
 | `browserTargets` | `available` | `present` | `packages/plugin-sdk/examples/action-contract-producer/src/index.ts` | `not-recorded` | `not-published` |
 | `commands` | `deferred` | `present` | — | `not-recorded` | `not-published` |
-| `composerAttachments` | `available` | `present` | `packages/plugins/triage/src/manifest.ts` | `not-recorded` | `not-published` |
-| `composerControls` | `available` | `present` | `packages/plugins/triage/src/manifest.ts` | `not-recorded` | `not-published` |
+| `composerAttachments` | `available` | `present` | `packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs` | `not-recorded` | `not-published` |
+| `composerControls` | `available` | `present` | `packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs` | `not-recorded` | `not-published` |
 | `composerReferences` | `available` | `present` | `packages/plugin-ui/fixtures/external-authoring/src/index.ts` | `not-recorded` | `not-published` |
 | `composerRegions` | `available` | `present` | `packages/plugin-ui/fixtures/external-authoring/src/index.ts` | `not-recorded` | `not-published` |
 | `connectedAccountDescriptors` | `available` | `present` | `packages/plugins/gemini/src/manifest.ts` | `not-recorded` | `not-published` |
@@ -91,7 +91,7 @@ and **44 of 45 SDK entrypoints** are available.
 | `interactions` | `available` | `present` | `packages/plugins/cursor/src/agent/acp/extensions/handlers.ts` | `not-recorded` | `not-published` |
 | `logger` | `available` | `present` | `packages/plugins/pi/src/agent/runtime/engine.ts` | `not-recorded` | `not-published` |
 | `managedServices` | `available` | `present` | `packages/plugins/opencode/src/agent/runtime/server/runtimeContext.ts` | `not-recorded` | `not-published` |
-| `mcp` | `available` | `present` | `packages/plugins/antigravity/src/agent/runtime/nativeSession.ts` | `not-recorded` | `not-published` |
+| `mcp` | `deferred` | `present` | — | `not-recorded` | `not-published` |
 | `notifications` | `deferred` | `present` | — | `not-recorded` | `not-published` |
 | `providers` | `deferred` | `present` | — | `not-recorded` | `not-published` |
 | `resources` | `deferred` | `present` | — | `not-recorded` | `not-published` |
@@ -137,6 +137,7 @@ and **44 of 45 SDK entrypoints** are available.
 | `./events` | `available` | `present` | `packages/plugins/scm-github/src/githubAutomationEventActions.ts` | `not-recorded` | `not-published` |
 | `./exec` | `available` | `present` | `packages/plugins/antigravity/src/agent/cliPrint/nativeExec.ts` | `not-recorded` | `not-published` |
 | `./exec/protocol-clients` | `available` | `present` | `packages/plugins/antigravity/src/agent/localharness/client/handshake.ts` | `not-recorded` | `not-published` |
+| `./first-party/connected-accounts` | `available` | `present` | `packages/plugins/codex/src/connectedAccounts/openAiCodexProfile.ts` | `not-recorded` | `not-published` |
 | `./fs` | `available` | `present` | `packages/plugins/antigravity/src/agent/cliPrint/observation.ts` | `not-recorded` | `not-published` |
 | `./hooks` | `available` | `present` | `packages/plugins/kimi/src/manifest.ts` | `not-recorded` | `not-published` |
 | `./http` | `available` | `present` | `packages/plugins/opencode/src/agent/runtime/server/transport.ts` | `not-recorded` | `not-published` |
@@ -240,7 +241,6 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.interactions` | `InteractionsService` | `./interactions` | invocation-scoped |
 | `context.services.logger` | `LoggerService` | `.` | invocation-scoped |
 | `context.services.managedServices` | `ManagedServices` | `./managed-services` | invocation-scoped |
-| `context.services.mcp` | `McpService` | `./mcp` | invocation-scoped |
 | `context.services.sessions` | `SessionsService` | `./sessions` | invocation-scoped |
 | `context.services.settings` | `SettingsService` | `./settings` | invocation-scoped |
 | `context.services.storage` | `StorageService` | `./storage` | invocation-scoped |
@@ -252,6 +252,7 @@ Reached through `context.services` inside a plugin invocation.
 | --- | --- |
 | `events` | A maintained external development-source plugin proves the EventsService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `fs` | A maintained external development-source plugin proves the FileSystemService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `mcp` | A maintained external development-source plugin proves the root MCP service through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `notifications` | A maintained external development-source plugin proves the NotificationsService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `providers` | A maintained external development-source plugin proves the ProvidersService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `resources` | A maintained external development-source plugin proves the ResourcesService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
