@@ -323,6 +323,14 @@ cat <<'JSON'
     {
       "name": "happier-v${olderVersion}-linux-x64.tar.gz",
       "browser_download_url": "https://example.test/happier-v${olderVersion}-linux-x64.tar.gz"
+    },
+    {
+      "name": "checksums-happier-v${newerVersion}.txt",
+      "browser_download_url": "https://example.test/checksums-happier-v${newerVersion}.txt"
+    },
+    {
+      "name": "checksums-happier-v${olderVersion}.txt",
+      "browser_download_url": "https://example.test/checksums-happier-v${olderVersion}.txt"
     }
   ]
 }
@@ -402,6 +410,14 @@ cat <<'JSON'
     {
       "name": "happier-v${olderVersion}-linux-x64.tar.gz",
       "browser_download_url": "https://example.test/happier-v${olderVersion}-linux-x64.tar.gz"
+    },
+    {
+      "name": "checksums-happier-v${newerVersion}.txt",
+      "browser_download_url": "https://example.test/checksums-happier-v${newerVersion}.txt"
+    },
+    {
+      "name": "checksums-happier-v${olderVersion}.txt",
+      "browser_download_url": "https://example.test/checksums-happier-v${olderVersion}.txt"
     }
   ]
 }

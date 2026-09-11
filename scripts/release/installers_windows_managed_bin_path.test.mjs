@@ -102,9 +102,12 @@ test('install.ps1 accepts an exact CLI version request through parameter or envi
 
   assert.match(raw, /\[string\]\s+\$Version\s*=\s*\$\(if\s*\(\$env:HAPPIER_INSTALL_VERSION\)/i);
   assert.match(raw, /Resolve-InstallerRequestedVersionPattern/i);
-  assert.match(raw, /\$assetPattern\s*=\s*Resolve-InstallerRequestedVersionPattern[\s\S]*happier-v[\s\S]*windows-x64/i);
+  assert.match(raw, /\$assetPattern\s*=\s*if[\s\S]*happier-v\$\{resolvedVersionPattern\}-windows-x64/i);
   assert.match(raw, /\$checksumsPattern\s*=\s*Resolve-InstallerRequestedVersionPattern[\s\S]*checksums-happier-v[\s\S]*\.txt/i);
   assert.doesNotMatch(raw, /\$asset\s*=\s*Resolve-InstallerAsset\s+-Release\s+\$release\s+-Pattern\s+'[\^]happier-v\.\*-windows-x64/i);
+  assert.match(raw, /\$tag\s*=\s*if\s*\(\$Version\)\s*\{\s*"cli-v\$Version"/i);
+  assert.match(raw, /\^happier-windows-x64\\\.tar\\\.gz\$/i);
+  assert.match(raw, /\$checksumAssetName\s*=\s*"happier-v\$resolvedVersion-windows-x64\.tar\.gz"/i);
 });
 
 test('install.ps1 semver-sorts rolling assets and keeps default asset patterns channel-safe', async () => {

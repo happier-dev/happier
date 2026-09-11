@@ -1571,6 +1571,14 @@ resolve_existing_background_service_install_strategy() {
 resolve_release_tag() {
   local product="$1"
   local channel="$2"
+  local version="${3:-}"
+  if [[ -n "${version}" ]]; then
+    case "${product}" in
+      cli|server|stack) echo "${product}-v${version}" ;;
+      *) return 1 ;;
+    esac
+    return
+  fi
   local suffix=""
   suffix="$(rolling_suffix_for_channel "${channel}")" || return 1
   case "${product}" in
@@ -1638,22 +1646,23 @@ action_version() {
   local tag=""
   local default_version_regex=""
   default_version_regex="$(default_release_asset_version_regex "${CHANNEL}")"
-  local asset_regex="^happier-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
   local version_prefix="happier-v"
+  local checksums_prefix="checksums-happier-v"
   if [[ "${PRODUCT}" == "server" ]]; then
-    asset_regex="^happier-server-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
     version_prefix="happier-server-v"
+    checksums_prefix="checksums-happier-server-v"
   fi
   if [[ "${PRODUCT}" == "stack" ]]; then
-    asset_regex="^hstack-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
     version_prefix="hstack-v"
+    checksums_prefix="checksums-hstack-v"
   fi
+  local checksums_regex="^${checksums_prefix}${default_version_regex}[.]txt$"
   if [[ -n "${INSTALL_VERSION}" ]]; then
     local requested_version_regex=""
     requested_version_regex="$(escape_regex_literal "${INSTALL_VERSION}")"
-    asset_regex="^${version_prefix}${requested_version_regex}-${os}-${arch}[.]tar[.]gz$"
+    checksums_regex="^${checksums_prefix}${requested_version_regex}[.]txt$"
   fi
-  tag="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
+  tag="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}" "${INSTALL_VERSION}")" || {
     echo "Unsupported product/channel combination: ${PRODUCT}/${CHANNEL}" >&2
     return 1
   }
@@ -1678,19 +1687,35 @@ action_version() {
       return 1
     fi
   fi
-  local asset_source=""
-  asset_source="$(resolve_release_asset_source "${release_json}" "${asset_regex}" || true)"
-  if [[ -z "${asset_source}" ]]; then
+  local checksums_source=""
+  checksums_source="$(resolve_release_asset_source "${release_json}" "${checksums_regex}" || true)"
+  if [[ -z "${checksums_source}" ]]; then
     echo "Unable to locate release assets for ${os}-${arch} on tag ${tag}." >&2
     return 1
   fi
-  local asset_name=""
-  asset_name="$(basename "${asset_source}")"
+  local checksums_name=""
+  checksums_name="$(basename "${checksums_source}")"
   local version=""
-  version="${asset_name#${version_prefix}}"
-  version="${version%-${os}-${arch}.tar.gz}"
-  if [[ -z "${version}" || "${version}" == "${asset_name}" ]]; then
-    echo "Failed to infer release version from asset name: ${asset_name}" >&2
+  version="${checksums_name#"${checksums_prefix}"}"
+  version="${version%.txt}"
+  if [[ -z "${version}" || "${version}" == "${checksums_name}" ]]; then
+    echo "Failed to infer release version from checksum asset: ${checksums_name}" >&2
+    return 1
+  fi
+  local version_regex=""
+  version_regex="$(escape_regex_literal "${version}")"
+  local versioned_asset_regex="^${version_prefix}${version_regex}-${os}-${arch}[.]tar[.]gz$"
+  local asset_source=""
+  if [[ -z "${INSTALL_VERSION}" && ( "${CHANNEL}" == "stable" || "${CHANNEL}" == "preview" ) ]]; then
+    local rolling_prefix="${version_prefix%v}"
+    local rolling_asset_regex="^${rolling_prefix}${os}-${arch}[.]tar[.]gz$"
+    asset_source="$(resolve_release_asset_source "${release_json}" "${rolling_asset_regex}" || true)"
+  fi
+  if [[ -z "${asset_source}" ]]; then
+    asset_source="$(resolve_release_asset_source "${release_json}" "${versioned_asset_regex}" || true)"
+  fi
+  if [[ -z "${asset_source}" ]]; then
+    echo "Unable to locate release assets for ${os}-${arch} on tag ${tag}." >&2
     return 1
   fi
 
@@ -2487,7 +2512,6 @@ fi
 
 TAG=""
 DEFAULT_VERSION_REGEX="$(default_release_asset_version_regex "${CHANNEL}")"
-ASSET_REGEX="^happier-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
 CHECKSUMS_REGEX="^checksums-happier-v${DEFAULT_VERSION_REGEX}[.]txt$"
 SIG_REGEX="^checksums-happier-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
 EXE_NAME="happier"
@@ -2496,7 +2520,6 @@ VERSION_PREFIX="happier-v"
 CHECKSUMS_PREFIX="checksums-happier-v"
 
 if [[ "${PRODUCT}" == "server" ]]; then
-  ASSET_REGEX="^happier-server-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
   CHECKSUMS_REGEX="^checksums-happier-server-v${DEFAULT_VERSION_REGEX}[.]txt$"
   SIG_REGEX="^checksums-happier-server-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
   EXE_NAME="happier-server"
@@ -2506,7 +2529,6 @@ if [[ "${PRODUCT}" == "server" ]]; then
 fi
 
 if [[ "${PRODUCT}" == "stack" ]]; then
-  ASSET_REGEX="^hstack-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
   CHECKSUMS_REGEX="^checksums-hstack-v${DEFAULT_VERSION_REGEX}[.]txt$"
   SIG_REGEX="^checksums-hstack-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
   EXE_NAME="hstack"
@@ -2517,12 +2539,11 @@ fi
 
 if [[ -n "${INSTALL_VERSION}" ]]; then
   REQUESTED_VERSION_REGEX="$(escape_regex_literal "${INSTALL_VERSION}")"
-  ASSET_REGEX="^${VERSION_PREFIX}${REQUESTED_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
   CHECKSUMS_REGEX="^${CHECKSUMS_PREFIX}${REQUESTED_VERSION_REGEX}[.]txt$"
   SIG_REGEX="^${CHECKSUMS_PREFIX}${REQUESTED_VERSION_REGEX}[.]txt[.]minisig$"
 fi
 
-TAG="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
+TAG="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}" "${INSTALL_VERSION}")" || {
   echo "Unsupported product/channel combination: ${PRODUCT}/${CHANNEL}" >&2
   exit 1
 }
@@ -2555,25 +2576,34 @@ if [[ -z "${RELEASE_ASSETS_DIR}" ]]; then
   fi
 fi
 
-ASSET_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${ASSET_REGEX}" || true)"
-if [[ -z "${ASSET_SOURCE}" ]]; then
+CHECKSUMS_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${CHECKSUMS_REGEX}" || true)"
+if [[ -z "${CHECKSUMS_SOURCE}" ]]; then
   echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${TAG}." >&2
   exit 1
 fi
-
-ASSET_NAME="$(basename "${ASSET_SOURCE}")"
-VERSION="${ASSET_NAME#${VERSION_PREFIX}}"
-VERSION="${VERSION%-${OS}-${ARCH}.tar.gz}"
-if [[ -z "${VERSION}" || "${VERSION}" == "${ASSET_NAME}" ]]; then
-  echo "Failed to infer release version from asset name: ${ASSET_NAME}" >&2
+CHECKSUMS_NAME="$(basename "${CHECKSUMS_SOURCE}")"
+VERSION="${CHECKSUMS_NAME#"${CHECKSUMS_PREFIX}"}"
+VERSION="${VERSION%.txt}"
+if [[ -z "${VERSION}" || "${VERSION}" == "${CHECKSUMS_NAME}" ]]; then
+  echo "Failed to infer release version from checksum asset: ${CHECKSUMS_NAME}" >&2
   exit 1
 fi
 
-CHECKSUMS_REGEX="^${CHECKSUMS_PREFIX}${VERSION}[.]txt$"
-SIG_REGEX="^${CHECKSUMS_PREFIX}${VERSION}[.]txt[.]minisig$"
-CHECKSUMS_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${CHECKSUMS_REGEX}" || true)"
+VERSION_REGEX="$(escape_regex_literal "${VERSION}")"
+CHECKSUM_ASSET_NAME="${VERSION_PREFIX}${VERSION}-${OS}-${ARCH}.tar.gz"
+VERSIONED_ASSET_REGEX="^${VERSION_PREFIX}${VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+ASSET_SOURCE=""
+if [[ -z "${INSTALL_VERSION}" && ( "${CHANNEL}" == "stable" || "${CHANNEL}" == "preview" ) ]]; then
+  ROLLING_PREFIX="${VERSION_PREFIX%v}"
+  ROLLING_ASSET_REGEX="^${ROLLING_PREFIX}${OS}-${ARCH}[.]tar[.]gz$"
+  ASSET_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${ROLLING_ASSET_REGEX}" || true)"
+fi
+if [[ -z "${ASSET_SOURCE}" ]]; then
+  ASSET_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${VERSIONED_ASSET_REGEX}" || true)"
+fi
+SIG_REGEX="^${CHECKSUMS_PREFIX}${VERSION_REGEX}[.]txt[.]minisig$"
 SIG_SOURCE="$(resolve_release_asset_source "${RELEASE_JSON}" "${SIG_REGEX}" || true)"
-if [[ -z "${CHECKSUMS_SOURCE}" || -z "${SIG_SOURCE}" ]]; then
+if [[ -z "${ASSET_SOURCE}" || -z "${SIG_SOURCE}" ]]; then
   echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${TAG}." >&2
   exit 1
 fi
@@ -2592,9 +2622,9 @@ CHECKSUMS_PATH="${TMP_DIR}/checksums.txt"
 stage_release_asset "Downloading release archive" "${ARCHIVE_PATH}" "${ASSET_SOURCE}"
 stage_release_asset "Downloading checksums" "${CHECKSUMS_PATH}" "${CHECKSUMS_SOURCE}"
 
-EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_SOURCE}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
+EXPECTED_SHA="$(grep -F "  ${CHECKSUM_ASSET_NAME}" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
 if [[ -z "${EXPECTED_SHA}" ]]; then
-  echo "Failed to resolve checksum for $(basename "${ASSET_SOURCE}")" >&2
+  echo "Failed to resolve checksum for ${CHECKSUM_ASSET_NAME}" >&2
   exit 1
 fi
 ACTUAL_SHA="$(sha256_file "${ARCHIVE_PATH}")"

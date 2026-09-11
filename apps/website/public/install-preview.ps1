@@ -2472,7 +2472,7 @@ function Resolve-MinisignPublicKey {
   Invoke-InstallerWebRequestWithRetry -Uri $MinisignPubKeyUrl -OutFile $TargetPath
 }
 
-$tag = if ($Channel -eq "preview") { "cli-preview" } elseif ($Channel -eq "publicdev") { "cli-dev" } else { "cli-stable" }
+$tag = if ($Version) { "cli-v$Version" } elseif ($Channel -eq "preview") { "cli-preview" } elseif ($Channel -eq "publicdev") { "cli-dev" } else { "cli-stable" }
 if (-not $ReleaseAssetsDir) {
   Write-Host "Fetching $tag release metadata..."
   try {
@@ -2491,20 +2491,36 @@ if (-not $ReleaseAssetsDir) {
 else {
   $release = $null
 }
-$assetPattern = Resolve-InstallerRequestedVersionPattern -Prefix "happier-v" -Suffix "-windows-x64.tar.gz"
 $checksumsPattern = Resolve-InstallerRequestedVersionPattern -Prefix "checksums-happier-v" -Suffix ".txt"
-$signaturePattern = Resolve-InstallerRequestedVersionPattern -Prefix "checksums-happier-v" -Suffix ".txt.minisig"
-$asset = Resolve-InstallerAsset -Release $release -Pattern $assetPattern
 $checksumsAsset = Resolve-InstallerAsset -Release $release -Pattern $checksumsPattern
-$signatureAsset = Resolve-InstallerAsset -Release $release -Pattern $signaturePattern
-if (-not $asset) {
-  throw "Unable to locate Windows x64 binary on release tag $tag."
-}
 if (-not $checksumsAsset) {
   throw "Unable to locate checksum asset on release tag $tag."
 }
+
+$checksumsName = [string]$checksumsAsset.Name
+$resolvedVersion = $checksumsName -replace '^checksums-happier-v', '' -replace '\.txt$', ''
+if (-not $resolvedVersion -or $resolvedVersion -eq $checksumsName) {
+  throw "Failed to infer release version from checksum asset: $checksumsName"
+}
+$resolvedVersionPattern = [Regex]::Escape($resolvedVersion)
+$signaturePattern = "^checksums-happier-v${resolvedVersionPattern}\.txt\.minisig$"
+$signatureAsset = Resolve-InstallerAsset -Release $release -Pattern $signaturePattern
 if (-not $signatureAsset) {
   throw "Unable to locate minisign signature asset on release tag $tag."
+}
+
+$assetPattern = if (-not $Version -and ($Channel -eq "stable" -or $Channel -eq "preview")) {
+  '^happier-windows-x64\.tar\.gz$'
+}
+else {
+  "^happier-v${resolvedVersionPattern}-windows-x64\.tar\.gz$"
+}
+$asset = Resolve-InstallerAsset -Release $release -Pattern $assetPattern
+if (-not $asset -and -not $Version -and ($Channel -eq "stable" -or $Channel -eq "preview")) {
+  $asset = Resolve-InstallerAsset -Release $release -Pattern "^happier-v${resolvedVersionPattern}-windows-x64\.tar\.gz$"
+}
+if (-not $asset) {
+  throw "Unable to locate Windows x64 binary on release tag $tag."
 }
 
 $script:PostInstallRunStatus = 0
@@ -2521,15 +2537,16 @@ try {
   Copy-OrDownloadInstallerAsset -Source $signatureAsset.Source -DestinationPath $signaturePath
 
   $assetName = [string]$asset.Name
+  $checksumAssetName = "happier-v$resolvedVersion-windows-x64.tar.gz"
   $expectedSha = $null
   foreach ($line in (Get-Content -Path $checksumsPath)) {
-    if ($line -match '^([a-fA-F0-9]{64})\s{2}(.+)$' -and $matches[2] -eq $assetName) {
+    if ($line -match '^([a-fA-F0-9]{64})\s{2}(.+)$' -and $matches[2] -eq $checksumAssetName) {
       $expectedSha = $matches[1].ToLowerInvariant()
       break
     }
   }
   if (-not $expectedSha) {
-    throw "Failed to resolve checksum for $assetName"
+    throw "Failed to resolve checksum for $checksumAssetName"
   }
   $actualSha = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($expectedSha -ne $actualSha) {
@@ -2554,10 +2571,7 @@ try {
   New-Item -ItemType Directory -Path $extractDir | Out-Null
   $tarPath = Resolve-TarExecutablePath
   & $tarPath -xzf $archivePath -C $extractDir
-  $version = $assetName -replace '^happier-v', '' -replace '-windows-x64\.tar\.gz$', ''
-  if (-not $version -or $version -eq $assetName) {
-    throw "Failed to infer release version from asset name: $assetName"
-  }
+  $version = $resolvedVersion
   $payloadRoot = Join-Path $extractDir "happier-v$version-windows-x64"
   if (-not (Test-Path $payloadRoot)) {
     throw "Failed to locate extracted payload root: $payloadRoot"

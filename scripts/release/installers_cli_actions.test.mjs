@@ -896,7 +896,8 @@ fi
 cat <<'JSON'
 {
   "assets": [
-    { "name": "happier-v9.9.9-linux-x64.tar.gz", "browser_download_url": "https://example.invalid/happier-v9.9.9-linux-x64.tar.gz" }
+    { "name": "happier-v9.9.9-linux-x64.tar.gz", "browser_download_url": "https://example.invalid/happier-v9.9.9-linux-x64.tar.gz" },
+    { "name": "checksums-happier-v9.9.9.txt", "browser_download_url": "https://example.invalid/checksums-happier-v9.9.9.txt" }
   ]
 }
 JSON
