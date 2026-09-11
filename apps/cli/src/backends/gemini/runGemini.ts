@@ -83,10 +83,9 @@ import { createAcpSessionIdentityBinding } from '@/agent/acp/runtime/sessionIden
 import { createVendorResumeIdMetadataPublisher } from '@/session/metadata/createVendorResumeIdMetadataPublisher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import {
-  parseOptionsFromText,
-  hasIncompleteOptions,
+  segmentTrailingOptions,
   formatOptionsXml,
-} from '@/backends/gemini/utils/optionsParser';
+} from '@/utils/optionsParser';
 import { ConversationHistory } from '@/backends/gemini/utils/conversationHistory';
 import { createGeminiBackendMessageHandler } from '@/backends/gemini/runtime/createGeminiBackendMessageHandler';
 import { reportGeminiConnectedServiceRuntimeAuthFailureBestEffort } from '@/backends/gemini/connectedServices/surfaceGeminiConnectedServiceRuntimeAuthFailure';
@@ -1196,7 +1195,11 @@ export async function runGemini(opts: {
         // Send accumulated response to mobile app ONLY when turn is complete
         // This prevents message fragmentation from Gemini's chunked responses
         if (hasAssistantOutput) {
-          const { text: messageText, options } = parseOptionsFromText(turnMessageState.accumulatedResponse);
+          const { before, options, hasIncompleteTrailingOptions } = segmentTrailingOptions(turnMessageState.accumulatedResponse);
+          // Trim the app-facing message (Gemini display concern) to stay
+          // byte-identical to the previous parseOptionsFromText behavior; the
+          // terminal formatter path preserves surrounding whitespace verbatim.
+          const messageText = before.trim();
           
           // Record assistant response in conversation history for context preservation
           conversationHistory.addAssistantMessage(messageText);
@@ -1207,7 +1210,7 @@ export async function runGemini(opts: {
             const optionsXml = formatOptionsXml(options);
             finalMessageText = messageText + optionsXml;
             logger.debug(`[gemini] Found ${options.length} options in response`);
-          } else if (hasIncompleteOptions(turnMessageState.accumulatedResponse)) {
+          } else if (hasIncompleteTrailingOptions) {
             logger.debug(`[gemini] Warning: Incomplete options block detected`);
           }
           
