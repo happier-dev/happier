@@ -73,7 +73,7 @@ const usageLimitRecovery = {
   lastProbeError: null,
   selectedAuth: {
     kind: 'group',
-    serviceId: 'openai-codex',
+    serviceId: 'happier.agent.codex/openai-codex',
     groupId: 'group-1',
     profileId: 'profile-1',
   },

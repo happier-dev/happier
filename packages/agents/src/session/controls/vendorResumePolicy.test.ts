@@ -522,11 +522,10 @@ describe('resolveAgentNativeTranscriptPathFromSessionMetadata', () => {
 /**
  * An external (manifest-contributed) Agent has no generated `<vendor>SessionId`
  * slot and no generated session-control adapter. Its native conversation id
- * lives in the one open, agent-agnostic carrier — the runtime descriptor — and
- * the canonical resume-id owner must read it there, or the daemon derives no
- * resume id and silently respawns a FRESH provider session.
+ * lives in `nativeResumeIdentityV1`; the runtime descriptor only attributes
+ * that generic identity to the current Agent, and its payload remains opaque.
  */
-describe('resolveVendorResumeIdFromSessionMetadata — external Agent runtime descriptor', () => {
+describe('resolveVendorResumeIdFromSessionMetadata — external Agent identity', () => {
   const externalDescriptorMetadata = (providerSessionId: string, agentId = 'acme') => ({
     runtimeDescriptorV1: {
       v: 1,

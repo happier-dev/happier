@@ -88,8 +88,8 @@ export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
         /**
          * The Agent's catalog-declared flat `<vendor>SessionId` slot, when it
          * has one. `null` — the normal case for a contributed Agent, which has
-         * no generated slot — routes the id to the agent-agnostic
-         * runtime-descriptor slot instead of discarding it.
+         * no generated slot — routes the id to `nativeResumeIdentityV1`
+         * instead of discarding it.
          */
         metadataKey: string | null;
         /**

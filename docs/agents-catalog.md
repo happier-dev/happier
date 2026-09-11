@@ -206,22 +206,23 @@ on `isBundledAgentId(...)`.
 
 ---
 
-## Session current-Agent identity (one flat vendor key)
+## Session current-Agent identity
 
-A Session declares exactly one current Agent, and its metadata must carry the flat vendor resume key
-of **that Agent only**. A view holding two keys has no authoritative identity; before this rule had
-an owner, such a Session could not be resumed at all.
+A Session declares exactly one current Agent. Bundled Agents carry only that Agent's released flat
+vendor resume key; contributed Agents use the generic native-resume identity carrier. A view holding
+multiple bundled keys has no authoritative identity; before this rule had an owner, such a Session
+could not be resumed at all.
 
 The single pure projector is `projectCurrentAgentSessionView`
 (`packages/agents/src/session/state/projectCurrentAgentSessionView.ts`). It seals three things every
 writer used to re-derive:
 
 1. **Declared identity** — `flavor` and the runtime descriptor name the Agent.
-2. **One flat vendor key** — the `identity.providerSessionId` field is cleared first, which drops
-   every Agent's flat resume key *and* its catalog-declared native session-log path; only then is the
-   target's id written, through `writeProviderSessionIdSessionState`. An Agent whose catalog declares
-   no log-path slot has none, so a path handed to the wrong Agent is dropped rather than left behind
-   as an unowned local path.
+2. **One native resume identity** — the `identity.providerSessionId` field is cleared first, which
+   drops the generic `nativeResumeIdentityV1`, every Agent's flat resume key, and every catalog-declared
+   native session-log path. `writeProviderSessionIdSessionState` then writes the target Agent's id to
+   its declared flat field when one exists, or to `nativeResumeIdentityV1` otherwise. A caller can
+   never choose an arbitrary metadata key.
 3. **State disposition** — a `carry` / `clear` policy for Agent-scoped current projections.
 
 The resume identity is `AgentNativeResumeIdentityV1 = { v, vendorResumeId }` — the Agent's own
@@ -233,23 +234,23 @@ silently starting fresh. The released bare-string form is accepted as the same i
 
 The flat `<vendor>SessionId` keys are **generated for bundled Agents only**. A contributed Agent
 declares no such slot, so its native conversation id lives in the one agent-agnostic carrier:
-`runtimeDescriptorV1.agent.providerSessionId`. The descriptor already names exactly one Agent, so the
-id is attributed to the Agent that produced it and is never lent to another.
+`nativeResumeIdentityV1`. The runtime descriptor names exactly one Agent and attributes the generic
+identity to it; the Agent-owned descriptor payload remains opaque and is never treated as a resume
+carrier.
 
 Both slots have one writer and one reader:
 
 - **Writer** — `providerSessionIdBinding`
   (`packages/agents/src/session/state/bindings/providerSessionId.ts`). A catalog-declared flat slot
-  wins when the Agent has one; otherwise the id is written into the descriptor. It is never dropped,
-  and a caller can never name an arbitrary metadata key.
+  wins when the Agent has one; otherwise the id is written to `nativeResumeIdentityV1`. The runtime
+  descriptor is not changed.
 - **Reader** — `resolveVendorResumeIdFromSessionMetadata`
-  (`packages/agents/src/session/controls/vendorResumePolicy.ts`), in declared-authority order: the
-  Agent's session-control adapter (Pi resumes from an absolute session-file path, not a bare id),
-  then the catalog-declared flat field, then the descriptor slot. The descriptor tier is last, so it
-  cannot change any bundled Agent's answer.
+  (`packages/agents/src/session/controls/vendorResumePolicy.ts`). A bundled Agent's declared flat field
+  is authoritative. Otherwise the reader accepts `nativeResumeIdentityV1` only when the runtime
+  descriptor identifies the requested Agent, so the identity is never lent to another Agent.
 
-The host publishes the id through the public `provider-session-id` runtime event and through the
-runtime-descriptor publication; the absence of a flat slot no longer suppresses either. Everything
+The host publishes the id through the public `provider-session-id` runtime event. Runtime-descriptor
+publication is separate, and the absence of a flat slot does not suppress the id event. Everything
 that decides whether a Session can resume — the daemon spawn/respawn path, the CLI listing, and the
 client's resume affordance — goes through that one reader, so they cannot disagree about whether a
 Session is resumable.

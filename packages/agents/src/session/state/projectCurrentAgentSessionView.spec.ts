@@ -33,7 +33,7 @@ const CLAUDE_NATIVE_VIEW = {
   runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
 } as const;
 
-describe('projectCurrentAgentSessionView — one flat vendor key', () => {
+describe('projectCurrentAgentSessionView — one native resume identity', () => {
   it('emits only the target Agent key and drops the source Agent key and log path', () => {
     const next = projectCurrentAgentSessionView(CLAUDE_NATIVE_VIEW, {
       agentId: 'codex',

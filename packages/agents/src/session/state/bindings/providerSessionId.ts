@@ -201,7 +201,7 @@ export function writeProviderSessionIdSessionState<TMetadata extends Record<stri
  * A structured id write. `metadataKey` is the CATALOG-DECLARED flat slot when the
  * publisher knows one; a key no Agent catalog declares is not honored as a
  * metadata key (a caller must never be able to name an arbitrary metadata
- * field) and the write falls through to the agent-agnostic descriptor slot.
+ * field) and the write falls through to `nativeResumeIdentityV1`.
  */
 function readStructuredProviderSessionIdWrite(
   value: SessionStateFieldWriteValue<'identity.providerSessionId'>,

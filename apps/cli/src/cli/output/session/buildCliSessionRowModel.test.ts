@@ -155,8 +155,9 @@ describe('buildCliSessionRowModel', () => {
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'pluginProvider',
-          providerSessionId: 'private-plugin-session',
+          agent: {},
         },
+        nativeResumeIdentityV1: { v: 1, vendorResumeId: 'private-plugin-session' },
       },
     });
 
@@ -208,7 +209,7 @@ describe('buildCliSessionRowModel', () => {
     });
   });
 
-  it('prefers canonical runtimeDescriptorV1 over legacy agentRuntimeDescriptorV1 for plugin vendor resume eligibility', () => {
+  it('uses canonical runtimeDescriptorV1 to attribute generic native resume identity over the legacy descriptor', () => {
     const rowModel = buildCliSessionRowModel({
       credentials,
       rawSession: {
@@ -223,9 +224,8 @@ describe('buildCliSessionRowModel', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'pluginProvider',
-            provider: {
+            agent: {
               backendMode: 'server',
-              providerSessionId: 'canonical-plugin-session',
             },
           },
           agentRuntimeDescriptorV1: {
@@ -236,6 +236,7 @@ describe('buildCliSessionRowModel', () => {
               providerSessionId: 'legacy-plugin-session',
             },
           },
+          nativeResumeIdentityV1: { v: 1, vendorResumeId: 'canonical-plugin-session' },
         }),
       } as any,
       contributionRegistry: createContributionRegistry(),
@@ -250,13 +251,12 @@ describe('buildCliSessionRowModel', () => {
   /**
    * A contributed Agent has no generated `<vendor>SessionId` slot and
    * `PluginAgentContributionV2` is strict — it declares no definition-local
-   * resume block — so its native conversation id can only live in the
-   * agent-agnostic runtime-descriptor slot. The listing must resolve it from
-   * there through the shared owner, or it reports a Session as resumable that
-   * the daemon will respawn fresh.
+   * resume block — so its native conversation id lives in the generic
+   * `nativeResumeIdentityV1` carrier. The runtime descriptor attributes that
+   * identity to the current Agent without exposing Agent-owned payload facts.
    */
-  it('resolves a contributed Agent resume id from the runtime descriptor slot', () => {
-    const buildRow = (agentPayload: Record<string, unknown>) => buildCliSessionRowModel({
+  it('resolves a contributed Agent resume id from the generic native identity carrier', () => {
+    const buildRow = (vendorResumeId?: string) => buildCliSessionRowModel({
       credentials,
       rawSession: {
         id: 'sess_configured_plugin_1',
@@ -270,8 +270,11 @@ describe('buildCliSessionRowModel', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'acme.resume.backend',
-            agent: agentPayload,
+            agent: { backendMode: 'acp', privateResumeFact: 'opaque' },
           },
+          ...(vendorResumeId
+            ? { nativeResumeIdentityV1: { v: 1, vendorResumeId } }
+            : {}),
         }),
       } as any,
       contributionRegistry: {
@@ -287,10 +290,10 @@ describe('buildCliSessionRowModel', () => {
       },
     });
 
-    expect(buildRow({ backendMode: 'acp', providerSessionId: 'plugin-vendor-session-1' }).vendorResume)
+    expect(buildRow('plugin-vendor-session-1').vendorResume)
       .toEqual({ eligible: true, vendorResumeId: 'plugin-vendor-session-1' });
     // Nothing else in metadata may stand in for the recorded conversation.
-    expect(buildRow({ backendMode: 'acp' }).vendorResume)
+    expect(buildRow().vendorResume)
       .toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });
   });
 
@@ -309,8 +312,9 @@ describe('buildCliSessionRowModel', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'acme.resume.backend',
-            agent: { backendMode: 'acp', providerSessionId: 'plugin-vendor-session-1' },
+            agent: { backendMode: 'acp', privateResumeFact: 'opaque' },
           },
+          nativeResumeIdentityV1: { v: 1, vendorResumeId: 'plugin-vendor-session-1' },
         }),
       } as any,
       contributionRegistry: {
@@ -426,11 +430,9 @@ describe('buildCliSessionRowModel', () => {
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'pluginProvider',
-        provider: {
-          providerSessionId: 'plugin-session-1',
-        },
+        agent: { privateResumeFact: 'opaque' },
       },
-      pluginSessionId: 'plugin-session-1',
+      nativeResumeIdentityV1: { v: 1, vendorResumeId: 'plugin-session-1' },
       externalSessionV1: {
         v: 1,
         agentId: 'pluginProvider',
@@ -515,8 +517,9 @@ describe('buildCliSessionRowModel', () => {
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'pluginProvider',
-          providerSessionId: 'private-plugin-session',
+          agent: {},
         },
+        nativeResumeIdentityV1: { v: 1, vendorResumeId: 'private-plugin-session' },
       },
       runtime: {
         acpConfiguredBackendV1: {

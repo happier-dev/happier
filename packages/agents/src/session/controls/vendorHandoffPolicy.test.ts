@@ -21,7 +21,7 @@ describe('vendorHandoffPolicy', () => {
     expect(resolveVendorHandoffIdFromSessionMetadata('claude', { claudeSessionId: '   ' })).toBeNull();
   });
 
-  it('prefers vendor session ids from agentRuntimeDescriptorV1 for handoff ids', () => {
+  it('keeps the released flat vendor session id authoritative over opaque descriptor data', () => {
     expect(resolveVendorHandoffIdFromSessionMetadata('codex', {
       agentRuntimeDescriptorV1: {
         v: 1,
@@ -29,7 +29,7 @@ describe('vendorHandoffPolicy', () => {
         provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
-    })).toBe('runtime_thread');
+    })).toBe('legacy_thread');
   });
 
   it('rejects unsupported direct handoff when the provider does not support direct session storage', () => {
@@ -79,14 +79,7 @@ describe('vendorHandoffPolicy', () => {
         storageMode: 'direct',
         metadata: {
           opencodeSessionId: 'o1',
-          agentRuntimeDescriptorV1: {
-            v: 1,
-            agentId: 'opencode',
-            provider: {
-              backendMode: 'acp',
-              providerSessionId: 'o1',
-            },
-          },
+          opencodeBackendMode: 'acp',
         },
       }),
     ).toEqual({ eligible: false, reasonCode: 'storage_mode_unsupported' });
@@ -102,24 +95,7 @@ describe('vendorHandoffPolicy', () => {
     ).toEqual({ eligible: true, vendorHandoffId: 'x1' });
   });
 
-  it('allows codex handoff when the canonical runtime descriptor proves an eligible backend mode', () => {
-    expect(
-      evaluateVendorHandoffEligibility({
-        agentId: 'codex',
-        storageMode: 'persisted',
-        metadata: {
-          codexSessionId: 'x1',
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'codex',
-            agent: { backendMode: 'appServer', providerSessionId: 'x1' },
-          },
-        },
-      }),
-    ).toEqual({ eligible: true, vendorHandoffId: 'x1' });
-  });
-
-  it('prefers the canonical runtime descriptor over legacy codex backend metadata', () => {
+  it('fails closed on an Agent-owned runtime descriptor instead of using legacy backend metadata', () => {
     expect(
       evaluateVendorHandoffEligibility({
         agentId: 'codex',
