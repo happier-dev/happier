@@ -312,6 +312,11 @@ test('publication admission requires full stable checks and risk-selected server
   );
   assert.equal(workflow.jobs.release_admission.steps.at(-1).env.SDK_API_HUMAN_REVIEW_REQUIRED,
     '${{ needs.plan.outputs.sdk_api_human_review_required }}');
+  assert.equal(
+    workflow.jobs.release_admission.steps.at(-1).env.PUBLISH_STACK,
+    "${{ needs.plan.outputs.publish_stack == 'true' }}",
+    'channel admission must consume the canonical stack publication decision',
+  );
   assert.match(
     admissionScript,
     /scripts\/pipeline\/release\/admit-release\.mjs/,

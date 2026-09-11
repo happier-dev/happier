@@ -42,6 +42,20 @@ test('combined preview and production release validates the exact source once be
   assert.equal(validation.with.base_refs, 'preview,main');
   assert.equal(validation.with.source_sha, '${{ inputs.authorized_promotion_source_sha }}');
   assert.equal(sourceValidation.on.workflow_call.inputs.base_refs.type, 'string');
+  assert.equal(sourceValidation.on.workflow_call.inputs.candidate_cli_requested.type, 'boolean');
+  const sourceSelection = sourceValidation.jobs.source_plan.steps.find(
+    (step) => step.name === 'Select source gates from the canonical unioned risk plan',
+  );
+  assert.equal(
+    sourceSelection.env.CANDIDATE_CLI_REQUESTED,
+    '${{ inputs.candidate_cli_requested }}',
+    'the reusable workflow must deliver candidate intent to the canonical selector',
+  );
+  assert.equal(
+    release.jobs.source_validation.with.candidate_cli_requested,
+    "${{ inputs.candidate_run_id != '' }}",
+    'direct candidate reuse must select every source gate required by CLI publication',
+  );
   assert.equal(preview.uses, './.github/workflows/release.yml');
   assert.equal(production.uses, './.github/workflows/release.yml');
   assert.deepEqual(preview.needs, ['snapshot_release_issues', 'source_validation']);

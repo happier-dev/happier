@@ -24,6 +24,10 @@ on:
       force_deploy:
         required: true
         type: boolean
+      candidate_cli_requested:
+        required: false
+        default: false
+        type: boolean
       resume_cli_requested:
         required: false
         default: false
@@ -115,6 +119,7 @@ jobs:
         env:
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           FORCE_DEPLOY: ${{ inputs.force_deploy }}
+          CANDIDATE_CLI_REQUESTED: ${{ inputs.candidate_cli_requested }}
           CHANGED_UI: ${{ steps.source.outputs.changed_ui }}
           CHANGED_CLI: ${{ steps.source.outputs.changed_cli }}
           CHANGED_CLI_STACK_SHARED: ${{ steps.source.outputs.changed_cli_stack_shared }}
@@ -191,6 +196,7 @@ jobs:
       run_mobile_e2e_android: false
       run_mobile_e2e_ios: false
       run_ui: false
+      run_shared_packages: false
       run_plugin_workspaces: false
       run_server: false
       run_server_db_contract: false

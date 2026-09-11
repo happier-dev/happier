@@ -19,6 +19,7 @@ function parseTargets(value) {
 
 /**
  * @param {{ deployTargets: string[]; forceDeploy: boolean;
+ * candidate: { cli: boolean };
  * changed: { ui: boolean; cli: boolean; cliStackShared: boolean; server: boolean; shared: boolean; stack: boolean };
  * resume: { cli: boolean; stack: boolean; server: boolean };
  * risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean } }} input
@@ -32,6 +33,7 @@ export function resolveSourceValidationPlan(input) {
     || input.changed.server
     || input.changed.shared;
   const cliBinariesNeeded = input.resume.cli
+    || input.candidate.cli
     || input.forceDeploy
     || targets.has('cli')
     || input.changed.cli
@@ -54,6 +56,9 @@ export function resolveSourceValidationPlanFromEnvironment(env) {
   return resolveSourceValidationPlan({
     deployTargets: parseTargets(env.DEPLOY_TARGETS),
     forceDeploy: enabled(env.FORCE_DEPLOY),
+    candidate: {
+      cli: enabled(env.CANDIDATE_CLI_REQUESTED),
+    },
     changed: {
       ui: enabled(env.CHANGED_UI),
       cli: enabled(env.CHANGED_CLI),

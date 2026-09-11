@@ -6,6 +6,7 @@ import { resolveSourceValidationPlan } from './resolve-source-validation-plan.mj
 const base = {
   deployTargets: [],
   forceDeploy: false,
+  candidate: { cli: false },
   changed: { ui: false, cli: false, cliStackShared: false, server: false, shared: false, stack: false },
   resume: { cli: false, stack: false, server: false },
   risks: { mysqlContract: false, platformServices: false, trustRoots: false },
@@ -65,6 +66,15 @@ test('resume and force inputs preserve validation for reused publish surfaces', 
   assert.equal(resolveSourceValidationPlan({
     ...base,
     forceDeploy: true,
+    risks: { ...base.risks, platformServices: true },
+  }).runPlatform, true);
+});
+
+test('an existing CLI candidate selects platform validation even without a CLI deploy target', () => {
+  assert.equal(resolveSourceValidationPlan({
+    ...base,
+    deployTargets: ['website'],
+    candidate: { cli: true },
     risks: { ...base.risks, platformServices: true },
   }).runPlatform, true);
 });

@@ -844,6 +844,7 @@ jobs:
       waive_ci: ${{ inputs.waive_ci }}
       deploy_targets: ${{ inputs.deploy_targets }}
       force_deploy: ${{ inputs.force_deploy }}
+      candidate_cli_requested: ${{ inputs.candidate_run_id != '' }}
       resume_cli_requested: ${{ needs.resolve_resume.outputs.cli_requested == 'true' }}
       resume_stack_requested: ${{ needs.resolve_resume.outputs.stack_requested == 'true' }}
       resume_server_requested: ${{ needs.resolve_resume.outputs.server_requested == 'true' }}
@@ -925,6 +926,7 @@ jobs:
           CI_GATE_RESULT: ${{ inputs.shared_source_validation == true && inputs.shared_ci_result || needs.source_validation.outputs.ci_result }}
           PUBLISH_SERVER_RUNTIME_NEEDED: ${{ needs.plan.outputs.publish_server_runtime_needed }}
           PUBLISH_CLI_BINARIES_NEEDED: ${{ needs.plan.outputs.publish_cli_binaries_needed }}
+          PUBLISH_STACK: ${{ needs.plan.outputs.publish_stack == 'true' }}
           RISK_MYSQL_CONTRACT: ${{ needs.plan.outputs.risk_mysql_contract }}
           RISK_PLATFORM_SERVICES: ${{ needs.plan.outputs.risk_platform_services }}
           RISK_TRUST_ROOTS: ${{ needs.plan.outputs.risk_trust_roots }}
