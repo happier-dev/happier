@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { Buffer } from 'node:buffer';
+import { existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,6 +11,12 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const vendoredGhosttyKitRoot = join(packageRoot, 'ios', 'Vendor', 'GhosttyKit.xcframework');
+const vendoredGhosttyKitTestSkip = process.platform !== 'darwin'
+  ? 'requires macOS'
+  : existsSync(vendoredGhosttyKitRoot)
+    ? false
+    : 'requires the locally materialized GhosttyKit.xcframework';
 
 test('iOS GhosttyKit policy records distinct zip and expanded artifact checksums', async () => {
   const rendererPolicy = JSON.parse(await readFile(join(packageRoot, 'native-renderers.json'), 'utf-8'));
@@ -32,7 +39,7 @@ test('iOS GhosttyKit policy records distinct zip and expanded artifact checksums
   assert.equal(artifact.directGhosttyBuild.status, 'future-contingency');
 });
 
-test('iOS Ghostty build copy isolates the complete Wuffs namespace on every Apple slice', { skip: process.platform !== 'darwin' }, async () => {
+test('iOS Ghostty build copy isolates the complete Wuffs namespace on every Apple slice', { skip: vendoredGhosttyKitTestSkip }, async () => {
   const fixtureRoot = await mkdtempPath();
   const isolationScript = join(packageRoot, 'ios', 'namespaceGhosttyWuffs.sh');
   const cases = [
@@ -502,7 +509,7 @@ test('iOS Ghostty runtime reports proof blockers even when GhosttyKit is not lin
   assert.equal(fallbackProofBlocked.detail, 'iOS Ghostty crash-to-WebView fallback proof has not passed.');
 });
 
-test('iOS Ghostty keyboard bridge typechecks against vendored GhosttyKit input symbols', { skip: process.platform !== 'darwin' }, async () => {
+test('iOS Ghostty keyboard bridge typechecks against vendored GhosttyKit input symbols', { skip: vendoredGhosttyKitTestSkip }, async () => {
   await typecheckIosSwift([
       join(packageRoot, 'ios/GhosttyRuntime.swift'),
       join(packageRoot, 'ios/GhosttyInput.swift'),

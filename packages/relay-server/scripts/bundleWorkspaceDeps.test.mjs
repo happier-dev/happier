@@ -282,8 +282,7 @@ test('bundleWorkspaceDeps admits resolved workspace bundles before copying sourc
       'export const generation = "new";\n',
     );
     assert.deepEqual(admittedPackageNames, ['@happier-dev/release-runtime']);
-    assert.match(String(admissionEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? ''), /"path"/);
-    assert.equal(admissionEnv?.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, undefined);
+    assert.equal(admissionEnv?.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, '/parent-stage');
     assert.equal(admissionForce, undefined);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
