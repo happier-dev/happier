@@ -631,11 +631,15 @@ test('verify-artifacts allows binary data, public certificates, and license pros
       files: [
         {
           path: 'happier',
+          contents: '#!/usr/bin/env sh\nexit 0\n',
+          mode: 0o755,
+        },
+        {
+          path: 'share/privacy-false-positive.bin',
           contents: Buffer.concat([
             Buffer.from([0x00, 0xff, 0x10, 0x80]),
             Buffer.from('sk-short\u0000token\u0000private key\u0000', 'utf-8'),
           ]),
-          mode: 0o755,
         },
         {
           path: 'LICENSE.txt',

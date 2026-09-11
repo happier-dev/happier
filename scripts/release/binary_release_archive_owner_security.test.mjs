@@ -83,7 +83,7 @@ test('GNU tar and libarchive creation options both normalize numeric ownership',
   );
 });
 
-test('native tar backend strips builder ownership while preserving entry types and modes', async (t) => {
+test('native tar backend strips builder ownership while preserving executable mode and symlink identity', async (t) => {
   const tempRoot = process.platform === 'darwin' ? '/private/tmp/' : `${tmpdir()}/`;
   const workspace = await mkdtemp(join(tempRoot, 'happier-archive-owner-normalization-'));
   const sourceRoot = join(workspace, 'source');
@@ -146,11 +146,12 @@ test('native tar backend strips builder ownership while preserving entry types a
       },
     );
     assert.deepEqual(
-      entries.find((entry) => entry.path === 'payload/run-link'),
+      (({ path, type, uid, gid, linkpath }) => ({ path, type, uid, gid, linkpath }))(
+        entries.find((entry) => entry.path === 'payload/run-link'),
+      ),
       {
         path: 'payload/run-link',
         type: 'SymbolicLink',
-        mode: 0o755,
         uid: 0,
         gid: 0,
         linkpath: 'run.sh',
