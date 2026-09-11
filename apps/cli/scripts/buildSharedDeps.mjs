@@ -2417,12 +2417,21 @@ async function prepareBundledWorkspaceDependenciesForCli(opts = {}) {
       force: publishesArtifact,
     },
   });
-  // The artifact inventory must describe the packages THIS publication build compiled.
-  // Scoping it to what the workspace owner reported as rebuilt lets a package it
-  // considered already-current keep an inventory entry from an earlier generation.
+  // Artifact publication must describe every package in this build. A normal source
+  // build may reuse current compiler output, but publisher-owned runtime files can
+  // still be absent or stale independently of `dist`; include those exact inventory
+  // divergences in the same canonical publication operation.
   const rebuiltPluginWorkspaceNames = resolveSelectedBundledPluginWorkspaceNames({
     repoRoot: resolvedRepoRoot,
-    workspaceNames: publishesArtifact ? workspaceNames : buildResult.builtWorkspaceNames,
+    workspaceNames: publishesArtifact
+      ? workspaceNames
+      : [
+          ...buildResult.builtWorkspaceNames,
+          ...collectDivergedBundledPluginWorkspaceNames({
+            repoRoot: resolvedRepoRoot,
+            workspaceNames,
+          }),
+        ],
   });
 
   return {
