@@ -665,7 +665,7 @@ async function waitForRequestCount(method: string, expectedCount: number): Promi
   for (let index = 0; index < 20; index += 1) {
     const count = clientState.requests.filter((request) => request.method === method).length;
     if (count >= expectedCount) return;
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
   throw new Error(`Expected ${expectedCount} ${method} requests`);
 }
@@ -2015,7 +2015,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       userMessageSeq: 7,
     });
     const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
-    emitNotification('turn/completed', completedTurn('provider-turn-1'));
+    emitNotification('turn/completed', completedTurn('turn-1'));
     await completion;
 
     const request = {
@@ -2023,8 +2023,8 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       providerSessionId: 'thread-1',
       target: { kind: 'beforeTurn', turnId: 'host-turn-1' },
       affectedTurns: [
-        { turnId: 'host-turn-1', providerCheckpoint: 'provider-turn-1' },
-        { turnId: 'host-turn-2', providerCheckpoint: 'provider-turn-2' },
+        { turnId: 'host-turn-1', providerCheckpoint: 'turn-1' },
+        { turnId: 'host-turn-2', providerCheckpoint: 'turn-2' },
       ],
       runtimeIncarnationId: 'runtime-1',
     } satisfies AgentSessionConversationRollbackRequest;
@@ -2032,7 +2032,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await expect(runtime.rollbackNativeConversation(request)).resolves.toEqual({ status: 'applied' });
     expect(clientState.requests).toContainEqual({
       method: 'thread/revert',
-      params: { threadId: 'thread-1', beforeTurnId: 'provider-turn-1' },
+      params: { threadId: 'thread-1', beforeTurnId: 'turn-1' },
     });
 
     const unavailable = createCodexAppServerRpcError({ method: 'thread/revert', code: -32601 });
@@ -2040,7 +2040,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     clientState.rejectNextThreadRevert(unavailable);
     await expect(runtime.rollbackNativeConversation(request)).resolves.toEqual({ status: 'applied' });
     expect(clientState.requests.slice(-2)).toEqual([
-      { method: 'thread/revert', params: { threadId: 'thread-1', beforeTurnId: 'provider-turn-1' } },
+      { method: 'thread/revert', params: { threadId: 'thread-1', beforeTurnId: 'turn-1' } },
       { method: 'thread/rollback', params: { threadId: 'thread-1', numTurns: 2 } },
     ]);
 
