@@ -25,7 +25,7 @@ import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { readPendingFirstInputFromEnv } from './spawn/pendingFirstInput';
 import type { ConnectedServicesMaterializationDiagnostic } from './connectedServices/materialize/providerMaterializerTypes';
 import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from './connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
+import { accountSettingsParse, isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { TemporaryThrottleRecoveryScheduler } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
@@ -67,7 +67,7 @@ function setConfiguredAcpCatalogForTest(supportsLoadSession: boolean, enabled = 
     settingsVersion: Date.now(),
     loadedAtMs: Date.now(),
     settingsSecretsReadKeys: [],
-    settings: {
+    settings: accountSettingsParse({
       acpCatalogSettingsV1: {
         v: 2,
         backends: [{
@@ -90,7 +90,7 @@ function setConfiguredAcpCatalogForTest(supportsLoadSession: boolean, enabled = 
         }],
       },
       backendEnabledByTargetKey: { 'acpBackend:custom-kiro': enabled },
-    },
+    }),
   });
 }
 

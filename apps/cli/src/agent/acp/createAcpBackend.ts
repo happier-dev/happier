@@ -21,7 +21,7 @@ import {
   type AcpSessionModelAdapter,
 } from './AcpBackend';
 import type { AcpAuthentication } from './AcpAuthentication';
-import type { AgentBackend, McpServerConfig } from '../core';
+import type { McpServerConfig } from '../core';
 import { DefaultTransport, type TransportHandler } from '../transport';
 
 /**
@@ -98,7 +98,7 @@ export interface CreateAcpBackendOptions {
  * @param options - Configuration options
  * @returns AgentBackend instance
  */
-export function createAcpBackend(options: CreateAcpBackendOptions): AgentBackend {
+export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
   const backendOptions: AcpBackendOptions = {
     agentName: options.agentName,
     cwd: options.cwd,

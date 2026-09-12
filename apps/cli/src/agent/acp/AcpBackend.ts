@@ -769,6 +769,7 @@ export class AcpBackend implements AgentBackend {
   private readonly sessionUpdateShapeLogger = createEventShapeLoggerForLog({ logger, scope: 'acp-backend' });
   private connection: AcpClientConnection | null = null;
   private acpSessionId: string | null = null;
+  private negotiatedSessionLoadSupport: boolean | null = null;
   private disposed = false;
   private replayCapture: AcpReplayCapture | null = null;
   /** Sole tool lifecycle/merge/timeout/finalization owner. */
@@ -802,6 +803,10 @@ export class AcpBackend implements AgentBackend {
 
   getSessionConfigOptionsState(): ReadonlyArray<SessionConfigOption> | null {
     return this.sessionConfigOptionsState;
+  }
+
+  getNegotiatedSessionLoadSupport(): boolean | null {
+    return this.negotiatedSessionLoadSupport;
   }
 
   getLastTurnOutcome(): AcpTurnOutcome | null {
@@ -1046,6 +1051,8 @@ export class AcpBackend implements AgentBackend {
     if (this.process || this.connection) {
       throw new Error('ACP backend is already initialized');
     }
+
+    this.negotiatedSessionLoadSupport = null;
 
     this.resetExtensionAbortControllerForTurn();
     this.recentStderrSummaries.length = 0;
@@ -1586,6 +1593,7 @@ export class AcpBackend implements AgentBackend {
     const initResponseRecord = asRecord(initResponse);
     const agentCapabilities = asRecord(initResponseRecord?.agentCapabilities);
     const negotiatedSessionLoadSupport = agentCapabilities?.loadSession === true;
+    this.negotiatedSessionLoadSupport = negotiatedSessionLoadSupport;
 
     if (this.options.authentication) {
       const advertisedMethodIds = new Set<string>();

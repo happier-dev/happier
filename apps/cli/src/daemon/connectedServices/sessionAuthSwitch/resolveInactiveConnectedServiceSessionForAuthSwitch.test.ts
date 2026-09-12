@@ -74,7 +74,8 @@ describe('resolveInactiveConnectedServiceSessionForAuthSwitch', () => {
     expect(resolveAttachContext).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token-1',
       sessionId: 'sess_inactive',
-      agent: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      credentials: credentials(),
     }));
   });
 

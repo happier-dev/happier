@@ -1,5 +1,6 @@
 import type { Credentials } from '@/persistence';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 
 import { resolveExistingSessionAttachContext } from '@/daemon/sessionEncryption/resolveExistingSessionAttachContext';
 
@@ -25,8 +26,9 @@ export async function resolveRespawnSessionRuntimeSnapshot(
   const effectiveCredentials = storedCredentials ?? params.credentials;
   const token = typeof effectiveCredentials?.token === 'string' ? effectiveCredentials.token.trim() : '';
   if (!token) return params.defaultOptions;
-  const backendTarget = params.defaultOptions.backendTarget ?? params.spawnOptions.backendTarget;
-  if (!backendTarget) return params.defaultOptions;
+  const backendTarget = params.defaultOptions.backendTarget
+    ?? params.spawnOptions.backendTarget
+    ?? { kind: 'builtInAgent' as const, agentId: DEFAULT_CATALOG_AGENT_ID };
 
   const attachContext = await resolver({
     token,

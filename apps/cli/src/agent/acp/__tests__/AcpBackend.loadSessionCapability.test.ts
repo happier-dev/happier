@@ -76,6 +76,7 @@ describe('AcpBackend session load capability', () => {
       try {
         await expect(backend.startSession()).resolves.toEqual({ sessionId: 'fresh-session' });
         expect(readCalls(callsPath)).toContain('session/new');
+        expect(readCalls(callsPath)).not.toContain('session/load');
       } finally {
         await backend.dispose();
       }

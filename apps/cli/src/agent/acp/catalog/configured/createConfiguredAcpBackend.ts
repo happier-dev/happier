@@ -1,6 +1,6 @@
 import { createAcpBackend } from '@/agent/acp/createAcpBackend';
-import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
+import type { AcpBackend, AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import type { AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 
 import type { ResolvedConfiguredAcpBackend } from './resolveConfiguredAcpBackendFromAccountSettings';
 import { resolveAcpCatalogTransportHandler } from '../transport/resolveAcpCatalogTransportHandler';
@@ -12,7 +12,7 @@ export type ConfiguredAcpBackendOptions = AgentFactoryOptions & Readonly<{
   permissionHandler?: AcpPermissionHandler;
 }>;
 
-export function createConfiguredAcpBackend(options: ConfiguredAcpBackendOptions): AgentBackend {
+export function createConfiguredAcpBackend(options: ConfiguredAcpBackendOptions): AcpBackend {
   return createAcpBackend({
     agentName: options.backend.backendId,
     cwd: options.cwd,

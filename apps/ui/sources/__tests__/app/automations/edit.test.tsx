@@ -54,6 +54,29 @@ const hydrateReadyState = vi.hoisted(() => ({
     ready: true,
 }));
 const stackOptionsCapture = createStackOptionsCapture();
+const configuredAcpAccountSettings = {
+    acpCatalogSettingsV1: {
+        v: 2 as const,
+        backends: [{
+            id: 'review-bot',
+            name: 'review-bot',
+            title: 'Review Bot',
+            command: 'review-bot',
+            args: [],
+            env: {},
+            transportProfile: 'generic' as const,
+            capabilities: {
+                supportsLoadSession: true,
+                supportsModes: 'unknown' as const,
+                supportsModels: 'unknown' as const,
+                supportsConfigOptions: 'unknown' as const,
+                promptImageSupport: 'unknown' as const,
+            },
+            createdAt: 1,
+            updatedAt: 1,
+        }],
+    },
+};
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -163,7 +186,7 @@ installAutomationAppRouteCommonModuleMocks({
         return createStorageModuleStub({
             useAutomation: () => automationState.value,
             useSession: () => sessionState.value,
-            useSettings: () => ({}),
+            useSettings: () => configuredAcpAccountSettings,
             storage: Object.assign(
                 ((selector?: (value: ReturnType<typeof readSnapshot>) => unknown) => {
                     const snapshot = readSnapshot();
@@ -396,6 +419,13 @@ describe('AutomationEditScreen route', () => {
                 path: '/repo/project',
                 homeDir: '/repo',
                 flavor: 'acp:review-bot',
+                customAcpSessionId: 'review-bot-session-1',
+                acpConfiguredBackendV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    backendId: 'review-bot',
+                    title: 'Review Bot',
+                },
             },
         };
         getStateSpy.mockImplementation(() => ({
@@ -584,6 +614,7 @@ describe('AutomationEditScreen route', () => {
                     backendId: 'review-bot',
                     title: 'Review Bot',
                 },
+                customAcpSessionId: 'review-bot-session-1',
             },
         } as any;
 
@@ -680,6 +711,7 @@ describe('AutomationEditScreen route', () => {
                     backendId: 'review-bot',
                     title: 'Review Bot',
                 },
+                customAcpSessionId: 'review-bot-session-1',
             },
         } as any;
 

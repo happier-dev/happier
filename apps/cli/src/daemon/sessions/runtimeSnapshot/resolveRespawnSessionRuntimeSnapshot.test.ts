@@ -117,4 +117,37 @@ describe('resolveRespawnSessionRuntimeSnapshot', () => {
 
     expect(result).toBe(defaultOptions);
   });
+
+  it('uses the canonical default backend target when legacy respawn options omit it', async () => {
+    const resolveAttachContext = vi.fn(async () => ({
+      ok: true as const,
+      attachPayload: { v: 2 as const, encryptionMode: 'plain' as const },
+      vendorResumeId: 'claude-session-1',
+      sessionPath: '/tmp/repo',
+      deliveredUserMessageSeq: null,
+      metadata: {
+        permissionMode: 'yolo',
+        permissionModeUpdatedAt: 710,
+      },
+    }));
+    const legacyOptions = defaultRespawnOptions({ backendTarget: undefined });
+
+    const result = await resolveRespawnSessionRuntimeSnapshot({
+      sessionId: 'session-1',
+      spawnOptions: legacyOptions,
+      vendorResumeId: 'claude-session-1',
+      defaultOptions: legacyOptions,
+      credentials: credentials('token'),
+      readCredentials: async () => null,
+      resolveAttachContext,
+    });
+
+    expect(resolveAttachContext).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    }));
+    expect(result).toMatchObject({
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 710,
+    });
+  });
 });
