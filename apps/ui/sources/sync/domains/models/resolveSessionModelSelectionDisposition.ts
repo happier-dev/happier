@@ -56,6 +56,7 @@ export function resolveSessionModelSelectionDisposition(params: Readonly<{
     const providerBindingState = readSessionProviderBindingMetadataStateV1(params.metadata);
     const exactSelection = readActiveSessionModelSelectionFromMetadata(
         params.metadata,
+        params.agentId,
         params.agentTargetKey,
         params.currentRunnerProcessIdentity,
     );

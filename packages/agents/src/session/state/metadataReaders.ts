@@ -1,8 +1,5 @@
 import type { PermissionIntent } from '../../types.js';
 import {
-  parseBackendTargetKeyV2,
-} from '@happier-dev/protocol/plugins/agents';
-import {
   SessionModelSelectionIntentV1Schema,
   readSessionModelSelectionIntentSourceV1,
   resolveSessionModelSelectionIntentV1,
@@ -27,10 +24,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /**
  * Returns model selection only when the Protocol owner proves it against the
  * exact current physical runner and, for Provider-bound selections, the exact
- * applied binding. Persisted intent and fallback catalogs are excluded.
+ * applied binding. The caller supplies the catalog-resolved Agent id because
+ * target keys intentionally do not resolve arbitrary host catalog identities.
+ * Persisted intent and fallback catalogs are excluded.
  */
 export function readActiveSessionModelSelectionFromMetadata(
   metadata: unknown,
+  agentId: string,
   agentTargetKey: string,
   currentRunnerProcessIdentity: Readonly<{
     pid: number;
@@ -40,16 +40,9 @@ export function readActiveSessionModelSelectionFromMetadata(
   const record = asRecord(metadata);
   if (!record) return null;
 
-  let targetAgentId: string;
-  try {
-    targetAgentId = parseBackendTargetKeyV2(agentTargetKey).backendId;
-  } catch {
-    return null;
-  }
-
   return readExactSessionActiveModelSelectionV1({
     metadata: record,
-    agentId: targetAgentId,
+    agentId,
     agentTargetKey,
     currentRunnerProcessIdentity,
   })?.selection ?? null;

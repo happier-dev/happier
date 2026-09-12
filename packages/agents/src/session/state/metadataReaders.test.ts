@@ -161,7 +161,7 @@ describe('readActiveSessionModelSelectionFromMetadata', () => {
           modelId: 'proposed-provider-model',
         },
       },
-    }, 'backend:antigravity', {
+    }, 'antigravity', 'backend:antigravity', {
       pid: 123,
       processStartTimeMs: 1_000,
     })).toEqual({
@@ -169,6 +169,45 @@ describe('readActiveSessionModelSelectionFromMetadata', () => {
       providerConnectionId: null,
       modelId: 'active-native-model',
     });
+  });
+
+  it('uses the caller-resolved Agent id for a canonical bundled target key and refuses mismatches', () => {
+    const agentTargetKey = 'agent:happier.agent.claude/claude';
+    const metadata = {
+      ...exactNativeMetadata,
+      sessionModelsV1: {
+        ...exactNativeMetadata.sessionModelsV1,
+        agentId: 'claude',
+        activeSelectionV1: {
+          ...exactNativeMetadata.sessionModelsV1.activeSelectionV1,
+          selection: {
+            ...exactNativeMetadata.sessionModelsV1.activeSelectionV1.selection,
+            agentTargetKey,
+          },
+        },
+      },
+    };
+    const currentRunnerProcessIdentity = {
+      pid: 123,
+      processStartTimeMs: 1_000,
+    };
+
+    expect(readActiveSessionModelSelectionFromMetadata(
+      metadata,
+      'claude',
+      agentTargetKey,
+      currentRunnerProcessIdentity,
+    )).toEqual({
+      agentTargetKey,
+      providerConnectionId: null,
+      modelId: 'active-native-model',
+    });
+    expect(readActiveSessionModelSelectionFromMetadata(
+      metadata,
+      'codex',
+      agentTargetKey,
+      currentRunnerProcessIdentity,
+    )).toBeNull();
   });
 
   it('does not promote catalog fallback state or pending intent into active proof', () => {
@@ -191,7 +230,7 @@ describe('readActiveSessionModelSelectionFromMetadata', () => {
           modelId: 'proposed-provider-model',
         },
       },
-    }, 'backend:antigravity', null)).toBeNull();
+    }, 'antigravity', 'backend:antigravity', null)).toBeNull();
   });
 
   it('invalidates old proof after a same-build physical runner replacement', () => {
@@ -205,7 +244,7 @@ describe('readActiveSessionModelSelectionFromMetadata', () => {
           processStartTimeMs: 2_000,
         },
       },
-    }, 'backend:antigravity', {
+    }, 'antigravity', 'backend:antigravity', {
       pid: 456,
       processStartTimeMs: 2_000,
     })).toBeNull();
