@@ -844,7 +844,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       const hookFile = pluginRequest?.files?.find((file) => file.path === 'hooks/hooks.json');
       expect(hookFile?.json).toMatchObject({
         hooks: {
-          PermissionRequest: [expect.objectContaining({ matcher: '' })],
+          PermissionRequest: [expect.objectContaining({ matcher: '*' })],
           PreToolUse: [expect.objectContaining({ matcher: 'AskUserQuestion' })],
         },
       });

@@ -139,7 +139,7 @@ export function buildClaudeHookPluginHooks(params: BuildClaudeHookPluginHooksPar
                 hookEventName: 'PermissionRequest',
                 secretFile: params.permissionHookSecretFile,
             }),
-            matcher: '',
+            matcher: '*',
             timeout: permissionHookTimeoutSeconds,
         })];
         hooks.PreToolUse = [buildCommandHook({

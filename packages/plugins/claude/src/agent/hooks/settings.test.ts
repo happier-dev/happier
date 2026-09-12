@@ -85,7 +85,7 @@ describe('Claude hook settings leaf', () => {
             permissionHookSecretFile: '/tmp/happier-hooks/permission.secret',
         });
 
-        expect(hooksJson.hooks.PermissionRequest?.[0]?.matcher).toBe('');
+        expect(hooksJson.hooks.PermissionRequest?.[0]?.matcher).toBe('*');
         expect(hooksJson.hooks.PermissionRequest?.[0]?.hooks[0]?.command).toBe(
             "'/bin/node' '/app/permission_hook_forwarder.cjs' '43124' 'PermissionRequest' '--secret-file' '/tmp/happier-hooks/permission.secret'",
         );
