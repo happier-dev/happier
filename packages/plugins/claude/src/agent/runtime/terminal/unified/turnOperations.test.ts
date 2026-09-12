@@ -475,6 +475,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
       const launchArgs = readLaunchArgs(terminalHost);
       expect(countArg(launchArgs, '--allow-dangerously-skip-permissions')).toBe(1);
+      expect(launchArgs).not.toContain('--permission-mode');
       expect(hasSplitFlagValue(launchArgs, '--permission-mode', 'bypassPermissions')).toBe(false);
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);

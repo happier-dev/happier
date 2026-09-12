@@ -127,6 +127,21 @@ describe('Claude plugin SDK query', () => {
         ]));
     });
 
+    it('omits --permission-mode for default so Claude can honor permissions.defaultMode from settings', () => {
+        const { ctx, spawnClient } = createContextFixture();
+
+        query(ctx, {
+            prompt: prompt(),
+            options: {
+                cwd: '/tmp/project',
+                permissionMode: 'default',
+            },
+        });
+
+        const args = spawnClient.mock.calls[0]?.[0].launch.args as string[];
+        expect(args).not.toContain('--permission-mode');
+    });
+
     it('emits the --effort flag for the reasoning effort query option', async () => {
         const { ctx, spawnClient } = createContextFixture();
 

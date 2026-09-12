@@ -62,7 +62,11 @@ import {
 } from '../lifecycle.js';
 import { CLAUDE_TERMINAL_YOLO_ALLOW_FLAG } from '../argv.js';
 import { buildClaudeEffortCliArgs, isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
-import { mapToClaudePermissionMode, resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
+import {
+  buildClaudePermissionModeArgs,
+  mapToClaudePermissionMode,
+  resolveClaudePermissionModeFromRuntimeMode,
+} from '../../permissionMode.js';
 import { isSidechainSessionHook } from '../../../hooks/sidechain.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 import {
@@ -1746,7 +1750,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
                 ...(currentProviderModel ? { providerModel: currentProviderModel } : {}),
               }),
               CLAUDE_TERMINAL_YOLO_ALLOW_FLAG,
-              ...(launchPermissionMode ? ['--permission-mode', mapToClaudePermissionMode(launchPermissionMode)] : []),
+              ...buildClaudePermissionModeArgs(launchPermissionMode),
             ],
             interactionKind: 'interactive_terminal',
             permissionMode: mapToClaudePermissionMode(launchPermissionMode),

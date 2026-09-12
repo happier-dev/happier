@@ -55,7 +55,7 @@ import {
   resolveClaudeNativeBaseLaunchEnvironment,
   resolveClaudeNativeLaunchSettings,
 } from './launchSettings.js';
-import { mapToClaudePermissionMode } from './permissionMode.js';
+import { buildClaudePermissionModeArgs, mapToClaudePermissionMode } from './permissionMode.js';
 import type {
   ClaudeUsageObservation,
   ClaudeUsageObservationSubscription,
@@ -983,7 +983,7 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
         argv: resolveClaudeLaunchSettingsOverlayArgs({
           args: [
             ...(model ? ['--model', model] : []),
-            ...(permissionMode ? ['--permission-mode', mapToClaudePermissionMode(permissionMode)] : []),
+            ...buildClaudePermissionModeArgs(permissionMode),
           ],
           interactionKind: 'interactive_terminal',
           permissionMode: permissionMode ? mapToClaudePermissionMode(permissionMode) : null,

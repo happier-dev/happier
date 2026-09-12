@@ -1686,7 +1686,7 @@ describe('createClaudeNativeRuntime', () => {
     ]);
   });
 
-  it('does not launch a model when the host has no active selection', async () => {
+  it('does not override the configured Claude default when the host has no active selection', async () => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
     });
@@ -1702,12 +1702,7 @@ describe('createClaudeNativeRuntime', () => {
         options: {},
       },
       modelSelection: null,
-    }))).resolves.toMatchObject({
-      argv: [
-        '--permission-mode',
-        'default',
-      ],
-    });
+    }))).resolves.toMatchObject({ argv: [] });
   });
 
   it('publishes input rejection when Claude proves spawn failed before prompt transport', async () => {

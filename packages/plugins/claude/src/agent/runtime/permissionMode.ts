@@ -32,6 +32,16 @@ export function mapToClaudePermissionMode(mode: string | null | undefined): Clau
     return 'default';
 }
 
+/**
+ * Build an explicit Claude permission override only when Happier selected a non-default mode.
+ * Claude's `default` CLI flag overrides `permissions.defaultMode` from settings, so provider
+ * default semantics require omitting the flag rather than spelling the default value.
+ */
+export function buildClaudePermissionModeArgs(mode: string | null | undefined): readonly string[] {
+    const providerMode = mapToClaudePermissionMode(mode);
+    return providerMode === 'default' ? [] : ['--permission-mode', providerMode];
+}
+
 export function resolveClaudePermissionModeFromRuntimeMode(mode: ClaudePermissionModeInput): ClaudeProviderPermissionMode {
     const agentModeId = typeof mode.agentModeId === 'string' ? mode.agentModeId.trim() : '';
     if (agentModeId === 'plan') return 'plan';
