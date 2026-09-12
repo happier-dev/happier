@@ -1906,6 +1906,10 @@ export class ApiSessionClient extends EventEmitter {
             const statusByLocalId = new Map(statuses.map((entry) => [entry.localId, entry.status]));
             for (const localId of blockingLocalIds) {
                 const status = statusByLocalId.get(localId);
+                // While exact provider acceptance is actively settling, it is stronger evidence
+                // than an absent/archived Pending projection. Once that operation finishes, the
+                // ordinary terminal reconciliation may retire a genuinely stale claim.
+                if (this.acceptedCanonicalPendingDeliveryResolutionLocalIdsInFlight.has(localId)) continue;
                 if (status !== undefined && status !== 'discarded') continue;
                 if (!this.canonicalPendingDeliveryByLocalId.has(localId)) continue;
                 logger.debug('[pendingQueue] exact terminal server truth retired local provider custody', {

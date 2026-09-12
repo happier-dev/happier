@@ -3379,6 +3379,85 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect((client as any).canonicalPendingDeliveryByLocalId.has('discarded-local')).toBe(false);
   });
 
+  it('does not let terminal reconciliation erase late acceptance after an uncertain delivery was dismissed', async () => {
+    const dismissedLocalId = 'dismissed-uncertain-local';
+    const laterLocalId = 'later-local';
+    const client = await createClient({
+      latestTurnStatus: 'completed',
+      pendingCount: 2,
+      pendingVersion: 1,
+      metadata: { deliveredUserMessageSeqV1: 0 },
+    });
+    const providerInvocations: string[] = [];
+    client.onUserMessage((message) => {
+      if (message.localId) providerInvocations.push(message.localId);
+    });
+    materializeNextMock
+      .mockResolvedValueOnce({
+        ...createProviderDeliveryMaterializeResult(dismissedLocalId, 2),
+        pendingQueueState: { known: true, pendingCount: 2, pendingBlockedCount: 0, pendingVersion: 2 },
+      })
+      .mockResolvedValueOnce({
+        ...createProviderDeliveryMaterializeResult(laterLocalId, 4),
+        pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 4 },
+      });
+    blockPendingDeliveryMock.mockResolvedValueOnce({
+      pendingQueueState: { known: true, pendingCount: 2, pendingBlockedCount: 1, pendingVersion: 3 },
+    });
+    const acceptedResult = {
+      didResolve: true,
+      pendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 5 },
+      message: {
+        id: `message-${dismissedLocalId}`,
+        seq: 91,
+        localId: dismissedLocalId,
+        messageRole: 'user',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'dismissed prompt' } } },
+        createdAt: 1_000,
+        updatedAt: 1_001,
+        deliveryState: null,
+      },
+    };
+    const acceptedResolution = createDeferred<typeof acceptedResult>();
+    resolveAcceptedPendingDeliveryMock.mockImplementationOnce(() => acceptedResolution.promise);
+
+    await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).resolves.toMatchObject({
+      type: 'materialized',
+      localId: dismissedLocalId,
+    });
+    await expect(client.blockPendingMessageDelivery({
+      localIds: [dismissedLocalId],
+      reason: 'ambiguous_terminal_delivery',
+    })).resolves.toBe(true);
+    await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' })).resolves.toMatchObject({
+      type: 'materialized',
+      localId: laterLocalId,
+    });
+
+    expect(providerInvocations).toEqual([dismissedLocalId, laterLocalId]);
+    expect((client as any).canonicalPendingDeliveryByLocalId.has(dismissedLocalId)).toBe(true);
+
+    confirmProviderInputAccepted(client, dismissedLocalId);
+    await waitUntil(() => resolveAcceptedPendingDeliveryMock.mock.calls.length === 1);
+    // The UI dismissal archives the first row outside this process. The ordinary pending
+    // projection therefore contains only the later live claim while acceptance settlement waits.
+    listDeliveryStatusesMock.mockResolvedValueOnce([
+      { localId: laterLocalId, status: 'delivering' },
+    ]);
+    await expect((client as any).reconcileCanonicalPendingDeliveriesBeforeMaterialization())
+      .resolves.toBe(false);
+    expect((client as any).canonicalPendingDeliveryByLocalId.has(dismissedLocalId)).toBe(true);
+
+    acceptedResolution.resolve(acceptedResult);
+    await waitUntil(() => (client as any).canonicalPendingDeliveryByLocalId.has(dismissedLocalId) === false);
+
+    expect(resolveAcceptedPendingDeliveryMock).toHaveBeenCalledWith({
+      socket: sessionSocketStub,
+      sessionId: 's1',
+      localId: dismissedLocalId,
+    });
+  });
+
   it.each(['queued', 'delivering', 'blocked'] as const)(
     'retains exact local custody while the server row remains %s',
     async (status) => {
