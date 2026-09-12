@@ -760,12 +760,11 @@ export async function claudeRemoteAgentSdk(opts: {
             resume: startFrom ?? undefined,
             ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
             settingSources,
-            // When the resolved mode is 'default', omit `permissionMode` so the Agent SDK falls
-            // back to the user's `permissions.defaultMode` from `.claude/settings.json`. Settings
-            // are already being loaded via `settingSources` above, so a user-configured
-            // defaultMode (e.g. "acceptEdits") takes effect for Happier sessions that don't
-            // explicitly pick a mode. Non-'default' modes still win as before.
-            ...(mappedPermissionMode !== 'default' ? { permissionMode: mappedPermissionMode } : {}),
+            // Agent SDK 0.2.123 defaults an absent `permissionMode` to "default" and then emits
+            // `--permission-mode default`, which overrides `permissions.defaultMode` from the
+            // selected settingSources. Its runtime treats null as the omit sentinel, so use that
+            // at this external boundary while continuing to pass explicit non-default modes.
+            permissionMode: mappedPermissionMode === 'default' ? null : mappedPermissionMode,
             allowDangerouslySkipPermissions: true,
             ...(resolvedEffort ? { effort: resolvedEffort } : {}),
             model: argOverrides.model ?? mode.model,

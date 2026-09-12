@@ -1309,9 +1309,9 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
         expect(capturedOptions).toBeTruthy();
         expect(capturedOptions.settingSources).toEqual(['user', 'project', 'local']);
-        // When Happier resolves to 'default', we omit permissionMode from the Agent SDK options
-        // so the SDK honors the user's `permissions.defaultMode` from .claude/settings.json.
-        expect(capturedOptions).not.toHaveProperty('permissionMode');
+        // Agent SDK 0.2.123 converts an absent value to `--permission-mode default`, which
+        // overrides the user's settings. A runtime null is the SDK boundary's omit sentinel.
+        expect(capturedOptions.permissionMode).toBeNull();
     });
 
     it('forwards settingSources when explicitly set on the mode', async () => {
@@ -2473,7 +2473,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         expect((await runOnce({ permissionMode: 'default', agentModeId: 'plan' }))?.allowDangerouslySkipPermissions).toBe(true);
     });
 
-    it('omits permissionMode when Happier resolves to default, but passes it for non-default modes', async () => {
+    it('uses the Agent SDK omit sentinel when Happier resolves to default, but passes non-default modes', async () => {
         let capturedOptions: any = null;
 
         const createQuery = vi.fn((_params: any) => {
@@ -2516,8 +2516,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return capturedOptions;
         };
 
-        // Default → no permissionMode key → SDK reads settings.json defaultMode
-        expect(await runOnce({ permissionMode: 'default' })).not.toHaveProperty('permissionMode');
+        // Default → null sentinel → no CLI flag → Claude reads settings.json defaultMode
+        expect((await runOnce({ permissionMode: 'default' }))?.permissionMode).toBeNull();
         // agentModeId === 'plan' still resolves to 'plan' (non-default), so it IS passed
         expect((await runOnce({ permissionMode: 'default', agentModeId: 'plan' }))?.permissionMode).toBe('plan');
         // Non-default explicit modes still forwarded
