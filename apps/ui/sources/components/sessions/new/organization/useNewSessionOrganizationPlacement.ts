@@ -84,7 +84,7 @@ export function useNewSessionOrganizationPlacement(params: Readonly<{
         setPlacement((current) => normalizeNewSessionOrganizationPlacement({ ...current, folderId }));
     }, []);
     const setTagIds = React.useCallback((tagIds: readonly string[]) => {
-        setPlacement((current) => normalizeNewSessionOrganizationPlacement({ ...current, tagIds }));
+        setPlacement((current) => normalizeNewSessionOrganizationPlacement({ ...current, tagIds: [...tagIds] }));
     }, []);
     const toggleTagId = React.useCallback((tagId: string) => {
         setPlacement((current) => normalizeNewSessionOrganizationPlacement({

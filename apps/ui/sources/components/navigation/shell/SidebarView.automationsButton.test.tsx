@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -157,34 +157,36 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
         const actionList = Array.isArray(props.actions) ? props.actions : [];
         const inlineActions = isCompact ? actionList.filter((action: any) => pinnedIds.has(action.id)) : actionList;
         const overflowActions = isCompact ? actionList.filter((action: any) => !pinnedIds.has(action.id)) : [];
+        const overflowTriggerProps = {
+            key: 'overflow',
+            'data-testid': props.overflowTriggerTestID,
+            accessibilityLabel: 'sidebar-header-actions-overflow',
+            onPress: vi.fn(),
+        };
 
         return React.createElement(
-            View,
+            'View',
             null,
             overflowActions.length > 0
                 ? React.createElement(
-                    Pressable,
-                    {
-                        key: 'overflow',
-                        testID: props.overflowTriggerTestID,
-                        accessibilityLabel: 'sidebar-header-actions-overflow',
-                        onPress: vi.fn(),
-                    },
+                    'Pressable',
+                    overflowTriggerProps,
                     null,
                 )
                 : null,
-            inlineActions.map((action: any) =>
-                React.createElement(
-                    Pressable,
-                    {
-                        key: action.id,
-                        testID: action.inlineTestID,
-                        accessibilityLabel: action.title,
-                        onPress: action.onPress,
-                    },
+            inlineActions.map((action: any) => {
+                const inlineActionProps = {
+                    key: action.id,
+                    'data-testid': action.inlineTestID,
+                    accessibilityLabel: action.title,
+                    onPress: action.onPress,
+                };
+                return React.createElement(
+                    'Pressable',
+                    inlineActionProps,
                     action.icon ?? null,
-                ),
-            ),
+                );
+            }),
         );
     },
 }));
@@ -547,19 +549,19 @@ describe('SidebarView header automations button', () => {
         const screen = await renderScreen(<SidebarView sidebarWidthPx={250} />);
 
         const overflow = requireTestInstance(
-            screen.findByTestId('sidebar-header-actions-overflow'),
+            screen.findHostByTestId('sidebar-header-actions-overflow'),
             'overflow trigger',
         );
         const settings = requireTestInstance(
-            screen.findByTestId('nav-settings'),
+            screen.findHostByTestId('nav-settings'),
             'settings button',
         );
         const projects = requireTestInstance(
-            screen.findByTestId('nav-projects'),
+            screen.findHostByTestId('nav-projects'),
             'projects button',
         );
         const newSession = requireTestInstance(
-            screen.findByTestId('nav-new-session'),
+            screen.findHostByTestId('nav-new-session'),
             'new session button',
         );
 
@@ -570,7 +572,7 @@ describe('SidebarView header automations button', () => {
         const parent = requireTestInstance(overflow.parent, 'header action parent');
         const order = parent.children
             .filter((child): child is ReactTestInstance => typeof child === 'object' && child !== null && 'props' in (child as any))
-            .map((child) => child.props?.testID ?? child.props?.accessibilityLabel)
+            .map((child) => child.props?.['data-testid'] ?? child.props?.testID ?? child.props?.accessibilityLabel)
             .filter(Boolean) as string[];
 
         expect(order.indexOf('sidebar-header-actions-overflow')).toBeLessThan(order.indexOf('nav-settings'));

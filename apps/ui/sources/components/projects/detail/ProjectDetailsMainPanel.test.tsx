@@ -93,7 +93,6 @@ describe('ProjectDetailsMainPanel', () => {
             scopeId: 'project:wr_1',
             activeRootPath: '/repo/.worktrees/feature-auth',
             displayPathOverride: '/repo',
-            pluginSurfacePlacementScope: 'project',
             workspaceRef: expect.objectContaining({
                 id: 'wr_1',
                 serverId: 's1',
@@ -162,7 +161,6 @@ describe('ProjectDetailsMainPanel', () => {
         expect(workspaceDetailsPanelSpy).toHaveBeenCalledWith(expect.objectContaining({
             pluginUiProjection,
             platform: 'web',
-            pluginSurfacePlacementScope: 'project',
         }));
     });
 });

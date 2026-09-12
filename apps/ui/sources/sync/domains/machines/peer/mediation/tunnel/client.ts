@@ -139,7 +139,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
         const openServerRelayStream = input.openServerRelayStream
             ?? (
                 relayScopeUserId && relaySocket
-                    ? (request: Readonly<{ open: PeerTcpTunnelOpenV1 }>) => openPeerTcpTunnelRelayStream({
+                    ? (request: Readonly<{ open: PeerTcpTunnelOpenV1; signal: AbortSignal | null }>) => openPeerTcpTunnelRelayStream({
                         scopeUserId: relayScopeUserId,
                         relaySocketId: relaySocket.socketId,
                         open: request.open,
@@ -191,6 +191,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
                 ? (request: Readonly<{
                     open: PeerTcpTunnelDirectOpen;
                     response: PeerTcpTunnelOpenResponseV1;
+                    signal: AbortSignal | null;
                 }>) => openPeerTcpTunnelLoopbackStream({
                     endpointUrl: loopbackEndpointUrl,
                     open: request.open,

@@ -11,10 +11,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
 installSessionDetailsPanelCommonModuleMocks({
     icons: async () => ({
         Octicons: 'Octicons',

@@ -19,6 +19,7 @@ enableReactActEnvironment();
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
+const machineRouteParams = { selectedId: 'm1' };
 
 installPickerCommonModuleMocks({
     reactNative: async () =>
@@ -29,10 +30,10 @@ installPickerCommonModuleMocks({
         }),
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
-    expoRouter: async () =>
-        (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    expoRouter: async () => {
+        const module = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
             navigation: navigationMock,
-            params: { selectedId: 'm1' },
+            params: machineRouteParams,
             router: {
                 push: routerMock.push,
                 back: routerMock.back,
@@ -40,7 +41,12 @@ installPickerCommonModuleMocks({
                 setParams: routerMock.setParams,
             },
             stackOptionsCapture,
-        }).module,
+        }).module;
+        return {
+            ...module,
+            useLocalSearchParams: () => machineRouteParams,
+        };
+    },
     storage: async (importOriginal) =>
         (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
             importOriginal,

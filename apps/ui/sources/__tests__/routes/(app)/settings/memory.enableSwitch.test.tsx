@@ -8,13 +8,36 @@ import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState 
 
 const machineRpcSpy = vi.fn();
 const featureEnabledState: Record<string, boolean> = { 'memory.search': true };
+const administrationTargetSelection = vi.hoisted(() => {
+    const executionTarget = {
+        target: { serverIdentityId: 'srv_1', machineId: 'm1' },
+        serverId: 'srv_1',
+        machine: { id: 'm1' },
+    };
+    return {
+        selectedTarget: executionTarget.target,
+        canExecute: true,
+        resolveExecutionTarget: () => executionTarget,
+    };
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'srv_1', generation: 1 }),
+    subscribeActiveServer: () => () => {},
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcSpy,
+}));
+
+vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    useMachineAdministrationTargetSelection: () => administrationTargetSelection,
+}));
+
+vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
+    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
+        React.createElement('MachineAdministrationTargetSelector', props)
+    ),
 }));
 
 function installMemorySettingsEntryMocks() {

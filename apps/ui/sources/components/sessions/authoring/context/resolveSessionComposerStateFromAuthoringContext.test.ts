@@ -34,20 +34,31 @@ const BASE_SESSION = {
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',
+    executionTarget: null,
     directory: '/repo/draft',
     checkoutCreationDraft: null,
+    organizationPlacement: { folderId: null, tagIds: [] },
     prompt: 'Summarize changes',
     displayText: 'Summarize changes',
-    agentId: 'claude',
-    backendTarget: { kind: 'backend', backendId: 'claude' },
+    agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+    },
     transcriptStorage: 'direct',
     profileId: 'profile-draft',
     environmentVariables: null,
     resumeSessionId: null,
     permissionMode: 'default',
     permissionModeUpdatedAt: 123,
-    modelId: 'gpt-5',
-    modelUpdatedAt: 456,
+    modelSelection: {
+        v: 1,
+        updatedAt: 456,
+        ref: {
+            agentTargetKey: 'agent:happier.agent.claude/claude',
+            providerConnectionId: null,
+            modelId: 'gpt-5',
+        },
+    },
     mcpSelection: null,
     connectedServices: null,
     terminal: { mode: 'integrated' },
@@ -64,13 +75,13 @@ const BASE_DRAFT: SessionAuthoringDraft = {
 };
 
 describe('resolveSessionComposerStateFromAuthoringContext', () => {
-    it('resolves live-session composer state from the snapshot with fallback agent support', () => {
+    it('uses the fallback agent when the live-session snapshot agent is blank', () => {
         const context: LiveSessionAuthoringContext = {
             kind: 'liveSession',
             session: BASE_SESSION as any,
             snapshot: {
                 ...BASE_SNAPSHOT,
-                agentId: 'not-a-real-agent',
+                agentId: '   ',
             } as any,
         };
 
@@ -86,13 +97,13 @@ describe('resolveSessionComposerStateFromAuthoringContext', () => {
         expect(state.currentPath).toBe('/repo/snapshot');
     });
 
-    it('leaves the live-session agent unset when there is no valid snapshot agent and no fallback', () => {
+    it('leaves the live-session agent unset when the snapshot agent is blank and there is no fallback', () => {
         const context: LiveSessionAuthoringContext = {
             kind: 'liveSession',
             session: BASE_SESSION as any,
             snapshot: {
                 ...BASE_SNAPSHOT,
-                agentId: 'not-a-real-agent',
+                agentId: '',
             } as any,
         };
 

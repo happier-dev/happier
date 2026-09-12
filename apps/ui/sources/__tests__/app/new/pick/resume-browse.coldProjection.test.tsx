@@ -159,6 +159,19 @@ describe('ResumeBrowsePickerScreen cold projection', () => {
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(browseScreenPropsRef.current).toBeNull();
-        expect(routerMock.replace).toHaveBeenCalledWith('/new');
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                agentType: 'claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
+                dataId: 'draft-1',
+                machineId: 'machine-cold',
+                spawnServerId: 'server-cold',
+            },
+        });
     });
 });

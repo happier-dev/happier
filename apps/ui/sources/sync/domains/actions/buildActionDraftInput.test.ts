@@ -37,4 +37,40 @@ describe('buildActionDraftInput', () => {
       permissionMode: 'read_only',
     });
   });
+
+  it('projects a canonical bundled Agent identity into the legacy Action seed target', () => {
+    const input = buildActionDraftInput({
+      actionId: 'subagents.delegate.start' as any,
+      sessionId: 's1',
+      defaultBackendTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+      },
+      instructions: 'Delegate this',
+    });
+
+    expect(input).toMatchObject({
+      sessionId: 's1',
+      backendTargetKeys: ['agent:claude'],
+      instructions: 'Delegate this',
+    });
+  });
+
+  it('keeps a contributed Agent addressable by its qualified routing id in the legacy Action seed', () => {
+    const input = buildActionDraftInput({
+      actionId: 'subagents.delegate.start' as any,
+      sessionId: 's1',
+      defaultBackendTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'acme.agent', localId: 'reviewer' },
+      },
+      instructions: 'Delegate this',
+    });
+
+    expect(input).toMatchObject({
+      sessionId: 's1',
+      backendTargetKeys: ['agent:acme.agent/reviewer'],
+      instructions: 'Delegate this',
+    });
+  });
 });

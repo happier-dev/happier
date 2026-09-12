@@ -104,6 +104,7 @@ const providerProjectionSpy = vi.hoisted(() => vi.fn<(input: unknown) => Provide
     error: null,
     loading: false,
     status: 'pending',
+    refreshFailures: [],
     refresh: vi.fn(async () => {}),
     refreshWithResult: vi.fn(async () => null),
 })));
@@ -286,6 +287,7 @@ describe('NewSessionEngineOptionDetail', () => {
             error: null,
             loading: false,
             status: 'pending',
+            refreshFailures: [],
             refresh: vi.fn(async () => {}),
             refreshWithResult: vi.fn(async () => null),
         });
@@ -337,6 +339,7 @@ describe('NewSessionEngineOptionDetail', () => {
             error: null,
             loading: false,
             status: 'success',
+            refreshFailures: [],
             refresh: vi.fn(async () => {}),
             refreshWithResult: vi.fn(async () => null),
         });
@@ -381,6 +384,7 @@ describe('NewSessionEngineOptionDetail', () => {
                 error: null,
                 loading: true,
                 status: 'pending',
+                refreshFailures: [],
                 refresh: vi.fn(async () => {}),
                 refreshWithResult: vi.fn(async () => null),
             } satisfies ProviderProjectionResult,
@@ -397,6 +401,7 @@ describe('NewSessionEngineOptionDetail', () => {
                 },
                 loading: false,
                 status: 'error',
+                refreshFailures: [],
                 refresh: vi.fn(async () => {}),
                 refreshWithResult: vi.fn(async () => null),
             } satisfies ProviderProjectionResult,

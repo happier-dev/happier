@@ -212,8 +212,7 @@ describe('SecretRequirementPickerScreen replace fallback', () => {
         expect(args).toEqual(expect.objectContaining({
             pathname: '/new',
             params: expect.objectContaining({
-                agentType: 'claude',
-                backendTargetKey: 'backend:claude',
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 profileId: 'deepseek',
@@ -223,6 +222,9 @@ describe('SecretRequirementPickerScreen replace fallback', () => {
         }));
 
         const backendTarget = parseJsonRouteParam(args?.params?.backendTarget) as any;
-        expect(backendTarget).toMatchObject({ kind: 'backend', backendId: 'claude' });
+        expect(backendTarget).toEqual({
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        });
     });
 });

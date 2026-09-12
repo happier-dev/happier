@@ -768,10 +768,9 @@ describe('createVoiceSessionLifecycleController', () => {
         expect(replacement.stop).not.toHaveBeenCalled();
     });
 
-    it('does not stop a later same-adapter attempt after delayed unsupported output focus', async () => {
+    it('does not stop a later same-adapter attempt after unsupported output focus from the prior attempt', async () => {
         const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
         const captureAdmission = createVoiceCaptureAdmissionController();
-        const focusApplication = createDeferred<'unsupported'>();
         const sessionId = 'session-1';
         let fixture!: ReturnType<typeof createAdapter>;
         fixture = createAdapter({
@@ -804,7 +803,7 @@ describe('createVoiceSessionLifecycleController', () => {
         });
         const adapter: VoiceAdapterController = {
             ...fixture.controller,
-            setOutputFocusState: vi.fn(() => focusApplication.promise),
+            setOutputFocusState: vi.fn(() => 'unsupported' as const),
         };
         const controller = createVoiceSessionLifecycleController({
             captureAdmission,
@@ -826,7 +825,6 @@ describe('createVoiceSessionLifecycleController', () => {
         expect(fixture.start).toHaveBeenCalledTimes(2);
         expect(fixture.stop).toHaveBeenCalledOnce();
 
-        focusApplication.resolve('unsupported');
         await expect(staleApplication).resolves.toBe('unsupported');
         expect(fixture.stop).toHaveBeenCalledOnce();
         expect(controller.getSnapshot()).toMatchObject({

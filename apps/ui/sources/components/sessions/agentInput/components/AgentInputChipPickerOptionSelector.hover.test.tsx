@@ -136,8 +136,9 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         expect(onActionPress).not.toHaveBeenCalled();
         expect(onFocusOption).not.toHaveBeenCalled();
 
+        const hoverContainer = screen.find((node) => typeof node.props.onMouseEnter === "function");
         await act(async () => {
-            actionBeforeHover?.parent?.props.onMouseEnter?.();
+            hoverContainer.props.onMouseEnter();
         });
         const actionOnHover = screen.findByTestId("engine-favorite-action");
         expect(actionOnHover?.props.disabled).toBe(false);

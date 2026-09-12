@@ -29,6 +29,7 @@ const MAIN_VIEW_PATH = join(
 const ALLOWED_SETTINGS_STACK_SCREEN_FILES = new Set([
     'app/(app)/settings/_layout.tsx',
     'components/settings/actions/ActionSettingsDetailView.tsx',
+    'components/settings/plugins/PluginSettingsPageScreen.tsx',
 ]);
 
 function walkFiles(root: string): string[] {

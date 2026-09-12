@@ -81,7 +81,8 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
+    Typography: { default: () => ({}), rowMeta: () => ({}) },
 }));
 
 vi.mock('@/components/ui/code/editor/codeEditorFontMetrics', () => ({
@@ -293,6 +294,7 @@ describe('SessionRightPanelTerminalView.web', () => {
             cols: 80,
             rows: 24,
             launch: { kind: 'session_attach', sessionId: 's1' },
+            terminalKey: 'session-attach:s1',
         });
     });
 
@@ -636,6 +638,7 @@ describe('SessionRightPanelTerminalView.web', () => {
         expect(cached).toEqual({
             terminalId: 't1',
             cursor: 0,
+            cursorMode: 'legacy-event-cursor',
             output: '',
             detectedUrl: null,
         });

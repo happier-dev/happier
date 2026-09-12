@@ -15,6 +15,9 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('Text', props, props.children),
 }));
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: (props: Record<string, unknown>) => React.createElement('Icon', props, null),
+}));
 // Focus on the git component's own logic; represent AnimatedNumber by its formatted output.
 vi.mock('@/components/instrument', () => ({
     AnimatedNumber: (props: { value: number; format: (n: number) => string; emphasisColor?: string }) =>
@@ -93,9 +96,9 @@ describe('GitDeltaInstrument', () => {
 
     it('drops the branch icon in compact mode', () => {
         act(() => { tree = create(<GitDeltaInstrument git={git({})} compact />); });
-        expect(tree!.root.findAll((n) => String(n.type) === 'Octicons')).toHaveLength(0);
+        expect(tree!.root.findAll((n) => String(n.type) === 'Icon')).toHaveLength(0);
         act(() => { tree!.unmount(); tree = create(<GitDeltaInstrument git={git({})} compact={false} />); });
-        expect(tree!.root.findAll((n) => String(n.type) === 'Octicons')).toHaveLength(1);
+        expect(tree!.root.findAll((n) => String(n.type) === 'Icon')).toHaveLength(1);
     });
 
     it('renders the branch icon alone in a clean repo (no numbers, no files label)', () => {
@@ -109,7 +112,7 @@ describe('GitDeltaInstrument', () => {
                 />,
             );
         });
-        expect(tree!.root.findAll((n) => String(n.type) === 'Octicons')).toHaveLength(1);
+        expect(tree!.root.findAll((n) => String(n.type) === 'Icon')).toHaveLength(1);
         expect(numbers(tree!)).toHaveLength(0);
         const texts = tree!.root.findAll((n) => String(n.type) === 'Text');
         expect(texts.some((n) => String(n.props.children).includes('changedFilesLabel'))).toBe(false);
@@ -124,7 +127,7 @@ describe('GitDeltaInstrument', () => {
                 />,
             );
         });
-        expect(tree!.root.findAll((n) => String(n.type) === 'Octicons')).toHaveLength(1);
+        expect(tree!.root.findAll((n) => String(n.type) === 'Icon')).toHaveLength(1);
     });
 
     it('invokes onPress when pressed', () => {

@@ -300,17 +300,11 @@ vi.mock('@/utils/system/versionUtils', () => ({
   MINIMUM_CLI_VERSION: '0.0.0',
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
   AGENT_IDS: ['codex'],
   DEFAULT_AGENT_ID: 'codex',
   buildResumeSessionExtrasFromUiState: () => null,
-  getAgentCore: () => ({
-    cli: { detectKey: 'codex' },
-    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
-    model: { defaultMode: 'default' },
-    resume: { vendorResumeIdField: null },
-    sessionModes: { kind: 'none' },
-  }),
   getAgentResumeExperimentsFromSettings: () => null,
   getNewSessionRelevantInstallableDepKeys: () => [],
   isBundledAgentId: (value: unknown) => value === 'codex',

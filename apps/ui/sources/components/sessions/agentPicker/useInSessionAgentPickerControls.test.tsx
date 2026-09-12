@@ -142,6 +142,7 @@ async function renderControls(props: HookProps = {}) {
         accountScope: hookProps.accountScope ?? null,
         currentAgentId: 'claude',
         currentAgentLabel: 'Claude Code',
+        projectionCurrent: true,
         currentAgentSessionActive: hookProps.sessionActive ?? true,
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
         featureDecision: hookProps.featureDecision === undefined
@@ -713,22 +714,23 @@ describe('useInSessionAgentPickerControls', () => {
     });
 
     it('fails closed while feature state is unresolved without spending an existing arm', async () => {
-        const hook = await renderControls();
+        const accountScope = { serverId: 'server-1', accountId: 'account-1' } as const;
+        const hook = await renderControls({ accountScope });
         await openPicker(hook);
         await act(async () => {
             optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
         });
         const localId = hook.getCurrent().armedContinuationLocalId;
 
-        await hook.rerender({ featureDecision: null });
+        await hook.rerender({ accountScope, featureDecision: null });
 
         // Presentation is closed while the decision is unknown, but uncertainty
         // is not evidence that a saved choice is invalid.
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
         expect(hook.getCurrent().armedContinuation).toBeNull();
-        expect(readSessionDraftValue(null, 'session-1', 'routing.agentContinuation')).toBeDefined();
+        expect(readSessionDraftValue(accountScope, 'session-1', 'routing.agentContinuation')).toBeDefined();
 
-        await hook.rerender({ featureDecision: { state: 'enabled' } });
+        await hook.rerender({ accountScope, featureDecision: { state: 'enabled' } });
 
         expect(hook.getCurrent().armedContinuation?.selection.agentId).toBe('codex');
         expect(hook.getCurrent().armedContinuationLocalId).toBe(localId);

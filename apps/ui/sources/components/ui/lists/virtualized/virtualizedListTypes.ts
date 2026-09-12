@@ -83,6 +83,7 @@ export type VirtualizedListProps<T> = Readonly<{
 
     keyboardShouldPersistTaps?: 'always' | 'never' | 'handled' | boolean;
     keyboardDismissMode?: 'none' | 'on-drag' | 'interactive';
+    horizontal?: boolean;
     showsVerticalScrollIndicator?: boolean;
     showsHorizontalScrollIndicator?: boolean;
     scrollEventThrottle?: number;

@@ -3,21 +3,15 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 vi.mock('@/components/ui/theme/haptics', () => ({
     hapticsLight: vi.fn(),
 }));
 
-vi.mock('@/text', () => createTextModuleMock());
-
-vi.mock('@/agents/registry/compat/customAcp', () => ({
-    resolveAgentLookupCoreConfig: () => ({ displayNameKey: 'agents.codex' }),
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentCore: () => ({ displayNameKey: 'agents.codex' }),
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 import { useAgentInputSelectionOverlayController } from '../selection/useAgentInputSelectionOverlayController';
 import { useAgentInputCoreControlHandlers } from './useAgentInputCoreControlHandlers';

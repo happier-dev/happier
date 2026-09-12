@@ -259,6 +259,7 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
                 storage: Object.assign(
                     (selector?: (state: any) => unknown) => {
                         const readSnapshot = () => {
@@ -483,7 +484,8 @@ vi.mock('@/components/sessions/agentInput', () => ({
         return React.createElement('AgentInput', props);
     },
 }));
-vi.mock('@/utils/system/versionUtils', () => ({
+vi.mock('@/utils/system/versionUtils', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/system/versionUtils')>(),
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
     MINIMUM_CLI_PENDING_QUEUE_V2_VERSION: '0.0.0',
@@ -494,7 +496,9 @@ vi.mock('@/agents/catalog/catalog', () => ({
     buildResumeSessionExtrasFromUiState: () => null,
     getAgentCore: () => ({
         displayNameKey: 'agents.codex',
+        availability: { experimental: false },
         cli: { spawnAgent: 'codex' },
+        ui: { agentPickerIconName: 'code-slash-outline' },
         model: { defaultMode: 'default' },
         resume: { vendorResumeIdField: null },
         uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },

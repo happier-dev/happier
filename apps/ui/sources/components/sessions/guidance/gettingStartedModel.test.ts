@@ -179,10 +179,11 @@ describe('buildSessionGettingStartedViewModel', () => {
     });
 
     it('uses the canonical session-ready summary instead of the raw sessions array', () => {
-        const input: any = {
+        const input = {
             sessions: null,
             sessionsReady: true,
             sessionCount: 1,
+            activeMachines: [],
             selection: {
                 activeTarget: { kind: 'server', id: 'srv-a' },
                 activeServerId: 'srv-a',
@@ -191,7 +192,7 @@ describe('buildSessionGettingStartedViewModel', () => {
             serverSelectionGroups: [],
             activeServerProfile: { id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' },
             machineListByServerId: { 'srv-a': [{ active: true }] },
-        };
+        } as const;
         const model = buildSessionGettingStartedViewModel(input);
 
         expect(model.kind).toBe('select_session');

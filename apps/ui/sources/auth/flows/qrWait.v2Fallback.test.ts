@@ -6,6 +6,7 @@ import { encryptBox } from '@/encryption/libsodium';
 import { generateAuthKeyPair } from './qrStart';
 import { authQRWait } from './qrWait';
 import { serverFetch } from '@/sync/http/client';
+import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 
 const activeServerSnapshot = vi.hoisted(() => ({
     serverId: 'relay-example',
@@ -24,21 +25,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    adoptHomeProfile: (...args: unknown[]) => adoptHomeProfileMock(...args),
+    adoptHomeProfile: adoptHomeProfileMock,
 }));
 
-type StubResponse = {
-    ok: boolean;
-    status: number;
-    json: () => Promise<any>;
-};
-
-function makeJsonResponse(status: number, payload: any): StubResponse {
-    return {
-        ok: status >= 200 && status < 300,
-        status,
-        json: async () => payload,
-    };
+function makeJsonResponse(status: number, payload: unknown): Response {
+    return Response.json(payload, { status });
 }
 
 describe('authQRWait v2 fallback', () => {
@@ -57,12 +48,14 @@ describe('authQRWait v2 fallback', () => {
         const fetchMock = vi.mocked(serverFetch);
         fetchMock.mockReset();
         fetchMock.mockResolvedValueOnce(
-            makeJsonResponse(200, { state: 'authorized', tokenEncrypted, response: responseEncrypted }) as any,
+            makeJsonResponse(200, { state: 'authorized', tokenEncrypted, response: responseEncrypted }),
         );
 
         const out = await authQRWait(keypair);
         expect(out?.token).toBe(expectedToken);
-        expect(out?.secret).toBe(encodeBase64(expectedSecret, 'base64url'));
+        expect(out && isLegacyAuthCredentials(out)).toBe(true);
+        if (!out || !isLegacyAuthCredentials(out)) throw new Error('expected legacy QR credentials');
+        expect(out.secret).toBe(encodeBase64(expectedSecret, 'base64url'));
         expect(fetchMock.mock.calls[0]?.[0]).toBe('/v2/auth/account/request');
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -76,14 +69,16 @@ describe('authQRWait v2 fallback', () => {
 
         const fetchMock = vi.mocked(serverFetch);
         fetchMock.mockReset();
-        fetchMock.mockResolvedValueOnce(makeJsonResponse(404, { error: 'Not Found' }) as any);
+        fetchMock.mockResolvedValueOnce(makeJsonResponse(404, { error: 'Not Found' }));
         fetchMock.mockResolvedValueOnce(
-            makeJsonResponse(200, { state: 'authorized', token: expectedToken, response: responseEncrypted }) as any,
+            makeJsonResponse(200, { state: 'authorized', token: expectedToken, response: responseEncrypted }),
         );
 
         const out = await authQRWait(keypair);
         expect(out?.token).toBe(expectedToken);
-        expect(out?.secret).toBe(encodeBase64(expectedSecret, 'base64url'));
+        expect(out && isLegacyAuthCredentials(out)).toBe(true);
+        if (!out || !isLegacyAuthCredentials(out)) throw new Error('expected legacy QR credentials');
+        expect(out.secret).toBe(encodeBase64(expectedSecret, 'base64url'));
         expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
             '/v2/auth/account/request',
             '/v1/auth/account/request',
@@ -106,7 +101,7 @@ describe('authQRWait v2 fallback', () => {
                 token: expectedToken,
                 response: responseEncrypted,
                 serverIdentityId: 'srv_auth_identity',
-            }) as any,
+            }),
         );
 
         const out = await authQRWait(keypair);
@@ -131,7 +126,7 @@ describe('authQRWait v2 fallback', () => {
         fetchMock.mockReset();
         fetchMock.mockRejectedValueOnce(new Error('network unavailable'));
         fetchMock.mockResolvedValueOnce(
-            makeJsonResponse(200, { state: 'authorized', token: expectedToken, response: responseEncrypted }) as any,
+            makeJsonResponse(200, { state: 'authorized', token: expectedToken, response: responseEncrypted }),
         );
 
         const out = await authQRWait(keypair);

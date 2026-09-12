@@ -40,6 +40,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import { getModelOptionsForAgentType, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import {
     mentionRefV1SurvivesRenderedTokenAlone,
+    readRuntimeDescriptorV1,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type PersistedBackendTargetRefV2,
@@ -335,6 +336,8 @@ export function useCreateNewSession(params: Readonly<{
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
     authoringDraft?: SessionAuthoringDraft | null;
+    automationsEnabled?: boolean;
+    onAutomationDraftChange?: (next: NonNullable<SessionAuthoringDraft['automation']>) => void;
     authoringCommitPending?: boolean;
     mcpSelection?: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchModeOverride?: WindowsRemoteSessionLaunchMode | null;
@@ -855,7 +858,7 @@ export function useCreateNewSession(params: Readonly<{
                 windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
                 windowsRemoteSessionConsole: null,
                 windowsTerminalWindowName: windowsTerminalWindowName || null,
-                runtimeDescriptorV1: spawnSessionExtras.runtimeDescriptorV1 ?? null,
+                runtimeDescriptorV1: readRuntimeDescriptorV1(spawnSessionExtras.runtimeDescriptorV1) ?? null,
                 acpSessionModeId: normalizedAcpModeId || null,
                 sessionConfigOptionOverrides:
                     spawnSessionExtras.sessionConfigOptionOverrides

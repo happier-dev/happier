@@ -38,6 +38,12 @@ import {
 
 import { buildSessionHandoffRecoveryPlan } from './recoveryPlan';
 
+const EXTERNAL_AGENT_IDENTITY = {
+    pluginId: 'acme',
+    localId: 'acme.agent',
+} as const;
+const EXTERNAL_AGENT_ID = `${EXTERNAL_AGENT_IDENTITY.pluginId}/${EXTERNAL_AGENT_IDENTITY.localId}`;
+
 describe('buildSessionHandoffRecoveryPlan', () => {
     beforeEach(() => {
         resolveVendorHandoffIdMetadataMock.mockReset();
@@ -242,9 +248,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
             },
         };
         expect(resolveVendorHandoffIdMetadataMock).toHaveBeenCalled();
-        for (const [metadata] of resolveVendorHandoffIdMetadataMock.mock.calls) {
-            expect(metadata).toEqual(projectedMetadata);
-        }
+        expect(resolveVendorHandoffIdMetadataMock).toHaveBeenCalledWith(sourceMetadata);
         expect(buildSourceRecoveryResumePatchMetadataMock)
             .toHaveBeenCalledWith(projectedMetadata);
     });
@@ -253,10 +257,10 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         const environmentVariables = (envKey: string) => ({
             payload: {
                 environmentVariables: {
-                    providerId: 'acme.agent',
+                    providerId: EXTERNAL_AGENT_ID,
                     backendMode: {
                         envKey,
-                        settingKey: 'acmeBackendMode',
+                        settingKey: { scope: 'account', localId: 'acmeBackendMode' },
                         legacyMetadataKey: 'acmeBackendMode',
                         runtimeDescriptorField: 'backendMode',
                         defaultValue: 'server',
@@ -270,10 +274,10 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine_a',
             descriptorsByAgentId: {
-                'acme.agent': {
+                [EXTERNAL_AGENT_ID]: {
                     kind: 'plugin.ui.v1',
-                    pluginId: 'acme',
-                    agentId: 'acme.agent',
+                    pluginId: EXTERNAL_AGENT_IDENTITY.pluginId,
+                    agentId: EXTERNAL_AGENT_ID,
                     version: 1,
                     behavior: environmentVariables('OTHER_MACHINE_ACME_MODE'),
                 },
@@ -282,10 +286,10 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine_source',
             descriptorsByAgentId: {
-                'acme.agent': {
+                [EXTERNAL_AGENT_ID]: {
                     kind: 'plugin.ui.v1',
-                    pluginId: 'acme',
-                    agentId: 'acme.agent',
+                    pluginId: EXTERNAL_AGENT_IDENTITY.pluginId,
+                    agentId: EXTERNAL_AGENT_ID,
                     version: 1,
                     behavior: environmentVariables('ACME_MODE'),
                 },
@@ -303,7 +307,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                     path: '/workspace',
                     runtimeDescriptorV1: {
                         v: 1,
-                        agentId: 'acme.agent',
+                        agentId: EXTERNAL_AGENT_ID,
                         agent: {
                             backendMode: 'local',
                             providerSessionId: 'external_vendor_session',
@@ -314,7 +318,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
             }),
         ).toMatchObject({
             sourceResume: {
-                agent: 'acme.agent',
+                agent: EXTERNAL_AGENT_ID,
                 // `local`, not the descriptor's `server` default: proof the Agent's own
                 // runtime handle was read rather than a fallback being manufactured.
                 environmentVariables: { ACME_MODE: 'local' },

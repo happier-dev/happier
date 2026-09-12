@@ -14,6 +14,8 @@ import {
 } from './tauriDriverSessionSelection.mjs';
 
 const execFileAsync = promisify(execFile);
+const qaScriptsDir = dirname(fileURLToPath(import.meta.url));
+const expectedRepoRoot = dirname(dirname(dirname(dirname(qaScriptsDir))));
 const { resolveActivitySurfacesPreflightSelector } = preflightModule;
 const canonicalActivitySurfacesRequiredProofStepIds = [
     'settings_overlay',
@@ -1641,7 +1643,7 @@ test('tauri activity-surfaces QA seeds a qualifying session through the canonica
     assert.deepEqual(
         calls.map(({ args }) => args),
         [
-            ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+            ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
             ['session', 'send', 'sess_seeded_overlay', 'Please post a brief status update so the desktop overlay becomes visible.'],
         ],
     );
@@ -2211,7 +2213,7 @@ test('tauri activity-surfaces QA can seed a deterministic attention-only session
     assert.deepEqual(
         calls.map(({ args }) => args),
         [
-            ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+            ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
             ['session', 'stop', 'sess_attention_only'],
             ['session', 'send', 'sess_attention_only', 'Please post a brief status update so the desktop overlay becomes visible.'],
         ],
@@ -2281,8 +2283,8 @@ test('tauri activity-surfaces QA retries seeded session creation after auto-star
     assert.deepEqual(
         calls.map(({ args }) => args),
         [
-            ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
-            ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+            ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
+            ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
             ['session', 'send', 'sess_seeded_overlay', 'Please post a brief status update so the desktop overlay becomes visible.'],
         ],
     );
@@ -2402,8 +2404,8 @@ test('tauri activity-surfaces QA retries seeded session creation by deriving the
     assert.deepEqual(
         calls.map(({ args }) => args),
         [
-            ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
-            ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+            ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
+            ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
             ['session', 'send', 'sess_seeded_overlay', 'Please post a brief status update so the desktop overlay becomes visible.'],
         ],
     );
@@ -2478,14 +2480,14 @@ test('tauri activity-surfaces QA falls back to the direct happier CLI when the n
         })),
         [
             {
-                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                args: ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
                 stackName: 'compose-desktop-qa',
                 serverUrl: 'http://127.0.0.1:57279',
                 homeDir: '/tmp/happier-stack/cli',
                 forceWebsocket: null,
             },
             {
-                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                args: ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
                 stackName: null,
                 serverUrl: 'http://127.0.0.1:57279',
                 homeDir: '/tmp/happier-stack/cli',
@@ -2552,7 +2554,7 @@ test('tauri activity-surfaces QA seeds through the direct happier CLI first when
         })),
         [
             {
-                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                args: ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
                 stackName: null,
                 serverUrl: 'http://127.0.0.1:57279',
                 forceWebsocket: '1',
@@ -2662,21 +2664,21 @@ test('tauri activity-surfaces QA retries direct session seeding after materializ
         })),
         [
             {
-                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                args: ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
                 stackName: 'compose-desktop-qa',
                 homeDir: null,
                 stackCliHomeDir: null,
                 forceWebsocket: null,
             },
             {
-                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                args: ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
                 stackName: null,
                 homeDir: null,
                 stackCliHomeDir: null,
                 forceWebsocket: '1',
             },
             {
-                args: ['session', 'create', '--path', '/Users/leeroy/Documents/Development/happier/dev', '--backend', 'codex'],
+                args: ['session', 'create', '--path', expectedRepoRoot, '--backend', 'codex'],
                 stackName: null,
                 homeDir: '/tmp/happier-compose-cli-home',
                 stackCliHomeDir: '/tmp/happier-compose-cli-home',

@@ -20,6 +20,7 @@ import {
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import {
     resolveNewSessionCapabilityProbeContext,
+    resolveNewSessionOperationalBackendTarget,
     resolveNewSessionOperationalProviderId,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
@@ -226,7 +227,10 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     }), [props.entry.agentId, props.entry.backendTarget, props.selectedMachineId, props.settings]);
 
     const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
-        backendTarget: props.entry.backendTarget,
+        backendTarget: resolveNewSessionOperationalBackendTarget({
+            backendTarget: props.entry.backendTarget,
+            runtimeCarrierAgentId: props.entry.agentId,
+        }),
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,

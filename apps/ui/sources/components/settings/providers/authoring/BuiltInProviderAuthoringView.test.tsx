@@ -50,6 +50,7 @@ describe('BuiltInProviderAuthoringView', () => {
             endpointTemplates={[]}
             endpointValues={{}}
             secretSelected={false}
+                savedSecretSelectionEnabled
                 preview={null}
                 previewLoading
                 enableAfterSaving={false}
@@ -99,6 +100,7 @@ describe('BuiltInProviderAuthoringView', () => {
                 ]}
                 endpointValues={{ acme: 'https://api.acme.example/v1' }}
                 secretSelected={false}
+                savedSecretSelectionEnabled
                 preview={null}
                 previewLoading={false}
                 enableAfterSaving={false}
@@ -138,6 +140,7 @@ describe('BuiltInProviderAuthoringView', () => {
                 endpointTemplates={[]}
                 endpointValues={{}}
                 secretSelected={false}
+                savedSecretSelectionEnabled
                 preview={{
                     status: 'selection_required',
                     connectionId: ProviderConnectionIdSchema.parse('pc_candidate'),

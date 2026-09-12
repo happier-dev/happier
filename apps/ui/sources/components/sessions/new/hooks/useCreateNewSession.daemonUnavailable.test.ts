@@ -50,6 +50,14 @@ type SpawnAttemptCustodyTestResult = Readonly<{
 }>;
 
 const activeHarnessStorageState: { current: NewSessionHarnessStorageState | null } = { current: null };
+const activeHarnessModalAlertSpy: { current: ReturnType<typeof vi.fn> | null } = { current: null };
+const activeHarnessSessionSpawnBoundarySpy: {
+  current: ((input: unknown) => Promise<SessionSpawnNewActionBoundaryOutcome>) | null;
+} = { current: null };
+const activeHarnessEnsureSessionVisibleSpy: {
+  current: ((sessionId: string) => Promise<unknown>) | null;
+} = { current: null };
+let loadedUseCreateNewSessionOwner: typeof import('./useCreateNewSession')['useCreateNewSession'] | null = null;
 
 async function setupHarness() {
   const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
@@ -58,6 +66,8 @@ async function setupHarness() {
     errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
     errorMessage: 'Daemon RPC is not available',
   }));
+  activeHarnessModalAlertSpy.current = modalAlertSpy;
+  activeHarnessSessionSpawnBoundarySpy.current = sessionSpawnNewActionBoundarySpy;
   const storageState: NewSessionHarnessStorageState = {
     settings: {},
     machines: { m1: { id: 'm1' } },
@@ -68,6 +78,11 @@ async function setupHarness() {
     updateSessionModelMode: vi.fn(),
   };
   activeHarnessStorageState.current = storageState;
+  const ensureSessionVisibleForMessageRoute = vi.fn<(sessionId: string) => Promise<unknown>>(async (sessionId: string) => {
+    const currentStorageState = activeHarnessStorageState.current ?? storageState;
+    currentStorageState.sessions[sessionId] = { id: sessionId };
+  });
+  activeHarnessEnsureSessionVisibleSpy.current = ensureSessionVisibleForMessageRoute;
 
   installNewSessionScreenModelCommonModuleMocks({
     text: () =>
@@ -86,7 +101,12 @@ async function setupHarness() {
         },
       }),
   });
-  vi.doMock('@/modal', () => ({ Modal: { alert: modalAlertSpy, confirm: vi.fn(async () => false) } }));
+  vi.doMock('@/modal', () => ({
+    Modal: {
+      alert: (...args: unknown[]) => activeHarnessModalAlertSpy.current?.(...args),
+      confirm: vi.fn(async () => false),
+    },
+  }));
   vi.doMock('@/sync/sync', () => ({
     sync: {
       applySettings: vi.fn(),
@@ -96,10 +116,10 @@ async function setupHarness() {
       refreshSessions: vi.fn(async () => {}),
       refreshMachines: vi.fn(async () => {}),
       sendMessage: vi.fn(async () => {}),
-      ensureSessionVisibleForMessageRoute: vi.fn(async (sessionId: string) => {
-        const currentStorageState = activeHarnessStorageState.current ?? storageState;
-        currentStorageState.sessions[sessionId] = { id: sessionId };
-      }),
+      acquireUserRequestLease: vi.fn(() => vi.fn()),
+      ensureSessionVisibleForMessageRoute: (sessionId: string) => (
+        activeHarnessEnsureSessionVisibleSpy.current?.(sessionId)
+      ),
     },
   }));
   vi.doMock('@/sync/store/settingsWriters', () => ({
@@ -215,7 +235,9 @@ async function setupHarness() {
     return {
       ...actual,
       executeManualSessionSpawnNewAction: async (input: any, _context: any, params: any) => {
-        const outcome = await sessionSpawnNewActionBoundarySpy(input);
+        const boundary = activeHarnessSessionSpawnBoundarySpy.current;
+        if (!boundary) throw new Error('expected active Session spawn boundary');
+        const outcome = await boundary(input);
         const custody = {
           v: 3 as const,
           scope: params.scope,
@@ -268,7 +290,11 @@ async function setupHarness() {
     };
   });
 
-  const { useCreateNewSession: useCreateNewSessionOwner } = await import('./useCreateNewSession');
+  loadedUseCreateNewSessionOwner ??= (await import('./useCreateNewSession')).useCreateNewSession;
+  const followUpModule = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
+  vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope).mockReset();
+  vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope).mockResolvedValue(undefined);
+  const useCreateNewSessionOwner = loadedUseCreateNewSessionOwner;
   const useCreateNewSession: typeof useCreateNewSessionOwner = (params) => useCreateNewSessionOwner({
     ...params,
     draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
@@ -278,23 +304,28 @@ async function setupHarness() {
     modalAlertSpy,
     sessionSpawnNewActionBoundarySpy,
     storageState,
+    ensureSessionVisibleForMessageRoute,
   };
 }
 
+await setupHarness();
+
 describe('useCreateNewSession (daemon unavailable UX)', () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-02-05T00:00:00.000Z'));
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
     activeHarnessStorageState.current = null;
+    activeHarnessModalAlertSpy.current = null;
+    activeHarnessSessionSpawnBoundarySpy.current = null;
+    activeHarnessEnsureSessionVisibleSpy.current = null;
   });
 
-  it('shows a daemon-unavailable alert with a Retry action', async () => {
+  it('shows the typed daemon-unavailable Action failure without a client retry', async () => {
     const { useCreateNewSession, modalAlertSpy } = await setupHarness();
 
     const setIsCreating = vi.fn();
@@ -347,12 +378,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(modalAlertSpy).toHaveBeenCalled();
     const args = modalAlertSpy.mock.calls[0] ?? [];
-    expect(args[0]).toBe('newSession.daemonRpcUnavailableTitle');
-    expect(String(args[1] ?? '')).toContain('newSession.daemonRpcUnavailableBody');
-    expect(String(args[1] ?? '')).toContain('status.lastSeen:time.minutesAgo:5');
-    expect(Array.isArray(args[2])).toBe(true);
-    const buttons = args[2] as any[];
-    expect(buttons.some((b) => b?.text === 'common.retry' && typeof b?.onPress === 'function')).toBe(true);
+    expect(args).toEqual(['common.error', 'newSession.daemonRpcUnavailableBody']);
     await hook.unmount();
   });
 
@@ -550,7 +576,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await hook.unmount();
   });
 
-  it('does not retry after unmount when the alert Retry action is pressed', async () => {
+  it('does not expose a client retry for a typed Action rejection', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy } = await setupHarness();
 
     const setIsCreating = vi.fn();
@@ -602,17 +628,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalled();
 
-    const buttons = (modalAlertSpy.mock.calls[0]?.[2] ?? []) as any[];
-    const retry = buttons.find((b) => b?.text === 'common.retry');
-    expect(typeof retry?.onPress).toBe('function');
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.daemonRpcUnavailableBody');
+    expect(modalAlertSpy.mock.calls[0]).toHaveLength(2);
 
     await hook.unmount();
-
-    await act(async () => {
-      retry.onPress();
-    });
-    await flushHookEffects({ runAllTimers: true });
-
     expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
   });
 
@@ -674,7 +693,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
   });
 
-  it('spawns first and enqueues the first turn with the launch attempt local id', async () => {
+  it('submits the first turn through the strict Action-owned initial input', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
     const followUpModule = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
     const followUpSpy = vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope);
@@ -738,14 +757,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     }));
     expect(actionInput).not.toHaveProperty('spawnNonce');
     expect(actionInput).not.toHaveProperty('initialPrompt');
-    expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
-      initialMessageText: 'Start here',
-      messageLocalId: expect.any(String),
-    }));
+    expect(followUpSpy).not.toHaveBeenCalled();
     const creationKey = (sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as any)?.creationKey;
-    const firstTurnLocalId = (followUpSpy.mock.calls[0]?.[0] as any)?.messageLocalId;
     expect(creationKey).toEqual(expect.stringMatching(/^manual:new-session-attempt-/));
-    expect(firstTurnLocalId).toBeTruthy();
 
     await hook.unmount();
   });
@@ -819,7 +833,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
       'session-created',
       expect.objectContaining({
-        localId: expect.stringMatching(/^spawn-first-turn:new-session-spawn-/),
+        localId: 'input-session-created',
         source: 'local_outbound',
         deliveryStatus: 'queued',
         text: 'Start here',
@@ -986,9 +1000,8 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await createPromise!;
 
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-    expect(followUpSpy).toHaveBeenCalledTimes(1);
-    const firstTurnLocalId = (followUpSpy.mock.calls[0]?.[0] as any)?.messageLocalId;
-    expect(firstTurnLocalId).toMatch(/^spawn-first-turn:new-session-spawn-/);
+    expect(followUpSpy).not.toHaveBeenCalled();
+    const firstTurnLocalId = 'input-session-created';
     expect(storageState.markSessionOptimisticThinking).toHaveBeenCalledWith('session-created');
     expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
       'session-created',
@@ -1007,7 +1020,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await hook.unmount();
   });
 
-  it('keeps the new-session surface active when the built-in first turn fails after spawn', async () => {
+  it('does not run the retired client follow-up for an Action-owned first turn', async () => {
     const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
     const followUpModule = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
     const followUpSpy = vi.mocked(followUpModule.followUpSpawnedSessionWithServerScope);
@@ -1017,7 +1030,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       type: 'success',
       sessionId: 'session-created',
     });
-    followUpSpy.mockRejectedValueOnce(new Error('first turn failed'));
 
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -1066,13 +1078,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await flushHookEffects({ runAllTimers: true });
 
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-    expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-created',
-      initialMessageText: 'Start here',
-      messageLocalId: expect.any(String),
-    }));
-    expect(router.replace).not.toHaveBeenCalled();
-    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'first turn failed');
+    expect(followUpSpy).not.toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
+    expect(modalAlertSpy).not.toHaveBeenCalled();
 
     await hook.unmount();
   });
@@ -1146,16 +1154,12 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
     expect(followUpSpy).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
-    expect(modalAlertSpy).toHaveBeenCalledWith(
-      'newSession.launchStillPendingTitle',
-      expect.stringContaining('newSession.launchStillPendingBody'),
-      expect.arrayContaining([expect.objectContaining({ text: 'common.retry' })]),
-    );
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.launchStillPendingBody');
 
     await hook.unmount();
   });
 
-  it('keeps the built-in first turn when daemon initial-prompt custody is not confirmed', async () => {
+  it('keeps the Action-owned first turn when local custody has no input identity', async () => {
     const {
       useCreateNewSession,
       sessionSpawnNewActionBoundarySpy,
@@ -1217,10 +1221,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await flushHookEffects({ runAllTimers: true });
 
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0]).not.toHaveProperty('initialPrompt');
-    expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-created',
-      initialMessageText: 'Start here',
-    }));
+    expect(followUpSpy).not.toHaveBeenCalled();
     expect(router.replace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
 
     await hook.unmount();
@@ -1299,16 +1300,10 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       creationKey?: string;
     };
     expect(firstSpawnOptions).not.toHaveProperty('initialPrompt');
-    const retryAlertCall = modalAlertSpy.mock.calls.find((call) => {
-      const buttons = call[2];
-      return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
-    });
-    expect(retryAlertCall).toBeTruthy();
-    const retry = ((retryAlertCall?.[2] ?? []) as Array<{ text?: string; onPress?: () => void }>)
-      .find((button) => button?.text === 'common.retry');
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'newSession.launchStillPendingBody');
 
     await act(async () => {
-      retry?.onPress?.();
+      await hook.getCurrent().handleCreateSession();
       await flushHookEffects({ runAllTimers: true });
     });
 
@@ -1316,17 +1311,13 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       creationKey: firstSpawnOptions.creationKey,
     }));
-    expect(followUpSpy).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-after-retry',
-      initialMessageText: 'Retry same nonce',
-      messageLocalId: expect.any(String),
-    }));
+    expect(followUpSpy).not.toHaveBeenCalled();
     expect(router.replace).toHaveBeenCalledWith('/session/session-after-retry?serverId=server-a', expect.anything());
 
     await hook.unmount();
   });
 
-  it('adopts the operation-owned nonce and user attempt id without a hook-level resolver', async () => {
+  it('keeps Action request identity authoritative over local custody metadata', async () => {
     const {
       useCreateNewSession,
       sessionSpawnNewActionBoundarySpy,
@@ -1413,11 +1404,15 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await flushHookEffects({ runAllTimers: true });
     await secondHook.unmount();
 
+    const firstSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0] as {
+      creationKey?: string;
+    };
     const secondSpawnOptions = sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0] as {
       creationKey?: string;
     };
 
-    expect(secondSpawnOptions.creationKey).toBe('manual:attempt-a');
+    expect(firstSpawnOptions.creationKey).toEqual(expect.stringMatching(/^manual:new-session-attempt-/));
+    expect(secondSpawnOptions.creationKey).toBe(firstSpawnOptions.creationKey);
   });
 
   it('keeps the unresolved launch barrier after remounting with a changed prompt on the same launch scope', async () => {
@@ -1668,7 +1663,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       sessionId: 'session-created',
       effectiveSpawnServerId: 'server-a',
       launchAttempt: expect.objectContaining({
-        attachmentMessageLocalId: expect.stringMatching(/^new-session-attachment-/),
+        attachmentMessageLocalId: expect.stringMatching(/^spawn-attachment:new-session-spawn-/),
       }),
     }));
     expect(router.replace).toHaveBeenCalledTimes(1);
@@ -1906,9 +1901,13 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   });
 
   it('keeps launch pending and routes when the created session hydrates after an initial route-readiness miss', async () => {
-    const { useCreateNewSession, modalAlertSpy, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
-    const { sync } = await import('@/sync/sync');
-    const ensureSessionVisibleForMessageRoute = vi.mocked(sync.ensureSessionVisibleForMessageRoute);
+    const {
+      useCreateNewSession,
+      modalAlertSpy,
+      sessionSpawnNewActionBoundarySpy,
+      storageState,
+      ensureSessionVisibleForMessageRoute,
+    } = await setupHarness();
 
     sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce({
       type: 'success',

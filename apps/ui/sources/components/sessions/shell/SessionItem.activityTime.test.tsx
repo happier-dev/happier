@@ -51,8 +51,10 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
     Typography: {
         default: () => ({}),
+        rowMeta: () => ({}),
     },
 }));
 
@@ -121,7 +123,8 @@ vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', ()
         React.createElement('SessionAgentCatalogIdentityIcon', props),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: (flavor: string | null | undefined) => flavor === 'claude' ? 'claude' : null,
 }));

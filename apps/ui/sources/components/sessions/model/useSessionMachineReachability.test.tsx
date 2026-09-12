@@ -108,6 +108,7 @@ describe('useSessionMachineReachability', () => {
             machineReachable: true,
             machineOnline: true,
             machineRpcTargetAvailable: true,
+            machineReachability: 'reachable',
         });
 
         await hook.unmount();

@@ -42,6 +42,7 @@ const virtualizedListState = vi.hoisted(() => ({
     current: null as null | {
         props: any | null;
         refHandle: unknown;
+        reset: () => void;
     },
 }));
 let allMachines = [
@@ -194,11 +195,17 @@ vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
-vi.mock('@/constants/Typography', () => ({
+vi.mock('@/constants/Typography', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/constants/Typography')>();
+    return {
+    ...actual,
     Typography: {
+        ...actual.Typography,
         default: () => ({}),
+        rowMeta: () => ({}),
     },
-}));
+    };
+});
 
 vi.mock('@legendapp/list/react-native', async () => {
     const legendListModule = (await import('@/dev/testkit/mocks/legendList')) as typeof import('@/dev/testkit/mocks/legendList');
@@ -663,7 +670,7 @@ function findRecordedGestureDetectors(
 
 describe('SessionsList (native virtualization)', () => {
     beforeEach(async () => {
-        virtualizedListState.current = null;
+        virtualizedListState.current?.reset();
         sessionListOrderingModeV1 = 'custom';
         mockPathname = '';
         pinnedSessionKeysV1 = [];

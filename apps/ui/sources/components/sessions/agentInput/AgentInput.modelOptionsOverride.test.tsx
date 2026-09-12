@@ -131,7 +131,8 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
     };
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,

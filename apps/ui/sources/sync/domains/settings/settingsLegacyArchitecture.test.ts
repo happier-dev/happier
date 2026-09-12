@@ -50,15 +50,16 @@ describe('settings legacy architecture', () => {
         const readSource = (relativePath: string) => readFileSync(join(UI_SOURCES_ROOT, relativePath), 'utf8');
         const accountIngress = readSource('sync/domains/settings/parse/accountSettingsCompatibilityMigrations.ts');
         const voicePersistence = readSource('sync/domains/settings/voiceSettingsPersistence.ts');
-        const providerProjection = readSource('voice/settings/providerSettings.ts');
+        const releasedCompatibility = readSource('sync/domains/settings/migrations/releasedVoiceSettingsCompatibility.ts');
         const speechMigrations = readSource('sync/domains/settings/migrations/speechProviders.ts');
         const credentialItem = readSource('voice/credentials/CredentialItem.tsx');
 
-        expect(accountIngress).not.toMatch(/stt_api_key|tts_api_key/);
+        expect(accountIngress).toContain("'happier.voice.openai-compat/stt'");
+        expect(accountIngress).toContain("'happier.voice.openai-compat/tts'");
         expect(voicePersistence).not.toMatch(/stt_api_key|tts_api_key|providerId === 'openai_compat'/);
-        expect(providerProjection).toContain("'happier.voice.openai-compat/stt'");
-        expect(providerProjection).toContain("'happier.voice.openai-compat/tts'");
-        expect(providerProjection).not.toContain('chatApiKey');
+        expect(releasedCompatibility).toContain("'happier.voice.openai-compat/stt'");
+        expect(releasedCompatibility).toContain("'happier.voice.openai-compat/tts'");
+        expect(releasedCompatibility).not.toContain('chatApiKey');
         expect(speechMigrations.slice(
             speechMigrations.indexOf('export function projectPredecessorSpeechProviderConfig'),
         )).toContain('OPENAI_COMPAT_STT_ID');

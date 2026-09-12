@@ -614,13 +614,18 @@ function dedupeEquivalentProfiles(params: Readonly<{
     }
     for (const [urlKey, profiles] of profilesByUrl) {
         const identities = new Set(profiles.map((profile) => profile.serverIdentityId).filter(Boolean));
-        if (identities.size <= 1) {
+        const allProfilesPrecedeCanonicalHomeIdentity = profiles.every(
+            (profile) => !profile.canonicalServerUrl,
+        );
+        if (identities.size <= 1 || allProfilesPrecedeCanonicalHomeIdentity) {
             groupsByKey.set(urlKey, profiles);
             continue;
         }
         // Stable identities outrank URL equality. Keep conflicting Homes
-        // separate; identity-less legacy entries may only join when there is
-        // no ambiguity (handled by the <=1 branch above).
+        // separate. Persisted profiles from before canonical Home URLs existed
+        // are the migration exception: those duplicate rows represented the
+        // same URL-selected Home, so the preferred row keeps the other
+        // identities as aliases rather than manufacturing distinct Homes.
         for (const profile of profiles) {
             const identityKey = profile.serverIdentityId ?? `legacy:${profile.id}`;
             const key = `${urlKey}|identity:${identityKey}`;

@@ -1,10 +1,13 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const cliBannerTheme = createThemeFixture();
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
@@ -112,15 +115,7 @@ describe('CliNotDetectedBanner', () => {
 
         const screen = await renderScreen(<CliNotDetectedBanner
             agentId={'codex' as any}
-            theme={{
-                colors: {
-                    warning: '#d97706',
-                    text: '#111827',
-                    textSecondary: '#6b7280',
-                    textLink: '#2563eb',
-                    box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
-                },
-            }}
+            theme={cliBannerTheme}
             onDismiss={() => {}}
         />);
 
@@ -132,15 +127,7 @@ describe('CliNotDetectedBanner', () => {
 
         const screen = await renderScreen(<CliNotDetectedBanner
             agentId={'codex' as any}
-            theme={{
-                colors: {
-                    warning: '#d97706',
-                    text: '#111827',
-                    textSecondary: '#6b7280',
-                    textLink: '#2563eb',
-                    box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
-                },
-            }}
+            theme={cliBannerTheme}
             onDismiss={() => {}}
         />);
 
@@ -150,8 +137,8 @@ describe('CliNotDetectedBanner', () => {
         expect(groups).toHaveLength(1);
         expect(items).toHaveLength(1);
         expect(groups[0].props.containerStyle).toEqual(expect.objectContaining({
-            backgroundColor: '#fff8e1',
-            borderColor: '#f5d38f',
+            backgroundColor: cliBannerTheme.colors.state.warning.background,
+            borderColor: cliBannerTheme.colors.state.warning.border,
             borderWidth: 1,
         }));
         expect(items[0].props.title).toBe('newSession.cliBanners.cliNotDetectedTitle:{"cli":"agents.codex"}');

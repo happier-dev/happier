@@ -9,6 +9,10 @@
  */
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    ExternalSessionOperationProgressV1Schema,
+    type ExternalSessionOperationProgressV1,
+} from '@happier-dev/protocol';
 
 const resumeOperationSpy = vi.hoisted(() => vi.fn());
 const retryOperationSpy = vi.hoisted(() => vi.fn());
@@ -54,6 +58,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSes
 
 import { renderHook } from '@/dev/testkit';
 
+import type { ChatListItem } from '@/components/sessions/chatListItems';
 import { TranscriptRowShell } from '@/components/sessions/transcript/ChatListRows';
 import { TranscriptWindowGapRow } from '@/components/sessions/transcript/viewport/window/TranscriptWindowGapRow';
 import { ExternalSessionOperationSharedCard } from '@/components/sessions/external/progress/ExternalSessionOperationSharedCard';
@@ -62,6 +67,44 @@ import { useTranscriptItemRenderer, type TranscriptItemRendererDeps } from './us
 
 function createRef<T>(current: T): { current: T } {
     return { current };
+}
+
+type ExternalSessionOperationItem = Extract<ChatListItem, { kind: 'external-session-operation' }>;
+
+function createExternalSessionOperationProgress(input: Readonly<{
+    operationId: string;
+    status: ExternalSessionOperationProgressV1['status'];
+    phase: ExternalSessionOperationProgressV1['phase'];
+}>): ExternalSessionOperationProgressV1 {
+    return ExternalSessionOperationProgressV1Schema.parse({
+        v: 1,
+        operationId: input.operationId,
+        revision: 1,
+        request: {
+            plan: 'materialize',
+            targetStorageMode: 'external-linked',
+            targetRuntimeMode: null,
+        },
+        status: input.status,
+        phase: input.phase,
+        timeline: ['validating', 'staging', 'importing', 'publishing'],
+        updatedAtMs: 1,
+        priorStableStorage: { state: 'machine_only' },
+        currentStorageState: 'machine_only',
+        checkpoint: {
+            sourcePagesRead: 0,
+            stagedItemCount: 0,
+            importedItemCount: 0,
+            requiredItemFailures: {
+                total: 0,
+                record: 0,
+                media: 0,
+                conversion: 0,
+                diagnosticsTruncated: false,
+            },
+        },
+        fence: { kind: 'none' },
+    });
 }
 
 function createRendererProps(overrides?: Partial<Record<string, unknown>>): TranscriptItemRendererDeps['props'] {
@@ -581,7 +624,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
         // card-local effect unmounts before it can run. The mounted row/viewport owner must
         // observe the transition after commit and focus the surviving transcript target.
         const returnFocusToTranscriptViewport = vi.fn();
-        const sharedItem = {
+        const sharedItem: ExternalSessionOperationItem = {
             kind: 'external-session-operation' as const,
             id: 'external-session-operation:operation-focus',
             presentation: {
@@ -595,9 +638,13 @@ describe('useTranscriptItemRenderer identity stability', () => {
             progress: null,
             createdAt: 0,
         };
-        const hydratedItem = {
+        const hydratedItem: ExternalSessionOperationItem = {
             ...sharedItem,
-            progress: {} as never,
+            progress: createExternalSessionOperationProgress({
+                operationId: 'operation-focus',
+                status: 'completed',
+                phase: 'publishing',
+            }),
         };
         const baseDeps = {
             ...createRendererDeps(createRendererProps({
@@ -606,7 +653,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
             returnFocusToTranscriptViewport,
         } as unknown as TranscriptItemRendererDeps;
         const hook = await renderHook(
-            ({ listData }: { listData: readonly typeof sharedItem[] }) => useTranscriptItemRenderer({
+            ({ listData }: { listData: readonly ExternalSessionOperationItem[] }) => useTranscriptItemRenderer({
                 ...baseDeps,
                 listData,
             }),
@@ -658,7 +705,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
                 revision: 2,
             },
         });
-        const hydratedItem = {
+        const hydratedItem: ExternalSessionOperationItem = {
             kind: 'external-session-operation' as const,
             id: 'external-session-operation:operation-owner-focus',
             presentation: {
@@ -669,10 +716,14 @@ describe('useTranscriptItemRenderer identity stability', () => {
                 status: 'awaiting_user_resume' as const,
                 phase: 'validating' as const,
             },
-            progress: {} as never,
+            progress: createExternalSessionOperationProgress({
+                operationId: 'operation-owner-focus',
+                status: 'awaiting_user_resume',
+                phase: 'validating',
+            }),
             createdAt: 0,
         };
-        const sharedItem = { ...hydratedItem, progress: null };
+        const sharedItem: ExternalSessionOperationItem = { ...hydratedItem, progress: null };
         const baseDeps = {
             ...createRendererDeps(createRendererProps({
                 externalSessionOperationOwnerTarget: {
@@ -685,7 +736,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
             returnFocusToTranscriptViewport,
         } as TranscriptItemRendererDeps;
         const hook = await renderHook(
-            ({ listData }: { listData: readonly typeof hydratedItem[] }) => useTranscriptItemRenderer({
+            ({ listData }: { listData: readonly ExternalSessionOperationItem[] }) => useTranscriptItemRenderer({
                 ...baseDeps,
                 listData,
             }),
@@ -716,7 +767,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
         // or SharedCard -> ImportProgressCard hydration; stealing focus here would discard the
         // nearer surviving control.
         const returnFocusToTranscriptViewport = vi.fn();
-        const sharedItem = {
+        const sharedItem: ExternalSessionOperationItem = {
             kind: 'external-session-operation' as const,
             id: 'external-session-operation:operation-local-focus',
             presentation: {
@@ -779,7 +830,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
         // unrelated revision (here: hydration) would move focus the reader's
         // action never caused.
         const returnFocusToTranscriptViewport = vi.fn();
-        const sharedItem = {
+        const sharedItem: ExternalSessionOperationItem = {
             kind: 'external-session-operation' as const,
             id: 'external-session-operation:operation-check-settle',
             presentation: {
@@ -793,9 +844,13 @@ describe('useTranscriptItemRenderer identity stability', () => {
             progress: null,
             createdAt: 0,
         };
-        const hydratedItem = {
+        const hydratedItem: ExternalSessionOperationItem = {
             ...sharedItem,
-            progress: {} as never,
+            progress: createExternalSessionOperationProgress({
+                operationId: 'operation-check-settle',
+                status: 'completed',
+                phase: 'publishing',
+            }),
         };
         const baseDeps = {
             ...createRendererDeps(createRendererProps({
@@ -804,7 +859,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
             returnFocusToTranscriptViewport,
         } as unknown as TranscriptItemRendererDeps;
         const hook = await renderHook(
-            ({ listData }: { listData: readonly typeof sharedItem[] }) => useTranscriptItemRenderer({
+            ({ listData }: { listData: readonly ExternalSessionOperationItem[] }) => useTranscriptItemRenderer({
                 ...baseDeps,
                 listData,
             }),

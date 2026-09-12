@@ -131,6 +131,8 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
             return createPartialStorageModuleMock(importOriginal, {
                 useSession: () => sessionState.session,
+                useEndpointStatus: () => ({ status: 'connected' }),
+                useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
                 useSetting: (key: string) => {
                     if (key === 'transcriptToolCallsCollapsedPreviewCount') {
                         return settingsState.transcriptToolCallsCollapsedPreviewCount;
@@ -145,6 +147,15 @@ installSessionDetailsPanelCommonModuleMocks({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
     TextInput: (props: any) => React.createElement('TextInput', props),
+}));
+
+// Provider launch-card internals are owned by the plugin surface host; this pane spec keeps the
+// real Agent behavior/slot resolution and replaces only that rendered child boundary.
+vi.mock('@/agents/registry/agentUiBehavior/AgentInlineSurface', () => ({
+    AgentInlineSurface: (props: any) => React.createElement('AgentInlineSurface', {
+        ...props,
+        testID: `agent-inline-surface:${props.surfaceId}`,
+    }),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -410,7 +421,7 @@ describe('SessionRightPanelAgentsView', () => {
         );
     });
 
-    it('renders compact Claude launch actions and opens launcher previews in the details pane', async () => {
+    it('renders the Claude provider launch surface and opens teammate previews in the details pane', async () => {
         const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 
         await act(async () => {
@@ -418,36 +429,15 @@ describe('SessionRightPanelAgentsView', () => {
         });
         await flushHookEffects();
 
-        await act(async () => {
-            screen.pressByTestId('session-subagent-launch-claude-team');
+        const launchSurface = screen.findByTestId('agent-inline-surface:subagent-launch');
+        expect(launchSurface).toBeTruthy();
+        expect(launchSurface?.props).toMatchObject({
+            pluginId: 'claude',
+            agentId: 'claude',
+            sessionId: 's1',
+            inlineMount: { role: 'sessionSubagentLaunch', presentation: 'content' },
+            launchInput: { teamIds: ['team-1'] },
         });
-        expect(openDetailsTabSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                key: 'claude-subagent-launcher:team',
-                kind: 'claudeSubagentLauncher',
-                resource: {
-                    kind: 'claudeSubagentLauncher',
-                    mode: 'team',
-                },
-            }),
-            { intent: 'preview' },
-        );
-
-        await act(async () => {
-            screen.pressByTestId('session-subagent-launch-claude-teammate');
-        });
-        expect(openDetailsTabSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                key: 'claude-subagent-launcher:member:team-1',
-                kind: 'claudeSubagentLauncher',
-                resource: {
-                    kind: 'claudeSubagentLauncher',
-                    mode: 'member',
-                    initialTeamId: 'team-1',
-                },
-            }),
-            { intent: 'preview' },
-        );
 
         await act(async () => {
             screen.pressByTestId('session-subagent-team-add:team-1');
@@ -456,11 +446,11 @@ describe('SessionRightPanelAgentsView', () => {
             expect.objectContaining({
                 key: 'claude-subagent-launcher:member:team-1',
                 kind: 'claudeSubagentLauncher',
-                resource: {
+                resource: expect.objectContaining({
                     kind: 'claudeSubagentLauncher',
                     mode: 'member',
                     initialTeamId: 'team-1',
-                },
+                }),
             }),
             { intent: 'preview' },
         );
@@ -525,7 +515,7 @@ describe('SessionRightPanelAgentsView', () => {
             screen.pressByTestId('session-subagents-launch-section-toggle');
         });
         expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeTruthy();
-        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
+        expect(screen.findByTestId('agent-inline-surface:subagent-launch')).toBeTruthy();
     });
 
     it('keeps the Subagent launch card visible while live execution-run backends are still loading for an active local session', async () => {
@@ -566,7 +556,7 @@ describe('SessionRightPanelAgentsView', () => {
             screen.pressByTestId('session-subagents-launch-section-toggle');
         });
         expect(screen.findByTestId('session-subagent-launch-execution-run')).toBeNull();
-        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
+        expect(screen.findByTestId('agent-inline-surface:subagent-launch')).toBeTruthy();
     });
 
     it('hides execution-run launch shortcuts for linked direct sessions until the runner is locally active', async () => {
@@ -599,7 +589,7 @@ describe('SessionRightPanelAgentsView', () => {
         await act(async () => {
             screen.pressByTestId('session-subagents-launch-section-toggle');
         });
-        expect(screen.findByTestId('session-subagent-launch-claude-team')).toBeTruthy();
+        expect(screen.findByTestId('agent-inline-surface:subagent-launch')).toBeTruthy();
     });
 
     // The published agent-activity headline owns EXISTENCE and STATUS. The transcript is the only

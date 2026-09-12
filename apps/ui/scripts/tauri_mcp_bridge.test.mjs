@@ -14,18 +14,17 @@ test('dev Tauri config enables the MCP bridge without widening production capabi
 
   const productionConfig = await readJson(join(srcTauriDir, 'tauri.conf.json'));
   const publicDevConfig = await readJson(join(srcTauriDir, 'tauri.publicdev.conf.json'));
-  const mcpCapability = await readJson(join(srcTauriDir, 'capabilities', 'mcp-dev.json'));
   const cargoToml = await readFile(join(srcTauriDir, 'Cargo.toml'), 'utf8');
   const libSource = await readFile(join(srcTauriDir, 'src', 'lib.rs'), 'utf8');
+  const mcpBridgeSource = await readFile(join(srcTauriDir, 'src', 'mcp_bridge.rs'), 'utf8');
 
-  assert.deepEqual(productionConfig.app?.security?.capabilities ?? [], ['default']);
+  const productionCapabilities = productionConfig.app?.security?.capabilities ?? [];
+  assert.deepEqual(productionCapabilities, ['default', 'overlay', 'pet_overlay']);
   assert.equal(publicDevConfig.app?.withGlobalTauri, true);
-  assert.deepEqual(publicDevConfig.app?.security?.capabilities ?? [], ['default', 'mcp-dev']);
-  assert.equal(mcpCapability.identifier, 'mcp-dev');
-  assert.deepEqual(mcpCapability.windows ?? [], ['main']);
-  assert.ok((mcpCapability.permissions ?? []).includes('mcp-bridge:default'));
+  assert.deepEqual(publicDevConfig.app?.security?.capabilities ?? [], [...productionCapabilities, 'mcp-dev']);
   assert.match(cargoToml, /tauri-plugin-mcp-bridge/);
   assert.match(cargoToml, /tauri-plugin-mcp-bridge = "0\.10"/);
   assert.match(libSource, /cfg\(debug_assertions\)/);
-  assert.match(libSource, /tauri_plugin_mcp_bridge::init\(\)/);
+  assert.match(libSource, /mcp_bridge::build_debug_mcp_bridge_plugin\(\)/);
+  assert.match(mcpBridgeSource, /McpBridgeBuilder::new\(\)\.bind_address\(&bind_address\)\.build\(\)/);
 });

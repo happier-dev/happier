@@ -19,6 +19,7 @@ import {
     type PluginUiProjectionModel,
     type PluginUiSettingsPageProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 
 import { usePluginSettingsPageDestinationHandler } from './pluginSettingsPageNavigation';
 
@@ -557,7 +558,7 @@ function PluginSettingsPageHostFocusProbe(props: Readonly<{ props: unknown }>): 
 function SettingsTargetNavigationScope(props: React.PropsWithChildren): React.ReactElement {
     const binding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: appShellState.projection
-            ? Object.values(appShellState.projection.surfacePlacementsById)
+            ? selectPluginDestinationSurfacePlacements(appShellState.projection)
             : [],
         settingsPages: appShellState.projection
             ? Object.values(appShellState.projection.settingsPagesById)

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 
 import type { SelectionListOption, SelectionListProps, SelectionListStep } from '../_types';
 
@@ -81,7 +81,7 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
 
         const input = screen.findByTestId('sl:header:input');
         const row = screen.findByTestId(expectedId);
-        const matchingIds = screen.tree.root.findAll((node) => node.props?.id === expectedId);
+        const matchingIds = findAllHostTestInstances(screen.root, (node) => node.props?.id === expectedId);
 
         expect(input?.props['aria-activedescendant']).toBe(expectedId);
         expect(row?.props.id).toBe(expectedId);
@@ -111,7 +111,7 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
         })} />);
 
         expect(screen.findByTestId('sl:empty')).not.toBeNull();
-        expect(screen.tree.root.findAll((node) => node.props?.role === 'group')).toHaveLength(1);
+        expect(findAllHostTestInstances(screen.root, (node) => node.props?.role === 'group')).toHaveLength(1);
     });
 
     it('exposes role=combobox + aria-controls + aria-expanded on the focused input element (web)', async () => {

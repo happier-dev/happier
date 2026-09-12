@@ -6,6 +6,7 @@ import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { createBundledSpeechRuntime } from './bundledSpeechRuntime';
 
 type SpeechDeclaration = Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>;
+type BundledSpeechClient = NonNullable<Parameters<typeof createBundledSpeechRuntime>[0]['client']>;
 
 const CATALOG_STT_DECLARATION = Object.freeze({
   id: 'catalog-stt',
@@ -127,7 +128,7 @@ describe('bundledSpeechRuntime', () => {
   });
 
   it('transcribes through the package-owned descriptor without a provider branch in the host', async () => {
-    const transcribe = vi.fn(async () => ' hello from package ');
+    const transcribe = vi.fn<BundledSpeechClient['transcribe']>(async () => ' hello from package ');
     const runtime = createBundledSpeechRuntime({
       registry: createFakeSpeechRegistry([CATALOG_STT_DECLARATION]).registry,
       client: { transcribe } as never,
@@ -165,7 +166,10 @@ describe('bundledSpeechRuntime', () => {
   });
 
   it('synthesizes and plays through host substrate while package config validation fails closed', async () => {
-    const synthesize = vi.fn(async () => ({ bytes: new Uint8Array([1, 2]), mimeType: 'audio/wav' as const }));
+    const synthesize = vi.fn<BundledSpeechClient['synthesize']>(async () => ({
+      bytes: new Uint8Array([1, 2]),
+      mimeType: 'audio/wav' as const,
+    }));
     const onPlaybackStarted = vi.fn();
     let notifyPlaybackStarted!: () => void;
     const play = vi.fn(async (params: unknown) => {
@@ -291,7 +295,7 @@ describe('bundledSpeechRuntime', () => {
   });
 
   it('executes a second bundled speech package from the injected registry without a host-global descriptor edit', async () => {
-    const transcribe = vi.fn(async () => 'acme result');
+    const transcribe = vi.fn<BundledSpeechClient['transcribe']>(async () => 'acme result');
     const fake = createFakeSpeechRegistry([CATALOG_STT_DECLARATION]);
     const runtime = createBundledSpeechRuntime({
       registry: fake.registry,
@@ -312,7 +316,7 @@ describe('bundledSpeechRuntime', () => {
   });
 
   it('validates a declared text model without carrying it over the daemon RPC', async () => {
-    const transcribe = vi.fn(async () => 'openai-compatible result');
+    const transcribe = vi.fn<BundledSpeechClient['transcribe']>(async () => 'openai-compatible result');
     const fake = createFakeSpeechRegistry([{
       id: 'text-stt',
       title: 'Text-configured speech-to-text',
@@ -346,7 +350,10 @@ describe('bundledSpeechRuntime', () => {
   });
 
   it('validates declared text voice and model settings without carrying them over the daemon RPC', async () => {
-    const synthesize = vi.fn(async () => ({ bytes: new Uint8Array([1]), mimeType: 'audio/mpeg' as const }));
+    const synthesize = vi.fn<BundledSpeechClient['synthesize']>(async () => ({
+      bytes: new Uint8Array([1]),
+      mimeType: 'audio/mpeg' as const,
+    }));
     const fake = createFakeSpeechRegistry([{
       id: 'text-tts',
       title: 'Text-configured text-to-speech',
@@ -367,6 +374,15 @@ describe('bundledSpeechRuntime', () => {
           schema: { type: 'string', minLength: 1, maxLength: 256 },
           default: 'alloy',
           presentation: { control: 'text' },
+        }, {
+          id: 'format',
+          title: 'Audio format',
+          schema: { type: 'string', enum: ['mp3', 'wav'] },
+          default: 'mp3',
+          presentation: {
+            control: 'select',
+            options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }],
+          },
         }],
       },
     }]);
@@ -378,7 +394,7 @@ describe('bundledSpeechRuntime', () => {
 
     await runtime.speak(fake.providerId('text-tts'), {
       text: 'hello',
-      providerConfig: { model: 'tts-custom', voiceName: 'verse' },
+      providerConfig: { model: 'tts-custom', voiceName: 'verse', format: 'mp3' },
       registerPlaybackStopper: () => () => {},
     });
     expect(synthesize).toHaveBeenCalledOnce();

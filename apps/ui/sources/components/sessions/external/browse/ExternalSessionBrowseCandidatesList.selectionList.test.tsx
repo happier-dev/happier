@@ -163,7 +163,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         const screen = await renderScreen(<ExternalSessionBrowseCandidatesList
             {...props}
             candidates={candidates}
-            agentId="claude"
         />);
 
         expect(screen.findAllByType('LegendListItem' as never)).toHaveLength(20);
@@ -183,7 +182,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         await screen.update(<ExternalSessionBrowseCandidatesList
             {...props}
             candidates={candidates}
-            agentId="claude"
             linkingSessionId="candidate-5000"
         />);
 

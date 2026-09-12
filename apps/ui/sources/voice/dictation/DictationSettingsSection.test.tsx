@@ -683,9 +683,11 @@ describe('DictationSettingsSection', () => {
         },
       },
     };
-    const declaration = createDefaultVoiceProviderRegistry()
-      .get('happier.voice.google/gemini-stt')?.declaration;
-    if (declaration?.kind !== 'speech') throw new Error('Expected Gemini STT declaration');
+    const entry = createDefaultVoiceProviderRegistry().get('happier.voice.google/gemini-stt');
+    if (entry?.kind !== 'voice.speech-engine.v1' || entry.declaration?.kind !== 'speech') {
+      throw new Error('Expected Gemini STT declaration');
+    }
+    const declaration = entry.declaration;
     const ready = saveAndUseAccountVoiceCredential({
       settings: settingsParse({ voice }),
       contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },

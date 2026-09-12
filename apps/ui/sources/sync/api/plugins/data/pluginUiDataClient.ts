@@ -301,17 +301,6 @@ export function createPluginUiDataClient(input: Readonly<{
                     deleted: true as const,
                 });
             },
-            async forget(rowId, options) {
-                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options.signal);
-                const outcome = await active.client.forget(rowId, options.expectedRevision, options);
-                assertCurrent(input.accountLifetime, options.signal);
-                if (outcome.status === 'forgotten') return Object.freeze({ rowId, forgotten: true as const });
-                if (outcome.status === 'conflict') {
-                    throw dataError(COLLECTION_CONFLICT_CODE, 'Collection forget conflicted with a newer row revision or absence epoch');
-                }
-                if (outcome.status === 'rejected') throw rejectedError(outcome);
-                throw unavailableError(outcome.reason);
-            },
             async query(request, options) {
                 const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
                 const outcome = await active.client.query({

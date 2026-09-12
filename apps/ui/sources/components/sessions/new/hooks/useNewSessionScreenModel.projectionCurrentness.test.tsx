@@ -613,9 +613,7 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
 // suites: a retryable machine_offline error keeps the assertion surface on the
 // payload without dragging route-recovery timing into these tests.
 vi.mock('@/sync/ops/actions/sessionSpawnNewAction', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/ops/actions/sessionSpawnNewAction')>(
-        '@/sync/ops/actions/sessionSpawnNewAction',
-    );
+    const actual = await importOriginal<typeof import('@/sync/ops/actions/sessionSpawnNewAction')>();
     return {
         ...actual,
         executeManualSessionSpawnNewAction: async (input: any, _context: any, params: any) => {

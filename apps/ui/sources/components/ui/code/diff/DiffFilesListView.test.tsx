@@ -211,7 +211,7 @@ describe('DiffFilesListView', () => {
         expect(getLegendListProps().drawDistance).toBe(600);
     });
 
-    it('forwards scroll handlers to the underlying list when virtualized', async () => {
+    it('forwards web-supported scroll handlers to the underlying list when virtualized', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
         legendListMockState = null;
 
@@ -242,10 +242,10 @@ describe('DiffFilesListView', () => {
         const listProps = getLegendListProps();
         expect(listProps.onScroll).toBe(onScroll);
         expect(listProps.onLayout).toBe(onLayout);
-        expect(listProps.onContentSizeChange).toBe(onContentSizeChange);
+        expect(listProps.onContentSizeChange).toBeUndefined();
     });
 
-    it('passes a flat style object to LegendList when virtualized', async () => {
+    it('composes the LegendList web fill style with the caller style when virtualized', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
         legendListMockState = null;
 
@@ -267,8 +267,8 @@ describe('DiffFilesListView', () => {
             />);
 
         const listProps = getLegendListProps();
-        expect(Array.isArray(listProps.style)).toBe(false);
-        expect(typeof listProps.style).toBe('object');
+        expect(Array.isArray(listProps.style)).toBe(true);
+        expect(flattenStyle(listProps.style)).toMatchObject({ flex: 1, minHeight: 0, overflowAnchor: 'none' });
     });
 
     it('keeps virtualized list row plumbing stable across equivalent parent rerenders', async () => {
@@ -313,7 +313,7 @@ describe('DiffFilesListView', () => {
         expect(after.keyExtractor).toBe(before.keyExtractor);
         expect(after.renderItem).toBe(before.renderItem);
         expect(after.contentContainerStyle).toBe(before.contentContainerStyle);
-        expect(after.style).toBe(before.style);
+        expect(after.style).toStrictEqual(before.style);
     });
 
     it('enables virtualization when the diff exceeds the byte threshold', async () => {

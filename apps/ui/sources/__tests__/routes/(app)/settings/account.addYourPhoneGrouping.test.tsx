@@ -86,13 +86,21 @@ vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    storage: () => vi.fn(),
-}));
+vi.mock('@/sync/domains/state/storageStore', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storageStore')>();
+    return {
+        ...actual,
+        storage: () => vi.fn(),
+    };
+});
 
-vi.mock('@/sync/domains/profiles/profile', () => ({
-    getDisplayName: () => null,
-}));
+vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
+    return {
+        ...actual,
+        getDisplayName: () => null,
+    };
+});
 
 vi.mock('@/hooks/server/useFriendsEnabled', () => ({
     useFriendsEnabled: () => false,

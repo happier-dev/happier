@@ -14,7 +14,7 @@ test('desktop Tauri wiring enables tray support and autostart registration', asy
   const traySource = await readFile(join(srcTauriDir, 'src', 'tray.rs'), 'utf8');
   const autostartSource = await readFile(join(srcTauriDir, 'src', 'autostart.rs'), 'utf8');
 
-  assert.match(cargoToml, /tauri = \{ version = "2\.8\.2", features = \[[^\]]*"tray-icon"/);
+  assert.match(cargoToml, /^tauri = \{[^}\n]*features = \[[^\]]*"tray-icon"/m);
   assert.match(cargoToml, /tauri-plugin-autostart = "2"/);
 
   assert.match(libSource, /mod autostart;/);

@@ -160,6 +160,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
+    isBundledAgentId: (value: unknown) => typeof value === 'string' && ['codex', 'claude', 'opencode', 'gemini'].includes(value),
     resolveAgentIdFromFlavor: () => null,
     resolveAgentIdFromFlavorNoDefault: () => null,
     getAgentCore: () => ({

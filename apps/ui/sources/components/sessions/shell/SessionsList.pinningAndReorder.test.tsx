@@ -20,7 +20,6 @@ import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/d
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedRootFlatListProps: any | null = null;
-const capturedRootVirtualizedListProps = vi.hoisted(() => ({ current: null as any }));
 const routerPushSpy = vi.fn();
 let hideInactiveSessions = false;
 const setSessionPinOp = vi.hoisted(() => vi.fn(async () => undefined));
@@ -63,43 +62,6 @@ const setWorkspaceRefsV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const mockMachinesState = vi.hoisted(() => ({ current: [] as any[] }));
 const flatListMock = createCapturingFlatListMock({ renderItems: true });
-
-vi.mock('@legendapp/list/react-native', async () => {
-    const ReactModule = await import('react');
-    const renderSlot = (slot: any) => {
-        if (!slot) return null;
-        return ReactModule.isValidElement(slot) ? slot : ReactModule.createElement(slot);
-    };
-    return {
-        LegendList: ReactModule.forwardRef<any, any>((props, ref) => {
-            capturedRootVirtualizedListProps.current = props;
-            if (typeof ref === 'function') {
-                ref({
-                    scrollToOffset: () => {},
-                    scrollToIndex: () => {},
-                });
-            } else if (ref && typeof ref === 'object') {
-                ref.current = {
-                    scrollToOffset: () => {},
-                    scrollToIndex: () => {},
-                };
-            }
-            return ReactModule.createElement(
-                'LegendList',
-                props,
-                renderSlot(props.ListHeaderComponent),
-                ...(props.data ?? []).map((item: any, index: number) => (
-                    ReactModule.createElement(
-                        ReactModule.Fragment,
-                        { key: props.keyExtractor?.(item) ?? String(index) },
-                        props.renderItem({ item, index }),
-                    )
-                )),
-                renderSlot(props.ListFooterComponent),
-            );
-        }),
-    };
-});
 
 const groupKey = 'server:server_a:day:2026-02-17';
 
@@ -566,7 +528,6 @@ describe('SessionsList pinning + per-group ordering', () => {
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
         capturedRootFlatListProps = null;
-        capturedRootVirtualizedListProps.current = null;
         hideInactiveSessions = false;
         readMachineTargetForSessionMock.mockReset();
         mockMachinesState.current = [];
@@ -695,9 +656,9 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         await renderSessionsList();
 
-        expect(capturedRootFlatListProps).toBeNull();
-        expect(capturedRootVirtualizedListProps.current).toBeTruthy();
-        expect(capturedRootVirtualizedListProps.current?.scrollEventThrottle).toBe(32);
+        expect(capturedRootFlatListProps).toBeTruthy();
+        expect(capturedRootFlatListProps?.disableVirtualization).toBeUndefined();
+        expect(capturedRootFlatListProps?.scrollEventThrottle).toBe(32);
     });
 
     it('renders the full priority prefix before inactive history on large web lists', async () => {
@@ -754,8 +715,8 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         await renderSessionsList();
 
-        expect(capturedRootFlatListProps).toBeNull();
-        expect(capturedRootVirtualizedListProps.current).toBeTruthy();
+        expect(capturedRootFlatListProps).toBeTruthy();
+        expect(capturedRootFlatListProps?.disableVirtualization).toBeUndefined();
     });
 
     it('passes session tags from organization projection into session items when enabled', async () => {
@@ -940,7 +901,9 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         const screen = await renderSessionsList();
 
-        expect(screen.findAll((node) => node.props?.accessibilityLabel === '~/repoA')).toHaveLength(1);
+        expect(screen.findAll((node) => (
+            typeof node.type === 'string' && node.props?.accessibilityLabel === '~/repoA'
+        ))).toHaveLength(1);
 
         const row1 = expectPresent(
             findSessionItem(screen, 'sess_p1'),

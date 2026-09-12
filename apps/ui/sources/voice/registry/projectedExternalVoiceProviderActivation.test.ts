@@ -61,6 +61,8 @@ import { projectVoiceProviderSelectionRows, selectVoiceProviderOption } from './
 import { resolveVoiceRoleReadiness } from './readiness';
 import { projectVoiceSpeechEndpointReadiness } from './speechEndpointReadiness';
 
+type BundledSpeechClient = NonNullable<Parameters<typeof createBundledSpeechRuntime>[0]['client']>;
+
 const rawCredentialMachineRpc = vi.hoisted(() => vi.fn());
 const reactNativeArtifactDaemonTransport = vi.hoisted(() => ({
   fetch: vi.fn<PluginReactNativeExactArtifactByteFetcher>(),
@@ -692,8 +694,8 @@ describe('projected external Voice provider activation', () => {
     })).resolves.toEqual([]);
 
     const registry = createDefaultVoiceProviderRegistry();
-    const transcribe = vi.fn(async () => 'packed transcript');
-    const synthesize = vi.fn(async () => ({
+    const transcribe = vi.fn<BundledSpeechClient['transcribe']>(async () => 'packed transcript');
+    const synthesize = vi.fn<BundledSpeechClient['synthesize']>(async () => ({
       bytes: new Uint8Array([1]),
       mimeType: 'audio/wav' as const,
     }));

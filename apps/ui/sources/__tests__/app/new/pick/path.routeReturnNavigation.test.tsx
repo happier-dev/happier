@@ -259,9 +259,11 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                agentType: 'claude',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
-                backendTargetKey: 'backend:claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 machineId: 'machine-1',
                 directory: '/repo/selected',
             },
@@ -304,9 +306,11 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                agentType: 'claude',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
-                backendTargetKey: 'backend:claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 machineId: 'machine-1',
                 directory: '/repo/selected',
             },
@@ -439,9 +443,11 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                agentType: 'claude',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
-                backendTargetKey: 'backend:claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 machineId: 'machine-1',
                 directory: '/repo/selected',
                 spawnServerId: 'server-2',
@@ -564,9 +570,11 @@ describe('PathPickerScreen', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                agentType: 'codex',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'codex' }),
-                backendTargetKey: 'backend:codex',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                }),
+                backendTargetKey: 'agent:happier.agent.codex/codex',
                 machineId: 'machine-1',
                 directory: '/repo/selected',
                 spawnServerId: 'server-2',

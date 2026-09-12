@@ -42,6 +42,11 @@ vi.mock('@/components/ui/lists/ItemGroupRowPosition', () => ({
     ItemGroupRowPositionBoundary: ({ children }: any) => children,
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    const parts = (Array.isArray(style) ? style.flat(Infinity) : [style]).filter(Boolean);
+    return Object.assign({}, ...(parts as Array<Record<string, unknown>>));
+}
+
 describe('SelectableMenuResults', () => {
     it('omits the category title row when the category title is empty', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
@@ -256,10 +261,8 @@ describe('SelectableMenuResults', () => {
                 />);
 
         const categoryTitle = screen.findByType('Text');
-        expect(categoryTitle.props.style).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                paddingHorizontal: 16,
-            }),
-        ]));
+        expect(flattenStyle(categoryTitle.props.style)).toMatchObject({
+            paddingHorizontal: 16,
+        });
     });
 });

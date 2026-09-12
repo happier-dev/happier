@@ -104,7 +104,7 @@ describe('ExternalUrlTarget (web)', () => {
             vi.advanceTimersByTime(5000);
         });
 
-        const action = screen.findByTestId('external-url-non-framable-open');
+        const action = screen.findByTestId('external-url-non-framable-action');
         expect(action).toBeTruthy();
 
         await act(async () => {

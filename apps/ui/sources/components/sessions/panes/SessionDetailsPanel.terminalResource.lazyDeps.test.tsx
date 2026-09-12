@@ -48,15 +48,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        rowTitle: () => ({}),
-        rowMeta: () => ({}),
-        pillLabel: () => ({}),
-    },
-}));
-
 const terminalViewSpy = vi.fn();
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     SessionEmbeddedTerminalPane: (props: any) => {

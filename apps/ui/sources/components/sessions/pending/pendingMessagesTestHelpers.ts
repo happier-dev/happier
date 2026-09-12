@@ -38,17 +38,22 @@ export function installPendingMessagesCommonModuleMocks(
         unistyles: options.unistyles,
     };
 
-    vi.mock('@/constants/Typography', async () => {
+    vi.mock('@/constants/Typography', async (importOriginal) => {
         const activeOptions = pendingMessagesModuleState.options;
+        const actual = await importOriginal<typeof import('@/constants/Typography')>();
         if (activeOptions.typography) {
-            return await activeOptions.typography();
+            const overrides = await activeOptions.typography() as Partial<typeof actual>;
+            return {
+                ...actual,
+                ...overrides,
+                Typography: {
+                    ...actual.Typography,
+                    ...overrides.Typography,
+                },
+            };
         }
 
-        return {
-            Typography: {
-                default: () => ({}),
-            },
-        };
+        return actual;
     });
 
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {

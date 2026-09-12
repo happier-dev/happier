@@ -193,6 +193,12 @@ async function loadClient(options: Readonly<{
                 headers: { 'Content-Type': 'application/json' },
             });
         }
+        if (path === '/v1/plugins/data/get') {
+            return new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
         if (path === `/v1/account/plugin-storage/${pluginId}`) {
             if ((_init?.method ?? 'GET') === 'GET') {
                 return options.accountKvRead?.() ?? new Response(

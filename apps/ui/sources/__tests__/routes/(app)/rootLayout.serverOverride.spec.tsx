@@ -56,7 +56,9 @@ function installWebLocation(params: Readonly<{ href: string }>) {
         locationState.hash = resolved.hash;
     });
 
-    (globalThis as any).document = {};
+    (globalThis as any).document = {
+        getElementById: () => null,
+    };
     (globalThis as any).window = {
         location: locationState,
         history: { replaceState: historyReplaceStateSpy },
@@ -293,7 +295,7 @@ describe('App RootLayout server override', () => {
         await screen.update(renderGate());
         await flushHookEffects();
 
-        expect(refreshFromActiveServerSpy).toHaveBeenCalledTimes(1);
+        expect(refreshFromActiveServerSpy).not.toHaveBeenCalled();
         expect(historyReplaceStateSpy).toHaveBeenCalledWith(null, '', '/');
         expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
         expect(lifecycle).toEqual({ mounts: 1, unmounts: 0 });

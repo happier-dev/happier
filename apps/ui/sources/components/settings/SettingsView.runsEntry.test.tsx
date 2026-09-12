@@ -112,12 +112,18 @@ vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
 }));
 
-vi.mock('@/constants/Typography', () => ({
+vi.mock('@/constants/Typography', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/constants/Typography')>();
+    return {
+    ...actual,
     Typography: {
+        ...actual.Typography,
         default: () => ({}),
         mono: () => ({}),
+        rowMeta: () => ({}),
     },
-}));
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
@@ -166,7 +172,8 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/domains/profiles/profile', () => ({
+vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/domains/profiles/profile')>()),
     getDisplayName: () => 'Test User',
     getAvatarUrl: () => null,
     getBio: () => '',

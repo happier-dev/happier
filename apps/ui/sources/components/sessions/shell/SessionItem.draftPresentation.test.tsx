@@ -65,6 +65,8 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+const { SessionItem } = await import('./SessionItem');
+
 describe('SessionItem existing-session draft presentation', () => {
     afterEach(() => {
         standardCleanup();
@@ -72,7 +74,6 @@ describe('SessionItem existing-session draft presentation', () => {
     });
 
     it('presents and deletes the repository draft without deleting the session row', async () => {
-        const { SessionItem } = await import('./SessionItem');
         const session = createSessionFixture({ id: 'session-draft-row', active: false });
         const onDeleteDraft = vi.fn(async () => undefined);
         const rowViewModel = createSessionItemRowViewModel({
@@ -113,7 +114,7 @@ describe('SessionItem existing-session draft presentation', () => {
             { confirmText: 'Delete', cancelText: 'Cancel', destructive: true },
         );
         expect(onDeleteDraft).toHaveBeenCalledTimes(1);
-        expect(screen.findAllByTestId('session-list-item-session-draft-row')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('session-list-item-session-draft-row')).toHaveLength(1);
         expect(screen.findByTestId('session-list-item-session-draft-row')?.props.accessibilityActions)
             .toContainEqual({ name: 'deleteDraft', label: 'Delete draft' });
     });

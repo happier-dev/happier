@@ -199,6 +199,10 @@ describe('Session Runs Screen', () => {
         return screen.findByProps({ accessibilityLabel: label });
     }
 
+    function findHeaderActionHosts(screen: Awaited<ReturnType<typeof renderScreen>>, label: string) {
+        return screen.findAll((node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === label);
+    }
+
     it('waits for session hydration before listing runs', async () => {
         hydrateReady = false;
         listRunsSpy.mockClear();
@@ -331,9 +335,9 @@ describe('Session Runs Screen', () => {
 
         await renderRunsScreen();
         const headerRightScreen = await renderHeaderRight();
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.plan' })).toHaveLength(1);
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.review' })).toHaveLength(0);
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.delegate' })).toHaveLength(0);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.plan')).toHaveLength(1);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.review')).toHaveLength(0);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.delegate')).toHaveLength(0);
     });
 
     it('hides new-run header actions when the session has no live execution-run backends', async () => {
@@ -342,9 +346,9 @@ describe('Session Runs Screen', () => {
 
         await renderRunsScreen();
         const headerRightScreen = await renderHeaderRight();
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.review' })).toHaveLength(0);
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.delegate' })).toHaveLength(0);
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'common.refresh' })).toHaveLength(1);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.review')).toHaveLength(0);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.delegate')).toHaveLength(0);
+        expect(findHeaderActionHosts(headerRightScreen, 'common.refresh')).toHaveLength(1);
     });
 
     it('hides new-run header actions when launchability is disabled even if backend discovery is populated', async () => {
@@ -355,9 +359,9 @@ describe('Session Runs Screen', () => {
 
         await renderRunsScreen();
         const headerRightScreen = await renderHeaderRight();
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.review' })).toHaveLength(0);
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'executionRuns.newRun.intents.delegate' })).toHaveLength(0);
-        expect(headerRightScreen.findAllByProps({ accessibilityLabel: 'common.refresh' })).toHaveLength(1);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.review')).toHaveLength(0);
+        expect(findHeaderActionHosts(headerRightScreen, 'executionRuns.newRun.intents.delegate')).toHaveLength(0);
+        expect(findHeaderActionHosts(headerRightScreen, 'common.refresh')).toHaveLength(1);
     });
 
     it('renders runs inside the constrained route content wrapper', async () => {

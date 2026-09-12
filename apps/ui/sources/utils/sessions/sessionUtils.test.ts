@@ -629,7 +629,7 @@ describe('getSessionStatus', () => {
         expect(status.isPulsing).toBe(true);
     });
 
-    it('does not return thinking when the latest primary turn in progress signal is stale', async () => {
+    it('keeps thinking while the canonical primary turn remains in progress', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({
             latestTurnStatus: 'in_progress',
@@ -637,7 +637,7 @@ describe('getSessionStatus', () => {
             thinking: false,
         });
         const status = getSessionStatus(session, 130_001, 0);
-        expect(status.state).toBe('waiting');
+        expect(status.state).toBe('thinking');
     });
 
     it('clears stale thinking after a completed primary turn projection', async () => {

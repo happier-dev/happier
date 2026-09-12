@@ -118,6 +118,7 @@ async function renderControls(props: HookProps = {}) {
         accountScope: SCOPE,
         currentAgentId: hookProps.currentAgentId ?? 'claude',
         currentAgentLabel: 'Claude Code',
+        projectionCurrent: true,
         entries: hookProps.entries ?? [entry('claude'), entry('codex')],
         featureDecision: hookProps.featureDecision === undefined
             ? { state: 'enabled' }

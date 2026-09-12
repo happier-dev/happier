@@ -12,7 +12,8 @@ import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabiliti
 
 const machineCapabilitiesInvokeMock = vi.fn();
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     getAgentCore: (agentId: string | null) => ({
         model: {
             supportsSelection: true,
@@ -188,7 +189,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { buildDynamicModelProbeCacheKey } = await import('@/sync/domains/models/dynamicModelProbeCacheKey');
         const cacheKey = buildDynamicModelProbeCacheKey({
             machineId: 'machine-1',
-            targetKey: 'backend:codex',
+            targetKey: 'agent:happier.agent.codex/codex',
             providerConnectionId: null,
             serverId: 'server-1',
             cwd: '/repo',
@@ -270,7 +271,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         );
 
         expect(hook.getCurrent().preflightModels?.availableModels.map((model) => model.id)).toEqual(['gpt-5.5']);
-        expect(hook.getCurrent().preflightModelsTargetKey).toBe('backend:codex');
+        expect(hook.getCurrent().preflightModelsTargetKey).toBe('agent:happier.agent.codex/codex');
         expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(true);
 
         await hook.rerender({ backendTarget: { kind: 'backend', backendId: 'claude' } });
@@ -329,7 +330,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
             { initialProps: { backendTarget: { kind: 'backend', backendId: 'codex' } } },
         );
 
-        expect(hook.getCurrent().preflightModelsTargetKey).toBe('backend:codex');
+        expect(hook.getCurrent().preflightModelsTargetKey).toBe('agent:happier.agent.codex/codex');
         expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(true);
         expect(hook.getCurrent().modelOptions.some((option) => option.value === 'opencode/big-pickle')).toBe(true);
 

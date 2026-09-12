@@ -54,6 +54,7 @@ const configuredBackendHarnessModuleState = vi.hoisted(() => ({
         sessionId,
     })),
 }));
+let loadedUseCreateNewSessionOwner: typeof import('./useCreateNewSession')['useCreateNewSession'] | null = null;
 
 async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     const captured: { value: SpawnPayloadCapture } = { value: null };
@@ -121,10 +122,10 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
                 encryptAutomationTemplateRaw: vi.fn(async (value: unknown) => value),
             },
             saveAutomationEditorDraft: vi.fn(async (input: {
-                executionRecipe: { template: { t: string; v?: Record<string, unknown> } };
+                executionRecipe: Record<string, unknown>;
             }) => {
                 if (configuredBackendHarnessModuleState.createdAutomationTemplate) {
-                    configuredBackendHarnessModuleState.createdAutomationTemplate.value = input.executionRecipe.template.v ?? null;
+                    configuredBackendHarnessModuleState.createdAutomationTemplate.value = input.executionRecipe;
                 }
                 return {};
             }),
@@ -134,6 +135,7 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
             ensureSessionVisibleForMessageRoute: vi.fn(async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) =>
                 configuredBackendHarnessModuleState.ensureSessionVisibleForMessageRoute(sessionId, options)),
             sendMessage: vi.fn(async () => {}),
+            acquireUserRequestLease: vi.fn(() => vi.fn()),
             prepareAccountSettingsForDaemonSpawn: prepareAccountSettingsForDaemonSpawnMock,
         },
     }));
@@ -223,6 +225,9 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     vi.doMock('@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount', () => ({
         encodeAutomationTemplateCiphertextForAccount: vi.fn(async ({ template }: { template: unknown }) => JSON.stringify(template)),
     }));
+    vi.doMock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+        fetchAccountEncryptionMode: vi.fn(async () => ({ mode: 'plain', updatedAt: 0 })),
+    }));
     vi.doMock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => ({
         resolveSessionComposerSend: vi.fn(({ input }: { input: string }) => ({ kind: 'send', text: input })),
     }));
@@ -287,7 +292,8 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
         followUpSpawnedSessionWithServerScope: vi.fn(async () => configuredBackendHarnessModuleState.followUpPending),
     }));
 
-    const { useCreateNewSession: useCreateNewSessionOwner } = await import('./useCreateNewSession');
+    loadedUseCreateNewSessionOwner ??= (await import('./useCreateNewSession')).useCreateNewSession;
+    const useCreateNewSessionOwner = loadedUseCreateNewSessionOwner;
     const useCreateNewSession: typeof useCreateNewSessionOwner = (params) => useCreateNewSessionOwner({
         ...params,
         draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
@@ -303,9 +309,13 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     };
 }
 
+// Load the production hook once during collection after the boundary mocks are installed.
+// Re-importing its large graph inside every test consumed most of the per-test timeout before
+// the behavior under test could run; all varying harness inputs are read through the hoisted state.
+await setupHarness();
+
 describe('useCreateNewSession configured ACP backend spawning', () => {
     beforeEach(() => {
-        vi.resetModules();
         applySettingsMock.mockReset();
         clearNewSessionDraftMock.mockClear();
         prepareAccountSettingsForDaemonSpawnMock.mockReset();
@@ -610,7 +620,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         });
     });
 
-    it('passes a configured ACP backend target into new-session automation template building', async () => {
+    it('fails closed before automation recipe building for an unrepresentable configured backend target', async () => {
         const { useCreateNewSession, createdAutomationTemplate } = await setupHarness();
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -661,17 +671,13 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 targetServerId: null,
                 allowedTargetServerIds: ['server-a'],
                 authoringDraft: buildNewSessionAuthoringDraft({
+                    executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     directory: '/tmp',
                     checkoutCreationDraft: null,
+                    organizationPlacement: { folderId: null, tagIds: [] },
                     prompt: '',
                     displayText: '',
-                    agentId: 'customAcp',
-                    backendTarget: {
-                        kind: 'backend',
-                        backendId: 'custom-kiro-preset',
-                        configuredBackendId: 'custom-kiro-preset',
-                        sourceKind: 'configured',
-                    },
+                    agentTarget: null,
                     transcriptStorage: null,
                     profileId: null,
                     environmentVariables: null,
@@ -685,7 +691,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                     terminal: null,
                     windowsRemoteSessionLaunchMode: null,
                     windowsRemoteSessionConsole: null,
-                    codexBackendMode: null,
+                    runtimeDescriptorV1: null,
                     acpSessionModeId: null,
                     sessionConfigOptionOverrides: null,
                     automation: {
@@ -719,10 +725,8 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(handleCreateSession).toBeTruthy();
         await handleCreateSession!();
 
-        expect(createdAutomationTemplate.value).toEqual(expect.objectContaining({
-            agent: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'custom-kiro-preset', configuredBackendId: 'custom-kiro-preset' },
-        }));
+        expect(createdAutomationTemplate.value).toBeNull();
+        expect(executeSessionSpawnNewActionMock).not.toHaveBeenCalled();
     });
 
     it('retains the configured backend selection state when only legacy customAcp carriers remain', async () => {
@@ -985,7 +989,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
-    it('writes the canonical Codex runtime descriptor into automation templates', async () => {
+    it('writes the canonical Codex Agent target into automation recipes', async () => {
         const { useCreateNewSession, createdAutomationTemplate } = await setupHarness();
 
         const { buildSpawnSessionExtrasFromUiState } = await import('@/agents/catalog/catalog');
@@ -1037,12 +1041,16 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 targetServerId: null,
                 allowedTargetServerIds: ['server-a'],
                 authoringDraft: buildNewSessionAuthoringDraft({
+                    executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     directory: '/tmp',
                     checkoutCreationDraft: null,
+                    organizationPlacement: { folderId: null, tagIds: [] },
                     prompt: 'Review the repo',
                     displayText: 'Review the repo',
-                    agentId: 'codex',
-                    backendTarget: { kind: 'backend', backendId: 'codex' },
+                    agentTarget: {
+                        kind: 'agent',
+                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    },
                     transcriptStorage: null,
                     profileId: null,
                     environmentVariables: null,
@@ -1056,7 +1064,11 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                     terminal: null,
                     windowsRemoteSessionLaunchMode: null,
                     windowsRemoteSessionConsole: null,
-                    codexBackendMode: 'appServer',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'appServer' },
+                    },
                     acpSessionModeId: null,
                     sessionConfigOptionOverrides: null,
                     automation: {
@@ -1091,14 +1103,15 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         await handleCreateSession!();
 
         expect(createdAutomationTemplate.value).toEqual(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'codex' },
-            runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                agent: { backendMode: 'appServer' },
-            },
+            target: expect.objectContaining({
+                kind: 'newSession',
+                spawn: expect.objectContaining({
+                    agentTarget: {
+                        kind: 'agent',
+                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    },
+                }),
+            }),
         }));
-        expect(createdAutomationTemplate.value).not.toHaveProperty('codexBackendMode');
-        expect(createdAutomationTemplate.value).not.toHaveProperty('experimentalCodexAcp');
     });
 });

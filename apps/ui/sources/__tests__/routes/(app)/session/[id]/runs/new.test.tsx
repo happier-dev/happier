@@ -805,7 +805,7 @@ describe('Session New Run Screen', () => {
                 intent: 'review',
                 backendId: 'claude',
                 instructions: 'please review this',
-                permissionMode: 'read-only',
+                permissionMode: 'read_only',
                 changeType: 'uncommitted',
             }),
         );
@@ -973,7 +973,7 @@ describe('Session New Run Screen', () => {
                 intent: 'delegate',
                 backendId: 'claude',
                 instructions: 'do the task',
-                permissionMode: 'safe-yolo',
+                permissionMode: 'workspace_write',
             }),
         );
     });

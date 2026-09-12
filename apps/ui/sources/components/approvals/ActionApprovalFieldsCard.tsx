@@ -28,7 +28,10 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
 
     const rows = React.useMemo(() => {
         return fields.flatMap((field) => {
-            const value = formatApprovalFieldValues(getApprovalFieldValues(props.actionArgs, field.path));
+            const value = formatApprovalFieldValues(
+                getApprovalFieldValues(props.actionArgs, field.path),
+                { preserveStructuredValues: field.widget === 'json' },
+            );
             if (!value) return [];
             return [{ key: field.path, title: field.title, value }];
         });

@@ -61,6 +61,11 @@ vi.mock('@/components/navigation/mobile/chrome/MobileBottomChromeHost', () => ({
     MobileBottomChromeHost: () => null,
 }));
 
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+
 function createGithubLinkedProvider(): LinkedProvider {
     return {
         id: 'github',
@@ -139,7 +144,6 @@ describe('RootLayout', () => {
 
     for (const scenario of scenarios) {
         it(scenario.name, async () => {
-            vi.resetModules();
             stubRootLayoutFeaturesFetch();
             friendsIdentityReady = scenario.linkedProviders.length > 0 && typeof scenario.username === 'string' && scenario.username.length > 0;
             storage.getState().applyProfile({
@@ -166,7 +170,6 @@ describe('RootLayout', () => {
     }
 
     it('registers session detail routes for tool and execution-run screens', async () => {
-        vi.resetModules();
         stubRootLayoutFeaturesFetch();
 
         const tree = await renderRootLayout();
@@ -182,7 +185,6 @@ describe('RootLayout', () => {
     });
 
     it('registers settings as a nested navigator', async () => {
-        vi.resetModules();
         stubRootLayoutFeaturesFetch();
 
         const tree = await renderRootLayout();
@@ -196,7 +198,6 @@ describe('RootLayout', () => {
     });
 
     it('registers project list and project detail source-control routes', async () => {
-        vi.resetModules();
         stubRootLayoutFeaturesFetch();
 
         const tree = await renderRootLayout();
@@ -215,7 +216,6 @@ describe('RootLayout', () => {
     });
 
     it('renders terminal connect without the shell header on web', async () => {
-        vi.resetModules();
         stubRootLayoutFeaturesFetch();
 
         const tree = await renderRootLayout();

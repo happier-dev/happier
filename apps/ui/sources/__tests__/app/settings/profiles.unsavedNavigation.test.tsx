@@ -10,6 +10,7 @@ import {
     createReactNavigationNativeMock,
     createReactNativeWebMock,
     createStorageModuleStub,
+    flushHookEffects,
     renderScreen,
     standardCleanup,
     type RenderScreenResult,
@@ -43,6 +44,7 @@ type CapturedEditFormProps = {
 };
 
 const promptUnsavedChangesAlertSpy = vi.hoisted(() => vi.fn());
+const applyProfileSaveSpy = vi.hoisted(() => vi.fn());
 const navigationState = vi.hoisted(() => ({
     legacyBeforeRemove: null as null | ((event: BeforeRemoveEvent) => void),
     preventRemoveEnabled: false,
@@ -116,6 +118,10 @@ vi.mock('expo-router', () => createExpoRouterMock({
 
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: (...args: unknown[]) => promptUnsavedChangesAlertSpy(...args),
+}));
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplyProfileSave: () => applyProfileSaveSpy,
 }));
 
 vi.mock('@/components/secrets/useSavedSecretsMutable', () => ({
@@ -199,9 +205,8 @@ function hasInlineEditor(screen: RenderScreenResult): boolean {
 async function invokeAndFlush(callback: () => void): Promise<void> {
     await act(async () => {
         callback();
-        await Promise.resolve();
-        await Promise.resolve();
     });
+    await flushHookEffects({ cycles: 4, turns: 4 });
 }
 
 describe('ProfileManager web unsaved navigation', () => {
@@ -213,6 +218,7 @@ describe('ProfileManager web unsaved navigation', () => {
         navigationState.preventRemoveCallback = null;
         navigationState.dispatch.mockReset();
         promptUnsavedChangesAlertSpy.mockReset();
+        applyProfileSaveSpy.mockReset();
         settingsState.values.useProfiles = true;
         settingsState.values.profiles = [];
         administrationTargetState.selectedTarget = {
@@ -348,30 +354,41 @@ describe('ProfileManager web unsaved navigation', () => {
         const screen = await renderDirtyInlineEditor();
         const firstEditForm = capturedEditFormProps;
         if (!firstEditForm) throw new Error('Expected the inline Profile editor');
-        firstEditForm.saveRef.current = () => false;
+        const failedSave = vi.fn(() => false);
+        firstEditForm.saveRef.current = failedSave;
 
         await invokeAndFlush(() => currentBeforeRemoveCallback()({
             data: { action: { type: 'GO_BACK', key: 'save-fails' } },
             preventDefault: vi.fn(),
         }));
 
+        await vi.waitFor(() => {
+            expect(failedSave).toHaveBeenCalledOnce();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
         expect(hasInlineEditor(screen)).toBe(true);
         expect(navigationState.dispatch).not.toHaveBeenCalled();
 
         const currentEditForm = capturedEditFormProps;
         if (!currentEditForm) throw new Error('Expected the inline Profile editor after save failure');
-        currentEditForm.saveRef.current = () => currentEditForm.onSave({
+        const successfulSave = vi.fn(() => currentEditForm.onSave({
             ...currentEditForm.profile,
             name: 'Saved profile',
-        });
+        }));
+        currentEditForm.saveRef.current = successfulSave;
 
         await invokeAndFlush(() => currentBeforeRemoveCallback()({
             data: { action: { type: 'GO_BACK', key: 'save-succeeds' } },
             preventDefault: vi.fn(),
         }));
 
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            expect(successfulSave).toHaveBeenCalledOnce();
+            expect(successfulSave).toHaveReturnedWith(true);
+            expect(navigationState.dispatch).toHaveBeenCalledOnce();
+        });
         expect(hasInlineEditor(screen)).toBe(false);
-        expect(navigationState.dispatch).toHaveBeenCalledOnce();
         expect(navigationState.dispatch).toHaveBeenCalledWith({
             type: 'GO_BACK',
             key: 'save-succeeds',

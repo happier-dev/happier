@@ -377,6 +377,33 @@ async function applyConnectedMachine(machineId: string, host: string): Promise<v
     });
 }
 
+async function completeDesktopLocalRelayHosting(
+    screen: Awaited<ReturnType<typeof renderScreen>>,
+    relayUrl = 'https://local-relay.example.test',
+): Promise<void> {
+    const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
+        props: {
+            onStatusChange?: (status: unknown) => void;
+            onRequestAdvance?: (status: unknown) => void;
+        };
+    };
+    const status = {
+        relayUrl,
+        installed: true,
+        service: { active: true },
+        healthy: true,
+    };
+
+    await act(async () => {
+        localRelaySection.props.onStatusChange?.(status);
+    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
+    await act(async () => {
+        localRelaySection.props.onRequestAdvance?.(status);
+    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
+}
+
 describe('SetupWizardSurface', () => {
     beforeEach(() => {
         routerMock.spies.push.mockReset();
@@ -1334,21 +1361,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
-            props: { onStatusChange?: (status: unknown) => void };
-        };
-
-        await act(async () => {
-            localRelaySection.props.onStatusChange?.({
-                relayUrl: 'https://local-relay.example.test',
-            });
-        });
-
-        const proceedAfterRelayHosting = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = proceedAfterRelayHosting?.props.action ?? proceedAfterRelayHosting?.props.onPress;
-            await handler?.();
-        });
+        await completeDesktopLocalRelayHosting(screen);
 
         expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
 
@@ -1381,11 +1394,7 @@ describe('SetupWizardSurface', () => {
 
         expect(screen.findByType('RelayHostLocalChecklistStep' as never)).toBeTruthy();
 
-        const continueAfterHosted = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueAfterHosted?.props.action ?? continueAfterHosted?.props.onPress;
-            await handler?.();
-        });
+        await completeDesktopLocalRelayHosting(screen, 'https://relay.example.test');
 
         expect(screen.findByType('LocalRelayAccessControlSection' as never)).toBeTruthy();
     });
@@ -1408,20 +1417,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
-            props: { onStatusChange?: (status: unknown) => void };
-        };
-        await act(async () => {
-            localRelaySection.props.onStatusChange?.({
-                relayUrl: 'https://local-relay.example.test',
-            });
-        });
-
-        const continueAfterHosted = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueAfterHosted?.props.action ?? continueAfterHosted?.props.onPress;
-            await handler?.();
-        });
+        await completeDesktopLocalRelayHosting(screen);
 
         const relayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
             props: Record<string, unknown>;
@@ -1465,20 +1461,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
-            props: { onStatusChange?: (status: unknown) => void };
-        };
-        await act(async () => {
-            localRelaySection.props.onStatusChange?.({
-                relayUrl,
-            });
-        });
-
-        const continueAfterHosted = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = continueAfterHosted?.props.action ?? continueAfterHosted?.props.onPress;
-            await handler?.();
-        });
+        await completeDesktopLocalRelayHosting(screen, relayUrl);
 
         const relayAccessSection = screen.findByType('LocalRelayAccessControlSection' as never) as unknown as {
             props: {
@@ -1535,21 +1518,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
-            props: { onStatusChange?: (status: unknown) => void };
-        };
-
-        await act(async () => {
-            localRelaySection.props.onStatusChange?.({
-                relayUrl: 'https://local-relay.example.test',
-            });
-        });
-
-        const proceedAfterRelayHosting = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = proceedAfterRelayHosting?.props.action ?? proceedAfterRelayHosting?.props.onPress;
-            await handler?.();
-        });
+        await completeDesktopLocalRelayHosting(screen);
 
         const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
@@ -1592,21 +1561,7 @@ describe('SetupWizardSurface', () => {
             await handler?.();
         });
 
-        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
-            props: { onStatusChange?: (status: unknown) => void };
-        };
-
-        await act(async () => {
-            localRelaySection.props.onStatusChange?.({
-                relayUrl: 'https://local-relay.example.test',
-            });
-        });
-
-        const proceedAfterRelayHosting = screen.findByTestId('setupWizard.surface-primary');
-        await act(async () => {
-            const handler = proceedAfterRelayHosting?.props.action ?? proceedAfterRelayHosting?.props.onPress;
-            await handler?.();
-        });
+        await completeDesktopLocalRelayHosting(screen);
 
         const continueAfterRelayAccess = screen.findByTestId('setupWizard.surface-primary');
         await act(async () => {
@@ -2463,17 +2418,7 @@ describe('SetupWizardSurface', () => {
         await pressSetup(screen, 'setupWizard-branch:relayLocal');
         await pressSetup(screen, 'setupWizard.surface-primary');
 
-        const localRelaySection = screen.findByType('RelayHostLocalChecklistStep' as never) as unknown as {
-            props: { onStatusChange?: (status: unknown) => void };
-        };
-        await act(async () => {
-            localRelaySection.props.onStatusChange?.({
-                relayUrl: 'https://local-relay.example.test',
-            });
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        await pressSetup(screen, 'setupWizard.surface-primary');
+        await completeDesktopLocalRelayHosting(screen);
         expectSetupStep(screen, 'relay_access');
 
         await pressSetup(screen, 'setupWizard.surface-primary');

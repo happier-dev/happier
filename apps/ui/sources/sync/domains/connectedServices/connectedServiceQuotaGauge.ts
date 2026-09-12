@@ -4,7 +4,7 @@ import type {
     ConnectedServiceQuotaSnapshotV1,
     SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
-import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { clampQuotaPct, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';
@@ -384,9 +384,15 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
 
 function resolveRuntimeIssueQuotaServiceId(issue: SessionRuntimeIssueV1): ConnectedServiceQuotaSnapshotV1['serviceId'] | null {
     const refServiceId = issue.usageLimit?.quotaSnapshotRef?.serviceId;
-    if (refServiceId) return refServiceId;
+    if (refServiceId) {
+        const parsed = ConnectedServiceIdSchema.safeParse(refServiceId);
+        if (parsed.success) return parsed.data;
+    }
     const connectedServiceId = issue.usageLimit?.connectedService?.serviceId;
-    if (connectedServiceId) return connectedServiceId;
+    if (connectedServiceId) {
+        const parsed = ConnectedServiceIdSchema.safeParse(connectedServiceId);
+        if (parsed.success) return parsed.data;
+    }
 
     const agentId = resolveAgentIdFromFlavor(issue.agentId);
     if (!agentId) return null;

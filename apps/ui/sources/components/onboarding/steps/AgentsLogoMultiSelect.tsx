@@ -67,7 +67,7 @@ export const AgentsLogoMultiSelect = React.memo(function AgentsLogoMultiSelect(p
     const styles = stylesheet;
     const visibleProviderEntries = React.useMemo(
         () => {
-            const entries = props.agentEntries ?? (props.agentIds?.map((agentId) => ({
+            const entries: readonly AgentsLogoMultiSelectEntry[] = props.agentEntries ?? (props.agentIds?.map((agentId) => ({
                 agentId,
                 iconAgentId: agentId as AgentId,
                 setupAgentId: agentId as AgentId,

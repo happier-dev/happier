@@ -8,7 +8,7 @@ function field(key: string) {
         key,
         valueType: 'string',
         clearWhenEmpty: false,
-        secretCustody: 'none',
+        secretCustody: null,
         managedServiceOrigin: false,
         control: { kind: 'text' },
         valueSchema: { type: 'string' },

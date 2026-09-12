@@ -82,9 +82,8 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     credentialSlotId,
   );
   const selectedCredentialAuthority = (() => {
-    const declaration = selectedProviderEntry?.kind === 'voice.conversation-provider.v1'
-      ? selectedProviderEntry.declaration
-      : null;
+    if (selectedProviderEntry?.kind !== 'voice.conversation-provider.v1') return 'unbound';
+    const declaration = selectedProviderEntry.declaration;
     const credentials = declaration?.credentials;
     if (!declaration || !credentials) return 'unbound';
     const contribution = {

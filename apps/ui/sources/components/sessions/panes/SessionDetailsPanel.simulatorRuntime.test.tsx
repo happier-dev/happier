@@ -33,18 +33,6 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-        eyebrow: () => ({}),
-        keyHint: () => ({}),
-        rowTitle: () => ({}),
-        rowMeta: () => ({}),
-        pillLabel: () => ({}),
-    },
-}));
-
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         closeDetails: vi.fn(),
@@ -85,7 +73,8 @@ vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => ({ id: 'acct_1' }),
 }));
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machineContributionRegistryProjectionDescribe: vi.fn(async () => ({
@@ -212,15 +201,16 @@ describe('SessionDetailsPanel simulator runtime wiring', () => {
 
     it('loads simulator preview runtime for production simulator session tabs', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const nowMs = () => 1_000;
 
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" nowMs={() => 1_000} />);
+        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" nowMs={nowMs} />);
         await flushEffects();
 
         expect(testState.useSimulatorPreviewSessionSurfaceRuntime).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_1',
             serverId: 'server_1',
             viewerId: 'session:s1:simulator-preview',
-            nowMs: 1_000,
+            nowMs,
             enabled: true,
         }));
         expect(screen.findByTestId('session-simulator-pane')).toBeTruthy();

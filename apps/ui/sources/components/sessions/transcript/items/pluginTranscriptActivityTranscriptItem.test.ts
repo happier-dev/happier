@@ -88,8 +88,8 @@ describe('appendPluginTranscriptActivityTranscriptItems', () => {
         });
 
         expect(rows).toHaveLength(17);
-        expect(rows.filter((row) => row.pluginId === 'plugin-one')).toHaveLength(16);
-        expect(rows.filter((row) => row.pluginId === 'plugin-two')).toHaveLength(0);
+        expect(rows.filter((row) => row.kind === 'plugin-transcript-activity' && row.pluginId === 'plugin-one')).toHaveLength(16);
+        expect(rows.filter((row) => row.kind === 'plugin-transcript-activity' && row.pluginId === 'plugin-two')).toHaveLength(0);
         expect(rows.at(-1)).toMatchObject({ aggregateHiddenCount: 16 });
     });
 

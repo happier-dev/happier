@@ -87,19 +87,26 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         DEFAULT_AGENT_ID: 'codex',
         isBundledAgentId: (value: unknown): value is typeof actual.DEFAULT_AGENT_ID =>
             typeof value === 'string' && value === 'codex',
-        getAgentCore: (agentId: string) => ({
-            permissions: { modeGroup: 'codexLike' },
-            cli: { machineLoginKey: 'codex' },
-            ui: { agentPickerIconName: 'terminal-outline' },
-            sessionStorage: { direct: false },
-            displayNameKey: 'agent.codex',
-            subtitleKey: 'profiles.aiBackend.subtitle',
-        }),
-        getAgentBehavior: () => ({
-            newSession: {
-                supportsTranscriptStorageMode: () => true,
-            },
-        }),
+        getAgentCore: () => {
+            const core = actual.getAgentCore('codex');
+            return {
+                ...core,
+                permissions: { ...core.permissions, modeGroup: 'codexLike' },
+                cli: { ...core.cli, machineLoginKey: 'codex' },
+                ui: { ...core.ui, agentPickerIconName: 'terminal-outline' },
+                sessionStorage: { ...core.sessionStorage, direct: false },
+            };
+        },
+        getAgentBehavior: () => {
+            const behavior = actual.getAgentBehavior('codex');
+            return {
+                ...behavior,
+                newSession: {
+                    ...behavior.newSession,
+                    supportsTranscriptStorageMode: () => true,
+                },
+            };
+        },
     };
 });
 
@@ -156,7 +163,7 @@ describe('ProfileEditForm backend targets', () => {
 
         const result = saveRef.current?.();
         expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             compatibilityByTargetKey: expect.objectContaining({
                 [buildBackendTargetKeyV2({
                     kind: 'backend',
@@ -190,7 +197,7 @@ describe('ProfileEditForm backend targets', () => {
 
         const result = saveRef.current?.();
         expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             authMode: 'machineLogin',
             requiresMachineLoginTargetKey: buildBackendTargetKeyV2({
                 kind: 'backend',

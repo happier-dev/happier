@@ -76,6 +76,10 @@ export const InteractionManager = {
 export const Keyboard = {
     addListener: () => ({ remove: () => {} }),
 } as const;
+export const BackHandler = {
+    addEventListener: () => ({ remove: () => {} }),
+    exitApp: () => {},
+} as const;
 export const Linking = {
     canOpenURL: async () => true,
     openURL: async () => {},

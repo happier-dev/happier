@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native';
 
 import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';

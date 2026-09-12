@@ -8,12 +8,18 @@ const activeServerSnapshot = {
     serverUrl: 'https://relay.example.test/',
     generation: 1,
 };
-const setPendingSetupIntentMock = vi.fn();
-const upsertServerProfileMock = vi.fn((params: { serverUrl: string; source?: string; replaceEquivalentStoredUrl?: boolean }) => ({
-    id: `server:${params.serverUrl}`,
-    serverUrl: params.serverUrl,
+const {
+    setPendingSetupIntentMock,
+    upsertServerProfileMock,
+    setActiveServerIdMock,
+} = vi.hoisted(() => ({
+    setPendingSetupIntentMock: vi.fn(),
+    upsertServerProfileMock: vi.fn((params: { serverUrl: string; source?: string; replaceEquivalentStoredUrl?: boolean }) => ({
+        id: `server:${params.serverUrl}`,
+        serverUrl: params.serverUrl,
+    })),
+    setActiveServerIdMock: vi.fn(),
 }));
-const setActiveServerIdMock = vi.fn();
 const tauriDesktopState = vi.hoisted(() => ({ value: true }));
 
 const expoRouterMock = createExpoRouterMock({

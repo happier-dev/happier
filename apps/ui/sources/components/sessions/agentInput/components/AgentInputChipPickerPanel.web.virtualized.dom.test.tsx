@@ -272,6 +272,17 @@ describe('AgentInputChipPickerPanel virtualized detail layout on web', () => {
                 element.dispatchEvent(new Event('scroll', { bubbles: true }));
             },
         });
+        Object.defineProperty(HTMLElement.prototype, 'scrollBy', {
+            configurable: true,
+            writable: true,
+            value(optionsOrX: ScrollToOptions | number, y?: number) {
+                const element = this as HTMLElement;
+                const requestedTop = typeof optionsOrX === 'number'
+                    ? element.scrollTop + (y ?? 0)
+                    : element.scrollTop + (optionsOrX.top ?? 0);
+                element.scrollTo({ top: requestedTop });
+            },
+        });
     });
 
     afterEach(async () => {

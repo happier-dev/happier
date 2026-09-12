@@ -204,6 +204,19 @@ function buildSessionHeaderReadStateSignature(
   ].join('|');
 }
 
+function readCurrentSessionActionTargetSnapshot(
+  state: Pick<StorageState, 'sessionListRenderables' | 'sessionListRowStateByServerId'>,
+  sessionId: string,
+  serverId: string | null,
+  fallback: Session,
+) {
+  const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
+  const scopedRenderable = normalizedServerId
+    ? state.sessionListRowStateByServerId?.[normalizedServerId]?.[sessionId]
+    : undefined;
+  return scopedRenderable ?? state.sessionListRenderables[sessionId] ?? fallback;
+}
+
 function showSessionHeaderActionError(error: unknown): void {
   if (error instanceof HappyError) {
     Modal.alert(t('common.error'), error.message);
@@ -284,6 +297,15 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const readStateSignature = storage((state) =>
     buildSessionHeaderReadStateSignature(state, props.sessionId, sessionServerId ?? null),
   );
+  const sessionActionSnapshot = React.useMemo(
+    () => readCurrentSessionActionTargetSnapshot(
+      storage.getState(),
+      props.sessionId,
+      sessionServerId ?? null,
+      session,
+    ),
+    [props.sessionId, readStateSignature, session, sessionServerId],
+  );
   const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
   const reachableMachineId = useSessionReachableMachineTarget(props.sessionId)?.machineId ?? null;
   const ownerMetadata = readSessionOwnerMetadataView(session);
@@ -312,7 +334,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const isAttentionStandingSession = sessionAttentionStandingKey != null
     && resolveSessionAttentionStanding(attentionStanding.policy, sessionAttentionStandingKey);
   const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
-    session,
+    session: sessionActionSnapshot,
     serverId: sessionServerId ?? null,
     currentUserId,
     isConnected: true,
@@ -323,9 +345,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     attentionStandingEnabled,
     currentUserId,
     isAttentionStandingSession,
-    readStateSignature,
     resumeCapabilityOptions,
-    session,
+    sessionActionSnapshot,
     sessionServerId,
   ]);
   const sourceMachineId = React.useMemo(

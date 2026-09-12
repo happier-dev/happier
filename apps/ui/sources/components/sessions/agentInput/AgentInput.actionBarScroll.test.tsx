@@ -6,6 +6,11 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const scrollEdgeFadesState = vi.hoisted(() => ({
+    canScrollX: false,
+    showRight: false,
+}));
+
 function flattenStyle(style: any): Record<string, unknown> {
     if (!style) return {};
     if (Array.isArray(style)) {
@@ -31,7 +36,9 @@ function getOrderedTestIdsWithin(
     root: renderer.ReactTestInstance,
     testIds: readonly string[],
 ) {
-    return root.findAll((node: any) => typeof node?.props?.testID === 'string')
+    return root.findAll((node: any) => (
+        typeof node.type === 'string' && typeof node?.props?.testID === 'string'
+    ))
         .map((node: any) => node.props.testID)
         .filter((testID: string) => testIds.includes(testID));
 }
@@ -230,11 +237,13 @@ function mockSettings() {
 }
 
 function mockScrollEdgeFades(params: { canScrollX: boolean; showRight: boolean }) {
+    scrollEdgeFadesState.canScrollX = params.canScrollX;
+    scrollEdgeFadesState.showRight = params.showRight;
     vi.doMock('@/components/ui/scroll/useScrollEdgeFades', () => ({
         useScrollEdgeFades: () => ({
-            canScrollX: params.canScrollX,
+            canScrollX: scrollEdgeFadesState.canScrollX,
             canScrollY: false,
-            visibility: { left: false, right: params.showRight, top: false, bottom: false },
+            visibility: { left: false, right: scrollEdgeFadesState.showRight, top: false, bottom: false },
             onViewportLayout: () => {},
             onContentSizeChange: () => {},
             onScroll: () => {},
@@ -244,7 +253,6 @@ function mockScrollEdgeFades(params: { canScrollX: boolean; showRight: boolean }
 
 describe('AgentInput (action bar scroll layout)', () => {
     it('keeps both chip rows horizontally scrollable on web', async () => {
-        vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
         mockCommonDeps();
@@ -281,7 +289,6 @@ describe('AgentInput (action bar scroll layout)', () => {
     });
 
     it('keeps the primary scroll row content padded with the right gutter for fades', async () => {
-        vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
         mockCommonDeps();
@@ -319,7 +326,6 @@ describe('AgentInput (action bar scroll layout)', () => {
     });
 
     it('keeps primary chips in the first scroll row and machine/path/resume in the second', async () => {
-        vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
         mockCommonDeps();
@@ -381,7 +387,6 @@ describe('AgentInput (action bar scroll layout)', () => {
     });
 
     it('keeps extra primary chips in the first scroll row while the secondary row stays dedicated to location controls', async () => {
-        vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
         mockCommonDeps();

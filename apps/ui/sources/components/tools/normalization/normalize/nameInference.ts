@@ -126,7 +126,10 @@ function resolveSpecificAcpWrappedToolName(toolName: string, input: unknown): st
     if ((normalizedToolName === 'read' || normalizedToolName === 'read_file' || normalizedToolName === 'readfile') && normalizedAcpTitle === 'web_fetch') {
         return 'WebFetch';
     }
-    if (normalizedToolName === 'search' && normalizedAcpTitle === 'web_search') {
+    if (
+        (normalizedToolName === 'search' || normalizedToolName === 'magnifying-glass')
+        && normalizedAcpTitle === 'web_search'
+    ) {
         return 'WebSearch';
     }
 

@@ -681,11 +681,11 @@ describe('useDaemonVoiceModelCatalogState', () => {
     });
 
     it('cancels the exact active install through its caller signal without retaining an action error', async () => {
-        let observedSignal: AbortSignal | null = null;
+        const observedSignals: AbortSignal[] = [];
         const client = {
             getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
             installModel: vi.fn(({ signal }: { signal?: AbortSignal | null }) => {
-                observedSignal = signal ?? null;
+                if (signal) observedSignals.push(signal);
                 return new Promise<DaemonVoiceInferenceModelStatus>((_resolve, reject) => {
                     signal?.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true });
                 });
@@ -705,7 +705,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
             await action;
         });
 
-        expect(observedSignal?.aborted).toBe(true);
+        expect(observedSignals[0]?.aborted).toBe(true);
         expect(tree.root.findByType('State').props.actionPackId).toBeNull();
         expect(tree.root.findByType('State').props.actionErrorPackId).toBeNull();
     });
@@ -746,11 +746,11 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((_resolve, reject) => {
             rejectInstall = reject;
         });
-        let installSignal: AbortSignal | null = null;
+        const installSignals: AbortSignal[] = [];
         const client = {
             getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
             installModel: vi.fn((input: { signal?: AbortSignal | null }) => {
-                installSignal = input.signal ?? null;
+                if (input.signal) installSignals.push(input.signal);
                 return pendingInstall;
             }),
             removeModel: vi.fn(async () => undefined),
@@ -770,7 +770,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
             await Promise.resolve();
         });
         expect(tree.root.findByType('State').props.actionPackId).toBeNull();
-        expect(installSignal?.aborted).toBe(true);
+        expect(installSignals[0]?.aborted).toBe(true);
 
         await act(async () => {
             rejectInstall(Object.assign(new Error('old machine failed'), { code: 'internal_error' }));

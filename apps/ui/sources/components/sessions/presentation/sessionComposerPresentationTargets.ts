@@ -969,6 +969,7 @@ function releaseComposerStagedMedia(
 /** One validated, not-yet-committed transaction application. */
 type PreparedComposerPresentationTransactionApply = Readonly<{
     target: ComposerPresentationTarget;
+    commitDocument: NonNullable<ComposerPresentationTarget['commitDocument']>;
     requiresRegisteredTargetCurrent: boolean;
     snapshot: ComposerSnapshotV1;
     expectedRevision: number;
@@ -1047,6 +1048,7 @@ function prepareComposerPresentationTransactionApply(input: Readonly<{
         ok: true,
         prepared: Object.freeze({
             target,
+            commitDocument: target.commitDocument,
             requiresRegisteredTargetCurrent: registeredTarget === target,
             snapshot,
             expectedRevision: transaction.data.expectedRevision,
@@ -1068,7 +1070,7 @@ function commitComposerPresentationTransactionApply(
         claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
     }>[] = [],
 ): ComposerTransactionResultV1 {
-    const committed = prepared.target.commitDocument({
+    const committed = prepared.commitDocument({
         expectedRevision: prepared.expectedRevision,
         mutation: {
             text: prepared.text,

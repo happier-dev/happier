@@ -1071,7 +1071,7 @@ describe('machine contribution registry projection ops', () => {
         });
     });
 
-    it('receives an active predecessor external-session source through the canonical response normalizer', async () => {
+    it('receives an active external-session source through the canonical response normalizer', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             protocolVersion: 1,
             projection: {
@@ -1093,9 +1093,9 @@ describe('machine contribution registry projection ops', () => {
                                 sourceKind: 'acmeArchive',
                                 schema: {
                                     fields: [{ name: 'kind', kind: 'literal', value: 'acmeArchive' }],
-                                    passthrough: true,
                                 },
                                 key: { segments: [{ kind: 'literal', value: 'acmeArchive' }] },
+                                instances: [{ kind: 'default', constants: {} }],
                             }],
                         },
                     },

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 
@@ -45,6 +45,10 @@ const rootTarget: SessionListMoveSheetTarget = {
 };
 
 describe('useSessionListMoveSheet', () => {
+    beforeAll(async () => {
+        await import('./SessionListMoveSheet');
+    });
+
     it('opens a card modal and resolves with the selected target', async () => {
         modalMock.show.mockClear();
         modalMock.hide.mockClear();

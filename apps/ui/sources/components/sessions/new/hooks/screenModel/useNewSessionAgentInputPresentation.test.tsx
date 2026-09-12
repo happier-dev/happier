@@ -107,7 +107,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -120,7 +120,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -218,7 +218,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -231,7 +231,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -327,7 +327,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -340,7 +340,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -440,7 +440,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -453,7 +453,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -594,7 +594,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },
@@ -607,7 +607,7 @@ describe('useNewSessionAgentInputPresentation', () => {
                     definition: {
                         kind: 'schedule',
                         enabled: true,
-                        schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+                        schedule: { kind: 'interval', everyMs: 30 * 60_000, scheduleExpr: null, timezone: null },
                     },
                 }],
             },

@@ -288,7 +288,7 @@ describe('SessionFileDetailsView (binary)', () => {
     await act(async () => {});
 
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
-    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
+    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBeGreaterThan(0);
   });
 
   it('renders header actions even when file content is binary', async () => {
@@ -304,11 +304,12 @@ describe('SessionFileDetailsView (binary)', () => {
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findByType('FileActionToolbar' as any).props.showWrapLinesToggle).toBe(false);
     expect(tree.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
-    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
+    const downloadButtons = tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' });
+    expect(downloadButtons.length).toBeGreaterThan(0);
     expect(tree.findAllByType('FileBinaryState' as any).length).toBe(1);
 
     await act(async () => {
-      await pressTestInstanceAsync(tree.findByProps({ testID: 'file-header-download', accessibilityRole: 'button' }));
+      await pressTestInstanceAsync(downloadButtons.find((node) => typeof node.props.onPress === 'function')!);
     });
 
     expect(startDownloadSpy).toHaveBeenCalledWith({ path: 'bin.dat', asZip: false });

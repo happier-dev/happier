@@ -137,8 +137,8 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         });
 
         expect(migrated.backendCliSourcePreferenceByTargetKey).toEqual({
-            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'managed-first',
-            [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: 'system-first',
+            'backend:codex': 'managed-first',
+            'backend:gemini': 'system-first',
         });
     });
 

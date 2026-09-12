@@ -93,6 +93,7 @@ describe('plugin surface openable content', () => {
         const first = await binding.stat();
 
         workspaceStatFileMock.mockResolvedValue(afterEqualSizeEdit);
+        workspaceReadFileMock.mockResolvedValue({ ok: true, contentBase64: 'd29ybGQ=' });
         const second = await binding.stat();
 
         expect(first.status).toBe('ready');
@@ -168,7 +169,7 @@ describe('plugin surface openable content', () => {
     });
 
     it('refuses a weak old-daemon stat instead of treating size and mtime as byte identity', async () => {
-        workspaceStatFileMock.mockResolvedValueOnce({
+        workspaceStatFileMock.mockResolvedValue({
             success: true,
             exists: true,
             kind: 'file',

@@ -1,5 +1,6 @@
 import type { NewSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { AgentExecutionTargetV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { DEFAULT_AGENT_ID, resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { t, type TranslationKey } from '@/text';
 
 export type NewSessionDraftRowPresentation = Readonly<{
@@ -47,7 +48,11 @@ function readAutomationName(draft: NewSessionDraftProjection): string | null {
 }
 
 export function resolveNewSessionDraftAgentId(draft: NewSessionDraftProjection) {
-    return resolveAgentIdFromFlavor(readNonblankString(readAuthoringValue(draft, 'agentId'))) ?? DEFAULT_AGENT_ID;
+    const target = AgentExecutionTargetV1Schema.safeParse(readAuthoringValue(draft, 'agentTarget'));
+    if (!target.success) return DEFAULT_AGENT_ID;
+
+    return resolveBundledAgentIdFromContributionIdentity(target.data.identity)
+        ?? buildQualifiedPluginContributionKey(target.data.identity);
 }
 
 function resolveStatusKey(

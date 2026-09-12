@@ -48,27 +48,29 @@ describe('listSpawnProfilesForActions', () => {
     });
 
     it('reports a newer-schema profile as unreadable instead of hiding it from a complete answer', () => {
-        storage.setState((state) => ({
-            ...state,
-            settings: {
-                ...state.settings,
-                profiles: [
-                    {
-                        v: 2,
-                        id: 'readable',
-                        name: 'Readable',
-                        extraEnvironmentVariables: [],
-                        defaultPermissionModeByTargetKey: {},
-                        defaultPersistenceModeByTargetKey: {},
-                        compatibilityByTargetKey: {},
-                        createdAt: 1,
-                        updatedAt: 1,
-                    },
-                    { v: 99, id: 'future', opaque: { untouched: true } },
-                ],
-            },
-            settingsVersion: 1,
-        }));
+        storage.setState((state) => {
+            const profiles: typeof state.settings.profiles = [
+                {
+                    v: 2,
+                    id: 'readable',
+                    name: 'Readable',
+                    extraEnvironmentVariables: [],
+                    defaultPermissionModeByTargetKey: {},
+                    defaultPersistenceModeByTargetKey: {},
+                    compatibilityByTargetKey: {},
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+                { v: 99, id: 'future', opaque: { untouched: true } },
+            ];
+            return {
+                settings: {
+                    ...state.settings,
+                    profiles,
+                },
+                settingsVersion: 1,
+            };
+        });
 
         expect(listSpawnProfilesForActions({})).toMatchObject({
             coverage: 'unreadable',

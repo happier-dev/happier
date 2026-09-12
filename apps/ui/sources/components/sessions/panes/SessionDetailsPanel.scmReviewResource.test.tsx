@@ -35,18 +35,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-        eyebrow: () => ({}),
-        keyHint: () => ({}),
-        rowTitle: () => ({}),
-        rowMeta: () => ({}),
-        pillLabel: () => ({}),
-    },
-}));
-
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         closeDetails: vi.fn(),
@@ -114,7 +102,8 @@ describe('SessionDetailsPanel (scm review resource)', () => {
         expect(tabChip).toBeTruthy();
 
         const headerNodes = root.findAll(
-            (node) => node?.props?.testID === 'session-details-close' || node?.props?.testID === 'session-details-tab-scmReview_working',
+            (node) => typeof node.type === 'string'
+                && (node.props?.testID === 'session-details-close' || node.props?.testID === 'session-details-tab-scmReview_working'),
         );
         expect(headerNodes.map((node) => node.props.testID)).toEqual([
             'session-details-close',

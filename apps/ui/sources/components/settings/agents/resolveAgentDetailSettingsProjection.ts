@@ -29,13 +29,14 @@ export function resolveAgentDetailPluginSettingsProjection(input: Readonly<{
     pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>> | null | undefined;
     identity: PluginContributionIdentityV1 | null;
 }>): PluginProjectionEntry | null {
-    if (!input.identity) return null;
+    const identity = input.identity;
+    if (!identity) return null;
     for (const entry of Object.values(input.pluginProjectionById ?? {})) {
-        if (entry.pluginId !== input.identity.pluginId) continue;
+        if (entry.pluginId !== identity.pluginId) continue;
         const matchingGroups = entry.editableSettingsGroups.filter((group) => (
             group.target.kind === 'agent'
-            && group.target.agent.pluginId === input.identity.pluginId
-            && group.target.agent.localId === input.identity.localId
+            && group.target.agent.pluginId === identity.pluginId
+            && group.target.agent.localId === identity.localId
         ));
         if (matchingGroups.length > 0) {
             return {

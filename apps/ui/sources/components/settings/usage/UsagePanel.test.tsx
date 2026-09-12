@@ -39,7 +39,8 @@ vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
     useAppPaneContext: () => ({ state: { activeScopeId: null, scopes: {} } }),
 }));
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/appShell/plugins/AppShellPluginUiProjection')>()),
     useAppShellPluginUiProjection: () => ({ pluginUiProjection: null }),
     useProjectedConnectedServicesRegistry: (): ConnectedServiceRegistrySnapshot => ({
         scopeKey: null,

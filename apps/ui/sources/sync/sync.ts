@@ -134,6 +134,7 @@ import {
     resetSessionMessagesWindowForSessionSwitch,
     type SessionMessagesWindowState,
 } from '@/sync/runtime/sessionMessagesWindowState';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import {
     MachineActivityAccumulator,

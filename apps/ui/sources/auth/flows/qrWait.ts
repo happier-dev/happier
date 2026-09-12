@@ -74,8 +74,7 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
                     // Direct QR responses predate HomeConnectionDescriptorV1 and only carry
                     // the Home identity. Converge them through the canonical adoption owner by
                     // binding that identity to the currently connected stable HTTPS origin.
-                    const active = getActiveServerSnapshot();
-                    const canonicalServerUrl = active.canonicalServerUrl ?? active.serverUrl;
+                    const canonicalServerUrl = getActiveServerSnapshot().serverUrl;
                     try {
                         await adoptHomeProfile({
                             descriptor: {

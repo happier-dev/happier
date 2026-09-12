@@ -22,6 +22,7 @@ import type {
     MergedProviderProjectionEntry,
 } from '@/agents/backendCatalog/mergedProjectionTypes';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
+import { SessionContextChips } from '@/components/sessions/context/SessionContextChips';
 import { installNewSessionComponentsCommonModuleMocks } from '../../new/components/newSessionComponentsTestHelpers';
 
 
@@ -566,10 +567,19 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('/tmp/worktree');
         expect(candidateSubtitleLines.map((line) => String(line?.props?.children ?? '')).join('\n')).not.toContain('codex-session-1');
         expect(candidateItem?.props.density).toBeUndefined();
-        expect(candidateItem?.props.icon?.type?.name).toBe('AgentIcon');
-        expect(candidateItem?.props.icon?.props.agentId).toBe('codex');
+        expect(candidateItem?.props.icon?.type).toBe(AgentCatalogIdentityIcon);
+        expect(candidateItem?.props.icon?.props).toMatchObject({
+            entry: {
+                qualifiedId: 'codex',
+                iconAgentId: 'codex',
+                isBuiltIn: true,
+            },
+            machineId: 'machine-1',
+            serverId: 'api.happier.dev',
+            current: true,
+        });
         expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('MacBook Pro');
-        expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('agentInput.agent.codex');
+        expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('Codex');
         expect(candidateItem?.props.rightElement).toBeTruthy();
         const badgeChildren = React.Children.toArray(candidateItem!.props.rightElement.props.children);
         const statusPill = badgeChildren.find((child: any) => child?.type?.name === 'StatusPill');
@@ -1780,9 +1790,9 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(lockedScopeSummary?.props.title).toBeUndefined();
         expect(lockedScopeSummary?.props.subtitle).toBeUndefined();
         expect(lockedScopeSummary?.findAllByProps({ children: 'Linux Box' }).length).toBeGreaterThan(0);
-        expect(lockedScopeSummary?.findAllByProps({
-            children: 'agentInput.agent.codex · externalSessions.browseSourceCodexUserHome',
-        }).length).toBeGreaterThan(0);
+        expect(lockedScopeSummary?.findByType(SessionContextChips).props.pathLabel).toBe(
+            'Codex · My Codex home',
+        );
 
         const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-1');
         expect(candidateItem).toBeTruthy();

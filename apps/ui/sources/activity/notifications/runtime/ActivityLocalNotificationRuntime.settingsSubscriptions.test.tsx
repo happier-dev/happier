@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { getStorage } from '@/sync/domains/state/storage';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -25,7 +24,10 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
 
 vi.mock('@/desktop/window/desktopMainWindowPresence', () => ({
     isDesktopMainWindowFocused: () => false,

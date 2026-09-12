@@ -1,4 +1,7 @@
 import { vi } from 'vitest';
+import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
+
+installShippedNativeFrameScheduler();
 
 type FilesContentModuleFactory = () => unknown | Promise<unknown>;
 type FilesContentImportOriginal = <T = unknown>() => Promise<T>;

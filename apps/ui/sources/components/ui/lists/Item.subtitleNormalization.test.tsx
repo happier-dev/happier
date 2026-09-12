@@ -251,7 +251,7 @@ describe('Item', () => {
         expect(detailNode).toBeTruthy();
 
         const style = detailNode!.props?.style;
-        const styles = Array.isArray(style) ? style : [style];
+        const styles = (Array.isArray(style) ? style.flat(Infinity) : [style]);
         const marginRight = styles.reduce((acc: number, s: any) => (s && typeof s === 'object' && typeof s.marginRight === 'number' ? s.marginRight : acc), 0);
         expect(marginRight).toBeGreaterThan(0);
     });

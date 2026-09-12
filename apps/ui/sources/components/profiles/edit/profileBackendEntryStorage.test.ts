@@ -42,6 +42,14 @@ const ohMyPiEntry: ResolvedBackendCatalogEntry = {
     subtitle: 'Oh My Pi',
     cliAuthBackgroundCheckSafe: false,
 };
+const qualifiedAgentEntry: ResolvedBackendCatalogEntry = {
+    ...pluginBackendEntry,
+    backendTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'acme.review', localId: 'review-agent' },
+    },
+    backendTargetKey: 'agent:acme.review/review-agent',
+};
 
 describe('profileBackendEntryStorage', () => {
     it('reads explicit compatibility by backend target key', () => {
@@ -52,6 +60,10 @@ describe('profileBackendEntryStorage', () => {
             },
             pluginBackendEntry,
         )).toBe(true);
+    });
+
+    it('does not invent a legacy backend key for a qualified Agent target', () => {
+        expect(readProfileTargetKeyValueForEntry({}, qualifiedAgentEntry)).toBeUndefined();
     });
 
     it('treats explicit compatibility as authoritative for plugin backends', () => {

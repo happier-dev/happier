@@ -51,7 +51,7 @@ export function resolveAgentScopedPluginSettingsDeclarations(params: Readonly<{
         for (const group of agentGroups) {
             if (group.scope.kind !== scope) continue;
             for (const field of group.fields) {
-                if (field.secretCustody !== 'none' || fieldsByKey.has(field.key)) continue;
+                if (field.secretCustody !== null || fieldsByKey.has(field.key)) continue;
                 fieldsByKey.set(field.key, field);
             }
         }

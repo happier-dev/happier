@@ -288,6 +288,7 @@ describe('DaemonVoiceModelCatalogSection', () => {
                 install,
                 acceptLicense,
                 remove: vi.fn(async () => undefined),
+                cancel: vi.fn(),
             },
         });
 

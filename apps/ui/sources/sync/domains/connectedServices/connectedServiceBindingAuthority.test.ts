@@ -199,10 +199,10 @@ describe('createConnectedServiceBindingAuthorityFingerprint', () => {
     })).toBe(initial);
     expect(createConnectedAccountTargetAuthorityFingerprint({
       target,
-      accounts: [{
+      accounts: [QualifiedConnectedAccountProfileV4Schema.parse({
         ...selectedAccount,
         credentialRevision: 'csr_2123456789ABCDEFGHJKMNPQRS',
-      }],
+      })],
       groups: [],
     })).not.toBe(initial);
   });

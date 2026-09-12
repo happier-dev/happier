@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { IrohHomeTunnelLease } from '@happier-dev/iroh-native';
 
 describe('UI Iroh lifecycle adapter', () => {
     it('publishes runtime origin on lease and clears it on release', async () => {
@@ -25,7 +26,7 @@ describe('UI Iroh lifecycle adapter', () => {
         let generation = 1;
         let resolveNative: ((value: { leaseId: string; homeServerIdentityId: string; homeEndpointId: string; runtimeOrigin: string; carrier: 'iroh'; observedPath: 'direct'; startedAtMs: number }) => void) | undefined;
         const native = {
-            ensureHomeTunnel: vi.fn(async () => await new Promise((resolve) => { resolveNative = resolve; })),
+            ensureHomeTunnel: vi.fn(async () => await new Promise<Omit<IrohHomeTunnelLease, 'release'>>((resolve) => { resolveNative = resolve; })),
             releaseHomeTunnel: vi.fn(async () => undefined),
         };
         const fenced = createUiIrohNativeAdapter({ native, getGeneration: () => generation });

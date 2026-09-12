@@ -100,12 +100,36 @@ vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-    },
-}));
+vi.mock('@/constants/Typography', () => {
+    const style = () => ({});
+    return {
+        FontWeights: {
+            regular: '400',
+            semiBold: '500',
+            bold: '600',
+        },
+        getDefaultFont: () => 'Inter-Regular',
+        getMonoFont: () => 'IBMPlexMono-Regular',
+        Typography: {
+            default: style,
+            mono: style,
+            tabular: style,
+            eyebrow: style,
+            rowTitle: style,
+            rowMeta: style,
+            pillLabel: style,
+            keyHint: style,
+            timestamp: style,
+            logo: style,
+            header: style,
+            body: style,
+            legacy: {
+                spaceMono: style,
+                systemMono: style,
+            },
+        },
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: createPassThroughComponent('ItemList'),
@@ -234,6 +258,24 @@ vi.mock('@/components/settings/machines/sections/ActiveSelectionMachinesSection'
     ActiveSelectionMachinesSection: () => null,
 }));
 
+vi.mock('@/components/settings/SettingsBelowFoldSections', () => ({
+    SettingsBelowFoldSections: () => null,
+}));
+
+vi.mock('@/components/settings/usage/SettingsUsageSummaryStrip', () => ({
+    SettingsUsageSummaryStrip: () => null,
+}));
+
+vi.mock('@/components/settings/usage/useUsageBannerModel', () => ({
+    useUsageBannerModel: () => ({
+        viewModel: null,
+        isLoading: false,
+        errorMessage: null,
+    }),
+}));
+
+const { SettingsView } = await import('./SettingsView');
+
 describe('SettingsView (web)', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -241,9 +283,7 @@ describe('SettingsView (web)', () => {
 
     it('renders an “Add your phone” shortcut that routes to /settings/add-phone', async () => {
         windowDimensions = { width: 1600, height: 900 };
-        vi.resetModules();
         routerPushSpy.mockClear();
-        const { SettingsView } = await import('./SettingsView');
 
         const screen = await renderSettingsView(<SettingsView />);
 
@@ -256,10 +296,7 @@ describe('SettingsView (web)', () => {
     it('hides “Add your phone” on phone-sized web', async () => {
         windowDimensions = { width: 360, height: 800 };
         vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
-        vi.resetModules();
         routerPushSpy.mockClear();
-
-        const { SettingsView } = await import('./SettingsView');
 
         const screen = await renderSettingsView(<SettingsView />);
 
@@ -270,10 +307,7 @@ describe('SettingsView (web)', () => {
         windowDimensions = { width: 480, height: 700 };
         vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
         vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) } as any);
-        vi.resetModules();
         routerPushSpy.mockClear();
-
-        const { SettingsView } = await import('./SettingsView');
 
         const screen = await renderSettingsView(<SettingsView />);
 

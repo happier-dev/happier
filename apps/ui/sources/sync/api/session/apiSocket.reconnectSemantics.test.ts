@@ -83,6 +83,15 @@ vi.mock('@/sync/api/session/connection/createSyncSocketTransport', () => ({
     createSyncSocketTransport: (...args: unknown[]) => transportFactory.createSyncSocketTransportSpy(...args),
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: 'server-test',
+        serverUrl: 'https://server.example.test',
+        kind: 'custom',
+        generation: 1,
+    }),
+}));
+
 async function settleAsyncWork() {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     if (typeof vi.isFakeTimers === 'function' && vi.isFakeTimers()) {

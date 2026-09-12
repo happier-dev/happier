@@ -495,25 +495,40 @@ describe('ReviewCommentsSessionSurface', () => {
 
         expect(execute).toHaveBeenCalledWith('reviews.comments.edit', expect.objectContaining({
             commentId: 'open-1',
+            projectId: 'project-1',
             nextBody: 'Edited body',
             expectedBodyVersion: 1,
+            expectedServerRevision: 1,
         }));
         expect(execute).toHaveBeenCalledWith('reviews.comments.transition', expect.objectContaining({
             commentId: 'open-1',
+            projectId: 'project-1',
             toState: 'resolved',
             expectedState: 'open',
+            expectedServerRevision: 1,
         }));
         expect(execute).toHaveBeenCalledWith('reviews.comments.redact', expect.objectContaining({
             commentId: 'open-1',
+            projectId: 'project-1',
+            expectedServerRevision: 1,
             redactBody: true,
         }));
         expect(execute).toHaveBeenCalledWith('reviews.comments.reply', expect.objectContaining({
             parentCommentId: 'open-1',
+            projectId: 'project-1',
+            expectedParentServerRevision: 1,
             body: 'Reply body',
         }));
         expect(execute).toHaveBeenCalledWith('reviews.comments.bulkTransition', expect.objectContaining({
+            projectId: 'project-1',
             commentIds: ['open-1', 'proposed-1', 'reply-1'],
             toState: 'resolved',
+            expectedState: 'open',
+            expectedServerRevisions: {
+                'open-1': 1,
+                'proposed-1': 1,
+                'reply-1': 1,
+            },
         }));
         expect(screen.getTextContent()).toContain('files.reviewComments.durable.bulkPartialFailure');
         expect(screen.getTextContent()).toContain('proposed-1');

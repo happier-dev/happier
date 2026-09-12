@@ -33,6 +33,13 @@ function nodeMatchesTestId(node: ReactTestInstance, testID: string): boolean {
     return node.props?.testID === testID || node.props?.['data-testid'] === testID;
 }
 
+export function findAllHostTestInstances(
+    scope: Pick<ReactTestInstance, 'findAll'>,
+    predicate: (node: ReactTestInstance) => boolean,
+): ReactTestInstance[] {
+    return scope.findAll((node) => typeof node.type === 'string' && predicate(node));
+}
+
 function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
     return root.findAll((node) => nodeMatchesTestId(node, testID));
 }
@@ -46,7 +53,7 @@ function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInst
  * rather than the style the host resolved. Use these when the assertion is about what was rendered.
  */
 function findAllHostsByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
-    return root.findAll((node) => typeof node.type === 'string' && nodeMatchesTestId(node, testID));
+    return findAllHostTestInstances(root, (node) => nodeMatchesTestId(node, testID));
 }
 
 function resolvePreferredTestIdMatch(root: ReactTestInstance, testID: string): ReactTestInstance | null {

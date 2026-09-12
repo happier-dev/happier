@@ -252,7 +252,7 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 vi.mock('@/constants/Typography', () => ({
     FontWeights: { regular: '400', semiBold: '500', bold: '600' },
-    Typography: { default: () => ({}), mono: () => ({}), header: () => ({}) },
+    Typography: { default: () => ({}), mono: () => ({}), header: () => ({}), rowMeta: () => ({}), pillLabel: () => ({}) },
 }));
 
 vi.mock('./ResumeChip', () => ({

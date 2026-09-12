@@ -144,6 +144,7 @@ describe('SessionDetailsPanel local service launcher handoff', () => {
             },
             descriptor: { surfaceId: 'browser-launchpad' },
             active: true,
+            callbacks: {},
         }) as React.ReactElement<{ launchpadRows?: readonly { id: string; disabledReason: string | null }[] }> | null;
 
         expect(element?.props.launchpadRows).toEqual(expect.arrayContaining([

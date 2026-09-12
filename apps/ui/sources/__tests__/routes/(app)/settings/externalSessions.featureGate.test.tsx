@@ -110,7 +110,7 @@ describe('External Sessions settings route feature gate', () => {
         expect(settingsView.props.integrationInventoryEnabled).toBe(true);
         expect(settingsViewRenderSpy).toHaveBeenCalledTimes(1);
         expect(featureDecisionSpy).toHaveBeenCalledWith('sessions.direct', undefined);
-        expect(tree.findByProps({ testID: 'external-sessions-browse-route-gate-unavailable' })).toBeUndefined();
+        expect(tree.findAllByProps({ testID: 'external-sessions-browse-route-gate-unavailable' })).toHaveLength(0);
     });
 
     it('does not give a machine query execution authority over the Administration settings view', async () => {

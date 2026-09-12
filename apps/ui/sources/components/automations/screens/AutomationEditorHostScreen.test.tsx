@@ -460,7 +460,8 @@ describe('AutomationEditorHostScreen', () => {
         expect(modalAlertSpy).not.toHaveBeenCalled();
     });
 
-    it('refuses to save a changed lifecycle row whose source turn is no longer current', async () => {
+    it('allows disabling a historical lifecycle row whose source turn is no longer current', async () => {
+        syncSpies.saveAutomationEditorDraft.mockResolvedValue({ id: 'automation-1' });
         await mountHost({});
         await flushRender();
 
@@ -477,12 +478,13 @@ describe('AutomationEditorHostScreen', () => {
         await act(async () => editor.onSubmit());
         await flushRender();
 
-        expect(syncSpies.saveAutomationEditorDraft).not.toHaveBeenCalled();
-        expect(syncSpies.refreshSessions).toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith(
-            'automations.exactTurn.staleTitle',
-            'automations.exactTurn.staleBody',
-        );
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
+        expect(syncSpies.saveAutomationEditorDraft.mock.calls[0]?.[0].triggers[1]).toMatchObject({
+            isDirty: true,
+            definition: { kind: 'sessionLifecycle', enabled: false },
+        });
+        expect(syncSpies.refreshSessions).not.toHaveBeenCalled();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
     });
 
     it('presents the existing-session target as non-selectable so the source always differs', async () => {

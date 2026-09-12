@@ -8,17 +8,6 @@ const scriptPath = fileURLToPath(import.meta.url);
 const scriptsDir = dirname(scriptPath);
 const packageRoot = dirname(scriptsDir);
 
-export const ACTIVITY_SURFACES_VALIDATION_NODE_TEST_FILES = [
-  './scripts/activitySurfacesValidationContract.test.mjs',
-  './scripts/runActivitySurfacesCertification.test.mjs',
-  './scripts/runActivitySurfacesNativeCertification.test.mjs',
-  './scripts/runActivitySurfacesReleaseReadiness.test.mjs',
-  './scripts/qa/tauriActivitySurfacesMcpQa.test.mjs',
-  './scripts/validateExpoWidgetsNativeSync.test.mjs',
-  './scripts/validateExpoWidgetsGeneratedProject.test.mjs',
-  './scripts/validateExpoWidgetsSimulatorBuildSmoke.test.mjs',
-];
-
 export const ACTIVITY_SURFACES_ROLLOUT_LOCAL_INCLUDED_CHECKS = [
   'validation_contract_tests',
   'typecheck:activity-surfaces',
@@ -62,7 +51,7 @@ export function runActivitySurfacesCertification({
   spawnSyncImpl = spawnSync,
   runVitestSuite = runActivitySurfacesVitestSuite,
 } = {}) {
-  runStep(process.execPath, ['--test', ...ACTIVITY_SURFACES_VALIDATION_NODE_TEST_FILES], {
+  runStep(process.platform === 'win32' ? 'yarn.cmd' : 'yarn', ['-s', 'test:activity-surfaces:contracts:local'], {
     cwd,
     env,
     spawnSyncImpl,

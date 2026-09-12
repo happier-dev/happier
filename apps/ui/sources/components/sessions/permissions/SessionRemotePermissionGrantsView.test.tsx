@@ -17,6 +17,7 @@ vi.mock('@/modal', () => ({
 }));
 
 const activeGrant = SessionPermissionRemoteGrantSummaryV1Schema.parse({
+    turnId: 'turn-1',
     requestId: 'request-1',
     settlementId: 'settlement-1',
     grantId: 'grant-1',
@@ -86,6 +87,7 @@ describe('SessionRemotePermissionGrantsView', () => {
             method: 'session.permission.remote.grants.revoke',
             payload: {
                 sessionId: 'session-1',
+                turnId: 'turn-1',
                 requestId: 'request-1',
                 grantId: 'grant-1',
             },

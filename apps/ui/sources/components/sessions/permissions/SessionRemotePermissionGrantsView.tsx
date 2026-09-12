@@ -200,6 +200,7 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
                 'session.permission.remote.grants.revoke',
                 {
                     sessionId: props.sessionId,
+                    turnId: grant.turnId,
                     requestId: grant.requestId,
                     grantId: grant.grantId,
                 },

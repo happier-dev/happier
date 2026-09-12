@@ -55,8 +55,8 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
-const invalidateFromUserAndAwaitSpy = vi.fn();
-const invalidateFromAutoRefreshAndAwaitSpy = vi.fn(async () => {});
+const invalidateFromUserAndAwaitSpy = vi.hoisted(() => vi.fn());
+const invalidateFromAutoRefreshAndAwaitSpy = vi.hoisted(() => vi.fn(async () => {}));
 const loadCommitHistorySpy = vi.fn();
 const useChangedFilesDataSpy = vi.fn();
 let sessionPathMock: string | null = '/workspace';
@@ -110,6 +110,13 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
     TextSelectabilityScope: ({ children }: { children: React.ReactNode }) => children,
 }));
+
+vi.mock('@/components/ui/lists/virtualized/VirtualizedList', async () => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return {
+        VirtualizedList: createCapturingLegendListMock({ renderItems: true }).module.LegendList,
+    };
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => scmWriteEnabledMock,
@@ -440,9 +447,9 @@ describe('SessionRightPanel git sub-tabs', () => {
         const screen = await renderScreen(<AppPaneProvider>
                     <SessionRightPanel sessionId="s1" scopeId="session:s1" />
                 </AppPaneProvider>);
-        expect(screen.findAllByTestId('scm-commit-message')).toHaveLength(0);
-        expect(screen.findAllByTestId('session-rightpanel-git-subtab:update')).toHaveLength(0);
-        expect(screen.findAllByTestId('session-rightpanel-git-subtab:history')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('scm-commit-message')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('session-rightpanel-git-subtab:update')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('session-rightpanel-git-subtab:history')).toHaveLength(1);
     });
 
     it('does not crash when SCM snapshot loads after mount', async () => {

@@ -801,13 +801,14 @@ describe('machineSpawnNewSession error mapping', () => {
         status: 'completed',
         userAttemptId: 'attempt-2',
         spawnNonce: 'launch-2',
-        firstTurnLocalId: 'spawn-first-turn:launch-2',
-        attachmentMessageLocalId: 'spawn-attachment:launch-2',
+        firstTurnLocalId: expect.stringMatching(/^plugin-input-v1:[A-Za-z0-9_-]{43}$/u),
+        attachmentMessageLocalId: expect.stringMatching(/^plugin-input-v1:[A-Za-z0-9_-]{43}$/u),
       },
     });
     if (second.spawnAttemptCustody?.status !== 'completed') {
       throw new Error('expected second completed custody');
     }
+    expect(second.spawnAttemptCustody.attachmentMessageLocalId).toBe(second.spawnAttemptCustody.firstTurnLocalId);
     expect(second.spawnAttemptCustody.firstTurnLocalId).not.toBe(first.spawnAttemptCustody.firstTurnLocalId);
     expect(second.spawnAttemptCustody.attachmentMessageLocalId).not.toBe(first.spawnAttemptCustody.attachmentMessageLocalId);
     await expect(completeMachineSpawnAttemptCustody(first.spawnAttemptCustody)).resolves.toBe(true);

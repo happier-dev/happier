@@ -48,6 +48,13 @@ function setCanonicalSessionTarget(machineId: string, path: string): void {
     };
 }
 
+function agentTarget(agentId: string, pluginId = `happier.agent.${agentId}`) {
+    return {
+        kind: 'agent' as const,
+        identity: { pluginId, localId: agentId },
+    };
+}
+
 beforeEach(() => {
     setCanonicalSessionTarget('m1', '/tmp');
 });
@@ -84,7 +91,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -105,7 +112,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
             initialTranscriptAfterSeq: 41,
         });
@@ -127,7 +134,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
             initialTranscriptAfterSeq: 0,
         });
@@ -192,7 +199,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm-target',
             directory: '/tmp/target',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -253,7 +260,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm-target',
             directory: '/tmp/target',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -290,7 +297,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -339,7 +346,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -365,7 +372,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -419,7 +426,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -436,7 +443,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
         });
     });
@@ -482,27 +489,36 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentTarget: agentTarget('codex'),
             resume: 'x1',
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'codex',
                 agent: {
                     backendMode: 'appServer',
-                    providerSessionId: 'x1',
                 },
             },
-            codexBackendMode: 'appServer',
         });
     });
 
-    it('returns null when codex vendor resume is disabled', () => {
+    it('continues codex sessions through the canonical runtime when a legacy account mode is set', () => {
         const session: any = {
             thinking: false,
             agentState: null,
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'codex', codexSessionId: 'x1' },
         };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'mcp' } } })).toBeNull();
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'mcp' } } })).toEqual({
+            sessionId: 's1',
+            machineId: 'm1',
+            directory: '/tmp',
+            agentTarget: agentTarget('codex'),
+            resume: 'x1',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
+        });
     });
 
     it('returns codex options when codex resume is enabled', () => {
@@ -519,9 +535,13 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentTarget: agentTarget('codex'),
             resume: 'x1',
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         });
     });
 
@@ -539,9 +559,13 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentTarget: agentTarget('codex'),
             resume: 'x1',
-            codexBackendMode: 'acp',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
         });
     });
 
@@ -573,17 +597,15 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            agentTarget: agentTarget('codex'),
             resume: 'x1',
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'codex',
                 agent: {
                     backendMode: 'appServer',
-                    providerSessionId: 'x1',
                 },
             },
-            codexBackendMode: 'appServer',
         });
     });
 
@@ -601,7 +623,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'gemini' },
+            agentTarget: agentTarget('gemini'),
             resume: 'g1',
         });
     });
@@ -621,7 +643,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            agentTarget: agentTarget('claude'),
             resume: 'c1',
             permissionMode: 'plan',
             permissionModeUpdatedAt: 123,
@@ -650,7 +672,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+            agentTarget: agentTarget('opencode'),
             resume: 'oc-1',
             environmentVariables: {
                 HAPPIER_OPENCODE_BACKEND_MODE: 'server',
@@ -688,21 +710,22 @@ describe('getPendingQueueWakeResumeOptions', () => {
         });
     });
     it('carries an externally installed Agent\'s projected wake resume extras', () => {
+        const externalAgentId = 'acme.lifecycle/acme-lifecycle';
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'm1',
             descriptorsByAgentId: {
-                'acme-lifecycle': {
+                [externalAgentId]: {
                     kind: 'plugin.ui.v1',
                     pluginId: 'acme.lifecycle',
-                    agentId: 'acme-lifecycle',
+                    agentId: externalAgentId,
                     version: 1,
                     behavior: {
                         payload: {
                             environmentVariables: {
-                                providerId: 'acme-lifecycle',
+                                providerId: externalAgentId,
                                 backendMode: {
                                     envKey: 'ACME_BACKEND_MODE',
-                                    settingKey: 'acmeBackendMode',
+                                    settingKey: { scope: 'account', localId: 'acmeBackendMode' },
                                     legacyMetadataKey: 'acmeBackendModeV1',
                                     runtimeDescriptorField: 'backendMode',
                                     defaultValue: 'server',
@@ -723,8 +746,22 @@ describe('getPendingQueueWakeResumeOptions', () => {
                     path: '/tmp',
                     runtimeDescriptorV1: {
                         v: 1,
-                        agentId: 'acme-lifecycle',
-                        provider: { providerSessionId: 'acme-session-1' },
+                        agentId: externalAgentId,
+                        agent: { providerSessionId: 'acme-session-1' },
+                    },
+                    nativeResumeIdentityV1: { v: 1, vendorResumeId: 'acme-session-1' },
+                    externalSessionV1: {
+                        v: 1,
+                        agentId: externalAgentId,
+                        machineId: 'm1',
+                        remoteSessionId: 'acme-session-1',
+                        source: { kind: 'pluginTranscript' },
+                        linkedAtMs: 1,
+                        qualifiedIdentity: {
+                            v: 1,
+                            agent: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
+                            source: { kind: 'pluginTranscript', contractVersion: 1 },
+                        },
                     },
                 },
             };
@@ -735,7 +772,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 resumeCapabilityOptions: {
                     accountSettings: {},
                     currentAgentCapabilities: {
-                        agentId: 'acme-lifecycle',
+                        agentId: externalAgentId,
                         identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
                         generation: 42,
                         capabilities: {
@@ -749,7 +786,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 } as any,
             });
 
-            expect(res?.backendTarget).toEqual({ kind: 'backend', backendId: 'acme-lifecycle' });
+            expect(res?.agentTarget).toEqual(agentTarget('acme-lifecycle', 'acme.lifecycle'));
             expect(res?.environmentVariables).toEqual({ ACME_BACKEND_MODE: 'server' });
         } finally {
             clearProjectedAgentUiBehaviorDescriptors();

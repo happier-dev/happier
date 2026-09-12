@@ -87,19 +87,22 @@ describe('daemon-projected agent UI behavior descriptors', () => {
                 },
             },
         });
-        const settings = makeSettings({ codexAcpEnabled: true, agentResumePaneEnabled: false });
+        const settings = makeSettings();
+        const pluginSettings = {
+            account: { codexAcpEnabled: true, agentResumePaneEnabled: false },
+        } as const;
 
-        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-a')).toEqual({
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-a', pluginSettings)).toEqual({
             enabled: true,
             switches: { legacyResume: false },
         });
-        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-b')).toEqual({
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-b', pluginSettings)).toEqual({
             enabled: true,
             switches: { acpResume: true },
         });
         // A machine that publishes nothing keeps the neutral floor instead of
         // adopting whichever machine sorts first.
-        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-c')).toEqual({
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-c', pluginSettings)).toEqual({
             enabled: true,
             switches: {},
         });

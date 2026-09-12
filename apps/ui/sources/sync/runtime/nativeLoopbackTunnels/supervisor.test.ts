@@ -63,7 +63,7 @@ describe('provider-neutral loopback tunnel supervisor', () => {
         let generation = 1;
         let resolveStart: ((value: { nativeTunnelId: string; localPort: number }) => void) | undefined;
         const adapter: LoopbackTunnelAdapter<Request> = {
-            startLoopbackTunnel: vi.fn(() => new Promise((resolve) => { resolveStart = resolve; })),
+            startLoopbackTunnel: vi.fn(() => new Promise<Readonly<{ nativeTunnelId: string; localPort: number }>>((resolve) => { resolveStart = resolve; })),
             stopLoopbackTunnel: vi.fn(async () => undefined),
         };
         const supervisor = createLoopbackTunnelSupervisor<Request, LoopbackTunnelLease>({

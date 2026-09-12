@@ -3,6 +3,7 @@ import {
     SessionCreationKeyV1Schema,
     type SessionSpawnNewResultV1,
 } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import {
     readSpawnAttemptCustodyState,
@@ -28,7 +29,7 @@ const input: StrictSessionSpawnNewInput = {
     executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
     directory: '/work/project',
     organizationPlacement: { folderId: null, tagIds: [] },
-    agentTarget: { kind: 'agent', identity: { pluginId: 'happier', localId: 'codex' } },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
 };
 
 const result: SessionSpawnNewResultV1 = {

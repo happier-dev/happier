@@ -35,7 +35,10 @@ const nativeAvailabilityState = vi.hoisted(() => ({
 
 const nativeQaState = vi.hoisted(() => ({
     enabled: false,
-    injectRendererCrash: vi.fn(async (_surfaceId: string) => ({ injected: false, reason: 'qa-disabled' })),
+    injectRendererCrash: vi.fn<(surfaceId: string) => Promise<
+        | Readonly<{ injected: true; surfaceId: string }>
+        | Readonly<{ injected: false; reason: string }>
+    >>(async (_surfaceId) => ({ injected: false, reason: 'qa-disabled' })),
 }));
 
 const localSettingState = vi.hoisted(() => ({
@@ -1100,6 +1103,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
                 nativeRenderer={{
                     featureEnabled: true,
                     platform: 'ios',
+                    accessibilityAccepted: false,
                     packageProofAccepted: true,
                     crashFallbackAvailable: true,
                     availability: {

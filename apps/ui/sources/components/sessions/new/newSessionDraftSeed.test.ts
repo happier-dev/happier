@@ -130,7 +130,7 @@ describe('applyNewSessionDraftSeedV1', () => {
             rootPath: '/repo-b',
             reachable: true,
             worktrees: [],
-        }] as const;
+        }];
 
         const seeded = applyNewSessionDraftSeedV1({
             seed: { candidates },

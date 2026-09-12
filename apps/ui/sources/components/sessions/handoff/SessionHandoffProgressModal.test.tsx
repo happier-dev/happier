@@ -59,9 +59,11 @@ describe('SessionHandoffProgressModal', () => {
             />,
         );
 
-        expect(screen.findByTestId('session-handoff-operation-progress-bar')).toBeTruthy();
+        const progressBar = screen.findByTestId('session-handoff-operation-progress-bar');
+        expect(progressBar).toBeTruthy();
+        expect(progressBar?.props.accessibilityLabel).toBe('Packaging session state');
         expect(screen.getTextContent()).toContain('25');
-        expect(screen.getTextContent()).toContain('Packaging session state');
+        expect(screen.getTextContent()).not.toContain('Packaging session state');
     });
 
     it('renders operation progress as one stateful checklist with progress nested under the active step', async () => {

@@ -68,7 +68,9 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateToSessionSpy,
 }));
 
-let platformOs: 'ios' | 'android' | 'web' = 'ios';
+const platformState = vi.hoisted(() => ({
+    os: 'ios' as 'ios' | 'android' | 'web',
+}));
 let localDevModeEnabled = false;
 const storageSessionsState = vi.hoisted(() => ({
     current: {} as Record<string, any>,
@@ -83,16 +85,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 }));
 
 installSessionShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                get OS() {
-                    return platformOs;
-                },
-            },
-        });
-    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -154,9 +146,19 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     });
 });
 
+const initialPlatform = platformState.os;
+platformState.os = 'web';
+const { SessionItem } = await import('./SessionItem');
+const { Platform } = await import('react-native');
+Object.defineProperty(Platform, 'OS', {
+    configurable: true,
+    get: () => platformState.os,
+});
+const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(SessionItem);
+platformState.os = initialPlatform;
+
 async function importSessionItem() {
-    const { SessionItem } = await import('./SessionItem');
-    return createModelBackedSessionItemTestComponent(SessionItem);
+    return ModelBackedSessionItem;
 }
 
 function hasSelectMenuItem(items: unknown): boolean {
@@ -182,7 +184,7 @@ describe('SessionItem context menu press suppression', () => {
         modalPromptSpy.mockClear();
         sessionRenameSpy.mockClear();
         openSessionForkStrategyFlowSpy.mockReset();
-        platformOs = 'ios';
+        platformState.os = 'ios';
         localDevModeEnabled = false;
         storageSessionsState.current = {};
         vi.useRealTimers();
@@ -298,6 +300,10 @@ describe('SessionItem context menu press suppression', () => {
                         providerSessionId: 'codex-session-1',
                     },
                 },
+                nativeResumeIdentityV1: {
+                    v: 1,
+                    vendorResumeId: 'codex-session-1',
+                },
             },
         });
         storageSessionsState.current = { [fullSession.id]: fullSession };
@@ -391,7 +397,7 @@ describe('SessionItem context menu press suppression', () => {
             );
         });
 
-        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_1' });
+        const itemPressable = screen.findHostByTestId('session-list-item-sess_1');
         await act(async () => {
             await pressTestInstanceAsync(itemPressable, 'session list item');
         });
@@ -449,7 +455,8 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_2' });
+        const itemPressable = screen.findHostByTestId('session-list-item-sess_2');
+        if (!itemPressable) throw new Error('expected native inline-drag session pressable');
         expect(itemPressable.props.onPressIn).toBeUndefined();
         expect(itemPressable.props.onPressOut).toBeUndefined();
         expect(itemPressable.props.onLongPress).toBeUndefined();
@@ -458,7 +465,7 @@ describe('SessionItem context menu press suppression', () => {
 
     it('suppresses the post-drag row press after a web reorder-handle drag', async () => {
         vi.useFakeTimers();
-        platformOs = 'web';
+        platformState.os = 'web';
         const SessionItem = await importSessionItem();
 
         const session = createSessionFixture({
@@ -503,7 +510,7 @@ describe('SessionItem context menu press suppression', () => {
             );
         });
 
-        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_reorder_drag' });
+        const itemPressable = screen.findHostByTestId('session-list-item-sess_reorder_drag');
         await act(async () => {
             await pressTestInstanceAsync(itemPressable, 'session list item');
         });
@@ -555,7 +562,8 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_press_in' });
+        const itemPressable = screen.findHostByTestId('session-list-item-sess_press_in');
+        if (!itemPressable) throw new Error('expected native long-press session pressable');
         expect(itemPressable.props.onPressIn).toEqual(expect.any(Function));
 
         await act(async () => {
@@ -576,7 +584,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('adds Android ripple feedback to the session row pressable', async () => {
-        platformOs = 'android';
+        platformState.os = 'android';
 
         const SessionItem = await importSessionItem();
 
@@ -608,7 +616,8 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_3' });
+        const itemPressable = screen.findHostByTestId('session-list-item-sess_3');
+        if (!itemPressable) throw new Error('expected Android session pressable');
         expect(itemPressable.props.android_ripple).toMatchObject({
             borderless: false,
             foreground: true,
@@ -663,7 +672,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('keeps the session identity visible on web row hover outside selection mode', async () => {
-        platformOs = 'web';
+        platformState.os = 'web';
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_hover',
@@ -701,7 +710,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('adds a web more-menu Select entry that enters selection mode for the row', async () => {
-        platformOs = 'web';
+        platformState.os = 'web';
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_web_select',
@@ -745,7 +754,7 @@ describe('SessionItem context menu press suppression', () => {
     });
 
     it('offers fork in the session row dropdown without a subtitle and opens the shared fork flow', async () => {
-        platformOs = 'web';
+        platformState.os = 'web';
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_fork',

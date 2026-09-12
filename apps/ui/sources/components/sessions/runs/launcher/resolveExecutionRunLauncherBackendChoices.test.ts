@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/registry/generatedBundledPluginEntries';
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({
@@ -144,7 +146,10 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
         });
 
         expect(choices).toContainEqual(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'claude' },
+            backendTarget: {
+                kind: 'agent',
+                identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES.claude,
+            },
             targetKey: 'agent:claude',
             backendId: 'claude',
             title: 't:agentInput.agent.claude',
@@ -174,6 +179,7 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
             mergedProviderProjectionById: {
                 'acme.plugin.provider1': {
                     agentId: 'acme.plugin.provider1',
+                    identity: { pluginId: 'acme.plugin', localId: 'provider1' },
                     title: 'Acme Plugin Provider',
                     subtitle: 'acme.plugin.provider1',
                     channel: 'plugin',
@@ -181,11 +187,14 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
                     iconAgentId: null,
                 },
             },
-        } as any);
+        });
 
         expect(choices).toContainEqual(expect.objectContaining({
-            backendTarget: { kind: 'backend', backendId: 'acme.plugin.backend1' },
-            targetKey: 'agent:acme.plugin.backend1',
+            backendTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'acme.plugin', localId: 'provider1' },
+            },
+            targetKey: 'agent:acme.plugin.provider1',
             backendId: 'acme.plugin.backend1',
             title: 'Acme Plugin Backend',
             disabled: false,

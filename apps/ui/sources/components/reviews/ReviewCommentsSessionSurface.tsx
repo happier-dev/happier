@@ -221,8 +221,10 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
         if (!nextBody) return;
         const response = await actions.edit({
             commentId: comment.id,
+            projectId: comment.projectId,
             nextBody,
             expectedBodyVersion: comment.bodyVersion,
+            expectedServerRevision: comment.serverRevision,
             clientMutationId: createReviewCommentClientMutationId('edit'),
         }) as ReviewCommentEditResponseV1;
         upsertUpdatedComments([response.comment]);
@@ -234,9 +236,11 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
     }>) => {
         const response = await actions.transition({
             commentId: input.comment.id,
+            projectId: input.comment.projectId,
             toState: input.toState,
             reason: t('files.reviewComments.durable.transitionReason'),
             expectedState: input.comment.state,
+            expectedServerRevision: input.comment.serverRevision,
             clientMutationId: createReviewCommentClientMutationId('transition'),
         }) as ReviewCommentTransitionResponseV1;
         upsertUpdatedComments([response.comment]);
@@ -245,6 +249,8 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
     const redactComment = React.useCallback(async (comment: ReviewCommentV1) => {
         const response = await actions.redact({
             commentId: comment.id,
+            projectId: comment.projectId,
+            expectedServerRevision: comment.serverRevision,
             redactBody: true,
             clientMutationId: createReviewCommentClientMutationId('redact'),
         }) as ReviewCommentRedactResponseV1;
@@ -261,18 +267,32 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
             },
         ));
         if (!body) return;
+        const parent = commentsState.byId[input.parentCommentId];
+        if (!parent) return;
         const response = await actions.reply({
             parentCommentId: input.parentCommentId,
+            projectId: parent.projectId,
+            expectedParentServerRevision: parent.serverRevision,
             body,
             clientMutationId: createReviewCommentClientMutationId('reply'),
         }) as ReviewCommentReplyResponseV1;
         upsertUpdatedComments([response.parent, response.comment]);
-    }, [actions, upsertUpdatedComments]);
+    }, [actions, commentsState.byId, upsertUpdatedComments]);
 
     const bulkTransition = React.useCallback(async (input: ReviewCommentBulkTransitionInput) => {
+        const comments = input.commentIds
+            .map((commentId) => commentsState.byId[commentId])
+            .filter((comment): comment is ReviewCommentV1 => comment !== undefined);
+        const firstComment = comments[0];
+        if (!firstComment || comments.length !== input.commentIds.length) return;
         const response = await actions.bulkTransition({
             commentIds: input.commentIds,
+            projectId: firstComment.projectId,
             toState: input.toState,
+            expectedState: firstComment.state,
+            expectedServerRevisions: Object.fromEntries(
+                comments.map((comment) => [comment.id, comment.serverRevision]),
+            ),
             reason: t('files.reviewComments.durable.bulkTransitionReason'),
             clientMutationId: createReviewCommentClientMutationId('bulk-transition'),
         }) as ReviewCommentBulkTransitionResponseV1;
@@ -284,7 +304,7 @@ export function ReviewCommentsSessionSurface(props: ReviewCommentsSessionSurface
                 errorCode: failure.errorCode,
             })),
         });
-    }, [actions, upsertUpdatedComments]);
+    }, [actions, commentsState.byId, upsertUpdatedComments]);
 
     return (
         <View

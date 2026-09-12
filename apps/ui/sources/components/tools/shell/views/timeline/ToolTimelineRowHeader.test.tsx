@@ -48,6 +48,14 @@ vi.mock('@expo/vector-icons', () => ({
     },
 }));
 
+vi.mock('@/components/ui/icons/Icon', () => ({
+    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
+    Icon: (props: Record<string, unknown>) => {
+        ioniconPropsState.push(props);
+        return React.createElement('Icon', { ...props, testID: `tool-timeline-icon:${String(props.name)}` });
+    },
+}));
+
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
     TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
@@ -296,7 +304,7 @@ describe('ToolTimelineRowHeader', () => {
         expect(ioniconPropsState.some((i) => i.name === 'caret-down')).toBe(true);
 
         const getChevronLayerOpacity = () => {
-            const chevronIcon = screen.findByTestId('tool-timeline-ionicon:chevron-down');
+            const chevronIcon = screen.findByTestId('tool-timeline-icon:caret-down');
             expect(chevronIcon).toBeTruthy();
             return readOpacity(chevronIcon!.parent?.parent?.props.style);
         };

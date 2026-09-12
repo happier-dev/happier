@@ -36,18 +36,19 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     if (typeof style === 'function') {
         return flattenStyle(style({ pressed: false, hovered: false, focused: false }));
     }
-    if (!Array.isArray(style)) {
-        return (style ?? {}) as Record<string, unknown>;
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
     }
-
-    return style.reduce<Record<string, unknown>>((acc, entry) => ({
-        ...acc,
-        ...(entry ?? {}),
-    }), {});
+    return style !== null && typeof style === 'object'
+        ? style as Record<string, unknown>
+        : {};
 }
 
 function requireTab(screen: RenderedScreen, testID: string) {
-    const tab = screen.findByTestId(testID);
+    const tab = screen.findHostByTestId(testID);
     expect(tab).toBeTruthy();
     return tab!;
 }
@@ -70,7 +71,10 @@ function requireTabSurface(screen: RenderedScreen, testID: string) {
 
 /** The track the segments sit in. Its padding is the only vertical space the frame may take. */
 function requireTrack(screen: RenderedScreen, testID: string) {
-    const track = requireTab(screen, testID).parent;
+    let track = requireTab(screen, testID).parent;
+    while (track && typeof track.type !== 'string') {
+        track = track.parent;
+    }
     expect(track).toBeTruthy();
     return track!;
 }
@@ -522,7 +526,7 @@ describe('SegmentedTabBar', () => {
         expect(beta.props.tabIndex).toBe(0);
         expect(alpha.props.tabIndex).toBe(-1);
         expect(gamma.props.tabIndex).toBe(-1);
-        expect(beta.parent?.props.accessibilityLabel).toBe('Thinking effort');
+        expect(requireTrack(screen, 'seg:beta').props.accessibilityLabel).toBe('Thinking effort');
 
         const keyEvent = (key: string) => ({
             key,
@@ -629,7 +633,7 @@ describe('SegmentedTabBar', () => {
         }
 
         // The dim comes from the bar's own themed track style, not a caller-side opacity wrapper.
-        const track = requireTab(screen, 'seg:beta').parent!;
+        const track = requireTrack(screen, 'seg:beta');
         expect(flattenStyle(track.props.style).opacity).toBe(0.5);
 
         screen.pressByTestId('seg:gamma');
@@ -643,7 +647,7 @@ describe('SegmentedTabBar', () => {
             <SegmentedTabBar tabs={TABS} activeTabId="beta" onSelectTab={onSelectTab} testIDPrefix="seg" />,
         );
 
-        const track = requireTab(screen, 'seg:beta').parent!;
+        const track = requireTrack(screen, 'seg:beta');
         expect(flattenStyle(track.props.style).opacity).toBeUndefined();
         expect(requireTab(screen, 'seg:beta').props.tabIndex).toBe(0);
 

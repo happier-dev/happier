@@ -128,7 +128,7 @@ describe('resolveContextWarningWindowTokens', () => {
                     v: 1,
                     updatedAt: 2,
                     selection: {
-                        agentTargetKey: 'backend:claude',
+                        agentTargetKey: 'agent:happier.agent.claude/claude',
                         providerConnectionId: null,
                         modelId,
                     },
@@ -182,7 +182,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: 'pc_01J00000000000000000000000',
                     modelId: 'claude-opus-4-7',
                 },
@@ -226,7 +226,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: null,
                     modelId: 'claude-opus-4-7',
                 },
@@ -239,7 +239,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 activeSelectionV1: {
                     v: 1,
                     selection: {
-                        agentTargetKey: 'backend:claude',
+                        agentTargetKey: 'agent:happier.agent.claude/claude',
                         providerConnectionId: null,
                         modelId: 'claude-sonnet-4-6',
                     },
@@ -327,7 +327,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: null,
                     modelId: 'proposed-custom-model',
                 },
@@ -367,7 +367,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: null,
                     modelId: 'claude-opus-4-7',
                 },
@@ -407,7 +407,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: null,
                     modelId: 'claude-opus-4-7',
                 },
@@ -480,7 +480,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: 'pc_deepseek',
                     modelId: 'deepseek-ai/DeepSeek-V3.1',
                 },
@@ -511,7 +511,7 @@ describe('resolveContextWarningWindowTokens', () => {
             processStartTimeMs: 1_000,
         };
         const bindingSecurityFingerprint = createProviderBindingSecurityFingerprintV1({
-            agentTargetKey: 'backend:claude',
+            agentTargetKey: 'agent:happier.agent.claude/claude',
             connectionId: 'pc_provider',
             modelId: 'provider-active',
             modelCapabilities: {},
@@ -556,7 +556,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 runtimeBindingBasis: {
                     v: 1,
                     deployment: { kind: 'external' },
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     connectionId: 'pc_provider',
                     contributionKey: 'plugin.openrouter/openrouter',
                     endpoint: {
@@ -615,7 +615,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: 'pc_provider',
                     modelId: 'provider-proposed',
                 },
@@ -628,7 +628,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 activeSelectionV1: {
                     v: 1,
                     selection: {
-                        agentTargetKey: 'backend:claude',
+                        agentTargetKey: 'agent:happier.agent.claude/claude',
                         providerConnectionId: 'pc_provider',
                         modelId: 'provider-active',
                     },
@@ -691,7 +691,7 @@ describe('resolveContextWarningWindowTokens', () => {
                 v: 1,
                 updatedAt: 2,
                 selection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: 'pc_deepseek',
                     modelId: 'deepseek-ai/DeepSeek-V3.1',
                 },

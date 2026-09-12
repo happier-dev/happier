@@ -124,6 +124,9 @@ export function useNewSessionAvailabilityState(params: Readonly<{
      * (non-bundled) Agent has even though it has no bundled catalog backing.
      */
     runtimeCarrierAgentId?: string | null;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
+    pluginSettingsAgentId?: string | null;
+    pluginSettingsReadiness?: AgentPluginSettingsReadiness | null;
     /** Current daemon projection for the selected machine's public managed dependencies. */
     pluginProjectionV2?: Pick<PluginProjectionV2, 'familiesById'> | null;
     /** @deprecated Direct callers without a projected backend entry are bundled-only. */

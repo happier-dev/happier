@@ -166,7 +166,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('does not recompute activity when a hidden system session changes', async () => {
+    it('does not recompute activity when an unrelated hidden system session changes', async () => {
         const previousState = storage.getState();
         const visibleSession = createSessionFixture({
             id: 'visible-waiting-session',
@@ -207,7 +207,7 @@ describe('usePetCompanionActivityModel', () => {
                 path: '/tmp/hidden-system-update-session',
                 host: 'test-host',
                 summary: { text: 'Hidden system session', updatedAt: 2_000 },
-                systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+                systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
             },
         });
 
@@ -306,8 +306,8 @@ describe('usePetCompanionActivityModel', () => {
                 flushOptions: { cycles: 1, turns: 4 },
             });
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'running',
+                reason: 'running',
                 sessionId: session.id,
             });
             const renderCountBeforeBookkeepingUpdate = renderCount;
@@ -339,8 +339,8 @@ describe('usePetCompanionActivityModel', () => {
 
             expect(renderCount).toBeGreaterThan(renderCountBeforeMeaningfulActivityUpdate);
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'running',
+                reason: 'running',
                 sessionId: session.id,
             });
 
@@ -393,8 +393,8 @@ describe('usePetCompanionActivityModel', () => {
                 flushOptions: { cycles: 1, turns: 4 },
             });
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'running',
+                reason: 'running',
                 sessionId: session.id,
             });
             const renderCountBeforeBookkeepingUpdate = renderCount;
@@ -428,8 +428,8 @@ describe('usePetCompanionActivityModel', () => {
 
             expect(renderCount).toBeGreaterThan(renderCountBeforeMeaningfulActivityUpdate);
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'running',
+                reason: 'running',
                 sessionId: session.id,
             });
 
@@ -666,7 +666,7 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('does not use unhydrated unread rows as pet waiting activity without projected runtime attention', async () => {
+    it('uses an unhydrated unread row as pet waiting activity', async () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
             id: 'renderable-only-unread',
@@ -708,10 +708,13 @@ describe('usePetCompanionActivityModel', () => {
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'idle',
-                reason: 'idle',
+                state: 'waiting',
+                reason: 'waiting',
                 sessionId: session.id,
-                trayItems: [],
+                trayItems: [expect.objectContaining({
+                    sessionId: session.id,
+                    status: 'waiting',
+                })],
             });
 
             await hook.unmount();

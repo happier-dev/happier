@@ -172,7 +172,7 @@ describe('CodeBlockViewFrame', () => {
                 </CodeBlockViewFrame>)).tree;
 
         const iconBefore = tree.findByType('Icon') as any;
-        expect(iconBefore.props.name).toBe('copy-outline');
+        expect(iconBefore.props.name).toBe('copy');
 
         const pressable = tree.findByProps({ accessibilityLabel: 'common.copy' });
         await pressTestInstanceAsync(pressable, 'common.copy');
@@ -181,7 +181,7 @@ describe('CodeBlockViewFrame', () => {
         expect(alertSpy).toHaveBeenCalledTimes(0);
 
         const iconAfter = tree.findByType('Icon') as any;
-        expect(iconAfter.props.name).toBe('checkmark-outline');
+        expect(iconAfter.props.name).toBe('check');
     });
 
     it('falls back cleanly when Typography.mono is missing from a partial module mock', async () => {

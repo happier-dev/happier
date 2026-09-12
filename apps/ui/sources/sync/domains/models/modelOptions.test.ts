@@ -12,6 +12,7 @@ import {
 import { findModelOptionForEffectiveModelId } from './modelOptions';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 
 function withMetadata(overrides: Partial<Metadata>): Metadata {
     return {
@@ -172,32 +173,29 @@ describe('modelOptions', () => {
     });
 
     it('ignores stale dynamic session model rows for static-only providers and uses the static catalog', () => {
-        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const staticGeminiValues = getModelOptionsForAgentType('gemini').map((option) => option.value);
         const out = getModelOptionsForSession(
-            'claude',
+            'gemini',
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    agentId: 'claude',
+                    agentId: 'gemini',
                     updatedAt: 1,
-                    currentModelId: 'claude-opus-4-6',
+                    currentModelId: 'gemini-2.5-pro',
                     availableModels: [
-                        { id: 'claude-opus-4-6', name: 'Opus 4.6 (From Session)' },
-                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (From Session)' },
+                        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (From Session)' },
                     ],
                 },
             }),
         );
 
-        expect(out.map((option) => option.value)).toEqual(staticClaudeValues);
-        expect(out.find((option) => option.value === 'claude-opus-4-6')).toMatchObject({
-            label: 'Opus 4.6',
-            modelOptions: expect.arrayContaining([
-                expect.objectContaining({ id: 'reasoning_effort' }),
-            ]),
+        expect(out.map((option) => option.value)).toEqual(staticGeminiValues);
+        expect(out.find((option) => option.value === 'gemini-2.5-pro')).toMatchObject({
+            label: 'Gemini 2.5 Pro',
         });
-        expect(out.find((option) => option.value === 'claude-sonnet-4-6')).toMatchObject({
-            label: 'Sonnet 4.6',
+        expect(out.find((option) => option.value === 'gemini-2.5-flash')).toMatchObject({
+            label: 'Gemini 2.5 Flash',
         });
     });
 
@@ -280,7 +278,7 @@ describe('modelOptions', () => {
                     v: 1,
                     updatedAt: 101,
                     selection: {
-                        agentTargetKey: 'backend:claude',
+                        agentTargetKey: buildAgentUniverseBackendTargetKey('claude'),
                         providerConnectionId: 'pc_01J00000000000000000000000',
                         modelId: 'provider-custom-model',
                     },
@@ -292,47 +290,47 @@ describe('modelOptions', () => {
     });
 
     it('appends custom metadata override models after the static catalog for static-only providers', () => {
-        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const staticGeminiValues = getModelOptionsForAgentType('gemini').map((option) => option.value);
         const out = getModelOptionsForSession(
-            'claude',
+            'gemini',
             withMetadata({
                 sessionModelsV1: {
                     v: 1,
-                    agentId: 'claude',
+                    agentId: 'gemini',
                     updatedAt: 1,
-                    currentModelId: 'claude-sonnet-4-6',
+                    currentModelId: 'gemini-2.5-flash',
                     availableModels: [
-                        { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                        { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (From Session)' },
                     ],
                 },
-                modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
+                modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gemini-custom-model' },
             }),
         );
 
         expect(out.map((option) => option.value)).toEqual([
-            ...staticClaudeValues,
-            'claude-custom-model',
+            ...staticGeminiValues,
+            'gemini-custom-model',
         ]);
     });
 
     it('derives selectable ids from the same static-only session model policy for freeform providers', () => {
-        const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
+        const staticGeminiValues = getModelOptionsForAgentType('gemini').map((option) => option.value);
         const metadata = withMetadata({
             sessionModelsV1: {
                 v: 1,
-                agentId: 'claude',
+                agentId: 'gemini',
                 updatedAt: 1,
-                currentModelId: 'claude-sonnet-4-6',
+                currentModelId: 'gemini-2.5-flash',
                 availableModels: [
-                    { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6 (From Session)' },
+                    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (From Session)' },
                 ],
             },
-            modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
+            modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gemini-custom-model' },
         });
 
-        expect(getSelectableModelIdsForSession('claude', metadata)).toEqual([
-            ...staticClaudeValues,
-            'claude-custom-model',
+        expect(getSelectableModelIdsForSession('gemini', metadata)).toEqual([
+            ...staticGeminiValues,
+            'gemini-custom-model',
         ]);
     });
 
@@ -410,14 +408,14 @@ describe('modelOptions', () => {
     it('does not treat static-only provider metadata as dynamic list support', () => {
         expect(
             hasDynamicModelListForSession(
-                'claude',
+                'gemini',
                 withMetadata({
                     sessionModelsV1: {
                         v: 1,
-                        agentId: 'claude',
+                        agentId: 'gemini',
                         updatedAt: 1,
-                        currentModelId: 'claude-haiku-4-5',
-                        availableModels: [{ id: 'haiku', name: 'Haiku' }],
+                        currentModelId: 'gemini-2.5-flash',
+                        availableModels: [{ id: 'gemini-stale', name: 'Gemini Stale' }],
                     },
                 }),
             ),

@@ -28,7 +28,7 @@ describe('RetainedPanelSurface', () => {
             )).tree;
 
             expect(tracker.mounts).toBe(1);
-            expect(tree.findByType(FocusEligibilityProbe).props.eligible).toBe(true);
+            expect(tree.findByType('FocusEligibilityProbe' as never).props.eligible).toBe(true);
 
             act(() => {
                 tree.update(
@@ -39,13 +39,13 @@ describe('RetainedPanelSurface', () => {
                 );
             });
 
-            const inactiveSurface = tree.findByTestId('retained-panel-under-test');
+            const inactiveSurface = tree.findHostByTestId('retained-panel-under-test');
             if (!inactiveSurface) throw new Error('Expected the retained panel surface');
             expect(inactiveSurface.props.pointerEvents).toBe('none');
             expect(inactiveSurface.props.inert).toBe(true);
             expect(inactiveSurface.props['aria-hidden']).toBe(true);
             expect(tracker.unmounts).toBe(0);
-            expect(tree.findByType(FocusEligibilityProbe).props.eligible).toBe(false);
+            expect(tree.findByType('FocusEligibilityProbe' as never).props.eligible).toBe(false);
 
             act(() => {
                 tree.update(
@@ -56,7 +56,7 @@ describe('RetainedPanelSurface', () => {
                 );
             });
 
-            const activeSurface = tree.findByTestId('retained-panel-under-test');
+            const activeSurface = tree.findHostByTestId('retained-panel-under-test');
             if (!activeSurface) throw new Error('Expected the retained panel surface');
             expect(activeSurface.props).toMatchObject({
                 pointerEvents: 'auto',
@@ -65,7 +65,7 @@ describe('RetainedPanelSurface', () => {
             });
             expect(tracker.mounts).toBe(1);
             expect(tracker.unmounts).toBe(0);
-            expect(tree.findByType(FocusEligibilityProbe).props.eligible).toBe(true);
+            expect(tree.findByType('FocusEligibilityProbe' as never).props.eligible).toBe(true);
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
@@ -92,7 +92,7 @@ describe('RetainedPanelSurface', () => {
                 );
             });
 
-            const inactiveSurface = tree.findByTestId('retained-panel-under-test');
+            const inactiveSurface = tree.findHostByTestId('retained-panel-under-test');
             if (!inactiveSurface) throw new Error('Expected the retained panel surface');
             expect(inactiveSurface.props).toMatchObject({
                 inert: undefined,
@@ -111,7 +111,7 @@ describe('RetainedPanelSurface', () => {
                 );
             });
 
-            const activeSurface = tree.findByTestId('retained-panel-under-test');
+            const activeSurface = tree.findHostByTestId('retained-panel-under-test');
             if (!activeSurface) throw new Error('Expected the retained panel surface');
             expect(activeSurface.props).toMatchObject({
                 accessibilityElementsHidden: false,

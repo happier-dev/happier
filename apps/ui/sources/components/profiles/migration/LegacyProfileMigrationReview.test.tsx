@@ -222,7 +222,7 @@ describe('LegacyProfileMigrationReview', () => {
                 .find((item) => item.props.title === 'settingsProviders.migration.preview')?.props.onPress?.();
         });
         expect(screen.findAllByType('Item').map((item) => item.props.title)).toEqual(expect.arrayContaining([
-            'settingsProviders.errors.unreachableTitle',
+            'settingsProviders.errors.machineUnavailableTitle',
             'settingsProviders.errors.actions.retry',
         ]));
         await React.act(async () => {

@@ -54,8 +54,8 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: (opts?: unknown) => createDefaultActionExecutorSpy(opts),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache: () => 'server-from-session',
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId: () => 'server-from-session',
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -173,7 +173,7 @@ describe('ApprovalPromptCard', () => {
         expect(executeSpy).toHaveBeenCalledWith(
             'approval.request.decide',
             { artifactId: 'approval-1', decision: 'approve' },
-            expect.objectContaining({ surface: 'ui_button', serverId: 'server-1' }),
+            expect.objectContaining({ surface: 'ui', serverId: 'server-1' }),
         );
         expect(sessionAllowSpy).not.toHaveBeenCalled();
         expect(sessionDenySpy).not.toHaveBeenCalled();
@@ -201,7 +201,7 @@ describe('ApprovalPromptCard', () => {
         expect(executeSpy).toHaveBeenCalledWith(
             'approval.request.decide',
             { artifactId: 'approval-1', decision: 'reject' },
-            expect.objectContaining({ surface: 'ui_button', serverId: 'server-from-session' }),
+            expect.objectContaining({ surface: 'ui', serverId: 'server-from-session' }),
         );
         expect(sessionAllowSpy).not.toHaveBeenCalled();
         expect(sessionDenySpy).not.toHaveBeenCalled();

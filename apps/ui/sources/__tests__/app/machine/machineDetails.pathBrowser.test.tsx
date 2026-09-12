@@ -170,7 +170,14 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => mockState.activeServerIdRef.current,
 }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({ setActiveServerAndSwitch: vi.fn(async () => true) }));
-vi.mock('@/sync/sync', () => ({ sync: { refreshMachinesThrottled: vi.fn(), refreshMachines: vi.fn(), retryNow: vi.fn() } }));
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        refreshMachinesThrottled: vi.fn(),
+        refreshMachines: vi.fn(),
+        retryNow: vi.fn(),
+        acquireUserRequestLease: vi.fn(() => vi.fn()),
+    },
+}));
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>, options?: { onError?: (error: unknown) => void }) => {
         void promise.catch((error) => {
@@ -430,7 +437,7 @@ describe('MachineDetailScreen path browser', () => {
             creationKey: expect.any(String),
             executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
             directory: '/Users/test',
-        }), { surface: 'ui' });
+        }), expect.objectContaining({ surface: 'ui' }));
         expect(mockState.machineSpawnNewSessionMock).not.toHaveBeenCalled();
         expect(mockState.routerBackSpy).toHaveBeenCalledTimes(2);
         expect(mockState.navigateToSessionSpy).toHaveBeenCalledWith('session-new');
@@ -590,7 +597,7 @@ describe('MachineDetailScreen path browser', () => {
 
         expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
             executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
-        }), { surface: 'ui' });
+        }), expect.objectContaining({ surface: 'ui' }));
     });
 
     it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
@@ -620,8 +627,11 @@ describe('MachineDetailScreen path browser', () => {
         });
 
         expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
-            agentTarget: expect.objectContaining({ kind: 'agent' }),
-        }), { surface: 'ui' });
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+        }), expect.objectContaining({ surface: 'ui' }));
     });
 
     it('falls back to the preferred built-in target when lastUsedAgent is legacy customAcp even when merged projection lists discovered plugin backends', async () => {
@@ -673,8 +683,11 @@ describe('MachineDetailScreen path browser', () => {
             timeoutMs: 10_000,
         }));
         expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
-            agentTarget: expect.objectContaining({ kind: 'agent' }),
-        }), { surface: 'ui' });
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            },
+        }), expect.objectContaining({ surface: 'ui' }));
     });
 
     it('uses the requested route server when spawning a new session', async () => {
@@ -698,6 +711,6 @@ describe('MachineDetailScreen path browser', () => {
 
         expect(mockState.sessionSpawnNewActionMock).toHaveBeenCalledWith(expect.objectContaining({
             executionTarget: { serverId: 'server-b', machineId: 'machine-1' },
-        }), { surface: 'ui' });
+        }), expect.objectContaining({ surface: 'ui' }));
     });
 });

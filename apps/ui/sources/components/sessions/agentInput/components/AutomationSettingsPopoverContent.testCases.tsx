@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AutomationPluginEventDefinitionTriggerInput } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
-import { createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { createPassThroughComponent } from '@/dev/testkit/mocks/components';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
@@ -28,21 +28,66 @@ installAgentInputCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
+    storage: async (importOriginal) => {
+        const [{ createPartialStorageModuleMock, createUseSettingMock }, { settingsDefaults }] = await Promise.all([
+            import('@/dev/testkit/mocks/storage'),
+            import('@/sync/domains/settings/settings'),
+        ]);
+        return createPartialStorageModuleMock(importOriginal, {
+            useSessions: () => [],
+            useSettings: () => settingsDefaults,
+            useSetting: createUseSettingMock({ fallback: (key) => settingsDefaults[key] }),
+        });
+    },
 });
 
-vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
-vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
-vi.mock('@/components/ui/lists/ItemGroupColumns', () => createPassThroughModule(['ItemGroupColumns', 'ItemGroupColumn']));
-vi.mock('@/components/ui/forms/FieldItem', () => createPassThroughModule(['FieldItem']));
-vi.mock('@/components/ui/forms/Switch', () => createPassThroughModule(['Switch']));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
-vi.mock('@/components/ui/selectionList', () => createPassThroughModule(['SelectionList']));
-vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
-vi.mock('@/components/ui/icons/Icon', () => createPassThroughModule(['Icon']));
+vi.mock('@/components/ui/lists/ItemGroup', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['ItemGroup']);
+});
+vi.mock('@/components/ui/lists/Item', async () => {
+    const { createElement } = await import('react');
+    return {
+        Item: (props: Record<string, unknown> & { children?: React.ReactNode; rightElement?: React.ReactNode }) => (
+            createElement('Item', props, props.children, props.rightElement)
+        ),
+    };
+});
+vi.mock('@/components/ui/lists/ItemGroupColumns', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['ItemGroupColumns', 'ItemGroupColumn']);
+});
+vi.mock('@/components/ui/forms/FieldItem', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['FieldItem']);
+});
+vi.mock('@/components/ui/forms/Switch', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['Switch']);
+});
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['DropdownMenu']);
+});
+vi.mock('@/components/ui/selectionList', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['SelectionList']);
+});
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['Text', 'TextInput']);
+});
+vi.mock('@/components/ui/icons/Icon', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['Icon']);
+});
 vi.mock('@/components/ui/popover', () => ({ usePopoverBoundaryRef: () => ({ current: null }) }));
-vi.mock('@/components/automations/editor/PluginEventAutomationEditor', () => (
-    createPassThroughModule(['PluginEventAutomationEditor'])
-));
+vi.mock('@/components/automations/editor/PluginEventAutomationEditor', async () => {
+    const { createPassThroughModule } = await import('@/dev/testkit/mocks/components');
+    return createPassThroughModule(['PluginEventAutomationEditor']);
+});
+
+const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
 
 function createPluginEventDefinition(
     localId: string,
@@ -110,7 +155,6 @@ function createDraft(): NewSessionAutomationDraft {
 export function runAutomationSettingsPopoverContentTests(): void {
     describe('AutomationSettingsPopoverContent', () => {
         it('edits independently enabled schedule rows while preserving their stable identities', async () => {
-            const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
             const onChange = vi.fn();
             const screen = await renderScreen(
                 <AutomationSettingsPopoverContent value={createDraft()} onChange={onChange} />,
@@ -118,7 +162,11 @@ export function runAutomationSettingsPopoverContentTests(): void {
 
             expect(screen.findByProps({ testID: 'automation-plural-editor' })).toBeTruthy();
             expect(screen.findByProps({ testID: 'automation-name' }).props.value).toBe('Release watch');
-            expect(screen.findAllByProps({ testID: /^automation-trigger-row-/ })).toHaveLength(2);
+            expect(screen.findAll((instance) => (
+                String(instance.type) === 'Item'
+                && typeof instance.props.testID === 'string'
+                && instance.props.testID.startsWith('automation-trigger-row-')
+            ))).toHaveLength(2);
             expect(screen.findByProps({ testID: 'automation-trigger-enabled-schedule-hourly' }).props.value).toBe(true);
             expect(screen.findByProps({ testID: 'automation-trigger-enabled-schedule-weekdays' }).props.value).toBe(false);
 
@@ -162,7 +210,6 @@ export function runAutomationSettingsPopoverContentTests(): void {
         });
 
         it('keeps a zero-trigger draft editable and exposes accessible Automation and trigger controls', async () => {
-            const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
             const screen = await renderScreen(
                 <AutomationSettingsPopoverContent
                     value={{
@@ -176,7 +223,11 @@ export function runAutomationSettingsPopoverContentTests(): void {
                 />,
             );
 
-            expect(screen.findAllByProps({ testID: /^automation-trigger-row-/ })).toHaveLength(0);
+            expect(screen.findAll((instance) => (
+                String(instance.type) === 'Item'
+                && typeof instance.props.testID === 'string'
+                && instance.props.testID.startsWith('automation-trigger-row-')
+            ))).toHaveLength(0);
             expect(screen.findByProps({ testID: 'automation-name' })).toBeTruthy();
             const automationToggle = screen.findAllByType('Switch' as any)[0];
             expect(automationToggle?.props.value).toBe(false);
@@ -188,13 +239,11 @@ export function runAutomationSettingsPopoverContentTests(): void {
             });
             for (const kind of ['schedule', 'pluginEvent', 'sessionLifecycle']) {
                 const option = screen.findByProps({ testID: `automation-trigger-kind-${kind}` });
-                expect(option.props.accessibilityRole).toBe('radio');
-                expect(option.props.accessibilityState).toEqual({ selected: false });
+                expect(option.props.accessibilityRole).toBe('button');
             }
         });
 
         it('mounts the canonical Event editor for the exact active row and preserves sibling rows', async () => {
-            const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
             const firstEvent = createPluginEventDefinition('push', 'repository-a', 'watcher-a');
             const activeEvent = createPluginEventDefinition('pull-request-opened', 'repository-b', 'watcher-b');
             const draft: NewSessionAutomationDraft = {
@@ -246,7 +295,6 @@ export function runAutomationSettingsPopoverContentTests(): void {
         });
 
         it('mounts a new row-scoped Event editor with the same machine and server context', async () => {
-            const { AutomationSettingsPopoverContent } = await import('./AutomationSettingsPopoverContent');
             const screen = await renderScreen(
                 <AutomationSettingsPopoverContent
                     value={createDraft()}

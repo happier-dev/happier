@@ -21,7 +21,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 
 import type { SelectionListProps, SelectionListStep } from '../_types';
 
@@ -129,8 +129,8 @@ describe('SelectionList inline row controls require the grid ARIA pattern', () =
         // technology infer the count from the widest row, which was the selected
         // one back when its open panel was a second cell.
         expect(body?.props['aria-colcount']).toBe(1);
-        expect(screen.tree.root.findAll((node) => node.props?.role === 'listbox')).toHaveLength(0);
-        expect(screen.tree.root.findAll((node) => node.props?.role === 'option')).toHaveLength(0);
+        expect(findAllHostTestInstances(screen.root, (node) => node.props?.role === 'listbox')).toHaveLength(0);
+        expect(findAllHostTestInstances(screen.root, (node) => node.props?.role === 'option')).toHaveLength(0);
 
         // Rows: the layout wrapper becomes the row and owns the row index.
         const wrapperA = screen.findByTestId('sl:root:option-wrapper:opt-a');
@@ -145,8 +145,12 @@ describe('SelectionList inline row controls require the grid ARIA pattern', () =
         // the option's selected state. The option used to be split across up to
         // three sibling cells (control, accessory, open panel), which left rows
         // ragged against a column count that was never declared.
-        const cellsA = wrapperA?.findAll((node) => node.props?.role === 'gridcell') ?? [];
-        const cellsB = wrapperB?.findAll((node) => node.props?.role === 'gridcell') ?? [];
+        const cellsA = wrapperA === null
+            ? []
+            : findAllHostTestInstances(wrapperA, (node) => node.props?.role === 'gridcell');
+        const cellsB = wrapperB === null
+            ? []
+            : findAllHostTestInstances(wrapperB, (node) => node.props?.role === 'gridcell');
         expect(cellsA).toHaveLength(1);
         expect(cellsB).toHaveLength(1);
         expect(cellsB[0]?.props.id).toBe('sl:root:option:opt-b');
@@ -168,12 +172,14 @@ describe('SelectionList inline row controls require the grid ARIA pattern', () =
         // open within the option rather than in a column beside it.
         const expanded = screen.findByTestId(EXPANDED_TEST_ID);
         expect(expanded).not.toBeNull();
-        expect(cellsB[0]?.findAll((node) => node.props?.testID === EXPANDED_TEST_ID))
+        expect(cellsB[0] === undefined
+            ? []
+            : findAllHostTestInstances(cellsB[0], (node) => node.props?.testID === EXPANDED_TEST_ID))
             .toHaveLength(1);
         expect(ancestorWithRole(expanded, 'row')).toBe(true);
         // …and never inside the activatable control itself: nesting it there
         // would make every switch flip and segment tap re-commit the selection.
-        for (const rowNode of screen.findAllByTestId('sl:root:option:opt-b')) {
+        for (const rowNode of screen.findAllHostsByTestId('sl:root:option:opt-b')) {
             let current = (expanded as TreeNode | null)?.parent as TreeNode | undefined;
             let nested = false;
             while (current) {

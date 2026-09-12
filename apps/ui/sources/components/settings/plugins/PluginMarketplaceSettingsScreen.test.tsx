@@ -869,10 +869,14 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) 
     };
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+    ...actual,
     AGENT_IDS: ['claude', 'codex'],
     DEFAULT_AGENT_ID: 'claude',
     getAgentCore: (agentId: string) => ({
+        ...actual.getAgentCore(agentId as never),
         displayNameKey: `agents.${agentId}.name`,
         uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.claude', connectRoute: null },
         ui: { agentPickerIconName: 'terminal-outline' },
@@ -881,7 +885,8 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconTintColor: () => null,
     isBundledAgentId: (agentId: unknown) => agentId === 'claude' || agentId === 'codex',
     resolveAgentIdFromConnectedServiceId: () => null,
-}));
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => createPassThroughModule(['ItemRowActions']));
 

@@ -8,9 +8,14 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { makeSettings } from './registryUiBehavior.testHelpers';
 import { createAgentUiBehaviorFromDescriptor } from './agentUiBehaviorDescriptors';
 import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS } from './generatedBundledPluginEntries.uiBehaviorOverrides';
+import { attachAgentPluginSettings } from './agentUiSettingLookup';
 
 function readObjectField(value: unknown, key: string): unknown {
     return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined;
+}
+
+function makeAccountScopedAgentSettings(values: Readonly<Record<string, unknown>>) {
+    return attachAgentPluginSettings(makeSettings(), { account: values });
 }
 
 describe('createAgentUiBehaviorFromDescriptor', () => {
@@ -154,7 +159,10 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         {
                             serviceId: 'openai-codex',
                             keyPrefix: 'codex:connected-service',
-                            detailSettingsKey: 'connectedServicesProfileLabelByKey',
+                            detailSettingsKey: {
+                                scope: 'host',
+                                localId: 'connectedServicesProfileLabelByKey',
+                            },
                             source: { kind: 'codexHome', home: 'connectedService' },
                         },
                     ],
@@ -290,32 +298,32 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         });
         expect(behavior.resume?.experimentSwitches?.[0]?.id).toBe('resumeAcp');
         expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
-            makeSettings({ codexBackendMode: 'acp' }),
+            makeAccountScopedAgentSettings({ codexBackendMode: 'acp' }),
         )).toBe(true);
         expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
-            makeSettings({ codexBackendMode: 'appServer' as any }),
+            makeAccountScopedAgentSettings({ codexBackendMode: 'appServer' }),
         )).toBe(false);
         expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
             agentId: 'codex',
-            settings: makeSettings({ codexBackendMode: 'acp' }),
+            settings: makeAccountScopedAgentSettings({ codexBackendMode: 'acp' }),
             experiments: { enabled: true, switches: {} },
             resumeSessionId: '',
         })).toEqual(['codex-acp']);
         expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
             agentId: 'codex',
-            settings: makeSettings({ experimentalCodexAcp: true }),
+            settings: makeAccountScopedAgentSettings({ experimentalCodexAcp: true }),
             experiments: { enabled: true, switches: {} },
             resumeSessionId: '',
         })).toEqual(['codex-acp']);
         expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
             agentId: 'codex',
-            settings: makeSettings({ codexBackendMode: 'appServer' as any }),
+            settings: makeAccountScopedAgentSettings({ codexBackendMode: 'appServer' }),
             experiments: { enabled: true, switches: {} },
             resumeSessionId: '',
         })).toEqual([]);
         expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
             agentId: 'codex',
-            settings: makeSettings({ codexBackendMode: 'acp' }),
+            settings: makeAccountScopedAgentSettings({ codexBackendMode: 'acp' }),
             experiments: { enabled: false, switches: {} },
             resumeSessionId: '',
         })).toEqual([]);
@@ -324,7 +332,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         // override the Agent runtime reads.
         expect(behavior.payload?.buildSpawnSessionExtras?.({
             agentId: 'codex',
-            settings: makeSettings({ codexBackendMode: 'mcp' }),
+            settings: makeAccountScopedAgentSettings({ codexBackendMode: 'mcp' }),
             experiments: { enabled: true, switches: {} },
             resumeSessionId: '',
             updatedAt: 4242,
@@ -344,7 +352,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         });
         expect(behavior.payload?.buildResumeSessionExtras?.({
             agentId: 'codex',
-            settings: makeSettings({ codexBackendMode: 'acp' }),
+            settings: makeAccountScopedAgentSettings({ codexBackendMode: 'acp' }),
             experiments: { enabled: true, switches: {} },
             session: {
                 metadata: {
@@ -701,7 +709,9 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
         expect(behavior.permissions?.footer?.stopHandling).toBe('denyOnly');
         expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
-            makeSettings({ directTranscriptStorageMode: true }),
+            attachAgentPluginSettings(makeSettings(), {
+                account: { directTranscriptStorageMode: true },
+            }),
         )).toBe(true);
         expect(behavior.newSession?.getRelevantInstallableDepKeys?.({
             agentId: 'acme' as any,
@@ -1126,12 +1136,14 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         })).toEqual({});
         expect(behavior.payload?.buildSpawnEnvironmentVariables?.({
             agentId: 'opencode' as any,
-            settings: makeSettings({
-                opencodeBackendMode: 'acp' as any,
-                opencodeServerBaseUrlByServerIdV1: {
-                    'server-1': 'http://127.0.0.1:4096/path',
+            settings: attachAgentPluginSettings(makeSettings(), {
+                account: {
+                    opencodeBackendMode: 'acp',
+                    opencodeServerBaseUrlByServerIdV1: {
+                        'server-1': 'http://127.0.0.1:4096/path',
+                    },
                 },
-            } as any),
+            }),
             environmentVariables: { FOO: '1' },
             newSessionOptions: { targetServerId: 'server-1' },
         })).toEqual({
@@ -1143,7 +1155,9 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(behavior.payload?.buildResumeSessionExtras?.({
             agentId: 'opencode' as any,
             experiments: { enabled: true, switches: {} },
-            settings: makeSettings({ opencodeBackendMode: 'acp' as any }),
+            settings: attachAgentPluginSettings(makeSettings(), {
+                account: { opencodeBackendMode: 'acp' },
+            }),
             session: {
                 metadata: {
                     runtimeDescriptorV1: {

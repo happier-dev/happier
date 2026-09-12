@@ -43,7 +43,7 @@ export type ScrollableChatListRef = Readonly<{
      */
     hasLiveWebHold?: (target:
         | Readonly<{ kind: 'end' }>
-        | Readonly<{ kind: 'item'; itemId: string }>,
+        | Readonly<{ kind: 'item'; itemId?: string }>,
     ) => boolean;
     /**
      * Web only: an explicit user navigation away from the tail revokes the

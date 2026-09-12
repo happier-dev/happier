@@ -29,6 +29,7 @@ export type NormalizedSharedListProps<T> = Readonly<{
     ItemSeparatorComponent?: VirtualizedListProps<T>['ItemSeparatorComponent'];
     keyboardShouldPersistTaps?: VirtualizedListProps<T>['keyboardShouldPersistTaps'];
     keyboardDismissMode?: VirtualizedListProps<T>['keyboardDismissMode'];
+    horizontal?: boolean;
     showsVerticalScrollIndicator?: boolean;
     showsHorizontalScrollIndicator?: boolean;
     scrollEventThrottle?: number;
@@ -101,6 +102,7 @@ export function normalizeVirtualizedListProps<T>(
             ItemSeparatorComponent: props.ItemSeparatorComponent,
             keyboardShouldPersistTaps: props.keyboardShouldPersistTaps,
             keyboardDismissMode: props.keyboardDismissMode,
+            horizontal: props.horizontal,
             showsVerticalScrollIndicator: props.showsVerticalScrollIndicator,
             showsHorizontalScrollIndicator: props.showsHorizontalScrollIndicator,
             scrollEventThrottle: props.scrollEventThrottle,

@@ -287,9 +287,11 @@ describe('SecretPickerScreen replace fallback', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
-                agentType: 'codex',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'codex' }),
-                backendTargetKey: 'backend:codex',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                }),
+                backendTargetKey: 'agent:happier.agent.codex/codex',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 secretId: 'secret-picked',
@@ -358,8 +360,7 @@ describe('SecretPickerScreen replace fallback', () => {
         expect(args).toEqual(expect.objectContaining({
             pathname: '/new',
             params: expect.objectContaining({
-                agentType: 'claude',
-                backendTargetKey: 'backend:claude',
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 secretId: 'secret-picked',
@@ -368,6 +369,9 @@ describe('SecretPickerScreen replace fallback', () => {
         }));
 
         const backendTarget = parseJsonRouteParam(args?.params?.backendTarget) as any;
-        expect(backendTarget).toMatchObject({ kind: 'backend', backendId: 'claude' });
+        expect(backendTarget).toEqual({
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        });
     });
 });

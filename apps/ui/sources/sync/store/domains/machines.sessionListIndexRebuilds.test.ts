@@ -5,10 +5,10 @@ import { resolveMachineSessionListIndexImpact } from './machines';
 import { resolveMachineSessionListIndexImpact as resolveMachineSessionIndexImpactFromHelper } from './machineSessionListIndexImpact';
 import type { MachineMetadata } from '../../domains/state/storageTypes';
 
-const { mmkvStore, invalidateCachedTransferRoutesForMachineSpy, saveMachineDisplayWarmCacheEntriesSpy } = vi.hoisted(() => ({
+const { mmkvStore, invalidateCachedTransferRoutesForMachineSpy, scheduleMachineDisplayWarmCacheSaveSpy } = vi.hoisted(() => ({
     mmkvStore: new Map<string, string>(),
     invalidateCachedTransferRoutesForMachineSpy: vi.fn(),
-    saveMachineDisplayWarmCacheEntriesSpy: vi.fn(),
+    scheduleMachineDisplayWarmCacheSaveSpy: vi.fn(),
 }));
 
 vi.mock('react-native-mmkv', () => {
@@ -34,7 +34,7 @@ afterEach(() => {
     vi.clearAllMocks();
     mmkvStore.clear();
     invalidateCachedTransferRoutesForMachineSpy.mockReset();
-    saveMachineDisplayWarmCacheEntriesSpy.mockReset();
+    scheduleMachineDisplayWarmCacheSaveSpy.mockReset();
 });
 
 const ONLINE = 'online' as const;
@@ -83,10 +83,9 @@ function mockMachineDomainBoundaries(profiles: readonly ServerProfileMockProfile
     vi.doMock('../../domains/transfers/runtime/transferRouteCache', () => ({
         invalidateCachedTransferRoutesForMachine: (...args: unknown[]) => invalidateCachedTransferRoutesForMachineSpy(...args),
     }));
-    vi.doMock('../../domains/state/warmCachePersistence', () => ({
-        resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
-        peekMachineDisplayWarmCacheEntries: vi.fn(() => null),
-        saveMachineDisplayWarmCacheEntries: saveMachineDisplayWarmCacheEntriesSpy,
+    vi.doMock('../../domains/state/machineDisplayWarmCacheWriter', () => ({
+        scheduleMachineDisplayWarmCacheSave: (...args: unknown[]) => scheduleMachineDisplayWarmCacheSaveSpy(...args),
+        scheduleMachineListDisplayWarmCacheSave: (...args: unknown[]) => scheduleMachineDisplayWarmCacheSaveSpy(...args),
     }));
 }
 
@@ -411,6 +410,7 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
             resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
             peekMachineDisplayWarmCacheEntries: vi.fn(() => null),
             saveMachineDisplayWarmCacheEntries: vi.fn(),
+            scheduleMachineDisplayWarmCacheEntriesSave: vi.fn(),
         }));
 
         const { createMachinesDomain } = await import('./machines');
@@ -1293,62 +1293,60 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
         const previousMachines = get().machines;
         const previousDisplays = get().machineDisplayById;
 
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        saveMachineDisplayWarmCacheEntriesSpy.mockClear();
+        scheduleMachineDisplayWarmCacheSaveSpy.mockClear();
 
         domain.applyMachines([machine]);
 
         expect(get().machines).toBe(previousMachines);
         expect(get().machineDisplayById).toBe(previousDisplays);
-        expect(saveMachineDisplayWarmCacheEntriesSpy).not.toHaveBeenCalled();
+        expect(scheduleMachineDisplayWarmCacheSaveSpy).not.toHaveBeenCalled();
     });
 
-    it('debounces full-fleet machine display warm-cache persistence', async () => {
-        vi.useFakeTimers();
-        try {
-            mockMachineDomainBoundaries();
+    it('delegates each changed full-fleet snapshot to the warm-cache persistence owner', async () => {
+        mockMachineDomainBoundaries();
 
-            const { createMachinesDomain } = await import('./machines');
-            const machine = {
-                id: 'm-debounce',
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-                active: true,
-                activeAt: 1,
-                metadata: makeMachineMetadata({ displayName: 'Debounced' }),
-                metadataVersion: 1,
-                daemonState: null,
-                daemonStateVersion: 0,
-            };
-            const initialState = {
-                sessions: {},
-                settings: {
-                    groupInactiveSessionsByProject: false,
-                    sessionListActiveGroupingV1: 'date' as const,
-                    sessionListInactiveGroupingV1: 'date' as const,
-                },
-                sessionListRenderables: {},
-                sessionListIndexByServerId: {},
-                sessionListRowStateByServerId: {},
-                concurrentSessionListCacheByServerId: {},
-                machines: {},
-                machineDisplayById: {},
-                machineListByServerId: {},
-                machineListStatusByServerId: {},
-                profile: { id: 'account_a' },
-            };
+        const { createMachinesDomain } = await import('./machines');
+        const machine = {
+            id: 'm-debounce',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: makeMachineMetadata({ displayName: 'Debounced' }),
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'date' as const,
+                sessionListInactiveGroupingV1: 'date' as const,
+            },
+            sessionListRenderables: {},
+            sessionListIndexByServerId: {},
+            sessionListRowStateByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
+        };
 
-            const { domain } = createHarness(createMachinesDomain, initialState);
+        const { domain } = createHarness(createMachinesDomain, initialState);
 
-            domain.applyMachines([machine]);
-            domain.applyMachines([{ ...machine, updatedAt: 2, activeAt: 2 }]);
+        domain.applyMachines([machine]);
+        domain.applyMachines([{ ...machine, updatedAt: 2, activeAt: 2 }]);
 
-            expect(saveMachineDisplayWarmCacheEntriesSpy).not.toHaveBeenCalled();
-            await vi.runAllTimersAsync();
-            expect(saveMachineDisplayWarmCacheEntriesSpy).toHaveBeenCalledTimes(1);
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(scheduleMachineDisplayWarmCacheSaveSpy).toHaveBeenCalledTimes(2);
+        expect(scheduleMachineDisplayWarmCacheSaveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+            accountId: 'account_a',
+            machineDisplays: expect.objectContaining({
+                'm-debounce': expect.objectContaining({ activeAt: 2 }),
+            }),
+        }));
     });
 });

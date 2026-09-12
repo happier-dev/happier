@@ -178,9 +178,10 @@ function buildSpawnHappySessionRpcParamsInternal(
         && canonicalModelSelection.ref.agentTargetKey !== predecessorTargetKey) {
         throw new Error('Spawn model selection target mismatch');
     }
-    const backendTransportFields = canonicalBackendTarget
+    const backendTransportFields = canonicalAgentTarget || canonicalBackendTarget
         ? buildBackendTransportFieldsFromUiState({
             machineId,
+            ...(canonicalAgentTarget ? { agentTarget: canonicalAgentTarget } : {}),
             backendTarget: canonicalBackendTarget,
             runtimeDescriptorV1,
             providerSessionId: resume,
@@ -213,11 +214,13 @@ function buildSpawnHappySessionRpcParamsInternal(
             : {}),
         ...(canonicalModelSelection ? { modelSelection: canonicalModelSelection } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
-        ...(runtimeDescriptorV1
-            ? { runtimeDescriptorV1 }
-            : 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
-                ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
-                : {}),
+        ...(canonicalAgentTarget && 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
+            ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
+            : runtimeDescriptorV1
+                ? { runtimeDescriptorV1 }
+                : 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
+                    ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
+                    : {}),
         connectedServices,
         ...(mcpSelection ? { mcpSelection } : {}),
         ...(typeof accountSettingsVersionHint === 'number' && Number.isInteger(accountSettingsVersionHint) && accountSettingsVersionHint >= 0

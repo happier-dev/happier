@@ -95,6 +95,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             selectEngineSelection: vi.fn(),
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             selectedBackendTargetKey: antigravity.backendTargetKey,
             selectedModelId: 'default',

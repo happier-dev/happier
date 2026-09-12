@@ -60,12 +60,18 @@ export function installSessionFilesViewCommonModuleMocks(
         });
     });
 
-    vi.doMock('@/constants/Typography', () => ({
+    vi.doMock('@/constants/Typography', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/constants/Typography')>();
+        return {
+        ...actual,
         Typography: {
+            ...actual.Typography,
             default: () => ({}),
             mono: () => ({}),
+            rowMeta: () => ({}),
         },
-    }));
+        };
+    });
 
     vi.doMock('@/components/ui/layout/layout', () => ({
         layout: { maxWidth: 1024 },

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionCreationKeyV1Schema } from '@happier-dev/protocol';
 
 import {
     createSpawnAttemptKeyForFreshSpawnOptions,
@@ -92,7 +93,7 @@ describe('createSpawnAttemptKeyForFreshSpawnOptions', () => {
 
     it('fails canonical custody closed before raw environment material can enter identity', () => {
         expect(() => createSpawnAttemptKeyForSessionSpawnNewInput({
-            creationKey: 'manual:attempt-a',
+            creationKey: SessionCreationKeyV1Schema.parse('manual:attempt-a'),
             executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
             directory: '/repo',
             agentTarget: {

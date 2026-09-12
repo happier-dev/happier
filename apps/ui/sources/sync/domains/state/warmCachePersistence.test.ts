@@ -40,6 +40,7 @@ import {
     resolveWarmCacheAccountScope,
     saveMachineDisplayWarmCacheEntries,
     saveSessionListWarmCacheEntries,
+    scheduleMachineDisplayWarmCacheEntriesSave,
     scheduleWarmCacheBootHydration,
     setWarmCacheAccountScope,
 } from './warmCachePersistence';
@@ -242,6 +243,41 @@ describe('warmCachePersistence', () => {
                 lockedReason: 'decryption_failed',
             }),
         });
+    });
+
+    it('coalesces pending machine display writes by cache scope', async () => {
+        vi.useFakeTimers();
+        try {
+            const first = {
+                m1: {
+                    machineId: 'm1',
+                    metadataVersion: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                },
+            };
+            const latest = {
+                m1: {
+                    ...first.m1,
+                    updatedAt: 2,
+                    activeAt: 2,
+                },
+            };
+
+            scheduleMachineDisplayWarmCacheEntriesSave('server-a', 'account-a', first);
+            scheduleMachineDisplayWarmCacheEntriesSave('server-a', 'account-a', latest);
+
+            expect(set).not.toHaveBeenCalled();
+            await vi.runAllTimersAsync();
+            expect(set).toHaveBeenCalledTimes(1);
+            expect(loadMachineDisplayWarmCacheEntries('server-a', 'account-a')).toEqual({
+                m1: expect.objectContaining({ updatedAt: 2, activeAt: 2 }),
+            });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('skips identical warm-cache writes for session list entries', () => {

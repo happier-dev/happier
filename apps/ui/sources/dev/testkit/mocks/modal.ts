@@ -50,6 +50,13 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
         prompt: vi.fn<IModal['prompt']>(promptImplementation),
         confirm: vi.fn<IModal['confirm']>(confirmImplementation),
     };
+    const context = {
+        state: { modals: [] },
+        showModal: spies.show,
+        hideModal: spies.hide,
+        hideAllModals: spies.hideAll,
+        updateCustomModalProps: spies.update,
+    };
 
     return {
         spies,
@@ -66,13 +73,9 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
             },
             ModalProvider: ({ active, children }: { active?: boolean; children?: React.ReactNode }) =>
                 React.createElement('ModalProvider', { active }, children ?? null),
-            useOptionalModal: () => ({
-                state: { modals: [] },
-                showModal: spies.show,
-                hideModal: spies.hide,
-                hideAllModals: spies.hideAll,
-                updateCustomModalProps: spies.update,
-            }),
+            useModal: () => context,
+            useOptionalModal: () => context,
+            useVisibleModalKind: () => null,
         },
     };
 }

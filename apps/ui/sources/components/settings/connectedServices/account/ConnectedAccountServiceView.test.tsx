@@ -564,9 +564,7 @@ describe('ConnectedAccountServiceView', () => {
         expect(runControlMock).not.toHaveBeenCalled();
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
         expect(applySettingsMock).not.toHaveBeenCalled();
-        expect(rendered.tree.findAll((node) => (
-            node.props.testID === 'connected-account-account-scope-mismatch'
-        ))).toHaveLength(1);
+        expect(rendered.findAllHostsByTestId('connected-account-account-scope-mismatch')).toHaveLength(1);
         expect(rendered.tree.findByType('MachineAdministrationTargetSelector' as never)).toBeTruthy();
         expect(rendered.tree.findAll((node) => (
             Object.values(node.props).includes('Account A label')
@@ -586,9 +584,7 @@ describe('ConnectedAccountServiceView', () => {
 
         expect(runControlMock).not.toHaveBeenCalled();
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
-        expect(rendered.tree.findAll((node) => (
-            node.props.testID === 'connected-account-account-scope-mismatch'
-        ))).toHaveLength(1);
+        expect(rendered.findAllHostsByTestId('connected-account-account-scope-mismatch')).toHaveLength(1);
     });
 
     it('fails closed without a fresh Administration target instead of using another online machine', async () => {

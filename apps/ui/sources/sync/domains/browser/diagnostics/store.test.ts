@@ -1,4 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { browserViewKey } from '@happier-dev/protocol';
+
+const TEST_BROWSER_VIEW_KEY = browserViewKey({
+    browserSessionId: 'browser_session_1',
+    viewId: 'view_1',
+});
 
 type StoreModule = Readonly<{
     applyBrowserDiagnosticEvents?: (
@@ -574,7 +580,7 @@ describe('browser diagnostics UI store', () => {
         expect(JSON.stringify(projection)).not.toContain('token=');
         expect(state).toMatchObject({
             viewsByKey: {
-                'browser_session_1\u0000view_1': {
+                [TEST_BROWSER_VIEW_KEY]: {
                     events: [
                         expect.objectContaining({
                             data: expect.objectContaining({
@@ -628,7 +634,7 @@ describe('browser diagnostics UI store', () => {
         expect(JSON.stringify(state)).not.toContain('errorCode');
         expect(state).toMatchObject({
             viewsByKey: {
-                'browser_session_1\u0000view_1': {
+                [TEST_BROWSER_VIEW_KEY]: {
                     events: [
                         expect.objectContaining({
                             data: expect.objectContaining({
@@ -696,7 +702,7 @@ describe('browser diagnostics UI store', () => {
         expect(JSON.stringify(state)).not.toContain('cacheBust');
         expect(state).toMatchObject({
             viewsByKey: {
-                'browser_session_1\u0000view_1': {
+                [TEST_BROWSER_VIEW_KEY]: {
                     events: [
                         expect.objectContaining({
                             data: {
@@ -758,7 +764,7 @@ describe('browser diagnostics UI store', () => {
         expect(JSON.stringify(state)).not.toContain('secret-tail');
         expect(state).toMatchObject({
             viewsByKey: {
-                'browser_session_1\u0000view_1': {
+                [TEST_BROWSER_VIEW_KEY]: {
                     events: [
                         expect.objectContaining({
                             data: {

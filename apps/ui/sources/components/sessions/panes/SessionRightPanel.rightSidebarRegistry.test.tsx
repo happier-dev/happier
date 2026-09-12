@@ -11,6 +11,7 @@ import {
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    isPluginUiDestinationSurfacePlacementProjection,
     type PluginUiSurfacePlacementProjection,
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
@@ -62,10 +63,6 @@ installSessionDetailsPanelCommonModuleMocks({
         });
     },
 });
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (fn: any) => fn(),
@@ -331,6 +328,9 @@ describe('SessionRightPanel right-sidebar registry tabs', () => {
     it('uses the Session target owner exactly once when the mounted panel joins its host binding', async () => {
         const projection = createPluginProjection();
         const placement = projection.surfacePlacementsById[`surfacePlacement:${REVIEW_PLUGIN_ID}:review-panel`]!;
+        if (!isPluginUiDestinationSurfacePlacementProjection(placement)) {
+            throw new Error('test fixture must resolve a destination placement');
+        }
         const shellRightSidebarOwner = vi.fn(async () => ({ ok: true as const }));
         const targetBinding = createPluginSurfaceDestinationNavigationBinding({
             placements: [placement],

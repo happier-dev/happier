@@ -178,15 +178,19 @@ vi.mock('@/components/workspaces/scm/WorkspaceScmHistoryTab', () => ({
 }));
 
 function createTimeoutCapture() {
-    const scheduledTimeouts: Array<() => void> = [];
+    const scheduledTimeouts: Array<Readonly<{
+        callback: () => void;
+        delayMs: number | undefined;
+    }>> = [];
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((
         callback: Parameters<typeof setTimeout>[0],
-        _delay?: number,
+        delayMs?: number,
         ...args: Array<unknown>
     ) => {
         if (typeof callback === 'function') {
-            scheduledTimeouts.push(() => {
-                callback(...args);
+            scheduledTimeouts.push({
+                callback: () => callback(...args),
+                delayMs,
             });
         }
         return 0 as unknown as ReturnType<typeof setTimeout>;
@@ -260,9 +264,9 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
             expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(2);
 
-            const nextTimeout = scheduledTimeouts.at(-1);
+            const nextTimeout = scheduledTimeouts.find(({ delayMs }) => delayMs === 20_000);
             expect(nextTimeout).toBeDefined();
-            nextTimeout?.();
+            nextTimeout?.callback();
             await flushHookEffects({ cycles: 1, turns: 1 });
 
             expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(3);

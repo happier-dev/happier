@@ -129,20 +129,20 @@ describe('getAgentVendorResumeId', () => {
         expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'gemini')).toBeNull();
     });
 
-    test('returns Claude session id only with transcript-backed metadata', () => {
-        expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'claude')).toBeNull();
+    test('returns the Claude session id without treating the transcript path as a resume gate', () => {
+        expect(getAgentVendorResumeId({ claudeSessionId: 'c1' }, 'claude')).toBe('c1');
         expect(getAgentVendorResumeId({
             claudeSessionId: 'c1',
             claudeTranscriptPath: '/tmp/c1.jsonl',
         }, 'claude')).toBe('c1');
     });
 
-    test('returns null for Codex vendor resume when disabled by settings', () => {
+    test('does not gate runtime-checked Codex resume on the retired backend-mode setting', () => {
         expect(getAgentVendorResumeId(
             { codexSessionId: 'x1' },
             'codex',
             { accountSettings: { codexBackendMode: 'mcp' } },
-        )).toBeNull();
+        )).toBe('x1');
     });
 
     test('returns Codex session id when experimental resume is enabled for Codex by settings', () => {

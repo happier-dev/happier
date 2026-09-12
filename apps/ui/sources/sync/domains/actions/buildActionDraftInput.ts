@@ -1,10 +1,29 @@
 import {
+  AgentExecutionTargetV1Schema,
+  buildActionDraftSeedInput,
+  buildQualifiedPluginContributionKey,
   convertBackendTargetRefV2ToV1,
+  getActionSpec,
   readBackendTargetRefV2,
+  type ActionId,
+  type BackendTargetRefV1,
   type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
-import type { ActionId } from '@happier-dev/protocol';
-import { buildActionDraftSeedInput, getActionSpec } from '@happier-dev/protocol';
+
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
+
+function convertDefaultBackendTargetToLegacyActionTarget(
+  input: BackendTargetRefV2Input,
+): BackendTargetRefV1 {
+  const canonicalAgentTarget = AgentExecutionTargetV1Schema.safeParse(input);
+  if (canonicalAgentTarget.success) {
+    const agentId = resolveBundledAgentIdFromContributionIdentity(canonicalAgentTarget.data.identity)
+      ?? buildQualifiedPluginContributionKey(canonicalAgentTarget.data.identity);
+    return { kind: 'builtInAgent', agentId };
+  }
+
+  return convertBackendTargetRefV2ToV1(readBackendTargetRefV2(input));
+}
 
 export function buildActionDraftInput(args: Readonly<{
   actionId: ActionId;
@@ -16,7 +35,7 @@ export function buildActionDraftInput(args: Readonly<{
 }>): Record<string, unknown> {
   const spec = getActionSpec(args.actionId as any);
   const defaultBackendTargetV1 = args.defaultBackendTarget
-    ? convertBackendTargetRefV2ToV1(readBackendTargetRefV2(args.defaultBackendTarget))
+    ? convertDefaultBackendTargetToLegacyActionTarget(args.defaultBackendTarget)
     : null;
   const seed = buildActionDraftSeedInput(spec as any, {
     defaultBackendTarget: defaultBackendTargetV1,

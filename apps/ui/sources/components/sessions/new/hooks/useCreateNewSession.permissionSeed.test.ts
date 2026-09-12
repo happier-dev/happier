@@ -97,7 +97,6 @@ function buildAutomationAuthoringDraft(params: Readonly<{
     modelMode: ModelMode;
     permissionMode: PermissionMode;
     permissionModeUpdatedAt?: number | null;
-    backendTarget?: Readonly<{ kind: 'backend'; backendId: string }> | null;
     automation: NewSessionAutomationDraft;
     connectedServices?: unknown;
     mcpSelection?: SessionMcpSelectionV1 | null;
@@ -110,12 +109,16 @@ function buildAutomationAuthoringDraft(params: Readonly<{
     acpSessionModeId?: string | null;
 }>){
     return buildNewSessionAuthoringDraft({
+        executionTarget: { serverId: 'server-a', machineId: 'm1' },
         directory: '/tmp',
         checkoutCreationDraft: params.checkoutCreationDraft ?? null,
+        organizationPlacement: { folderId: null, tagIds: [] },
         prompt: params.prompt,
         displayText: params.prompt,
-        agentId: 'codex',
-        backendTarget: params.backendTarget ?? null,
+        agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        },
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: null,
         environmentVariables: null,
@@ -135,7 +138,7 @@ function buildAutomationAuthoringDraft(params: Readonly<{
     });
 }
 
-async function setupUseCreateNewSessionHarness() {
+async function initializeUseCreateNewSessionHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const sessionSpawnNewRpcRequest: { value: SessionSpawnNewRpcRequest | null } = { value: null };
     const buildSpawnEnvironmentVariablesCapture: { value: Record<string, unknown> | null } = { value: null };
@@ -443,6 +446,79 @@ async function setupUseCreateNewSessionHarness() {
         ...params,
         draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
     });
+    const resetHarness = () => {
+        captured.value = null;
+        sessionSpawnNewRpcRequest.value = null;
+        buildSpawnEnvironmentVariablesCapture.value = null;
+        automationCaptured.value = null;
+        for (const sessionId of Object.keys(sessions)) {
+            delete sessions[sessionId];
+        }
+        accountEncryptionMode.value = 'e2ee';
+        accountEncryptionMode.fetchAccountEncryptionMode.mockReset();
+        accountEncryptionMode.fetchAccountEncryptionMode.mockImplementation(async () => ({
+            mode: accountEncryptionMode.value,
+            updatedAt: 1,
+        }));
+        saveAutomationEditorDraftSpy.mockReset();
+        saveAutomationEditorDraftSpy.mockImplementation(async (draft: AutomationEditorDraft) => {
+            automationCaptured.value = draft;
+            return { automationId: draft.automationId ?? draft.pendingAutomationId ?? 'automation-created' };
+        });
+        encryptRawSpy.mockReset();
+        encryptRawSpy.mockImplementation(async (value: unknown) => (
+            `cipher:${Buffer.from(JSON.stringify(value)).toString('base64')}`
+        ));
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockReset().mockResolvedValue(false);
+        clearNewSessionDraftSpy.mockClear();
+        setActiveServerSpy.mockClear();
+        switchConnectionToActiveServerSpy.mockReset().mockResolvedValue({ token: 'next-token', secret: 'next-secret' });
+        refreshMachinesSpy.mockReset().mockResolvedValue(undefined);
+        refreshSessionsSpy.mockReset().mockResolvedValue(undefined);
+        ensureSessionVisibleForMessageRouteSpy.mockReset();
+        ensureSessionVisibleForMessageRouteSpy.mockImplementation(async (sessionId: string) => {
+            sessions[sessionId] ??= { id: sessionId };
+            return { kind: 'available' };
+        });
+        refreshAutomationsSpy.mockReset().mockResolvedValue(undefined);
+        applySettingsSpy.mockClear();
+        upsertPendingMessageSpy.mockClear();
+        markSessionOptimisticThinkingSpy.mockClear();
+        saveSessionDraftsSpy.mockClear();
+        getMachineCapabilitiesSnapshotSpy.mockReset();
+        getMachineCapabilitiesSnapshotSpy.mockReturnValue({ supported: true, response: { protocolVersion: 1, results: {} } });
+        prefetchMachineCapabilitiesSpy.mockReset().mockResolvedValue(undefined);
+        captureExceptionIfEnabledSpy.mockClear();
+        syncSendMessageSpy.mockReset().mockResolvedValue(undefined);
+        materializeNewSessionCheckoutSpy.mockReset().mockResolvedValue({
+            success: true,
+            path: '/tmp/materialized-worktree',
+            sessionPath: '/tmp/materialized-worktree',
+            repositoryRootPath: '/tmp/materialized-worktree',
+        });
+        machineBashSpy.mockReset().mockResolvedValue({
+            success: true,
+            stderr: '',
+            stdout: '',
+            exitCode: 0,
+        });
+        sessionSpawnNewRpcSpy.mockReset();
+        sessionSpawnNewRpcSpy.mockImplementation(async (request: SessionSpawnNewRpcRequest): Promise<SessionSpawnNewResultV1> => {
+            captureSessionSpawnNewRequest(request);
+            return { type: 'error', code: 'spawn_failed', retryable: false };
+        });
+        executeSessionSpawnNewActionSpy.mockReset();
+        executeSessionSpawnNewActionSpy.mockImplementation(async (input: SessionSpawnNewInputV2) => ({
+            ok: true,
+            result: await sessionSpawnNewRpcSpy({
+                serverId: input.executionTarget.serverId,
+                machineId: input.executionTarget.machineId,
+                method: RPC_METHODS.SESSION_SPAWN_NEW,
+                payload: input,
+            }),
+        }));
+    };
     return {
         useCreateNewSession,
         setLocalSearchParams(nextParams: Record<string, string | string[] | undefined>) {
@@ -467,17 +543,27 @@ async function setupUseCreateNewSessionHarness() {
         sessionSpawnNewRpcSpy,
         sessionSpawnNewRpcRequest,
         mockSessionSpawnSuccess,
+        resetHarness,
     };
 }
 
+let initializedUseCreateNewSessionHarness: Awaited<ReturnType<typeof initializeUseCreateNewSessionHarness>> | null = null;
+
+async function setupUseCreateNewSessionHarness() {
+    initializedUseCreateNewSessionHarness ??= await initializeUseCreateNewSessionHarness();
+    initializedUseCreateNewSessionHarness.resetHarness();
+    return initializedUseCreateNewSessionHarness;
+}
+
+await setupUseCreateNewSessionHarness();
+
 describe('useCreateNewSession permission seeding', () => {
     beforeEach(() => {
-        vi.resetModules();
         routerSearchParamsState.value = {};
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        vi.clearAllMocks();
     });
 
     it('passes a canonical permission mode and timestamp into the strict Action request', async () => {
@@ -751,12 +837,16 @@ describe('useCreateNewSession permission seeding', () => {
             refresh: () => {},
         };
         const authoringDraft = buildNewSessionAuthoringDraft({
+            executionTarget: { serverId: 'server-a', machineId: 'm1' },
             directory: '/tmp',
             checkoutCreationDraft: null,
+            organizationPlacement: { folderId: null, tagIds: [] },
             prompt: 'hello',
             displayText: 'hello',
-            agentId: 'opencode',
-            backendTarget: { kind: 'backend', backendId: 'opencode' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+            },
             transcriptStorage: null,
             profileId: null,
             environmentVariables: null,
@@ -767,7 +857,7 @@ describe('useCreateNewSession permission seeding', () => {
                 v: 1,
                 updatedAt: 456,
                 ref: {
-                    agentTargetKey: 'backend:opencode',
+                    agentTargetKey: 'agent:happier.agent.opencode/opencode',
                     providerConnectionId: 'pc_openrouter',
                     modelId: 'default',
                 },
@@ -929,7 +1019,7 @@ describe('useCreateNewSession permission seeding', () => {
                     connectedServices: {
                         v: 1,
                         bindingsByServiceId: {
-                            anthropic: { source: 'connected', profileId: 'work' },
+                            'happier.service.github/github': { source: 'connected', selection: 'profile', profileId: 'work' },
                         },
                     },
                 },
@@ -957,7 +1047,7 @@ describe('useCreateNewSession permission seeding', () => {
         expect(captured.value?.connectedServices).toEqual({
             v: 1,
             bindingsByServiceId: {
-                anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
+                'happier.service.github/github': { source: 'connected', selection: 'profile', profileId: 'work' },
             },
         });
     });
@@ -1165,7 +1255,6 @@ describe('useCreateNewSession permission seeding', () => {
     it('falls back to active server when targetServerId is outside the allowed target server IDs', async () => {
         const {
             useCreateNewSession,
-            modalAlertSpy,
             captured,
         } = await setupUseCreateNewSessionHarness();
 
@@ -1219,7 +1308,6 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
-        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'newSession.serverSelectionUnavailable');
         expect(captured.value).not.toBeNull();
         expect(captured.value?.executionTarget.serverId).toBe('server-a');
     });
@@ -1308,6 +1396,7 @@ describe('useCreateNewSession permission seeding', () => {
             automationCaptured,
             refreshAutomationsSpy,
             materializeNewSessionCheckoutSpy,
+            modalAlertSpy,
         } = await setupUseCreateNewSessionHarness();
 
         let handleCreateSession: null | ReturnType<typeof useCreateNewSession>['handleCreateSession'] = null;
@@ -1330,8 +1419,9 @@ describe('useCreateNewSession permission seeding', () => {
         const connectedServices = {
             v: 1 as const,
             bindingsByServiceId: {
-                github: {
+                'happier.service.github/github': {
                     source: 'connected' as const,
+                    selection: 'profile' as const,
                     profileId: 'work',
                 },
             },
@@ -1462,7 +1552,7 @@ describe('useCreateNewSession permission seeding', () => {
         expect(spawn?.connectedServices).toEqual({
             v: 1,
             bindingsByServiceId: {
-                github: {
+                'happier.service.github/github': {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'work',

@@ -321,7 +321,7 @@ export function createHostedWebAccountDataBridge(input: Readonly<{
                         break;
                 }
             } else if (operation.operation.startsWith('collection.')) {
-                if (!operation.definition) {
+                if (!('definition' in operation)) {
                     throw new Error('Collection definition is required.');
                 }
                 const collection = input.dataClient.collection(

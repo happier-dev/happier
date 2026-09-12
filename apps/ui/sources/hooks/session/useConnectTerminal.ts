@@ -4,8 +4,10 @@ import { useAuth } from '@/auth/context/AuthContext';
 import {
     TokenStorage,
     type AuthCredentials,
+    isLegacyAuthCredentials,
     isTokenOnlyAuthCredentials,
 } from '@/auth/storage/tokenStorage';
+import { decodeBase64 } from '@/encryption/base64';
 import { authApprove } from '@/auth/flows/approve';
 import {
     buildTerminalResponseV1,

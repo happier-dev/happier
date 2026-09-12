@@ -627,7 +627,7 @@ describe('deriveSessionParticipantTargets', () => {
         expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(false);
     });
 
-    it('includes claude team members and broadcast even when session flavor is missing (derived from tool names)', () => {
+    it('includes claude team members and broadcast when the legacy flavor is missing but the runtime descriptor identifies Claude', () => {
         const messages: Message[] = [
             createToolMessage({
                 id: 't1',
@@ -646,7 +646,12 @@ describe('deriveSessionParticipantTargets', () => {
         ];
 
         const targets = deriveSessionParticipantTargets({
-            session: { metadata: { flavor: null } } as any,
+            session: {
+                metadata: {
+                    flavor: null,
+                    runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+                },
+            } as any,
             messages,
         });
 
@@ -1680,7 +1685,7 @@ describe('deriveAutoRecipientFromFocusedToolTranscript', () => {
         expect((auto as any)?.memberLabel).toBe('Alpha');
     });
 
-    it('returns agent_team_member recipient for focused Task tool with teammate_spawned result even when session flavor is missing', () => {
+    it('returns agent_team_member for a focused Task when the legacy flavor is missing but the runtime descriptor identifies Claude', () => {
         const toolMsg = createToolMessage({
             id: 'm1',
             name: 'Task',
@@ -1688,7 +1693,12 @@ describe('deriveAutoRecipientFromFocusedToolTranscript', () => {
             result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'alpha@probe', team_name: 'probe', name: 'alpha' } },
         });
         const auto = deriveAutoRecipientFromFocusedToolTranscript({
-            session: { metadata: { flavor: null } } as any,
+            session: {
+                metadata: {
+                    flavor: null,
+                    runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+                },
+            } as any,
             tool: toolMsg.tool,
             messages: [],
         });

@@ -1,7 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 
 import {
     renderScreen,
@@ -246,7 +245,7 @@ describe('ResumePickerScreen browse modal', () => {
         expect(openExternalSessionsResumeIdPickerModalMock).not.toHaveBeenCalled();
     });
 
-    it('resolves configured ACP backend labels without reviving customAcp in the canonical agentType state', async () => {
+    it('uses the configured ACP backend id as its operational agentType without reviving customAcp', async () => {
         routeParamsState.value = {
             backendTargetKey: 'acpBackend:review-bot',
             currentResumeId: '',
@@ -285,29 +284,38 @@ describe('ResumePickerScreen browse modal', () => {
         await renderScreen(React.createElement(ResumePickerScreen));
 
         const props = resumeSelectionContentPropsRef.current;
-        expect(props?.agentType).toBe(DEFAULT_AGENT_ID);
+        expect(props?.agentType).toBe('review-bot');
         expect(props?.agentLabel).toBe('Review Bot');
     });
 
     it('resolves plugin backend labels from daemon merged projection inputs', async () => {
         routeParamsState.value = {
-            backendTargetKey: 'backend:plugin-review-bot',
+            backendTarget: JSON.stringify({
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
+            }),
+            backendTargetKey: 'agent:acme.review-bot/review-bot',
             currentResumeId: '',
             machineId: 'machine-plugin-2',
             spawnServerId: 'server-2',
         };
+        settingsState.value = {
+            backendEnabledByTargetKey: {
+                'agent:acme.review-bot/review-bot': true,
+            },
+        };
 
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
-            projection: {
-                v: 1,
-                agentsById: {
+            projection: createSupportedClaudeProjection({
+                additionalAgentsById: {
                     'plugin:review-bot': {
                         id: 'plugin:review-bot',
                         title: 'Review Bot Plugin',
                         subtitle: 'plugin agent',
                         channel: 'plugin',
                         isBuiltIn: false,
+                        identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
                     },
                 },
                 backendsById: {
@@ -316,11 +324,9 @@ describe('ResumePickerScreen browse modal', () => {
                         agentId: 'plugin:review-bot',
                         title: 'Review Bot (plugin)',
                         subtitle: 'plugin backend',
-                        catalogAgentId: null,
-                        iconAgentId: null,
                     },
                 },
-            },
+            }),
         });
 
         const ResumePickerScreen = (await import('@/app/(app)/new/pick/resume')).default;
@@ -339,10 +345,19 @@ describe('ResumePickerScreen browse modal', () => {
     it('uses the projected runtime carrier when browsing direct sessions for a plugin backend', async () => {
         featureState.externalSessionsEnabled = true;
         routeParamsState.value = {
-            backendTargetKey: 'backend:plugin-review-bot',
+            backendTarget: JSON.stringify({
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
+            }),
+            backendTargetKey: 'agent:acme.review-bot/review-bot',
             currentResumeId: '',
             machineId: 'machine-plugin-3',
             spawnServerId: 'server-2',
+        };
+        settingsState.value = {
+            backendEnabledByTargetKey: {
+                'agent:acme.review-bot/review-bot': true,
+            },
         };
 
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
@@ -357,6 +372,7 @@ describe('ResumePickerScreen browse modal', () => {
                         isBuiltIn: false,
                         catalogAgentId: 'claude',
                         iconAgentId: 'claude',
+                        identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
                         externalSessions: {
                             agent: {
                                 pluginId: 'acme.review-bot',
@@ -446,8 +462,11 @@ describe('ResumePickerScreen browse modal', () => {
             pathname: '/new',
             params: {
                 agentType: 'claude',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
-                backendTargetKey: 'backend:claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 spawnServerId: 'server-2',
@@ -458,7 +477,7 @@ describe('ResumePickerScreen browse modal', () => {
         expect(routerMock.back).not.toHaveBeenCalled();
     });
 
-    it('uses the last explicit built-in agent placeholder while keeping the configured backend label when route context is missing', async () => {
+    it('uses the configured backend operational identity and label when route context is missing', async () => {
         navigationMock.getState = () => ({
             index: 0,
             routes: [
@@ -509,7 +528,7 @@ describe('ResumePickerScreen browse modal', () => {
         await renderScreen(React.createElement(ResumePickerScreen));
 
         const props = resumeSelectionContentPropsRef.current;
-        expect(props?.agentType).toBe('codex');
+        expect(props?.agentType).toBe('review-bot');
         expect(props?.agentLabel).toBe('Review Bot');
 
         await props?.onSave?.('session-picked');

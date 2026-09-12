@@ -95,7 +95,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                         definition: {
                             kind: 'schedule',
                             enabled: true,
-                            schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                            schedule: { kind: 'interval', everyMs: 60 * 60_000, scheduleExpr: null, timezone: null },
                         },
                     }],
                 },
@@ -151,7 +151,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                         definition: {
                             kind: 'schedule',
                             enabled: true,
-                            schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                            schedule: { kind: 'interval', everyMs: 60 * 60_000, scheduleExpr: null, timezone: null },
                         },
                     }],
                 },
@@ -215,7 +215,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                         definition: {
                             kind: 'schedule',
                             enabled: true,
-                            schedule: { kind: 'interval', everyMs: 60 * 60_000 },
+                            schedule: { kind: 'interval', everyMs: 60 * 60_000, scheduleExpr: null, timezone: null },
                         },
                     }],
                 },

@@ -167,12 +167,12 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
             const now = Date.now();
             const permissionMode = props.seed.permissionMode ?? 'default';
             const authoringDraft = buildNewSessionAuthoringDraftFromResolvedInputs({
+                executionTarget: selectedTarget,
                 directory: directory.trim(),
                 checkoutCreationDraft: null,
                 prompt: '',
                 displayText: '',
-                agentId: selectedAgent.agentId,
-                backendTarget: selectedAgent.backendTarget,
+                agentTarget: selectedAgent.agentTarget,
                 transcriptStorage: null,
                 profileId: null,
                 environmentVariables: null,
@@ -193,8 +193,6 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
             });
             props.onResolve(buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
                 draft: authoringDraft,
-                executionTarget: selectedTarget,
-                agentTarget: selectedAgent.agentTarget,
                 permissionMode,
                 configurationUpdatedAtMs: now,
             }));

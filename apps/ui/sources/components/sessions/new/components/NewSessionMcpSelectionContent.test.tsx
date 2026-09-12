@@ -23,11 +23,8 @@ type CapturedItemProps = Readonly<{
     subtitle?: unknown;
 } & Record<string, unknown>>;
 type CapturedItemGroupProps = Readonly<{ title?: React.ReactNode } & Record<string, unknown>>;
-type CapturedViewProps = Readonly<{ style?: unknown } & Record<string, unknown>>;
-
 const capturedItems: CapturedItemProps[] = [];
 const capturedItemGroups: CapturedItemGroupProps[] = [];
-const capturedViews: CapturedViewProps[] = [];
 
 const mcpServersSettingsFixture: McpServersSettingsV1 = {
     v: 1,
@@ -68,9 +65,6 @@ installNewSessionComponentsCommonModuleMocks({
     }),
     reactNative: () => createReactNativeWebMock({
         Platform: { OS: 'ios' },
-        View: createCapturingComponent('View', (props) => {
-            capturedViews.push(props as CapturedViewProps);
-        }),
         Pressable: createPassThroughComponent('Pressable'),
         ScrollView: createPassThroughComponent('ScrollView'),
             ActivityIndicator: createPassThroughComponent('ActivityIndicator'),
@@ -149,11 +143,9 @@ vi.mock('@/components/sessions/new/modules/sessionMcpSelectionState', () => ({
 
 describe('NewSessionMcpSelectionContent', () => {
     it('keeps native MCP content-sized under the computed popover height cap', async () => {
-        capturedViews.length = 0;
-
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
-        await renderScreen(<NewSessionMcpSelectionContent
+        const screen = await renderScreen(<NewSessionMcpSelectionContent
             machineId="machine-1"
             machineName="Builder"
             directory="/repo"
@@ -174,10 +166,10 @@ describe('NewSessionMcpSelectionContent', () => {
             maxHeight={520}
         />);
 
-        expect(capturedViews.some((view) => {
-            const style = Array.isArray(view.style)
-                ? Object.assign({}, ...view.style)
-                : view.style as Record<string, unknown> | undefined;
+        expect(screen.findAllByType('View').some((view) => {
+            const style = Array.isArray(view.props.style)
+                ? Object.assign({}, ...view.props.style)
+                : view.props.style as Record<string, unknown> | undefined;
             return style?.maxHeight === 520 && style?.height === undefined;
         })).toBe(true);
     });
@@ -232,12 +224,11 @@ describe('NewSessionMcpSelectionContent', () => {
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.loading')).toBe(false);
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.error')).toBe(false);
 
-        const detectedGroup = capturedItemGroups
-            .filter((group) => React.isValidElement(group.title))
-            .find((group) => {
-                const titleEl = group.title as React.ReactElement<{ title: string }>;
-                return titleEl.props.title === 'newSession.mcpDetectedSectionTitleForAgent';
-            });
+        const detectedGroup = capturedItemGroups.find((group) => {
+            const titleProps = (group.title as { props?: { actions?: unknown } } | undefined)?.props;
+            const actionProps = (titleProps?.actions as { props?: { testID?: string } } | undefined)?.props;
+            return actionProps?.testID === 'new-session.mcp.detected.refresh';
+        });
 
         expect(detectedGroup).toBeTruthy();
 

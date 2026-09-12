@@ -136,10 +136,12 @@ describe('Settings → Account (username)', () => {
         });
 
         expect(modalMockRef.current.spies.prompt).toHaveBeenCalled();
-        expect(fetchMock).toHaveBeenCalledWith(
-            expect.stringContaining('/v1/account/username'),
-            expect.objectContaining({ method: 'POST' }),
-        );
+        await vi.waitFor(() => {
+            expect(fetchMock).toHaveBeenCalledWith(
+                expect.stringContaining('/v1/account/username'),
+                expect.objectContaining({ method: 'POST' }),
+            );
+        });
     }, 40_000);
 
     it('keeps connectedServicesV2 projections out of Account while the canonical Connected Accounts route remains available', async () => {

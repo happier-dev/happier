@@ -32,7 +32,8 @@ vi.mock('@/agents/registry/compat/customAcp', () => ({
   }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
   isBundledAgentId: (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude',
   getAgentCore: (agentId: string) => ({
     sessionModes: { kind: agentId === 'codex' ? 'acpPolicyPresets' : 'acpAgentModes' },

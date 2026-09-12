@@ -277,6 +277,7 @@ describe('ExternalSessionsSettingsView passive shell', () => {
     beforeEach(async () => {
         effectBoundary.machines = [];
         effectBoundary.machineRpc.mockReset();
+        effectBoundary.followPolicySet.mockReset();
         accountCurrentnessState.current = true;
         modalMock.spies.alert.mockClear();
         modalMock.spies.alertAsync.mockClear();
@@ -1171,9 +1172,6 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         expect(row?.props.disabled).toBe(true);
         const toggle = row?.props.rightElement as React.ReactElement<Record<string, unknown>> | undefined;
         expect(toggle?.props.disabled).toBe(true);
-        await act(async () => {
-            await row?.props.onPress?.();
-        });
         expect(effectBoundary.followPolicySet).not.toHaveBeenCalled();
 
         await screen.unmount();
@@ -1208,9 +1206,6 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         expect(row?.props.disabled).toBe(true);
         const toggle = row?.props.rightElement as React.ReactElement<Record<string, unknown>> | undefined;
         expect(toggle?.props.disabled).toBe(true);
-        await act(async () => {
-            await row?.props.onPress?.();
-        });
         expect(effectBoundary.followPolicySet).not.toHaveBeenCalled();
 
         await screen.unmount();

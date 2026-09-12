@@ -93,6 +93,7 @@ import {
     composerAttachmentViewToDraft,
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
+    placePositionlessComposerReferences,
     resolveCurrentComposerAttachmentCatalogEntry,
 } from '@/components/sessions/composer/composerScopeAdapters';
 import {
@@ -420,6 +421,7 @@ import {
     RawIngressStructuredInputV1Schema,
     type ComposerAttachmentDraftV1,
     type ComposerAttachmentInputV1,
+    type MentionRefV1,
     type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
     type ComposerRefV1,
     type ComposerSnapshotV1,
@@ -582,6 +584,17 @@ const MAX_USAGE_LIMIT_RECOVERY_READY_TIMER_MS = 2_147_483_647;
 const PENDING_MESSAGE_EDIT_DRAIN_HOLD_TTL_MS = 2 * 60 * 1000;
 const PENDING_MESSAGE_EDIT_DRAIN_HOLD_REFRESH_MS = 30 * 1000;
 const EMPTY_SESSION_MODEL_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
+
+/** Converts positionless Pending-message wire references into editable Composer custody. */
+export function projectPendingMessageComposerMentions(input: Readonly<{
+    text: string;
+    references: readonly MentionRefV1[];
+}>): readonly ComposerStructuredInputMention[] {
+    return composerStructuredMentionsFromReferences({
+        references: placePositionlessComposerReferences(input),
+        existing: [],
+    });
+}
 
 /**
  * Where one submitted localId has got to, canonically — the single reader for
@@ -3695,7 +3708,7 @@ function SessionViewLoaded({
                 return;
             }
 
-            if (kind === 'consume_reset_credit' && connectedServiceQuotaProfileRef && connectedServiceQuotaProfileKey) {
+            if (kind === 'consume_reset_credit' && connectedServiceQuotaProfileIdentity && connectedServiceQuotaProfileKey) {
                 const recoveryCreditSummary = summarizeConnectedServiceQuotaRecoveryCredits(
                     usageLimitRecoveryCredits,
                     nowServerMs(),
@@ -4850,9 +4863,9 @@ function SessionViewLoaded({
         }
 
         const accountLifetime = captureActiveServerAccountScopeLifetime();
-        const hydratedComposerMentions = composerStructuredMentionsFromReferences({
+        const hydratedComposerMentions = projectPendingMessageComposerMentions({
+            text: editText,
             references: attachmentHydration.mentions ?? [],
-            existing: [],
         });
         const previousEdit = pendingMessageEditRef.current;
         if (previousEdit && previousEdit.pendingId !== request.id) {

@@ -12,8 +12,8 @@ describe('DesktopShellWindowControlsHost', () => {
     it('renders nothing when no window-controls surface is active', async () => {
         const screen = await renderScreen(<DesktopShellWindowControlsHost />);
 
-        expect(screen.findAllByTestId('desktop-window-controls-host')).toHaveLength(0);
-        expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('desktop-window-controls-host')).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('desktop-window-controls-slot')).toHaveLength(0);
     });
 
     it('renders the host wrapper when an active window-controls surface is provided', async () => {
@@ -25,8 +25,8 @@ describe('DesktopShellWindowControlsHost', () => {
             </DesktopShellWindowControlsHost>,
         );
 
-        expect(screen.findAllByTestId('desktop-window-controls-host')).toHaveLength(1);
-        expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('desktop-window-controls-host')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('desktop-window-controls-slot')).toHaveLength(1);
     });
 
     it('does not wrap an already resolved window-controls slot in another slot', async () => {
@@ -38,8 +38,8 @@ describe('DesktopShellWindowControlsHost', () => {
             </DesktopShellWindowControlsHost>,
         );
 
-        expect(screen.findAllByTestId('desktop-window-controls-host')).toHaveLength(1);
-        expect(screen.findAllByTestId('desktop-window-controls-slot')).toHaveLength(1);
-        expect(screen.findAllByTestId('desktop-window-drag-region')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('desktop-window-controls-host')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('desktop-window-controls-slot')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('desktop-window-drag-region')).toHaveLength(1);
     });
 });

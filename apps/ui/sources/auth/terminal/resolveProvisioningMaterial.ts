@@ -5,7 +5,6 @@ import {
     type AuthCredentials,
     isDataKeyAuthCredentials,
     isLegacyAuthCredentials,
-    isTokenOnlyAuthCredentials,
 } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 
@@ -15,8 +14,6 @@ import { decodeBase64 } from '@/encryption/base64';
  * collapse it into the legacy secret field.
  */
 export function resolveProvisioningMaterial(credentials: AuthCredentials): TerminalProvisioningV2Response {
-    if (isTokenOnlyAuthCredentials(credentials)) return { type: 'tokenOnly' };
-
     if (isDataKeyAuthCredentials(credentials)) {
         const key = decodeBase64(credentials.encryption.machineKey, 'base64');
         if (key.length !== 32) throw new Error('Invalid data-key credential key length');

@@ -1362,10 +1362,24 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
   it('prefers the configured last-used backend target for voice-home spawning when agentSource stays on session', async () => {
     state.settings.lastUsedAgent = 'codex';
-    state.settings.lastUsedBackendTarget = { kind: 'configuredAcpBackend', backendId: 'review-bot' };
+    state.settings.lastUsedBackendTarget = {
+      kind: 'backend',
+      backendId: 'review-bot',
+      configuredBackendId: 'review-bot',
+      sourceKind: 'configured',
+    };
     state.settings.acpCatalogSettingsV1 = {
       v: 2,
-      backends: [{ id: 'review-bot', name: 'review-bot', title: 'Review Bot' }],
+      backends: [{
+        id: 'review-bot',
+        name: 'review-bot',
+        title: 'Review Bot',
+        command: 'review-bot',
+        args: [],
+        env: {},
+        createdAt: 1,
+        updatedAt: 1,
+      }],
     };
 
     const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');

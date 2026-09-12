@@ -248,7 +248,7 @@ describe('ActionSettingsDetailView', () => {
         const apiMode = capture.segmentedTabBars.find((bar) =>
             bar.testIDPrefix === 'settings-actions:action:review.start:target:api:mode',
         );
-        expect(apiMode?.accessibilityLabel).toBe('External API & SDK');
+        expect(apiMode?.accessibilityLabel).toBe('settingsActions.targets.api.title');
         const commandPaletteSwitch = capture.switches.find((switchProps) =>
             switchProps.testID === 'settings-actions:action:review.start:target:command_palette:enabled',
         );

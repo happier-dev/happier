@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type {
@@ -120,7 +120,7 @@ describe('SelectionListBody single virtualized-list multi-section restructure (R
 
         const input = screen.findByTestId('sl:header:input');
         const row = screen.findByTestId(expectedId);
-        const matchingIds = screen.tree.root.findAll((node) => node.props?.id === expectedId);
+        const matchingIds = findAllHostTestInstances(screen.root, (node) => node.props?.id === expectedId);
 
         expect(input?.props['aria-activedescendant']).toBe(expectedId);
         expect(row?.props.id).toBe(expectedId);

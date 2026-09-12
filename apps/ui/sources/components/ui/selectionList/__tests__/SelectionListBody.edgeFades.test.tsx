@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 
 import type {
     SelectionListOption,
@@ -13,6 +14,8 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+
+installShippedNativeFrameScheduler();
 
 /**
  * RUX-5: scrolling-edge indicators on the SelectionListBody scroll container.

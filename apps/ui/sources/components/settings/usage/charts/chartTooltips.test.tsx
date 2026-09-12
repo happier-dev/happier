@@ -47,7 +47,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             />,
         );
 
-        const triggers = screen.findAllByTestId('usage-heatmap-cell-trigger');
+        const triggers = screen.findAllHostsByTestId('usage-heatmap-cell-trigger');
         expect(triggers.length).toBeGreaterThan(0);
 
         // Press the trigger for the active day (last week column contains Jul 10).
@@ -73,7 +73,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             />,
         );
 
-        const triggers = screen.findAllByTestId('usage-heatmap-cell-trigger');
+        const triggers = screen.findAllHostsByTestId('usage-heatmap-cell-trigger');
         expect(triggers).toHaveLength(7);
         act(() => {
             pressTestInstance(triggers[6]!, 'usage-heatmap-cell-trigger');
@@ -88,7 +88,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             <HourRhythmChart rhythm={{ hours, busiestHour: 14, peakCount: 96, total: 96 }} testID="rhythm" />,
         );
 
-        const triggers = screen.findAllByTestId('usage-rhythm-hour-trigger');
+        const triggers = screen.findAllHostsByTestId('usage-rhythm-hour-trigger');
         expect(triggers).toHaveLength(24);
         act(() => {
             pressTestInstance(triggers[14]!, 'usage-rhythm-hour-trigger');
@@ -107,7 +107,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             />,
         );
 
-        const triggers = screen.findAllByTestId('usage-punchcard-cell-trigger');
+        const triggers = screen.findAllHostsByTestId('usage-punchcard-cell-trigger');
         expect(triggers).toHaveLength(7 * 24);
         // The busiest cell is at flattened index weekday*24 + hour = 3*24 + 14 = 86.
         act(() => {
@@ -134,7 +134,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
             />,
         );
 
-        const triggers = screen.findAllByTestId('usage-composition-segment-trigger');
+        const triggers = screen.findAllHostsByTestId('usage-composition-segment-trigger');
         expect(triggers).toHaveLength(2);
         act(() => {
             pressTestInstance(triggers[0]!, 'usage-composition-segment-trigger');

@@ -33,7 +33,8 @@ vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 vi.mock('@shopify/react-native-skia', () => ({}));
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
 vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
-vi.mock('react-native-safe-area-context', () => ({
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-native-safe-area-context')>(),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 

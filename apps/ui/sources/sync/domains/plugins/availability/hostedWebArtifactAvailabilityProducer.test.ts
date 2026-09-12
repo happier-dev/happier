@@ -395,6 +395,8 @@ function createCurrentPersistentAccountOperation() {
         isCurrent: () => true,
         isCacheCurrent: () => true,
         isOpen: () => true,
+        readPersistentArtifact: async () => null,
+        writePersistentArtifact: async () => true,
         awaitPendingPersistentArtifactRemoval: async () => undefined,
         removePersistentArtifact: async () => undefined,
         removePersistentArtifactsForAccount: async () => undefined,

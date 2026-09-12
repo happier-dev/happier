@@ -790,11 +790,14 @@ function createDeliveryResolutionDataClient(input: Readonly<{
   const query = vi.fn(async (
     request: Parameters<ChannelDeliveriesCollection['query']>[0],
   ): Promise<ChannelDeliveriesCollectionPage> => {
-    if (request.index !== CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention) {
+    if (request.index !== CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention) {
       throw new Error(`Unexpected direct delivery Collection index: ${request.index}.`);
     }
     if (request.prefix?.[0] !== 'connection-1') {
       throw new Error('Expected the delivery query to stay within the expanded connection.');
+    }
+    if (request.range?.lower !== true || request.range?.upper !== true) {
+      throw new Error('Expected the delivery query to select only attention rows for the expanded connection.');
     }
     if (request.limit !== undefined && request.limit > 200) {
       throw new Error('Direct delivery query exceeded the Data-owned page limit.');
@@ -4396,13 +4399,13 @@ describe('Channels settings surface (real source, mounted)', () => {
       renderer,
       `channels-delivery-resolution-accept-${partialCustodyId}`,
     ).some((instance) => (
-      instance.props?.accessibilityRole === 'button'
+      instance.props?.role === 'button'
         && instance.props?.accessibilityLabel === 'Accept as sent'
     ))).toBe(true);
     expect(findByTestId(
       renderer,
       `channels-delivery-resolution-discard-${unknownCustodyId}`,
-    ).some((instance) => instance.props?.accessibilityRole === 'button')).toBe(true);
+    ).some((instance) => instance.props?.role === 'button')).toBe(true);
 
     const readsBeforeResolution = host.readResource.mock.calls.length;
     await act(async () => {
@@ -4412,8 +4415,9 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(host.executeAction).toHaveBeenCalledTimes(1);
     expect(deliveryData.query).toHaveBeenCalledWith({
-      index: CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention,
+      index: CHANNEL_DELIVERIES_INDEX_ID.byConnectionAttention,
       prefix: ['connection-1'],
+      range: { lower: true, upper: true },
       order: 'asc',
       limit: 50,
     }, expect.any(Object));

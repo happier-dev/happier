@@ -12,6 +12,10 @@ const featureGateState = vi.hoisted(() => ({
     managementEnabled: true,
     secretMaterialEnabled: false,
 }));
+
+vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
+    getFeatureBuildPolicyDecision: () => 'allow',
+}));
 type RemoteHostsRaw = AccountSettingsDefaults['remoteHostsV1'];
 
 const remoteHostsState = vi.hoisted(() => ({
@@ -355,7 +359,7 @@ vi.mock('@/components/systemTasks/SystemTaskProgressCard', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         decryptSecretValue: () => secretState.decryptedSecretValue,
-        encryptSecretValue: () => ({ __brand: 'SecretString', value: 'enc' }),
+        encryptSecretValue: () => ({ _isSecretValue: true, value: 'enc' }),
     },
 }));
 
@@ -790,7 +794,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                    passwordEnc: { _isSecretValue: true, value: 'enc' },
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -898,7 +902,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                    passwordEnc: { _isSecretValue: true, value: 'enc' },
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -972,7 +976,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                    passwordEnc: { _isSecretValue: true, value: 'enc' },
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -1020,7 +1024,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                    passwordEnc: { _isSecretValue: true, value: 'enc' },
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -1080,7 +1084,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                    passwordEnc: { _isSecretValue: true, value: 'enc' },
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,

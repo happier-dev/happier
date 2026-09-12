@@ -110,6 +110,23 @@ describe('UI testkit render helpers', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
     });
 
+    it('queries rendered host instances without counting transparent composite wrappers', async () => {
+        const { findAllHostTestInstances, renderScreen } = await import('./renderScreen');
+
+        function ForwardingControl(props: Record<string, unknown>) {
+            return React.createElement('Pressable', props);
+        }
+
+        const screen = await renderScreen(React.createElement(ForwardingControl, {
+            role: 'switch',
+            testID: 'settings.forwarded-control',
+        }));
+
+        expect(screen.findAll((node) => node.props?.role === 'switch')).toHaveLength(2);
+        expect(findAllHostTestInstances(screen.root, (node) => node.props?.role === 'switch'))
+            .toEqual([expect.objectContaining({ type: 'Pressable' })]);
+    });
+
     it('exposes the same test id helpers on the underlying tree result, including text changes', async () => {
         const { renderScreen } = await import('./renderScreen');
 

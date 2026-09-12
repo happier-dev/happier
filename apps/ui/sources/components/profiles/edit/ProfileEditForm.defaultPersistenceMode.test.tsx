@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import { installProfileEditFormModuleMocks } from './profileEditFormTestHelpers';
 import { ProfileEditForm } from './ProfileEditForm';
@@ -12,6 +12,18 @@ import type { ProfileEditFormProps } from './ProfileEditForm';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionTypeSelectorSpy = vi.hoisted(() => vi.fn(() => null));
+
+const builtInBackendTargetKey = (backendId: string) => buildBackendTargetKeyV2({
+    kind: 'backend',
+    backendId,
+    sourceKind: 'built_in',
+});
+const configuredBackendTargetKey = (backendId: string) => buildBackendTargetKeyV2({
+    kind: 'backend',
+    backendId,
+    configuredBackendId: backendId,
+    sourceKind: 'configured',
+});
 
 installProfileEditFormModuleMocks({
     storageModule: async () => {
@@ -47,24 +59,36 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['codex'],
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    isBundledAgentId: (value: unknown): value is 'codex' | 'customAcp' =>
-        typeof value === 'string' && ['codex', 'customAcp'].includes(value),
-    getAgentCore: () => ({
-        sessionStorage: { direct: true, persisted: true },
-        permissions: { modeGroup: 'codexLike' },
-        cli: { machineLoginKey: 'codex' },
-        ui: { agentPickerIconName: 'terminal-outline' },
-        displayNameKey: 'agent.codex',
-    }),
-    getAgentBehavior: () => ({
-        newSession: {
-            supportsTranscriptStorageMode: () => true,
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        AGENT_IDS: ['codex'],
+        DEFAULT_AGENT_ID: 'codex',
+        isBundledAgentId: (value: unknown): value is typeof actual.DEFAULT_AGENT_ID =>
+            typeof value === 'string' && value === 'codex',
+        getAgentCore: () => {
+            const core = actual.getAgentCore('codex');
+            return {
+                ...core,
+                sessionStorage: { ...core.sessionStorage, direct: true, persisted: true },
+                permissions: { ...core.permissions, modeGroup: 'codexLike' },
+                cli: { ...core.cli, machineLoginKey: 'codex' },
+                ui: { ...core.ui, agentPickerIconName: 'terminal-outline' },
+            };
         },
-    }),
-}));
+        getAgentBehavior: () => {
+            const behavior = actual.getAgentBehavior('codex');
+            return {
+                ...behavior,
+                newSession: {
+                    ...behavior.newSession,
+                    supportsTranscriptStorageMode: () => true,
+                },
+            };
+        },
+    };
+});
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
@@ -81,9 +105,9 @@ function buildProfile(overrides: Record<string, unknown> = {}): AIBackendProfile
         defaultPersistenceModeByTargetKey: {},
         compatibility: { codex: true, claude: true, gemini: true },
         compatibilityByTargetKey: {
-            'agent:codex': true,
-            'agent:claude': true,
-            'agent:gemini': true,
+            [builtInBackendTargetKey('codex')]: true,
+            [builtInBackendTargetKey('claude')]: true,
+            [builtInBackendTargetKey('gemini')]: true,
         },
         envVarRequirements: [],
         isBuiltIn: false,
@@ -116,7 +140,7 @@ describe('ProfileEditForm default persistence mode', () => {
         await renderScreen(React.createElement(ProfileEditForm, {
                     profile: buildProfile({
                         defaultPersistenceModeByAgent: {},
-                        defaultPersistenceModeByTargetKey: { 'agent:codex': 'direct' },
+                        defaultPersistenceModeByTargetKey: { [builtInBackendTargetKey('codex')]: 'direct' },
                     }),
                     machineId: null,
                     onSave,
@@ -131,7 +155,7 @@ describe('ProfileEditForm default persistence mode', () => {
         const saved = onSave.mock.calls[0]?.[0];
         expect(saved).toBeTruthy();
         expect(saved).toEqual(expect.objectContaining({
-            defaultPersistenceModeByTargetKey: { 'agent:codex': 'direct' },
+            defaultPersistenceModeByTargetKey: { [builtInBackendTargetKey('codex')]: 'direct' },
         }));
         expect(saved!.defaultPersistenceModeByAgent).toEqual({});
     });
@@ -143,16 +167,16 @@ describe('ProfileEditForm default persistence mode', () => {
         await renderScreen(React.createElement(ProfileEditForm, {
                     profile: buildProfile({
                         defaultPermissionModeByTargetKey: {
-                            'agent:codex': 'read-only',
-                            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: 'safe-yolo',
+                            [builtInBackendTargetKey('codex')]: 'read-only',
+                            [configuredBackendTargetKey('custom-preset')]: 'safe-yolo',
                         },
                         defaultPersistenceModeByTargetKey: {
-                            'agent:codex': 'direct',
-                            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: 'persisted',
+                            [builtInBackendTargetKey('codex')]: 'direct',
+                            [configuredBackendTargetKey('custom-preset')]: 'persisted',
                         },
                         compatibilityByTargetKey: {
-                            'agent:codex': true,
-                            [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: true,
+                            [builtInBackendTargetKey('codex')]: true,
+                            [configuredBackendTargetKey('custom-preset')]: true,
                         },
                     }),
                     machineId: null,
@@ -164,19 +188,19 @@ describe('ProfileEditForm default persistence mode', () => {
         expect(saveRef.current).toBeTruthy();
         const result = saveRef.current?.();
         expect(result).toBe(true);
-        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
-            compatibilityByTargetKey: {
-                'agent:codex': true,
-                [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: true,
-            },
-            defaultPermissionModeByTargetKey: {
-                'agent:codex': 'read-only',
-                [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: 'safe-yolo',
-            },
-            defaultPersistenceModeByTargetKey: {
-                'agent:codex': 'direct',
-                [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-preset' })]: 'persisted',
-            },
+        expect(onSave.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            compatibilityByTargetKey: expect.objectContaining({
+                [builtInBackendTargetKey('codex')]: true,
+                [configuredBackendTargetKey('custom-preset')]: true,
+            }),
+            defaultPermissionModeByTargetKey: expect.objectContaining({
+                [builtInBackendTargetKey('codex')]: 'read-only',
+                [configuredBackendTargetKey('custom-preset')]: 'safe-yolo',
+            }),
+            defaultPersistenceModeByTargetKey: expect.objectContaining({
+                [builtInBackendTargetKey('codex')]: 'direct',
+                [configuredBackendTargetKey('custom-preset')]: 'persisted',
+            }),
         }));
     });
 
@@ -190,13 +214,13 @@ describe('ProfileEditForm default persistence mode', () => {
                         defaultPersistenceModeByAgent: {},
                         compatibility: {},
                         defaultPermissionModeByTargetKey: {
-                            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'read-only',
+                            [builtInBackendTargetKey('codex')]: 'read-only',
                         },
                         defaultPersistenceModeByTargetKey: {
-                            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
+                            [builtInBackendTargetKey('codex')]: 'direct',
                         },
                         compatibilityByTargetKey: {
-                            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+                            [builtInBackendTargetKey('codex')]: true,
                         },
                     }),
                     machineId: null,
@@ -213,14 +237,14 @@ describe('ProfileEditForm default persistence mode', () => {
         expect(saved).toBeTruthy();
         expect(saved).toEqual(expect.objectContaining({
             compatibility: {},
-            compatibilityByTargetKey: {
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
-            },
+            compatibilityByTargetKey: expect.objectContaining({
+                [builtInBackendTargetKey('codex')]: true,
+            }),
             defaultPermissionModeByTargetKey: {
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'read-only',
+                [builtInBackendTargetKey('codex')]: 'read-only',
             },
             defaultPersistenceModeByTargetKey: {
-                [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: 'direct',
+                [builtInBackendTargetKey('codex')]: 'direct',
             },
         }));
         expect(saved!.defaultPermissionModeByAgent).toEqual({});

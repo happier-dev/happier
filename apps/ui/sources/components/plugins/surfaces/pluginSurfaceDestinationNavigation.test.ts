@@ -135,7 +135,7 @@ describe('plugin surface destination navigation', () => {
 
         function LayoutOpeningChild(props: Readonly<{ revision: number }>) {
             React.useLayoutEffect(() => {
-                void binding.openSurface(request).then((outcome) => {
+                void Promise.resolve(binding.openSurface(request)).then((outcome) => {
                     outcomes.push(outcome);
                 });
             }, [props.revision]);

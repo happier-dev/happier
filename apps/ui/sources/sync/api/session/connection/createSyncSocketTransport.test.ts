@@ -80,7 +80,7 @@ describe('createSyncSocketTransport', () => {
                     clientPurpose: 'sync',
                     accountStoredContentCompatibility: {
                         v: 1,
-                        protocolVersion: 3,
+                        protocolVersion: 4,
                     },
                 }),
                 transports: ['websocket'],

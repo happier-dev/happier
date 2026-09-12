@@ -113,7 +113,7 @@ describe('admitDeclarativeStaticModel', () => {
     ) => {
         const complete = model({});
         const completeInventory = complete.declarativeInventory;
-        const candidateInventory = Object.fromEntries(Object.entries(completeInventory)
+        const candidateInventory: Record<string, unknown> = Object.fromEntries(Object.entries(completeInventory)
             .filter(([key]) => key !== inventoryKey));
         if (replacement !== undefined) candidateInventory[inventoryKey] = replacement;
 

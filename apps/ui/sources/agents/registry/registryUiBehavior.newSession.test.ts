@@ -28,19 +28,23 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
     });
 
     it('returns codex installable deps based on codex backend mode', () => {
-        const acp = makeSettings({ codexBackendMode: 'acp' });
+        const acp = makeSettings();
+        const acpPluginSettings = { account: { codexBackendMode: 'acp' } } as const;
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'codex',
             settings: acp,
-            experiments: getAgentResumeExperimentsFromSettings('codex', acp),
+            pluginSettings: acpPluginSettings,
+            experiments: getAgentResumeExperimentsFromSettings('codex', acp, null, acpPluginSettings),
             resumeSessionId: '',
         })).toEqual([INSTALLABLE_KEYS.CODEX_ACP]);
 
-        const mcp = makeSettings({ codexBackendMode: 'mcp' });
+        const mcp = makeSettings();
+        const mcpPluginSettings = { account: { codexBackendMode: 'mcp' } } as const;
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'codex',
             settings: mcp,
-            experiments: getAgentResumeExperimentsFromSettings('codex', mcp),
+            pluginSettings: mcpPluginSettings,
+            experiments: getAgentResumeExperimentsFromSettings('codex', mcp, null, mcpPluginSettings),
             resumeSessionId: 'x1',
         })).toEqual([]);
     });
@@ -67,7 +71,7 @@ describe('getNewSessionPreflightIssues', () => {
             id: 'agent-plugin-settings-loading',
             titleKey: 'settingsPlugins.genericSettingsTitle',
             messageKey: 'settingsPlugins.genericSettingsLoading',
-            confirmTextKey: 'common.openMachine',
+            confirmTextKey: 'connect.openMachine',
             action: 'openMachine',
         });
         expect(getNewSessionPreflightIssues({
@@ -85,14 +89,16 @@ describe('getNewSessionPreflightIssues', () => {
     });
 
     it('returns codex preflight issues based on machine results (deps missing)', () => {
-        const settings = makeSettings({ codexBackendMode: 'acp' });
+        const settings = makeSettings();
+        const pluginSettings = { account: { codexBackendMode: 'acp' } } as const;
         const issues = getNewSessionPreflightIssues({
             agentId: 'codex',
-            experiments: getAgentResumeExperimentsFromSettings('codex', settings),
+            experiments: getAgentResumeExperimentsFromSettings('codex', settings, null, pluginSettings),
             resumeSessionId: 'x1',
             results: makeResults({
                 [CODEX_ACP_DEP_ID]: okCapability({ installed: false }),
             }),
+            pluginSettings,
         });
         // Codex ACP is handled via background install + daemon fresh-session fallback, so the wizard
         // should not hard-block when the optional dependency is not installed yet.

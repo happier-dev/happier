@@ -245,11 +245,10 @@ describe('SelectionList rows — the flush presentation is untouched', () => {
                     virtualization,
                 });
                 for (const id of ['m-0', 'm-1', 'm-2', 'm-3']) {
-                    // The flush row carries no style prop at all, which is what
-                    // lets `Item` resolve the user's density exactly as it does
-                    // in every other list.
-                    expect(screen.findByTestId(`sl:root:option-wrapper:${id}`)?.props.style)
-                        .toBeUndefined();
+                    // Multi-column layout may add width/flex sizing to the
+                    // wrapper, but a flush row never gains the card-only gap.
+                    expect(flattenStyle(screen.findByTestId(`sl:root:option-wrapper:${id}`)?.props.style))
+                        .not.toHaveProperty('marginTop');
                 }
                 for (const row of columnRows(screen)) {
                     // An `ItemGroup`'s dividers assume its rows meet flush.

@@ -1,11 +1,14 @@
 import type { ReactNode } from 'react';
 import {
+    AgentExecutionTargetV1Schema,
+    buildQualifiedPluginContributionKey,
     buildBackendTargetKeyV2,
     readAcpConfiguredBackendV1FromMetadata,
     readBackendTargetRefV2,
     SessionModelSelectionIntentV1Schema,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
+    type AgentExecutionTargetV1,
     AccountProfile,
     type ExternalSessionsAgentId,
     type AcpConfigOptionOverridesV1,
@@ -40,6 +43,7 @@ import {
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS,
     type BundledAgentUiBehaviorDescriptor,
 } from './generatedBundledPluginEntries.uiBehaviorOverrides';
+import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from './generatedBundledPluginEntries';
 import {
     createAgentUiBehaviorFromDescriptor,
     readOwnerMetadataFromSessionLike,
@@ -197,7 +201,8 @@ export type AgentBackendTransportFields = Readonly<{
 
 export type AgentBackendTransportContext = Readonly<{
     agentId: AgentLookupId;
-    backendTarget: BackendTargetRefV2;
+    agentTarget?: AgentExecutionTargetV1;
+    backendTarget?: BackendTargetRefV2;
     providerMode?: unknown;
     legacyExperimentalMode?: boolean;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
@@ -480,7 +485,7 @@ export function resolveAgentPluginSettingsPreflightIssue(
         id: `agent-plugin-settings-${readiness.error ?? (readiness.loading ? 'loading' : 'unavailable')}`,
         titleKey: 'settingsPlugins.genericSettingsTitle',
         messageKey,
-        confirmTextKey: 'common.openMachine',
+        confirmTextKey: 'connect.openMachine',
         action: 'openMachine',
     };
 }
@@ -916,7 +921,7 @@ export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): r
     const pluginSettingsIssue = resolveAgentPluginSettingsPreflightIssue(ctx.pluginSettingsReadiness);
     if (pluginSettingsIssue) return [pluginSettingsIssue];
     const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.getPreflightIssues;
-    return fn ? fn({ ...ctx, settings: mergeAgentBehaviorSettings(ctx.settings, ctx.pluginSettings) }) : [];
+    return fn ? fn(ctx) : [];
 }
 
 export function buildNewSessionOptionsFromUiState(opts: {
@@ -1055,24 +1060,45 @@ function resolveAgentIdFromBackendTarget(input: BackendTargetRefV2Input | undefi
     return target.backendId;
 }
 
+function resolveAgentIdFromExecutionTarget(input: AgentExecutionTargetV1 | undefined): AgentId | null {
+    const parsed = AgentExecutionTargetV1Schema.safeParse(input);
+    if (!parsed.success) return null;
+    for (const bundledAgentId of CANONICAL_AGENT_IDS) {
+        const bundledIdentity = BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES[bundledAgentId];
+        if (
+            bundledIdentity.pluginId === parsed.data.identity.pluginId
+            && bundledIdentity.localId === parsed.data.identity.localId
+        ) {
+            return bundledAgentId;
+        }
+    }
+    return buildQualifiedPluginContributionKey(parsed.data.identity);
+}
+
 export function buildBackendTransportFieldsFromUiState(opts: Readonly<{
     /** Exact daemon target that will consume the transport fields. */
     machineId: string | null;
+    agentTarget?: AgentExecutionTargetV1;
     backendTarget?: BackendTargetRefV2Input;
     providerMode?: unknown;
     legacyExperimentalMode?: boolean;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     providerSessionId?: string;
 }>): AgentBackendTransportFields {
+    const agentTarget = opts.agentTarget
+        ? AgentExecutionTargetV1Schema.parse(opts.agentTarget)
+        : undefined;
     const backendTarget = readCanonicalBackendTarget(opts.backendTarget);
-    const agentId = resolveAgentIdFromBackendTarget(opts.backendTarget);
-    if (!backendTarget || !agentId) return {};
+    const agentId = resolveAgentIdFromExecutionTarget(agentTarget)
+        ?? resolveAgentIdFromBackendTarget(opts.backendTarget);
+    if (!agentId || (!agentTarget && !backendTarget)) return {};
 
     const fn = resolveAgentUiBehavior(agentId, opts.machineId).payload?.buildBackendTransportFields;
     return fn
         ? fn({
             agentId,
-            backendTarget,
+            ...(agentTarget ? { agentTarget } : {}),
+            ...(backendTarget ? { backendTarget } : {}),
             providerMode: opts.providerMode,
             legacyExperimentalMode: opts.legacyExperimentalMode,
             runtimeDescriptorV1: opts.runtimeDescriptorV1,

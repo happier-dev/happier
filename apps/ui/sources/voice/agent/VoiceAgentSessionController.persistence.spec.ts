@@ -45,7 +45,7 @@ function buildExecutionRunPublicState(
     callId: 'call_1',
     sidechainId: 'sidechain_1',
     intent: 'voice_agent',
-    backendTarget: { kind: 'backend', backendId: 'claude' },
+    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
     permissionMode: 'read_only',
     retentionPolicy: 'resumable',
     runClass: 'long_lived',
@@ -564,7 +564,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         }),
         buildExecutionRunPublicState({
           runId: 'run_other_backend',
-          backendTarget: { kind: 'backend', backendId: 'codex' },
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
           startedAtMs: 30,
         }),
       ],

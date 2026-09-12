@@ -79,7 +79,8 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/text/i18n', () => ({
+vi.mock('@/text/i18n', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/text/i18n')>()),
     setPreferredLanguageFromSettings: vi.fn(),
 }));
 

@@ -47,15 +47,6 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
-vi.mock('@/constants/Typography', () => ({
-    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-        tabular: () => ({}),
-    },
-}));
-
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (fn: any) => fn(),
 }));

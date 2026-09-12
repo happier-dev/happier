@@ -160,6 +160,7 @@ const EXPECTED_GENERIC_DESTINATION_HOST_METHODS = [
     'executeAction',
     'readResource',
     'watchResource',
+    'openConnectedAccounts',
     'notify',
     'confirm',
     'diagnostic',

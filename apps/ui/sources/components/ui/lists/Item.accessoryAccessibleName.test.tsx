@@ -2,7 +2,7 @@ import React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen, type RenderScreenResult } from '@/dev/testkit';
 
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
@@ -25,7 +25,7 @@ vi.mock('react-native', async () => {
  * the accessible name off that same node.
  */
 function findControlsByRole(screen: RenderScreenResult, role: string): ReactTestInstance[] {
-    return screen.findAll((node) => (
+    return findAllHostTestInstances(screen.root, (node) => (
         node.props?.role === role || node.props?.accessibilityRole === role
     ));
 }

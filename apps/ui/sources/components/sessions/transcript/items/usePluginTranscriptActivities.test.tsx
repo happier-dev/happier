@@ -175,6 +175,7 @@ describe('plugin transcript Activity Resource projection', () => {
         const account = createAccountLifetime('dismissal-retirement');
         const sessionA = 'dismissal-retirement-session-a';
         let latest: ReturnType<typeof usePluginTranscriptActivityDismissal> | null = null;
+        const readLatest = () => latest;
         function Probe(props: Readonly<{ sessionId: string }>) {
             latest = usePluginTranscriptActivityDismissal({
                 accountLifetime: account.lifetime,
@@ -196,7 +197,7 @@ describe('plugin transcript Activity Resource projection', () => {
             tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId="dismissal-retirement-session-b" /></PluginTranscriptActivityDismissalProvider>);
             await Promise.resolve();
         });
-        expect(latest?.dismissedActivityIds).toEqual(new Set());
+        expect(readLatest()?.dismissedActivityIds).toEqual(new Set());
 
         await act(async () => {
             storage.getState().deleteSession(sessionA);
@@ -206,13 +207,14 @@ describe('plugin transcript Activity Resource projection', () => {
             tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId={sessionA} /></PluginTranscriptActivityDismissalProvider>);
             await Promise.resolve();
         });
-        expect(latest?.dismissedActivityIds).toEqual(new Set());
+        expect(readLatest()?.dismissedActivityIds).toEqual(new Set());
         await act(async () => { tree?.unmount(); });
     });
 
     it('retires a dormant prior-generation dismissal when the same Session is reacquired at a new generation', async () => {
         const account = createAccountLifetime('generation-retirement');
         let latest: ReturnType<typeof usePluginTranscriptActivityDismissal> | null = null;
+        const readLatest = () => latest;
         function Probe(props: Readonly<{ sessionId: string; generation: string }>) {
             latest = usePluginTranscriptActivityDismissal({
                 accountLifetime: account.lifetime,
@@ -247,7 +249,7 @@ describe('plugin transcript Activity Resource projection', () => {
             tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId="generation-session-a" generation="1" /></PluginTranscriptActivityDismissalProvider>);
             await Promise.resolve();
         });
-        expect(latest?.dismissedActivityIds).toEqual(new Set());
+        expect(readLatest()?.dismissedActivityIds).toEqual(new Set());
         await act(async () => { tree?.unmount(); });
     });
 

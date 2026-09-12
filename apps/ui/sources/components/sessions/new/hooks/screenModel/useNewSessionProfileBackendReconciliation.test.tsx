@@ -1,7 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionModelSelectionV1Schema, type BackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import {
+    SessionModelSelectionV1Schema,
+    type BackendTargetRefV2,
+    type PersistedBackendTargetRefV2,
+    type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -96,7 +101,7 @@ type HarnessProps = Readonly<{
 
 function useHarness(props: HarnessProps) {
     const [selectedProfileId, setSelectedProfileId] = React.useState<string | null>(props.initialSelectedProfileId);
-    const [backendTarget, setBackendTarget] = React.useState<BackendTargetRefV2>(props.initialBackendTarget);
+    const [backendTarget, setBackendTarget] = React.useState<PersistedBackendTargetRefV2>(props.initialBackendTarget);
     const hasUserSelectedPermissionModeRef = React.useRef(false);
     const permissionModeRef = React.useRef<PermissionMode>('default');
     const hasUserTouchedProfileSelectionRef = React.useRef(false);

@@ -174,6 +174,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -216,6 +217,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             favoriteBackendTargetKeys: [codexEntry.backendTargetKey],
@@ -268,6 +270,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             favoriteModelSelections: [
@@ -316,6 +319,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             favoriteModelSelections: [
@@ -358,6 +362,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             favoriteModelSelections: [
@@ -443,6 +448,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setEngineSelectionForBackendTarget,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             favoriteModelSelections: [{ selection: providerSelection }],
@@ -489,6 +495,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             favoriteModelSelections: [
@@ -532,6 +539,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -586,6 +594,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -617,6 +626,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -652,6 +662,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -685,6 +696,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -716,6 +728,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             rememberedAgentPickerView: {
@@ -755,6 +768,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: setSessionConfigOptionOverrides as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
             refreshProbe,
@@ -841,6 +855,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -872,6 +887,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: vi.fn() as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -910,6 +926,7 @@ describe('useNewSessionAgentPickerControls', () => {
             setSessionConfigOptionOverrides: setSessionConfigOptionOverrides as any,
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as any,
         }));
@@ -952,7 +969,9 @@ describe('useNewSessionAgentPickerControls', () => {
 
         function useHarness() {
             const [backendTarget, setBackendTarget] = React.useState(claudeEntry.backendTarget);
-            const selectedEntry = backendTarget.backendId === 'codex' ? codexEntry : claudeEntry;
+            const selectedEntry = backendTarget.kind === 'backend' && backendTarget.backendId === 'codex'
+                ? codexEntry
+                : claudeEntry;
             const authoring = useNewSessionAgentAuthoringOptionsState({
                 agentType: selectedEntry.catalogAgentId as AgentId,
                 backendTargetKey: selectedEntry.backendTargetKey,
@@ -980,6 +999,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 setEngineSelectionForBackendTarget: authoring.setEngineSelectionForBackendTarget,
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
+                projectionCurrent: true,
                 selectedPath: '/repo',
                 settings: {} as any,
             });

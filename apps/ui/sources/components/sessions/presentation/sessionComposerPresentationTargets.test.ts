@@ -503,13 +503,17 @@ describe('composer presentation targets', () => {
             content: stagedMedia,
         };
         const baseTarget = createDocumentTarget(createSnapshot());
+        const commitBaseDocument = baseTarget.commitDocument;
+        if (!commitBaseDocument) {
+            throw new Error('test fixture must expose a document commit owner');
+        }
         let snapshotReads = 0;
         const target = {
             ...baseTarget,
             readSnapshot: () => {
                 snapshotReads += 1;
                 if (snapshotReads === 1) return baseTarget.readCurrent();
-                baseTarget.commitDocument({
+                commitBaseDocument({
                     expectedRevision: 1,
                     mutation: {
                         text: '',

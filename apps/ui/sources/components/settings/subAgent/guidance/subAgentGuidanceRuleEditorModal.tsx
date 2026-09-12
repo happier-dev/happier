@@ -318,7 +318,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                 </View>
                               ),
                           },
-                          ...backendEntries.map((entry) => ({
+                          ...backendEntries.filter((entry) => entry.backendTarget.kind === 'backend').map((entry) => ({
                               id: entry.backendTargetKey,
                               title: entry.title,
                               subtitle: entry.subtitle ?? undefined,
@@ -337,7 +337,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             return;
                         }
                         const resolved = backendEntries.find((entry) => entry.backendTargetKey === next) ?? null;
-                        if (!resolved) return;
+                        if (!resolved || resolved.backendTarget.kind !== 'backend') return;
                         setBackendTarget(resolved.backendTarget);
                         setModelId(undefined);
                     }}

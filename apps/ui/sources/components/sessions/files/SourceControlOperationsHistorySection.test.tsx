@@ -18,9 +18,10 @@ function makeEntries(count: number) {
     })) as any[];
 }
 
-function getCommitRows(screen: { findAllByTestId: (testID: string) => unknown[] }, count: number) {
+function getCommitRows(screen: { findHostByTestId: (testID: string) => unknown | null }, count: number) {
     return Array.from({ length: count }, (_, index) => `scm-commit-entry-sha-${index + 1}`)
-        .flatMap((testID) => screen.findAllByTestId(testID));
+        .map((testID) => screen.findHostByTestId(testID))
+        .filter((row) => row !== null);
 }
 
 describe('SourceControlOperationsHistorySection', () => {
@@ -64,10 +65,10 @@ describe('SourceControlOperationsHistorySection', () => {
         const commitRowsBefore = getCommitRows(screen, 12);
         expect(commitRowsBefore).toHaveLength(12);
 
-        const headBadges = screen.findAllByTestId('scm-commit-entry-head-badge');
+        const headBadges = screen.findAllHostsByTestId('scm-commit-entry-head-badge');
         expect(headBadges).toHaveLength(1);
 
-        const loadMore = screen.findAllByTestId('scm-commit-load-more');
+        const loadMore = screen.findAllHostsByTestId('scm-commit-load-more');
         expect(loadMore).toHaveLength(1);
 
         await act(async () => {
@@ -96,7 +97,7 @@ describe('SourceControlOperationsHistorySection', () => {
         const commitRows = getCommitRows(screen, 10);
         expect(commitRows).toHaveLength(10);
 
-        const loadMore = screen.findAllByTestId('scm-commit-load-more');
+        const loadMore = screen.findAllHostsByTestId('scm-commit-load-more');
         expect(loadMore).toHaveLength(0);
     });
 
@@ -113,7 +114,7 @@ describe('SourceControlOperationsHistorySection', () => {
                     onOpenCommit={vi.fn()}
                 />);
 
-        const loadMore = screen.findAllByTestId('scm-commit-load-more');
+        const loadMore = screen.findAllHostsByTestId('scm-commit-load-more');
         expect(loadMore).toHaveLength(1);
 
         await act(async () => {
@@ -137,7 +138,7 @@ describe('SourceControlOperationsHistorySection', () => {
                     onOpenCommit={onOpenCommit}
                 />);
 
-        const firstCommit = screen.findAllByTestId('scm-commit-entry-sha-1');
+        const firstCommit = screen.findAllHostsByTestId('scm-commit-entry-sha-1');
         expect(firstCommit).toHaveLength(1);
 
         await act(async () => {

@@ -283,6 +283,10 @@ describe('PublicShareViewerScreen (e2ee)', () => {
         try {
             await flushHookEffects({ cycles: 1, turns: 2 });
 
+            await vi.waitFor(() => {
+                expect(transcriptListSpy).toHaveBeenCalled();
+            });
+
             const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
             expect(last?.messages ?? []).toEqual([]);
             expect(last?.metadata?.externalSessionOperationPresentationV1).toEqual(

@@ -69,7 +69,10 @@ function resolveTargetScopedAuthoringDraft<Draft extends TempAuthoringDraftLike 
         if (params.allowTargetlessDraftEngineSelection === false) return null;
         return params.backendTargetKey ? null : params.draft;
     }
-    return backendTargetKeysMatch(draftBackendTargetKey, params.backendTargetKey) ? params.draft : null;
+    return params.backendTargetKey
+        && backendTargetKeysMatch(draftBackendTargetKey, params.backendTargetKey)
+        ? params.draft
+        : null;
 }
 
 type ResolvedAuthoringModelState = Readonly<{

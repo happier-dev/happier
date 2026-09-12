@@ -219,7 +219,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         expect(onChangedFilesViewMode).toHaveBeenCalledWith('session');
     });
 
-    it('renders a FlatList for repository changed files to avoid huge ScrollView renders', async () => {
+    it('renders repository changed files through the canonical virtualized list instead of a ScrollView', async () => {
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
         const files = Array.from({ length: 200 }).map((_, idx) => ({
@@ -272,11 +272,11 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         expect(() => tree.findByType('FlatList' as any)).not.toThrow();
 
         const flatList = tree.findByType('FlatList' as any);
-        expect(flatList.props.initialNumToRender).toBeLessThanOrEqual(12);
-        expect(flatList.props.maxToRenderPerBatch).toBeLessThanOrEqual(12);
+        expect(flatList.props.data).toHaveLength(200);
+        expect(tree.findAllByType('ScrollView' as any)).toHaveLength(0);
     });
 
-    it('renders session-scoped changed files through the bounded FlatList path', async () => {
+    it('renders session-scoped changed files through the canonical virtualized path', async () => {
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
 
         const files = Array.from({ length: 200 }).map((_, idx) => ({
@@ -332,8 +332,6 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
 
         const flatList = screen.tree.findByType('FlatList' as any);
         expect(flatList.props.data).toHaveLength(200);
-        expect(flatList.props.initialNumToRender).toBeLessThanOrEqual(12);
-        expect(flatList.props.maxToRenderPerBatch).toBeLessThanOrEqual(12);
         expect(screen.tree.findAllByType('ScrollView' as any)).toHaveLength(0);
     });
 

@@ -46,10 +46,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
-}));
-
 vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
     useChromeSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));

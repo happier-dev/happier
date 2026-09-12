@@ -1,7 +1,8 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { createDeferred, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import {
@@ -55,6 +56,8 @@ const modalPrompt = vi.fn();
 const reorderPendingMessages = vi.fn();
 const executeDefaultAction = vi.fn();
 const resolvePreferredServerIdForSessionId = vi.fn();
+const resolvePendingDeliveryLabelKeyForSession = vi.hoisted(() => vi.fn());
+const resolvePendingDeliveryTransientActionForSession = vi.hoisted(() => vi.fn());
 const setClipboardStringSafe = vi.hoisted(() => vi.fn(async (_value: string) => true));
 const serverFeaturesSnapshotState = vi.hoisted(() => ({
     current: { status: 'loading' } as any,
@@ -65,7 +68,7 @@ let settingValues: Record<string, unknown> = {};
 
 installPendingMessagesCommonModuleMocks({
     storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit');
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
             useSession: () => sessionValue,
             useSetting: (key: string) => settingValues[key],
@@ -130,55 +133,13 @@ installPendingMessagesCommonModuleMocks({
     }),
 });
 
-const agentCatalogMocks = vi.hoisted(() => {
-    const resolveAgentIdFromFlavor = (flavor: unknown) => {
-        if (flavor === 'claude') return 'claude';
-        if (flavor === 'codex') return 'codex';
-        if (flavor === 'pi') return 'pi';
-        return null;
-    };
-    const getAgentCore = (agentId: string) => ({
-        id: agentId,
-        permissions: {
-            promptProtocol: agentId === 'codex' ? 'codexDecision' : 'claude',
-        },
-        sessionStorage: {
-            direct: true,
-            persisted: true,
-        },
-        model: {
-            defaultMode: 'default',
-            supportsSelection: false,
-        },
-        resume: {},
-        runtimeInput: {
-            inFlightSteerSupported: agentId === 'pi',
-        },
+vi.mock('@/agents/registry/registryUiBehavior', async () => {
+    const { createRegistryUiBehaviorModuleMock } = await import('@/dev/testkit/mocks/registryUiBehavior');
+    return createRegistryUiBehaviorModuleMock({
+        resolvePendingDeliveryLabelKeyForSession: (...args) => resolvePendingDeliveryLabelKeyForSession(...args),
+        resolvePendingDeliveryTransientActionForSession: (...args) => resolvePendingDeliveryTransientActionForSession(...args),
     });
-    return { getAgentCore, resolveAgentIdFromFlavor };
 });
-
-vi.mock('@/agents/registry/registryCore', () => ({
-    AGENT_IDS: ['claude', 'codex', 'pi'],
-    CANONICAL_AGENT_IDS: ['claude', 'codex', 'pi'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentCore: agentCatalogMocks.getAgentCore,
-    resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
-    resolveAgentIdFromSessionMetadata: (metadata: unknown) => {
-        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
-        return agentCatalogMocks.resolveAgentIdFromFlavor((metadata as { flavor?: unknown }).flavor);
-    },
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentCore: agentCatalogMocks.getAgentCore,
-    isBundledAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
-    resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
-    buildWakeResumeExtras: ({ session }: { session?: { metadata?: Record<string, unknown> } | null }) => {
-        const connectedServices = session?.metadata?.connectedServices;
-        return connectedServices ? { connectedServices } : {};
-    },
-}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -285,7 +246,6 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 describe('PendingMessagesTranscriptBlock', () => {
     beforeEach(() => {
-        vi.resetModules();
         sendPendingMessageNow.mockReset();
         sendPendingMessageNow.mockResolvedValue({ type: 'committed', persistence: 'provider_direct' });
         deletePendingMessage.mockReset();
@@ -302,6 +262,10 @@ describe('PendingMessagesTranscriptBlock', () => {
         executeDefaultAction.mockReset();
         executeDefaultAction.mockResolvedValue({ ok: true, result: { ok: true, status: 'cleared', sessionId: 's1' } });
         resolvePreferredServerIdForSessionId.mockReset();
+        resolvePendingDeliveryLabelKeyForSession.mockReset();
+        resolvePendingDeliveryLabelKeyForSession.mockReturnValue(null);
+        resolvePendingDeliveryTransientActionForSession.mockReset();
+        resolvePendingDeliveryTransientActionForSession.mockReturnValue(null);
         setClipboardStringSafe.mockReset();
         setClipboardStringSafe.mockResolvedValue(true);
         serverFeaturesSnapshotState.current = { status: 'loading' };
@@ -1343,8 +1307,16 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.sendNow:p-handoff')).toBeNull();
     });
 
-    it('labels exact Claude-native custody as Queued in Claude', async () => {
+    it('renders the registry-provided Claude custody label and interrupt action', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        resolvePendingDeliveryLabelKeyForSession.mockReturnValue(
+            'session.pendingMessages.deliveryStatus.queuedInClaude',
+        );
+        resolvePendingDeliveryTransientActionForSession.mockReturnValue({
+            id: 'interrupt_and_run',
+            localId: 'p-delivering',
+            stateAtMs: 42,
+        });
         serverFeaturesSnapshotState.current = {
             status: 'ready',
             features: {
@@ -1389,6 +1361,16 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:server-p-delivering')?.props.children)
             .toBe('Queued in Claude');
+        expect(resolvePendingDeliveryLabelKeyForSession).toHaveBeenCalledWith({
+            session: sessionValue,
+            localId: 'p-delivering',
+            detail: undefined,
+        });
+        expect(resolvePendingDeliveryTransientActionForSession).toHaveBeenCalledWith({
+            session: sessionValue,
+            localId: 'p-delivering',
+            wireMode: 'pending_input_v1',
+        });
         expect(resolvePreferredServerIdForSessionId).toHaveBeenCalledWith('s1');
 
         modalConfirm.mockResolvedValueOnce(true);

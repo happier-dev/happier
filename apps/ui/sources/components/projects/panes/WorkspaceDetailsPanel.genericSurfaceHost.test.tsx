@@ -5,9 +5,6 @@ import { renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const detailsSurfaceHostSpy = vi.hoisted(() => vi.fn((props: unknown) => React.createElement('DetailsSurfaceHostMock', { props })));
-const pluginSurfacePlacementStackSpy = vi.hoisted(() => vi.fn((props: unknown) => (
-    React.createElement('PluginSurfacePlacementStackMock', { props })
-)));
 const detailsSplitWorkspaceSpy = vi.hoisted(() => vi.fn((props: any) => React.createElement(
     React.Fragment,
     null,
@@ -25,10 +22,6 @@ const detailsSplitWorkspaceSpy = vi.hoisted(() => vi.fn((props: any) => React.cr
 vi.mock('@/components/appShell/panes/details/surfaces', () => ({
     DetailsSurfaceHost: (props: unknown) => detailsSurfaceHostSpy(props),
     createDetailsSurfacePaneCallbacks: (callbacks: unknown) => callbacks,
-}));
-
-vi.mock('@/components/plugins/surfaces/PluginSurfacePlacementStack', () => ({
-    PluginSurfacePlacementStack: (props: unknown) => pluginSurfacePlacementStackSpy(props),
 }));
 
 vi.mock('expo-router', () => createExpoRouterMock().module);
@@ -141,9 +134,36 @@ describe('WorkspaceDetailsPanel generic details surface host adapter', () => {
         }));
     });
 
-    it('mounts workspace details plugin surface placements from the overview insertion point', async () => {
+    it('registers the canonical project plugin destination renderer with the details host', async () => {
         const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
-        pluginSurfacePlacementStackSpy.mockClear();
+        detailsSurfaceHostSpy.mockClear();
+
+        await renderScreen(
+            <WorkspaceDetailsPanel
+                workspaceRef={{
+                    id: 'wr_1',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo/main',
+                    label: 'Repo',
+                } as any}
+                scopeId="project:wr_1"
+                activeRootPath="/repo/main"
+                {...({ pluginUiProjection: { generation: 1 }, platform: 'web' } as any)}
+            />,
+        );
+
+        const hostProps = detailsSurfaceHostSpy.mock.calls.at(-1)?.[0] as {
+            renderers?: readonly { id: string; owner: string }[];
+        } | undefined;
+        expect(hostProps?.renderers).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'plugin-details-destination:project', owner: 'plugin' }),
+        ]));
+    });
+
+    it('keeps the workspace overview content while the generic details renderer set is available', async () => {
+        const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
+        detailsSplitWorkspaceSpy.mockClear();
 
         await renderScreen(
             <WorkspaceDetailsPanel
@@ -160,47 +180,15 @@ describe('WorkspaceDetailsPanel generic details surface host adapter', () => {
             />,
         );
 
-        expect(pluginSurfacePlacementStackSpy).toHaveBeenCalledWith(expect.objectContaining({
-            placement: 'workspace.details',
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            platform: 'web',
-            pluginUiProjection: { generation: 1 },
+        expect(detailsSplitWorkspaceSpy).toHaveBeenCalledWith(expect.objectContaining({
+            renderEmptyState: expect.any(Function),
+            renderTabContent: expect.any(Function),
         }));
     });
 
-    it('mounts workspace main plugin surface placements without replacing the overview content', async () => {
+    it('derives project details scope from the panel owner without a placement-scope override', async () => {
         const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
-        pluginSurfacePlacementStackSpy.mockClear();
-
-        await renderScreen(
-            <WorkspaceDetailsPanel
-                workspaceRef={{
-                    id: 'wr_1',
-                    serverId: 'server-1',
-                    machineId: 'machine-1',
-                    rootPath: '/repo/main',
-                    label: 'Repo',
-                } as any}
-                scopeId="workspace:wr_1"
-                activeRootPath="/repo/main"
-                {...({ pluginUiProjection: { generation: 1 }, platform: 'web' } as any)}
-            />,
-        );
-
-        expect(pluginSurfacePlacementStackSpy).toHaveBeenCalledWith(expect.objectContaining({
-            placement: 'workspace.main',
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            platform: 'web',
-            pluginUiProjection: { generation: 1 },
-        }));
-        expect(detailsSplitWorkspaceSpy).toHaveBeenCalled();
-    });
-
-    it('mounts project main plugin surface placements from project-scoped main content', async () => {
-        const { WorkspaceDetailsPanel } = await import('./WorkspaceDetailsPanel');
-        pluginSurfacePlacementStackSpy.mockClear();
+        detailsSurfaceHostSpy.mockClear();
 
         await renderScreen(
             <WorkspaceDetailsPanel
@@ -213,24 +201,19 @@ describe('WorkspaceDetailsPanel generic details surface host adapter', () => {
                 } as any}
                 scopeId="project:wr_1"
                 activeRootPath="/repo/worktree-a"
-                pluginSurfacePlacementScope="project"
                 {...({ pluginUiProjection: { generation: 2 }, platform: 'web' } as any)}
             />,
         );
 
-        expect(pluginSurfacePlacementStackSpy).toHaveBeenCalledWith(expect.objectContaining({
-            placement: 'project.main',
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            platform: 'web',
-            pluginUiProjection: { generation: 2 },
-        }));
-        expect(pluginSurfacePlacementStackSpy).toHaveBeenCalledWith(expect.objectContaining({
-            placement: 'project.details',
-            machineId: 'machine-1',
-            serverId: 'server-1',
-            platform: 'web',
-            pluginUiProjection: { generation: 2 },
+        expect(detailsSurfaceHostSpy).toHaveBeenCalledWith(expect.objectContaining({
+            scope: expect.objectContaining({
+                kind: 'project',
+                workspaceRefId: 'wr_1',
+                activeRootPath: '/repo/worktree-a',
+            }),
+            renderers: expect.arrayContaining([
+                expect.objectContaining({ id: 'plugin-details-destination:project', owner: 'plugin' }),
+            ]),
         }));
     });
 });

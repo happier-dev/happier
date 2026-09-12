@@ -1109,6 +1109,7 @@ describe('BundledSpeechSettings', () => {
       }),
       setVoice: vi.fn(),
       popoverBoundaryRef: null,
+      networkTimeoutMs: 15_000,
     }));
 
     expect(rendered.tree.root.findByType('VoiceCredentialItem' as never).props).toMatchObject({
@@ -1299,6 +1300,7 @@ describe('BundledSpeechSettings', () => {
       }),
       setVoice: vi.fn(),
       popoverBoundaryRef: null,
+      networkTimeoutMs: 15_000,
     }));
 
     expect(rendered.tree.root.findByType('VoiceCredentialItem' as never).props)

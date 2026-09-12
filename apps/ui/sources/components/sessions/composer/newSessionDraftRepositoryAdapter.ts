@@ -23,6 +23,7 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 
 function strictJson(value: unknown): StrictJsonValue {
     return StrictJsonValueSchema.parse(value);
@@ -95,7 +96,7 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
         sessionConfigOptionOverrides: localState?.sessionConfigOptionOverrides ?? null,
         backendNewSessionOptionStateByTargetKey: localState?.backendNewSessionOptionStateByTargetKey ?? null,
         ...(authoring.resumeSessionId ? { resumeSessionId: authoring.resumeSessionId } : {}),
-        ...(authoring.automation ? { automationDraft: authoring.automation } : {}),
+        ...(authoring.automation ? { automationDraft: sanitizeNewSessionAutomationDraft(authoring.automation) } : {}),
         updatedAt: snapshot.updatedAt,
     };
 }

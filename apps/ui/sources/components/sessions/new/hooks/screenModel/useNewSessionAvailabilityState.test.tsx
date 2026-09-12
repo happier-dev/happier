@@ -108,6 +108,7 @@ describe('useNewSessionAvailabilityState', () => {
             resolvedBackendEntries: [
                 {
                     family: 'builtInAgent',
+                    agentId: 'claude',
                     builtInAgentId: 'claude',
                     target: { kind: 'builtInAgent', agentId: 'claude' },
                     targetKey: 'agent:claude',
@@ -115,6 +116,7 @@ describe('useNewSessionAvailabilityState', () => {
                 } as any,
                 {
                     family: 'builtInAgent',
+                    agentId: 'codex',
                     builtInAgentId: 'codex',
                     target: { kind: 'builtInAgent', agentId: 'codex' },
                     targetKey: 'agent:codex',
@@ -123,6 +125,7 @@ describe('useNewSessionAvailabilityState', () => {
             ],
             selectedBackendEntry: {
                 family: 'builtInAgent',
+                agentId: 'claude',
                 builtInAgentId: 'claude',
                 target: { kind: 'builtInAgent', agentId: 'claude' },
                 targetKey: 'agent:claude',
@@ -164,7 +167,14 @@ describe('useNewSessionAvailabilityState', () => {
             agentType: 'claude' as any,
             resumeSessionId: null,
             backendNewSessionOptionStateByTargetKey: {},
-            resolvedBackendEntries: [],
+            resolvedBackendEntries: [{
+                family: 'builtInAgent',
+                agentId: 'codex',
+                builtInAgentId: 'codex',
+                target: { kind: 'builtInAgent', agentId: 'codex' },
+                targetKey: 'agent:codex',
+                title: 'Codex',
+            } as any],
             selectedBackendEntry: null,
             setBackendTarget: vi.fn(),
             machines: [],
@@ -300,6 +310,7 @@ describe('useNewSessionAvailabilityState', () => {
             resolvedBackendEntries: [
                 {
                     family: 'builtInAgent',
+                    agentId: 'claude',
                     builtInAgentId: 'claude',
                     target: { kind: 'builtInAgent', agentId: 'claude' },
                     targetKey: 'agent:claude',
@@ -323,8 +334,9 @@ describe('useNewSessionAvailabilityState', () => {
         }));
         expect(useCLIDetectionSpy).toHaveBeenCalledWith(null, expect.objectContaining({
             autoDetect: false,
-            includeLoginStatus: true,
-            includeLoginStatusForAgentIds: ['claude'],
+            agentIds: ['claude'],
+            includeLoginStatus: false,
+            includeLoginStatusForAgentIds: [],
             serverId: 'server-1',
         }));
     });

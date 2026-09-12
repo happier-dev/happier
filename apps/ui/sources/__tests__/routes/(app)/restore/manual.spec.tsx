@@ -13,7 +13,10 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const routerBackSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const routerDismissToSpy = vi.hoisted(() => vi.fn());
-const authLoginSpy = vi.hoisted(() => vi.fn(async () => {}));
+const authLoginSpy = vi.hoisted(() => vi.fn(async () => ({
+    kind: 'completed' as const,
+})));
+const activateStackRuntimeServerSpy = vi.hoisted(() => vi.fn());
 const normalizeSecretKeySpy = vi.hoisted(() => vi.fn((input: string) => input.trim()));
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({
@@ -40,6 +43,20 @@ vi.mock('@/auth/flows/getToken', () => ({
 
 vi.mock('@/auth/recovery/secretKeyBackup', () => ({
     normalizeSecretKey: normalizeSecretKeySpy,
+}));
+
+vi.mock('@/sync/domains/server/stackRuntimeServer', () => ({
+    activateStackRuntimeServer: activateStackRuntimeServerSpy,
+    readStackRuntimeServerUrl: () => null,
+}));
+
+vi.mock('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth', () => ({
+    guardAccountEncryptionFirstKeyCredentialMutation: vi.fn(async () => ({
+        kind: 'allowed' as const,
+    })),
+    abandonAccountEncryptionFirstKeyExternalAuth: vi.fn(async () => ({
+        kind: 'abandoned' as const,
+    })),
 }));
 
 vi.mock('@/encryption/base64', () => ({
@@ -105,6 +122,7 @@ describe('/restore/manual', () => {
         });
 
         expect(authLoginSpy).toHaveBeenCalled();
+        expect(activateStackRuntimeServerSpy).toHaveBeenCalledWith({ scope: 'device' });
         expect(normalizeSecretKeySpy).toHaveBeenCalled();
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(routerReplaceSpy).not.toHaveBeenCalled();

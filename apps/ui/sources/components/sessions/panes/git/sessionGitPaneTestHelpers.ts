@@ -151,11 +151,20 @@ export function installSessionGitPaneCommonModuleMocks(
 
     vi.mock('@/constants/Typography', async (importOriginal) => {
         const activeOptions = sessionGitPaneModuleState.options;
+        const actual = await importOriginal<typeof import('@/constants/Typography')>();
         if (activeOptions.typography) {
-            return await activeOptions.typography();
+            const overrides = await activeOptions.typography() as Partial<typeof actual>;
+            return {
+                ...actual,
+                ...overrides,
+                Typography: {
+                    ...actual.Typography,
+                    ...overrides.Typography,
+                },
+            };
         }
 
-        return await importOriginal<typeof import('@/constants/Typography')>();
+        return actual;
     });
 
     vi.mock('@/text', async () => {

@@ -79,9 +79,12 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
-}));
+vi.mock('@/components/ui/lists/virtualized/VirtualizedList', async () => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return {
+        VirtualizedList: createCapturingLegendListMock({ renderItems: true }).module.LegendList,
+    };
+});
 
 vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
     SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),

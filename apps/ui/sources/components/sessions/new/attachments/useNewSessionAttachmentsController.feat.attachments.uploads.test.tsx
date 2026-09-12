@@ -1463,7 +1463,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(handleCreateSession).toHaveBeenCalledWith(undefined);
+        expect(handleCreateSession).toHaveBeenCalledWith({
+            inputTextOverride: 'Focus on correctness',
+        });
         expect(clearWorkspaceReviewCommentDraftsSpy).not.toHaveBeenCalled();
     });
 

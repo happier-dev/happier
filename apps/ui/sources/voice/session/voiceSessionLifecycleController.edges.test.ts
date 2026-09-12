@@ -65,6 +65,7 @@ describe('voice session lifecycle edge contracts', () => {
             toggle: vi.fn(async () => {}),
             interrupt: vi.fn(async () => {}),
             setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
             getSnapshot: snapshots.getSnapshot,
             subscribe: snapshots.subscribe,
         };
@@ -121,6 +122,7 @@ describe('voice session lifecycle edge contracts', () => {
             toggle: vi.fn(async () => {}),
             interrupt: vi.fn(async () => {}),
             setMuted: vi.fn(async () => {}),
+            sendContextUpdate: vi.fn(),
             getSnapshot: snapshots.getSnapshot,
             subscribe: snapshots.subscribe,
         };

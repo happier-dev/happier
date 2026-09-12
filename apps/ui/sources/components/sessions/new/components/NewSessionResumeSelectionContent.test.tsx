@@ -89,7 +89,8 @@ vi.mock('@/components/ui/text/Text', () => ({
     }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     DEFAULT_AGENT_ID: 'claude',
     getAgentCore: (agentId: string) => ({
         displayNameKey: `agents.${agentId}.displayName`,

@@ -22,12 +22,20 @@ function createAccountLifetime() {
 describe('captureSessionAutomationAuthority', () => {
     it('accepts only the hydrated Session owner on the active server and Account lifetime', () => {
         const { lifetime: accountLifetime } = createAccountLifetime();
-        const current = {
+        const current: {
+            session: { id: string; serverId: string; metadata: Record<string, unknown> };
+            routeSessionId: string | null;
+            routeServerId: string | null;
+            activeServerId: string | null;
+            automationsEnabled: boolean;
+            accountSettings: Record<string, unknown>;
+        } = {
             session: { id: 'session-1', serverId: 'server-1', metadata: eligibleMetadata },
             routeSessionId: 'session-1',
             routeServerId: 'server-1',
             activeServerId: 'server-1',
             automationsEnabled: true,
+            accountSettings: {},
         };
 
         const authority = captureSessionAutomationAuthority({
@@ -62,12 +70,20 @@ describe('captureSessionAutomationAuthority', () => {
 
     it('becomes stale when the Session, route, server, feature decision, or Account lifetime changes', () => {
         const { lifetime: accountLifetime, retire } = createAccountLifetime();
-        const current = {
-            session: { id: 'session-1', serverId: 'server-1', metadata: eligibleMetadata } as { id: string; serverId: string; metadata: typeof eligibleMetadata },
-            routeSessionId: 'session-1' as string | null,
-            routeServerId: 'server-1' as string | null,
-            activeServerId: 'server-1' as string | null,
+        const current: {
+            session: { id: string; serverId: string; metadata: Record<string, unknown> };
+            routeSessionId: string;
+            routeServerId: string;
+            activeServerId: string;
+            automationsEnabled: boolean;
+            accountSettings: Record<string, unknown>;
+        } = {
+            session: { id: 'session-1', serverId: 'server-1', metadata: eligibleMetadata },
+            routeSessionId: 'session-1',
+            routeServerId: 'server-1',
+            activeServerId: 'server-1',
             automationsEnabled: true,
+            accountSettings: {},
         };
         const authority = captureSessionAutomationAuthority({
             ...current,
@@ -89,7 +105,14 @@ describe('captureSessionAutomationAuthority', () => {
     it('rejects hidden Session ids at capture and retires authority when a Session becomes hidden', () => {
         const { lifetime: accountLifetime } = createAccountLifetime();
         const metadata = eligibleMetadata;
-        const current = {
+        const current: {
+            session: { id: string; serverId: string; metadata: Record<string, unknown> };
+            routeSessionId: string;
+            routeServerId: string;
+            activeServerId: string;
+            automationsEnabled: boolean;
+            accountSettings: Record<string, unknown>;
+        } = {
             session: { id: 'session-1', serverId: 'server-1', metadata },
             routeSessionId: 'session-1',
             routeServerId: 'server-1',

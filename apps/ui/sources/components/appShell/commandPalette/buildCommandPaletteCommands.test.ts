@@ -616,7 +616,7 @@ describe('buildCommandPaletteCommands', () => {
     expect(created?.input?.engines).toBeUndefined();
   });
 
-  it('uses UI-normalized permission defaults for execution-run drafts', async () => {
+  it('uses execution-run permission defaults for execution-run drafts', async () => {
     createSessionActionDraftSpy.mockClear();
     mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
 
@@ -638,9 +638,9 @@ describe('buildCommandPaletteCommands', () => {
     });
 
     const expectations: Array<Readonly<{ title: string; actionId: string; permissionMode: string }>> = [
-      { title: 'Start review run', actionId: 'review.start', permissionMode: 'read-only' },
-      { title: 'Start plan run', actionId: 'subagents.plan.start', permissionMode: 'read-only' },
-      { title: 'Start delegation run', actionId: 'subagents.delegate.start', permissionMode: 'safe-yolo' },
+      { title: 'Start review run', actionId: 'review.start', permissionMode: 'read_only' },
+      { title: 'Start plan run', actionId: 'subagents.plan.start', permissionMode: 'read_only' },
+      { title: 'Start delegation run', actionId: 'subagents.delegate.start', permissionMode: 'workspace_write' },
     ];
 
     for (const expected of expectations) {

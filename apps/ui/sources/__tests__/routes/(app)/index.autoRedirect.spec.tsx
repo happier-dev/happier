@@ -1,12 +1,14 @@
+import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
     flushHookEffects,
+    renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { createWelcomeFeaturesResponse, renderWelcomeScreen } from './index.testHelpers';
+import { createWelcomeFeaturesResponse } from './index.testHelpers';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -39,6 +41,10 @@ vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({ RoundButton: () => null }));
 vi.mock('@shopify/react-native-skia', () => ({}));
 vi.mock('react-native-safe-area-context', () => ({
+    initialWindowMetrics: {
+        frame: { x: 0, y: 0, width: 0, height: 0 },
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    },
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
@@ -91,6 +97,8 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
         getAuthAutoRedirectSuppressedUntil: () => shared.getSuppressedUntilMock(),
         setPendingExternalAuth: () => shared.setPendingExternalAuthMock(),
         clearPendingExternalAuth: () => shared.clearPendingExternalAuthMock(),
+        readPendingExternalAuthState: async () => ({ value: null, serverMismatch: false }),
+        readPendingExternalAuthStateForServerUrl: async () => ({ value: null, serverMismatch: false }),
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
@@ -139,6 +147,8 @@ const getServerFeaturesSnapshotMock = vi.fn(async (_params?: unknown): Promise<S
 
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
+    getCachedServerFeaturesSnapshot: () => null,
+    subscribeServerFeaturesSnapshot: () => () => {},
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
@@ -149,6 +159,17 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
         isActiveServerSelectionExplicit: () => false,
     };
 });
+
+const { default: WelcomeScreen } = await import('@/app/(app)/index');
+
+async function renderWelcomeScreen(options: Readonly<{ strictMode?: boolean }> = {}) {
+    const element = options.strictMode
+        ? React.createElement(React.StrictMode, null, React.createElement(WelcomeScreen))
+        : React.createElement(WelcomeScreen);
+    const screen = await renderScreen(element);
+    await flushHookEffects();
+    return screen;
+}
 
 describe('/ (welcome) auto redirect', () => {
     const testTimeoutMs = 60_000;
@@ -196,14 +217,11 @@ describe('/ (welcome) auto redirect', () => {
     });
 
     it('auto-starts provider signup when server enables auth.ui.autoRedirect', async () => {
-        vi.resetModules();
         await renderWelcomeScreen();
         expect(shared.openURL).toHaveBeenCalledWith('https://example.test/oauth');
     }, testTimeoutMs);
 
     it('does not double-trigger auto-redirect when the effect runs twice before suppression is resolved', async () => {
-        vi.resetModules();
-
         let resolveSuppressedUntil: ((value: number) => void) | undefined;
         const suppressedUntilPromise = new Promise<number>((resolve) => {
             resolveSuppressedUntil = resolve;
@@ -220,7 +238,6 @@ describe('/ (welcome) auto redirect', () => {
     }, testTimeoutMs);
 
     it('does not auto-start provider signup when auto-redirect is temporarily suppressed', async () => {
-        vi.resetModules();
         shared.getSuppressedUntilMock.mockResolvedValue(Date.now() + 60_000);
 
         await renderWelcomeScreen();
@@ -228,7 +245,6 @@ describe('/ (welcome) auto redirect', () => {
     }, testTimeoutMs);
 
     it('does not throw when server features fetch fails', async () => {
-        vi.resetModules();
         getServerFeaturesMock.mockRejectedValueOnce(new Error('network'));
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'error', reason: 'network' });
 
@@ -237,7 +253,6 @@ describe('/ (welcome) auto redirect', () => {
     }, testTimeoutMs);
 
     it('retries one transient server features failure before surfacing unavailable state', async () => {
-        vi.resetModules();
         process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = '1';
 
         getServerFeaturesSnapshotMock
@@ -270,14 +285,12 @@ describe('/ (welcome) auto redirect', () => {
     }, testTimeoutMs);
 
     it('refuses unsafe external signup URLs', async () => {
-        vi.resetModules();
         shared.externalSignupUrl = 'javascript:alert(1)';
         await renderWelcomeScreen();
         expect(shared.openURL).not.toHaveBeenCalled();
     }, testTimeoutMs);
 
     it('auto-starts mTLS login when server enables auth.ui.autoRedirect=mtls', async () => {
-        vi.resetModules();
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
             status: 'ready',
             features: createWelcomeFeaturesResponse({
@@ -294,7 +307,6 @@ describe('/ (welcome) auto redirect', () => {
     }, testTimeoutMs);
 
     it('uses the configured app scheme for the mTLS returnTo deep link', async () => {
-        vi.resetModules();
         expoScheme = 'happier-dev';
 
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
@@ -313,7 +325,6 @@ describe('/ (welcome) auto redirect', () => {
     }, testTimeoutMs);
 
     it('auto-starts keyless provider login when server enables auth.ui.autoRedirect for a keyless login method', async () => {
-        vi.resetModules();
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({
             status: 'ready',
             features: createWelcomeFeaturesResponse({

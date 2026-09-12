@@ -938,7 +938,7 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
         });
         getStringSpy.mockRestore();
 
-        expect(result).toEqual({ localId, accepted: true });
+        expect(result).toEqual({ localId, accepted: true, settled: true });
         expect(loadPendingOutboxForSession(sessionId, scope)).toEqual([]);
         expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
             expect.objectContaining({

@@ -110,11 +110,11 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
         ...actual,
         AGENT_IDS: ['claude', 'codex'],
         getAgentCore: (agentId: AgentId | null) => {
-            const core = actual.getAgentCore(agentId);
+            const core = agentId ? actual.getAgentCore(agentId) : null;
             return {
                 ...core,
                 model: {
-                    ...core.model,
+                    ...core?.model,
                     dynamicProbe: agentId ? (agentCoreById[agentId]?.dynamicProbe ?? 'dynamic') : 'dynamic',
                 },
             };
@@ -366,6 +366,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 selectedModelId="gpt-5.5"
                 selectedMachineId="machine-1"
                 capabilityServerId="server-1"
+                projectionCurrent
                 cwd="/repo"
                 settings={settings}
                 onSelectFavoriteModel={onSelectFavoriteModel}
@@ -415,6 +416,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
             onToggleFavoriteModel={vi.fn()}
@@ -469,6 +471,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
             onToggleFavoriteModel={vi.fn()}
@@ -541,6 +544,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={settings}
             onSelectFavoriteModel={vi.fn()}
             onToggleFavoriteModel={vi.fn()}
@@ -585,6 +589,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={settings}
             onSelectFavoriteModel={vi.fn()}
             onToggleFavoriteModel={vi.fn()}
@@ -637,6 +642,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={hiddenSettings}
             onSelectFavoriteModel={onSelectFavoriteModel}
             onToggleFavoriteModel={vi.fn()}
@@ -722,6 +728,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={hiddenSettings}
             onSelectFavoriteModel={onSelectFavoriteModel}
             onToggleFavoriteModel={vi.fn()}
@@ -770,6 +777,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="claude-opus-4-7"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
@@ -798,6 +806,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="claude-opus-4-7"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
@@ -840,6 +849,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
@@ -880,6 +890,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
@@ -954,6 +965,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedConfigOverrides={{ reasoning_effort: 'high' }}
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={vi.fn()}
@@ -1045,6 +1057,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             }}
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
@@ -1079,6 +1092,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={vi.fn()}
@@ -1132,6 +1146,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedConfigOverrides={{ reasoning_effort: 'high' }}
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             settings={settings}
             onSelectFavoriteModel={onSelectFavoriteModel}
             onSelectFavoriteModelOptionValue={onSelectFavoriteModelOptionValue}

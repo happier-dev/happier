@@ -339,12 +339,6 @@ describe('sessionAuthoringDraftAdapters', () => {
 
         const spawn = buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
             draft,
-            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            organizationPlacement: { folderId: null, tagIds: [] },
-            agentTarget: {
-                kind: 'agent',
-                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            },
             permissionMode: 'default',
             configurationUpdatedAtMs: 999,
         });
@@ -396,12 +390,6 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
             draft,
             creationKey: 'attempt-external-1',
-            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            organizationPlacement: { folderId: null, tagIds: [] },
-            agentTarget: {
-                kind: 'agent',
-                identity: { pluginId: 'com.acme.mercury', localId: 'mercury' },
-            },
             permissionMode: 'default',
             configurationUpdatedAtMs: 999,
             initialMessage: 'Review this',
@@ -443,12 +431,6 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
             draft,
             creationKey: 'attempt-1',
-            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            organizationPlacement: { folderId: null, tagIds: [] },
-            agentTarget: {
-                kind: 'agent',
-                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            },
             permissionMode: 'default',
             configurationUpdatedAtMs: 999,
         })).toMatchObject({
@@ -683,8 +665,8 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             agentModeId: 'plan',
         }));
-        expect(template.experimentalCodexAcp).toBeUndefined();
-        expect((template as any).sessionConfigOptionOverrides).toBeUndefined();
+        expect('experimentalCodexAcp' in template).toBe(false);
+        expect('sessionConfigOptionOverrides' in template).toBe(false);
         expect(template.existingSessionId).toBeUndefined();
         expect(template.sessionEncryptionKeyBase64).toBeUndefined();
         expect(template.sessionEncryptionVariant).toBeUndefined();
@@ -693,6 +675,7 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('preserves an authored existing-branch checkout choice in the automation template', () => {
         const template = buildAutomationTemplateFromSessionAuthoringDraft({
             targetType: 'new_session',
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
             directory: '/tmp/project',
             checkoutCreationDraft: {
                 kind: 'git_worktree',
@@ -700,6 +683,7 @@ describe('sessionAuthoringDraftAdapters', () => {
                 baseRef: 'main',
                 branchMode: 'existing',
             },
+            organizationPlacement: { folderId: null, tagIds: [] },
             prompt: 'Open the repository and run checks',
             displayText: '',
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -1096,8 +1080,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             currentDraft: {
                 targetType: 'existing_session',
+                executionTarget: null,
                 directory: '/tmp/project-old',
                 checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Keep this message',
                 displayText: 'Keep this message',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -1241,8 +1227,10 @@ describe('sessionAuthoringDraftAdapters', () => {
         const merged = mergeExistingSessionAutomationTemplateDraft({
             hydratedTemplateDraft: {
                 targetType: 'existing_session',
+                executionTarget: null,
                 directory: '/template/project',
                 checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Template prompt',
                 displayText: '',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -1292,8 +1280,10 @@ describe('sessionAuthoringDraftAdapters', () => {
             },
             currentDraft: {
                 targetType: 'existing_session',
+                executionTarget: null,
                 directory: '/old/project',
                 checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Keep my edited message',
                 displayText: 'Keep my edited message',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -1383,7 +1373,8 @@ describe('sessionAuthoringDraftAdapters', () => {
     it('preserves an explicit Automatic model choice instead of inheriting a fallback selection', () => {
         const merged = mergeExistingSessionAutomationTemplateDraft({
             hydratedTemplateDraft: {
-                targetType: 'existing_session', directory: '/template', checkoutCreationDraft: null,
+                targetType: 'existing_session', executionTarget: null, directory: '/template', checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Template', displayText: 'Template',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, transcriptStorage: 'persisted',
                 profileId: null, environmentVariables: null, resumeSessionId: null,
@@ -1419,8 +1410,10 @@ describe('sessionAuthoringDraftAdapters', () => {
         const merged = mergeExistingSessionAutomationTemplateDraft({
             hydratedTemplateDraft: {
                 targetType: 'existing_session',
+                executionTarget: null,
                 directory: '/template/project',
                 checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Template prompt',
                 displayText: 'Template prompt',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
@@ -1612,8 +1605,10 @@ describe('sessionAuthoringDraftAdapters', () => {
         const tempData = buildNewSessionTempDataFromAuthoringDraft({
             draft: {
                 targetType: 'new_session',
+                executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
                 directory: '/tmp/project',
                 checkoutCreationDraft: null,
+                organizationPlacement: { folderId: null, tagIds: [] },
                 prompt: 'Run the review',
                 displayText: 'Run the review',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },

@@ -86,6 +86,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
     Typography: {
         default: () => ({}),
         mono: () => ({}),

@@ -1417,7 +1417,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
         });
 
-        let patchBody: Record<string, unknown> | null = null;
+        const requestCapture: { patchBody: Record<string, unknown> | null } = { patchBody: null };
         const result = await updatePendingMessageV2({
             sessionId,
             pendingId: 'p1',
@@ -1429,7 +1429,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
             encryption: null,
             request: async (_path, init) => {
-                patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+                requestCapture.patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
                 return new Response(null, { status: 204 });
             },
         });
@@ -1450,7 +1450,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         });
         // The finalizer's canonical metadata must travel with the accepted fact and
         // be written to the Pending row atomically with its durable media references.
-        expect(patchBody?.content).toMatchObject({
+        expect(requestCapture.patchBody?.content).toMatchObject({
             t: 'plain',
             v: {
                 meta: {
@@ -1494,7 +1494,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
         });
 
-        let patchBody: Record<string, unknown> | null = null;
+        const requestCapture: { patchBody: Record<string, unknown> | null } = { patchBody: null };
         const accepted = await updatePendingMessageV2({
             sessionId,
             pendingId: 'p1',
@@ -1506,13 +1506,13 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
             encryption: null,
             request: async (_path, init) => {
-                patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+                requestCapture.patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
                 return new Response(null, { status: 204 });
             },
         });
 
         expect(accepted?.sessionMediaMetadata).toEqual({ key: 'happierMedia', envelope });
-        expect(patchBody?.content).toMatchObject({
+        expect(requestCapture.patchBody?.content).toMatchObject({
             t: 'plain',
             v: {
                 meta: {

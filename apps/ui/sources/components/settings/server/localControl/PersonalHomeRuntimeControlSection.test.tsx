@@ -7,8 +7,12 @@ import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const confirmMock = vi.fn(async () => true);
-const alertMock = vi.fn(async () => {});
+const confirmMock = vi.fn(async (
+    _title: string,
+    _message: string,
+    _options?: Readonly<{ destructive?: boolean }>,
+) => true);
+const alertMock = vi.fn(async (_title: string, _message: string) => {});
 
 installMachinesSettingsCommonModuleMocks({
     reactNative: async () => {
@@ -69,7 +73,7 @@ describe('PersonalHomeRuntimeControlSection', () => {
         await screen.pressByTestIdAsync('settings.personalHomeRuntime.eraseData');
         expect(eraseData).toHaveBeenCalledTimes(1);
         expect(confirmMock).toHaveBeenCalledTimes(3);
-        expect(confirmMock.mock.calls.every(([, , options]) => (options as { destructive?: boolean }).destructive === true)).toBe(true);
+        expect(confirmMock.mock.calls.every(([, , options]) => options?.destructive === true)).toBe(true);
     });
 
     it('does not render destructive controls when Lane 07 has not supplied its operation API', async () => {

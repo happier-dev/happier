@@ -64,6 +64,8 @@ const tokenStorageMock = vi.hoisted(() => ({
     getCredentialsForServerUrl: vi.fn<(serverUrl: string) => Promise<{ token: string; secret: string } | null>>(
         async () => ({ token: 'scoped-token', secret: 'scoped-secret' })
     ),
+    readPendingExternalAuthState: vi.fn(async () => ({ value: null, serverMismatch: false })),
+    readPendingExternalAuthStateForServerUrl: vi.fn(async () => ({ value: null, serverMismatch: false })),
 }));
 
 const routerMocks = vi.hoisted(() => ({
@@ -183,6 +185,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
+    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
     Typography: {
         default: () => ({}),
     },
@@ -275,6 +278,8 @@ afterEach(() => {
     syncMocks.retryNow.mockReset();
     tokenStorageMock.getCredentialsForServerUrl.mockReset();
     tokenStorageMock.getCredentialsForServerUrl.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+    tokenStorageMock.readPendingExternalAuthState.mockClear();
+    tokenStorageMock.readPendingExternalAuthStateForServerUrl.mockClear();
     routerMocks.push.mockReset();
     routerMocks.replace.mockReset();
     settingsState.serverSelectionGroups = [];

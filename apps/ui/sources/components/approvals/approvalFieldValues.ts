@@ -50,12 +50,20 @@ export function shouldHideApprovalField(path: string, allPaths: readonly string[
     return allPaths.some((candidate) => candidate !== path && (candidate.startsWith(`${path}.`) || candidate.startsWith(`${path}.[`)));
 }
 
-export function formatApprovalFieldValues(values: readonly unknown[]): string | null {
-    const flattened = values.flatMap((value) => (Array.isArray(value) ? value : [value]));
+export function formatApprovalFieldValues(
+    values: readonly unknown[],
+    options: Readonly<{ preserveStructuredValues?: boolean }> = {},
+): string | null {
+    const flattened = options.preserveStructuredValues
+        ? values
+        : values.flatMap((value) => (Array.isArray(value) ? value : [value]));
     const formatted = flattened
         .map((value) => {
             if (typeof value === 'string') return value.trim();
             if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+            if (options.preserveStructuredValues && value !== null && typeof value === 'object') {
+                return JSON.stringify(value) ?? '';
+            }
             return '';
         })
         .filter((value) => value.length > 0);

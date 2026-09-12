@@ -53,6 +53,16 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
   useProjectedConnectedServicesRegistry: () => state.projectedConnectedServicesRegistry,
+  useProjectedPluginLocalizedTextResolver: () => (_pluginId: string, value: unknown) => {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+    const localized = value as Readonly<{ key?: unknown; fallback?: unknown }>;
+    return typeof localized.fallback === 'string'
+      ? localized.fallback
+      : typeof localized.key === 'string'
+        ? localized.key
+        : '';
+  },
 }));
 
 vi.mock('@/text', () => ({
@@ -289,9 +299,11 @@ describe('VoiceCredentialSourceField', () => {
 
     expect(accountRow).toBeTruthy();
     expect(accountRow).toMatchObject({
-      subtitle: 'Codex · codex-work',
-      accessibilityLabel: 'Codex · Work Codex · codex-work',
+      subtitle: 'Codex',
+      accessibilityLabel: 'Codex · Work Codex',
     });
+    expect(accountRow.subtitle).not.toContain('codex-work');
+    expect(accountRow.accessibilityLabel).not.toContain('codex-work');
     await act(async () => dropdown.props.onSelect(accountRow.id));
 
     expect(state.mutateAccountSettingsOnce).toHaveBeenCalledTimes(1);

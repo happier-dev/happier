@@ -1,7 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { findNearestHostParent, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
 
@@ -167,11 +167,11 @@ describe('CollapsedSidebarView desktop chrome', () => {
             await Promise.resolve();
         });
 
-        const minimizeButton = screen.findByTestId('desktop-window-controls-minimize');
+        const minimizeButton = screen.findHostByTestId('desktop-window-controls-minimize');
         if (!minimizeButton) {
             throw new Error('minimize button should be present');
         }
-        const controlsGroup = minimizeButton.parent;
+        const controlsGroup = findNearestHostParent(minimizeButton);
         if (!controlsGroup) {
             throw new Error('controls group should be present');
         }

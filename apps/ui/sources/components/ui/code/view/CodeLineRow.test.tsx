@@ -228,7 +228,7 @@ describe('CodeLineRow', () => {
         const icon = findTestInstanceByTypeWithProps(screen.tree, 'Icon' as any, {
             testID: 'review-comment-line-affordance-icon',
         });
-        expect(icon?.props.name).toBe('chatbox-ellipses-outline');
+        expect(icon?.props.name).toBe('chat-dots');
 
         const stopPropagation = vi.fn();
         const stopImmediatePropagation = vi.fn();
@@ -282,7 +282,7 @@ describe('CodeLineRow', () => {
         });
 
         expect(onPressLine).toHaveBeenCalledTimes(1);
-        expect(onPressLine).toHaveBeenCalledWith(line);
+        expect(onPressLine).toHaveBeenCalledWith(line, undefined);
     });
 
     it('uses a dedicated selection indicator when a diff line is selected for commit', async () => {

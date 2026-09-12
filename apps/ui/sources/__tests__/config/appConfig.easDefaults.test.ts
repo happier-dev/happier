@@ -414,20 +414,20 @@ describe('app.config.js', () => {
             withAndroidManifest(config, (manifestConfig) => {
                 const applications = manifestConfig.modResults.manifest.application ?? [];
                 manifestConfig.modResults.manifest.application = applications;
-                if (applications.length === 0) applications.push({ $: {} });
+                if (applications.length === 0) {
+                    applications.push({ $: { 'android:name': '.MainApplication' } });
+                }
                 const services = applications[0].service ?? [];
                 applications[0].service = services;
                 services.push({
                     $: {
                         'android:name': upstreamAudioService,
-                        'android:stopWithTask': 'true',
                         'android:foregroundServiceType': 'mediaPlayback',
                     },
                 });
                 services.push({
                     $: {
                         'android:name': upstreamAudioService,
-                        'android:stopWithTask': 'true',
                         'android:foregroundServiceType': 'mediaPlayback',
                     },
                 });

@@ -2398,11 +2398,16 @@ describe('VoiceProviderSection', () => {
             },
         );
         const registry = createDefaultVoiceProviderRegistry();
-        const sttDeclaration = registry.get('happier.voice.google/gemini-stt')?.declaration;
-        const ttsDeclaration = registry.get('happier.voice.google/google-cloud-tts')?.declaration;
-        if (sttDeclaration?.kind !== 'speech' || ttsDeclaration?.kind !== 'speech') {
+        const sttEntry = registry.get('happier.voice.google/gemini-stt');
+        const ttsEntry = registry.get('happier.voice.google/google-cloud-tts');
+        if (sttEntry?.kind !== 'voice.speech-engine.v1'
+            || sttEntry.declaration?.kind !== 'speech'
+            || ttsEntry?.kind !== 'voice.speech-engine.v1'
+            || ttsEntry.declaration?.kind !== 'speech') {
             throw new Error('expected current Google speech declarations');
         }
+        const sttDeclaration = sttEntry.declaration;
+        const ttsDeclaration = ttsEntry.declaration;
         const sttReady = saveAndUseAccountVoiceCredential({
             settings: settingsParse({ voice }),
             contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },

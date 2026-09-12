@@ -19,8 +19,11 @@ let sessionsById: Record<string, {
 }>;
 const writeExistingSessionDraftSpy = vi.fn();
 const flushSessionDraftSpy = vi.fn(async (_input: unknown) => ({ status: 'clean' as const }));
-const patchSessionMetadataWithRetrySpy = vi.fn();
-const materializeExistingSessionDraftSpy = vi.fn(async () => undefined);
+const patchSessionMetadataWithRetrySpy = vi.fn((
+  _sessionId: string,
+  _update: (metadata: unknown) => unknown,
+) => undefined);
+const materializeExistingSessionDraftSpy = vi.fn(async (_sessionId: string) => undefined);
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
 const activeServerAccountScope = Object.freeze({ serverId: 'server-test', accountId: 'account-test' });
 const activeScopeState = vi.hoisted(() => ({
@@ -90,8 +93,11 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
-    patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
-    materializeExistingSessionDraft: (...args: any[]) => materializeExistingSessionDraftSpy(...args),
+    patchSessionMetadataWithRetry: (
+      sessionId: string,
+      update: (metadata: unknown) => unknown,
+    ) => patchSessionMetadataWithRetrySpy(sessionId, update),
+    materializeExistingSessionDraft: (sessionId: string) => materializeExistingSessionDraftSpy(sessionId),
   },
 }));
 

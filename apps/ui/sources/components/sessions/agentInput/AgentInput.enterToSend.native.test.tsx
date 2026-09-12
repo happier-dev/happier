@@ -66,8 +66,8 @@ const commandMenuState = vi.hoisted(() => ({
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
             View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('View', props, props.children),
             Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -291,6 +291,8 @@ vi.mock('./subscribeToIosHardwareShiftEnter', () => ({
     },
 }));
 
+const { AgentInput } = await import('./AgentInput');
+
 function findNativeTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const nodes = screen.findAll((node) => (node.type as any) === 'TextInput');
     expect(nodes.length).toBe(1);
@@ -325,7 +327,6 @@ describe('AgentInput (enter to send on native)', () => {
     });
 
     it('uses a 16 point input text base for existing sessions and new sessions', async () => {
-        const { AgentInput } = await import('./AgentInput');
         const existingSessionScreen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -363,7 +364,6 @@ describe('AgentInput (enter to send on native)', () => {
         mocks.activeSuggestionIndex = 0;
         mocks.respectSuggestionQuery = true;
         const largePrompt = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -396,7 +396,6 @@ describe('AgentInput (enter to send on native)', () => {
         const focusChanges = vi.fn();
         const focusRequestCapture = { current: null as (() => void) | null };
         mocks.inputFocus.mockClear();
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -433,7 +432,6 @@ describe('AgentInput (enter to send on native)', () => {
         mocks.activeSuggestionIndex = 0;
         mocks.respectSuggestionQuery = true;
         const largePrompt = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
-        const { AgentInput } = await import('./AgentInput');
         const render = (value: string) => (
             <AgentInput
                 sessionId="session-1"
@@ -488,7 +486,6 @@ describe('AgentInput (enter to send on native)', () => {
             text: 'Expanded QA prompt',
             cursorPosition: 'Expanded QA prompt'.length,
         } as never);
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -554,7 +551,6 @@ describe('AgentInput (enter to send on native)', () => {
         mocks.activeSuggestionIndex = 0;
         promptInvocationMock.resolve.mockImplementationOnce(() => pendingSelection as never);
 
-        const { AgentInput } = await import('./AgentInput');
         const render = (value: string) => (
             <AgentInput
                 sessionId="session-1"
@@ -604,7 +600,6 @@ describe('AgentInput (enter to send on native)', () => {
         mocks.activeSuggestions = [{ kind: 'slashCommand', key: 'cmd-qa', text: '/qa', label: '/qa' }] as any;
         mocks.activeSuggestionIndex = 0;
         promptInvocationMock.resolve.mockClear();
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -652,7 +647,6 @@ describe('AgentInput (enter to send on native)', () => {
             },
         }];
         mocks.activeSuggestionIndex = 0;
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -690,8 +684,6 @@ describe('AgentInput (enter to send on native)', () => {
                         kind: MENTION_KIND_V1.vendorPlugin,
                         ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'github'),
                         token: '@github',
-                        start: 0,
-                        end: 7,
                         label: 'GitHub',
                     }],
                     vendorPluginMentions: [{
@@ -706,7 +698,6 @@ describe('AgentInput (enter to send on native)', () => {
     });
 
     it('does not submit from the native composer when only the web enter-to-send setting is enabled', async () => {
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 value="hello"
@@ -736,7 +727,6 @@ describe('AgentInput (enter to send on native)', () => {
         settingState.webEnterToSend = false;
         settingState.nativeEnterToSend = true;
 
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 value="hello"
@@ -766,7 +756,6 @@ describe('AgentInput (enter to send on native)', () => {
         settingState.webEnterToSend = false;
         settingState.nativeEnterToSend = true;
 
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"
@@ -796,7 +785,6 @@ describe('AgentInput (enter to send on native)', () => {
         settingState.webEnterToSend = false;
         settingState.nativeEnterToSend = true;
 
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 value="hello"
@@ -838,7 +826,6 @@ describe('AgentInput (enter to send on native)', () => {
         settingState.webEnterToSend = false;
         settingState.nativeEnterToSend = false;
 
-        const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
                 sessionId="session-1"

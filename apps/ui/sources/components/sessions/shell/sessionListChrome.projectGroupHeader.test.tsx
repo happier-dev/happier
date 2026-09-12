@@ -103,6 +103,13 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+const {
+    CollapsibleSectionHeader,
+    FolderGroupHeader,
+    ProjectGroupHeader,
+    SessionFolderFocusBreadcrumbs,
+} = await import('./sessionListChrome');
+
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
         return style.reduce<Record<string, unknown>>((acc, entry) => ({
@@ -153,7 +160,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('reuses the same menu item array when rerendered with identical scope values', async () => {
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
         const item = {
             type: 'header',
             title: '/repo',
@@ -225,7 +231,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('exposes a stable project header selector keyed by group key', async () => {
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <ProjectGroupHeader
@@ -259,7 +264,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('keeps the project-group menu trigger stopPropagation bound to the original event', async () => {
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
         const item = {
             type: 'header',
             title: '/repo',
@@ -309,7 +313,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('anchors the ordering menu below the trigger', async () => {
-        const { CollapsibleSectionHeader } = await import('./sessionListChrome');
 
         await renderScreen(
             <CollapsibleSectionHeader
@@ -326,7 +329,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('keeps the real collapsible header root mounted when measurement activates', async () => {
-        const { CollapsibleSectionHeader } = await import('./sessionListChrome');
         const measurementRef = React.createRef<any>();
         const onLayout = vi.fn();
         const screen = await renderScreen(
@@ -363,7 +365,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('adds the folder tree toggle to the existing ordering menu', async () => {
-        const { CollapsibleSectionHeader } = await import('./sessionListChrome');
 
         await renderScreen(
             <CollapsibleSectionHeader
@@ -394,7 +395,6 @@ describe('ProjectGroupHeader menu items', () => {
         const onMoveToWorkspaceRoot = vi.fn();
         const onMoveUp = vi.fn();
         const onMoveDown = vi.fn();
-        const { FolderGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <FolderGroupHeader
@@ -487,7 +487,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('renders a locked folder as unavailable state and disables name-dependent actions', async () => {
-        const { FolderGroupHeader } = await import('./sessionListChrome');
         const screen = await renderScreen(
             <FolderGroupHeader
                 title=""
@@ -535,7 +534,6 @@ describe('ProjectGroupHeader menu items', () => {
 
     it('keeps folder drop target registration separate from row-local outline styling', async () => {
         platformOs = 'web';
-        const { FolderGroupHeader } = await import('./sessionListChrome');
 
         const renderHeader = () => (
             <FolderGroupHeader
@@ -579,7 +577,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('does not nest folder header pressable controls inside another pressable on web', async () => {
-        const { FolderGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <FolderGroupHeader
@@ -615,7 +612,6 @@ describe('ProjectGroupHeader menu items', () => {
 
     it('does not nest project header pressable controls inside another pressable on web', async () => {
         platformOs = 'web';
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <ProjectGroupHeader
@@ -653,7 +649,6 @@ describe('ProjectGroupHeader menu items', () => {
     it('renders focused folder breadcrumbs with root and folder targets', async () => {
         const onClear = vi.fn();
         const onSelectFolder = vi.fn();
-        const { SessionFolderFocusBreadcrumbs } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <SessionFolderFocusBreadcrumbs
@@ -694,7 +689,6 @@ describe('ProjectGroupHeader menu items', () => {
 
     it('hides folder actions while the sessions.folders gate is disabled', async () => {
         sessionFoldersFeatureEnabled = false;
-        const { CollapsibleSectionHeader, ProjectGroupHeader } = await import('./sessionListChrome');
 
         await renderScreen(
             <CollapsibleSectionHeader
@@ -747,7 +741,6 @@ describe('ProjectGroupHeader menu items', () => {
     it('keeps the project add action visible while hover-only controls appear on demand', async () => {
         platformOs = 'web';
         const onCreateSession = vi.fn();
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
 
         const item = {
             type: 'header',
@@ -812,7 +805,7 @@ describe('ProjectGroupHeader menu items', () => {
             rowPressable.props.onHoverOut?.();
         });
 
-        expect(screen.root.findAllByProps({ testID: 'session-workspace-reorder-handle:project:repo' })).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('session-workspace-reorder-handle:project:repo')).toHaveLength(1);
 
         await act(async () => {
             menuTrigger.props.onHoverIn?.();
@@ -855,7 +848,6 @@ describe('ProjectGroupHeader menu items', () => {
             uri: 'data:image/svg+xml;base64,PHN2Zy8+',
             relativePath: 'public/favicon.svg',
         });
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <ProjectGroupHeader
@@ -913,7 +905,6 @@ describe('ProjectGroupHeader menu items', () => {
     });
 
     it('hides machine subtitles when workspace machine subtitles are disabled', async () => {
-        const { ProjectGroupHeader } = await import('./sessionListChrome');
 
         const screen = await renderScreen(
             <ProjectGroupHeader
@@ -952,7 +943,6 @@ describe('ProjectGroupHeader menu items', () => {
 
     it('uses the secondary header typography tier for date headers', async () => {
         platformOs = 'web';
-        const { CollapsibleSectionHeader, ProjectGroupHeader } = await import('./sessionListChrome');
 
         const activeScreen = await renderScreen(
             <CollapsibleSectionHeader

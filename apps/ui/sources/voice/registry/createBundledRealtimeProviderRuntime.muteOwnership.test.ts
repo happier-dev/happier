@@ -280,6 +280,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       await capturedControllerDeps.current?.onConnectionReady?.({
         controlSessionId,
         attemptId: 1,
+        reason: 'reconnect',
         request: {},
         connection: createOpenConnection(),
         signal: new AbortController().signal,

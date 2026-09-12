@@ -91,7 +91,8 @@ vi.mock('@/components/profiles/ProfilesList', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/profiles/profileUtils', () => ({
+vi.mock('@/sync/domains/profiles/profileUtils', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/profiles/profileUtils')>(),
     DEFAULT_PROFILES: [],
     getBuiltInProfileNameKey: () => null,
     resolveProfileById: () => null,

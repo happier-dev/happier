@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 
@@ -31,9 +31,13 @@ describe('ItemGroupTitleWithAction', () => {
             }))).tree;
 
         const rootView = tree!.findByType('View' as any);
-        const children = React.Children.toArray(rootView.props.children) as any[];
-        expect(children).toHaveLength(2);
-        expect(children[1]?.type).toBe('Pressable');
+        const children = findAllHostTestInstances(rootView, (node) => {
+            if (node === rootView) return false;
+            let parent = node.parent;
+            while (parent && typeof parent.type !== 'string') parent = parent.parent;
+            return parent === rootView;
+        });
+        expect(children.map((child) => child.type)).toEqual(['Text', 'Pressable']);
 
         const titleNodes = tree!.findAllByType('Text' as any).filter((node) => {
             const value = node.props.children;

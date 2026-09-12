@@ -97,6 +97,8 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
         invalidateCredentialsTokenForServerUrl: vi.fn(async () => {}),
         removeCredentialsForServerUrl: vi.fn(async () => {}),
         setCredentialsForServerUrl: vi.fn(async () => {}),
+        readPendingExternalAuthState: vi.fn(async () => ({ value: null, serverMismatch: false })),
+        readPendingExternalAuthStateForServerUrl: vi.fn(async () => ({ value: null, serverMismatch: false })),
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));

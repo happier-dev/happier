@@ -205,7 +205,7 @@ describe('buildPetCompanionActivityModel', () => {
         });
     });
 
-    it('does not keep waiting activity alive from active heartbeat alone', () => {
+    it('keeps pending permission activity visible while the session runtime is live', () => {
         const nowMs = 1_000_000;
         const session = createSessionFixture({
             id: 'waiting-heartbeat-only-session',
@@ -220,11 +220,16 @@ describe('buildPetCompanionActivityModel', () => {
         });
 
         expect(model).toMatchObject({
-            state: 'idle',
-            reason: 'idle',
+            state: 'waiting',
+            reason: 'waiting',
             sessionId: session.id,
-            trayItems: [],
         });
+        expect(model.trayItems).toEqual([
+            expect.objectContaining({
+                sessionId: session.id,
+                status: 'waiting',
+            }),
+        ]);
     });
 
     it('keeps running tray items live across timestamp-only updates', () => {

@@ -27,7 +27,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type { SelectionListOption, SelectionListProps, SelectionListStep } from '../_types';
@@ -177,9 +177,12 @@ function ancestorRoles(node: Node, stopAtTestId: string): ReadonlyArray<string> 
 }
 
 function directRoleChildren(node: Node): ReadonlyArray<string> {
-    return node.children
-        .filter((child): child is Node => typeof child !== 'string' && isRoleHost(child))
-        .map((child) => child.props.role as string);
+    return findAllHostTestInstances(node, (candidate) => {
+        if (candidate === node || !isRoleHost(candidate)) return false;
+        let parent = candidate.parent as Node | null;
+        while (parent && typeof parent.type !== 'string') parent = parent.parent as Node | null;
+        return parent === node;
+    }).map((child) => child.props.role as string);
 }
 
 function expectHeaderIsAnExposedGridRow(
@@ -236,7 +239,9 @@ describe('SelectionList — a columned grid owns nothing but rows', () => {
         const gridRows = rows(screen);
         expect(gridRows).toHaveLength(4);
         expect(directRoleChildren(gridRows[1]!)).toEqual(['gridcell', 'gridcell']);
-        expect(gridRows[1]!.findAll((node) => node.props.role === 'gridcell').map((node) => node.props['aria-selected'])).toEqual([true, false]);
+        expect(findAllHostTestInstances(gridRows[1]!, (node) => node.props.role === 'gridcell')
+            .map((node) => node.props['aria-selected']))
+            .toEqual([true, false]);
         expectContiguousRowNumbering(screen);
     });
 

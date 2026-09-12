@@ -533,10 +533,13 @@ describe('plugin-surface action branch selection', () => {
         const outputSchema = defineProtocolObject({
             accepted: defineProtocolLiteral(true),
         }, { policy: 'additive-open/drop' }).jsonSchema;
-        const handler = vi.fn(async (input: PluginUiJsonValueV1) => ({
-            accepted: true,
-            privateResult: (input as Readonly<{ title?: unknown }>).title,
-        }));
+        const handler = vi.fn(async (input: PluginUiJsonValueV1) => {
+            const title = input !== null && typeof input === 'object' && 'title' in input
+                && typeof input.title === 'string'
+                ? input.title
+                : null;
+            return { accepted: true, privateResult: title };
+        });
         const clientHandler: PluginClientActionHandler = async (input, context) => {
             expect(context).toBeDefined();
             return handler(input);

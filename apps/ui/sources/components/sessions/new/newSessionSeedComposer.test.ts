@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const seedDraftSpy = vi.hoisted(() => vi.fn(() => '00000000-0000-4000-8000-000000000042'));
+const seedDraftSpy = vi.hoisted(() => vi.fn<
+    NonNullable<Parameters<typeof seedAndOpenNewSession>[0]['seedDraft']>
+>((_input) => '00000000-0000-4000-8000-000000000042'));
 
 import { readPluginNewSessionSeedV1, seedAndOpenNewSession } from './newSessionSeedComposer';
 

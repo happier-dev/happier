@@ -17,7 +17,11 @@ function buildResumeHappySessionRpcParams(
     return buildResumeHappySessionRpcParamsForMachine({ ...rest, machineId });
 }
 
-const EXTERNAL_AGENT_ID = 'example.machine-scoped-agent';
+const EXTERNAL_AGENT_IDENTITY = {
+    pluginId: 'example.machine-plugin',
+    localId: 'machine-scoped-agent',
+} as const;
+const EXTERNAL_AGENT_ID = `${EXTERNAL_AGENT_IDENTITY.pluginId}/${EXTERNAL_AGENT_IDENTITY.localId}`;
 
 function publishMachineScopedTransportDescriptors(): void {
     publishProjectedAgentUiBehaviorDescriptors({
@@ -25,7 +29,7 @@ function publishMachineScopedTransportDescriptors(): void {
         descriptorsByAgentId: {
             [EXTERNAL_AGENT_ID]: {
                 kind: 'plugin.ui.v1',
-                pluginId: 'example.machine-a',
+                pluginId: EXTERNAL_AGENT_IDENTITY.pluginId,
                 agentId: EXTERNAL_AGENT_ID,
                 version: 1,
                 behavior: {
@@ -45,7 +49,7 @@ function publishMachineScopedTransportDescriptors(): void {
         descriptorsByAgentId: {
             [EXTERNAL_AGENT_ID]: {
                 kind: 'plugin.ui.v1',
-                pluginId: 'example.machine-b',
+                pluginId: EXTERNAL_AGENT_IDENTITY.pluginId,
                 agentId: EXTERNAL_AGENT_ID,
                 version: 2,
                 behavior: {
@@ -74,7 +78,12 @@ describe('buildResumeHappySessionRpcParams', () => {
             sessionId: 'session-1',
             machineId: 'machine-b',
             directory: '/tmp/workspace',
-            backendTarget: { kind: 'backend', backendId: EXTERNAL_AGENT_ID },
+            agentTarget: { kind: 'agent', identity: EXTERNAL_AGENT_IDENTITY },
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: EXTERNAL_AGENT_ID,
+                agent: { backendMode: 'shared-mode' },
+            },
         });
 
         expect(params.runtimeDescriptorV1).toMatchObject({

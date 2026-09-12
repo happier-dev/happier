@@ -19,7 +19,10 @@ const openSpy = vi.fn();
 const attachCustomKeyEventHandlerSpy = vi.fn();
 const onDataSpy = vi.fn();
 const disposeSpy = vi.fn();
-const registerOscHandlerSpy = vi.fn(() => ({ dispose: vi.fn() }));
+const registerOscHandlerSpy = vi.fn((
+    _id: number,
+    _handler: (data: string) => boolean,
+) => ({ dispose: vi.fn() }));
 const registerDcsHandlerSpy = vi.fn(() => ({ dispose: vi.fn() }));
 let webLinksHandler: ((event: MouseEvent, uri: string) => void) | null = null;
 let renderServiceRendererValue: unknown = {};

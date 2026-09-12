@@ -666,7 +666,7 @@ describe('createDeviceSttController', () => {
 
   it('presents the canonical recovery once when native speech recognition denies its secondary permission', async () => {
     requestMicrophonePermission.mockResolvedValueOnce({ granted: true, canAskAgain: true });
-    requestPermissionsAsync.mockResolvedValueOnce({ granted: false, canAskAgain: false });
+    requestPermissionsAsync.mockResolvedValueOnce({ granted: false });
     showMicrophonePermissionDeniedAlert.mockClear();
 
     const { createDeviceSttController } = await import('./DeviceSttController');

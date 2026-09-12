@@ -7,20 +7,31 @@ import { buildExistingSessionAutomationAuthoringContext } from './buildExistingS
 
 const BASE_DRAFT: SessionAuthoringDraft = {
     targetType: 'existing_session',
+    executionTarget: null,
     directory: '/repo/project',
     checkoutCreationDraft: null,
+    organizationPlacement: { folderId: null, tagIds: [] },
     prompt: 'Summarize the latest changes',
     displayText: 'Summarize the latest changes',
-    agentId: 'claude',
-    backendTarget: { kind: 'backend', backendId: 'claude' },
+    agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+    },
     transcriptStorage: 'direct',
     profileId: 'profile-1',
     environmentVariables: null,
     resumeSessionId: null,
     permissionMode: 'acceptEdits',
     permissionModeUpdatedAt: 123,
-    modelId: 'gpt-5',
-    modelUpdatedAt: 456,
+    modelSelection: {
+        v: 1,
+        updatedAt: 456,
+        ref: {
+            agentTargetKey: 'agent:happier.agent.claude/claude',
+            providerConnectionId: null,
+            modelId: 'gpt-5',
+        },
+    },
     mcpSelection: {
         v: 1,
         managedServersEnabled: true,
@@ -54,11 +65,9 @@ const BASE_DRAFT: SessionAuthoringDraft = {
         triggers: [
             {
                 clientId: 'nightly-summary-schedule',
-                kind: 'schedule',
-                persisted: null,
-                enabled: true,
                 definition: {
                     kind: 'schedule',
+                    enabled: true,
                     schedule: {
                         kind: 'interval',
                         scheduleExpr: null,
@@ -69,11 +78,9 @@ const BASE_DRAFT: SessionAuthoringDraft = {
             },
             {
                 clientId: 'nightly-summary-turn-completed',
-                kind: 'sessionLifecycle',
-                persisted: null,
-                enabled: false,
                 definition: {
                     kind: 'sessionLifecycle',
+                    enabled: false,
                     event: 'parentTurnCompleted',
                     scope: {
                         kind: 'exactTurn',

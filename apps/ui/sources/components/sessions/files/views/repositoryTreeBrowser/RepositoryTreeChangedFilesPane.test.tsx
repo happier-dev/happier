@@ -64,21 +64,29 @@ describe('RepositoryTreeChangedFilesPane', () => {
         changedFilesDataSpy.mockReturnValue({
             attributionReliability: 'high',
             showTurnViewToggle: true,
+            showTurnAgentReportedViewToggle: false,
+            showTurnCheckpointViewToggle: false,
             showSessionViewToggle: true,
             scmStatusFiles: null,
             changedFilesCount: 1,
             shouldShowAllFiles: false,
             allRepositoryChangedFiles: [{ fullPath: 'session-changes-qa-root.txt', fileName: 'session-changes-qa-root.txt' }],
             turnAttributedFiles: [{ file: { fullPath: 'session-changes-qa-root.txt', fileName: 'session-changes-qa-root.txt' }, confidence: 'high' }],
+            turnAgentReportedFiles: [],
+            turnCheckpointFiles: [],
+            turnCheckpointMetadata: null,
             turnRepositoryOnlyFiles: [],
             sessionAttributedFiles: [{ file: { fullPath: 'session-changes-qa-root.txt', fileName: 'session-changes-qa-root.txt' }, confidence: 'high' }],
             repositoryOnlyFiles: [],
             suppressedInferredCount: 0,
         });
         derivedSessionChangeSetSpy.mockReturnValue({
+            latestTurnChangeSet: { sessionId: 's1', files: [{ filePath: 'session-changes-qa-root.txt' }] },
             latestTurnScopedChangeSet: { sessionId: 's1', files: [{ filePath: 'session-changes-qa-root.txt' }] },
             sessionChangeSet: { sessionId: 's1', files: [{ filePath: 'session-changes-qa-root.txt' }] },
             latestTurnDiffByPath: new Map([['session-changes-qa-root.txt', 'diff --git a/session-changes-qa-root.txt b/session-changes-qa-root.txt']]),
+            latestTurnAgentReportedDiffByPath: new Map(),
+            latestTurnCheckpointDiffByPath: new Map(),
             providerDiffByPath: new Map([['session-changes-qa-root.txt', 'diff --git a/session-changes-qa-root.txt b/session-changes-qa-root.txt']]),
         });
 

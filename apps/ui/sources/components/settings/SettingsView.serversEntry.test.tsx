@@ -133,12 +133,18 @@ vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
 }));
 
-vi.mock('@/constants/Typography', () => ({
+vi.mock('@/constants/Typography', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/constants/Typography')>();
+    return {
+    ...actual,
     Typography: {
+        ...actual.Typography,
         default: () => ({}),
         mono: () => ({}),
+        rowMeta: () => ({}),
     },
-}));
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: createPassthroughNode('ItemList'),

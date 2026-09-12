@@ -35,7 +35,7 @@ describe('createPluginUiPrivatePresentationHost focus transfer', () => {
     });
 
     it('forwards a read-only unified diff to the incumbent app renderer without adding state', () => {
-        const host = createPluginUiPrivatePresentationHost();
+        const host = createPluginUiPrivatePresentationHost(undefined);
         const unifiedDiff = '@@ -1 +1 @@\n-old\n+new';
         const rendered = host.renderDiffViewer({
             unifiedDiff,

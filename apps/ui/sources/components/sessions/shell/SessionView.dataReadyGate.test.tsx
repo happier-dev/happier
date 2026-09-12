@@ -283,6 +283,7 @@ installSessionShellCommonModuleMocks({
         }).module,
     storage: async () =>
         createStorageModuleStub({
+            useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
             storage: Object.assign(
                 (
                     selector?: (value: {
@@ -837,18 +838,18 @@ describe('SessionView (data ready gating)', () => {
             placement: 'beforeComposer',
             // SessionView forwards the single normalized region projection;
             // CurrentSessionPresentationSurface remains the physical-slot owner.
-            composerRegions: [
+            composerRegions: expect.arrayContaining([
                 expect.objectContaining({ id: 'acme.compose/before' }),
                 expect.objectContaining({ id: 'acme.compose/after' }),
-            ],
+            ]),
             renderComposerRegion: expect.any(Function),
         }));
         expect(currentSessionPresentationPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
             placement: 'afterComposer',
-            composerRegions: [
+            composerRegions: expect.arrayContaining([
                 expect.objectContaining({ id: 'acme.compose/before' }),
                 expect.objectContaining({ id: 'acme.compose/after' }),
-            ],
+            ]),
             renderComposerRegion: expect.any(Function),
         }));
         expect(agentInputPropsSpy).toHaveBeenCalled();
@@ -1398,7 +1399,7 @@ describe('SessionView (data ready gating)', () => {
                     executionOrigin: {
                         serverIdentityId: 'srv_acme',
                         materializationRef: {
-                            machineId: 'machine-compose',
+                            machineId: 'm1',
                             materializationId: 'issues-materialization-a',
                             pluginId: attachment.attachment.pluginId,
                         },
@@ -1429,7 +1430,7 @@ describe('SessionView (data ready gating)', () => {
                     executionOrigin: {
                         serverIdentityId: 'srv_acme',
                         materializationRef: {
-                            machineId: 'machine-compose',
+                            machineId: 'm1',
                             materializationId: 'issues-materialization-a',
                             pluginId: attachment.attachment.pluginId,
                         },

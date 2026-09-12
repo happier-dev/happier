@@ -30,7 +30,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 
 import type { SelectionListOption, SelectionListProps, SelectionListStep } from '../_types';
 
@@ -231,7 +231,7 @@ describe('SelectionList — selection and filtering cannot move the pattern', ()
         // expandedContent at all. The declared capability is unchanged, so the
         // widget is unchanged.
         await selectTo(null);
-        expect(screen.tree.root.findAll((node) => node.props?.testID === EXPANDED_TEST_ID))
+        expect(findAllHostTestInstances(screen.root, (node) => node.props?.testID === EXPANDED_TEST_ID))
             .toHaveLength(0);
         expect(roleCensus(screen)).toEqual(opened);
 
@@ -332,7 +332,9 @@ describe('SelectionList — the grid describes the columns it actually paints', 
         const selectedCell = screen.findByTestId('sl:root:option-wrapper:m-1')
             ?.findAll((node) => hasHostRole(node, 'gridcell'))[0];
         expect(selectedCell?.props['aria-colindex']).toBe(1);
-        expect(selectedCell?.findAll((node) => node.props?.testID === EXPANDED_TEST_ID))
+        expect(selectedCell === undefined
+            ? []
+            : findAllHostTestInstances(selectedCell, (node) => node.props?.testID === EXPANDED_TEST_ID))
             .toHaveLength(1);
     });
 });

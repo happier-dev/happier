@@ -63,9 +63,15 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     isBundledAgentId: (value: string) => ['claude', 'codex', 'custom-preset'].includes(value),
-    getAgentCore: () => ({ model: { supportsFreeform: true, dynamicProbe: 'dynamic' } }),
+    getAgentCore: () => ({
+        availability: { experimental: false },
+        displayNameKey: 'agents.codex',
+        model: { supportsFreeform: true, dynamicProbe: 'dynamic' },
+        ui: { agentPickerIconName: 'code-slash-outline' },
+    }),
 }));
 
 vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({

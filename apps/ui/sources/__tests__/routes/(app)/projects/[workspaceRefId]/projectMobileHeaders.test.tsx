@@ -9,6 +9,7 @@ import { createExpoRouterMock, createStackOptionsCapture } from '@/dev/testkit/m
 
 const stackOptionsCapture = createStackOptionsCapture();
 const paneOpenDetailsTabSpy = vi.fn();
+const persistProjectLastMobileSurfaceSpy = vi.fn();
 const setLocalSettingSpy = vi.fn();
 const setSettingSpy = vi.fn();
 let localSettingsMock: Record<string, unknown> = {};
@@ -111,6 +112,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
         useProjectLastMobileSurface: (workspaceRefId: string | null) => (
             workspaceRefId ? projectLastMobileSurfaceByWorkspaceRefIdMock[workspaceRefId] ?? null : null
         ),
+        usePersistProjectLastMobileSurface: () => persistProjectLastMobileSurfaceSpy,
     });
 });
 
@@ -169,6 +171,7 @@ describe('project mobile route headers', () => {
             details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
         };
         setLocalSettingSpy.mockClear();
+        persistProjectLastMobileSurfaceSpy.mockClear();
         setSettingSpy.mockClear();
         stackOptionsCapture.reset();
         paneOpenDetailsTabSpy.mockClear();
@@ -205,7 +208,7 @@ describe('project mobile route headers', () => {
         const Screen = (await import(moduleId)).default as React.ComponentType;
         await renderScreen(<Screen />);
 
-        expect(setLocalSettingSpy).toHaveBeenCalledWith(expected);
+        expect(persistProjectLastMobileSurfaceSpy).toHaveBeenCalledWith('wr_1', expected.wr_1);
     });
 
     it('hydrates the remembered active worktree state from a worktreeId query param', async () => {
@@ -233,7 +236,7 @@ describe('project mobile route headers', () => {
         const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
         await renderScreen(<Screen />);
 
-        expect(setLocalSettingSpy).toHaveBeenCalledWith({ wr_1: 'tabs' });
+        expect(persistProjectLastMobileSurfaceSpy).toHaveBeenCalledWith('wr_1', 'tabs');
     });
 
     it.each([

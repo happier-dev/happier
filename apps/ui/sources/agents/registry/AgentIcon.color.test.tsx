@@ -103,7 +103,8 @@ const catalogSpies = vi.hoisted(() => ({
     getAgentIconTintColor: vi.fn(() => '#444444'),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     getAgentIconSource: catalogSpies.getAgentIconSource,
     getAgentIconSvgXml: catalogSpies.getAgentIconSvgXml,
     getAgentIconTintColor: catalogSpies.getAgentIconTintColor,

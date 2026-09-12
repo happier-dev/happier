@@ -70,11 +70,23 @@ describe('sessionConfigurationSeed', () => {
             machineId: 'machine-target',
             directory: '/workspace/target',
             agentType: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             selectedProfileId: 'profile-1',
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
-            modelMode: 'gpt-5',
+            modelSelection: {
+                v: 1,
+                ref: {
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
+                    modelId: 'gpt-5',
+                    providerConnectionId: null,
+                },
+                updatedAt: 201,
+            },
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'codex',
@@ -95,7 +107,7 @@ describe('sessionConfigurationSeed', () => {
                 forceExcludeServerIds: ['disabled'],
             },
             backendNewSessionOptionStateByTargetKey: {
-                'backend:codex': {
+                'agent:happier.agent.codex/codex': {
                     connectedServices: {
                         v: 1,
                         bindingsByServiceId: {

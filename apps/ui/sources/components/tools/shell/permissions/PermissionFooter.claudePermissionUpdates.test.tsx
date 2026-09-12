@@ -82,8 +82,12 @@ function findPermissionFooterButton(
 
 function getTextStyleFragments(button: ReturnType<typeof findPermissionFooterButton>) {
     const textNode = button.findByType('Text' as any);
-    const style = textNode.props.style;
-    return (Array.isArray(style) ? style : [style]).filter(Boolean) as Array<Record<string, unknown>>;
+    return flattenStyleFragments(textNode.props.style);
+}
+
+function flattenStyleFragments(style: unknown): Array<Record<string, unknown>> {
+    if (Array.isArray(style)) return style.flatMap(flattenStyleFragments);
+    return style && typeof style === 'object' ? [style as Record<string, unknown>] : [];
 }
 
 describe('PermissionFooter (Claude permission updates)', () => {

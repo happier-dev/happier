@@ -18,7 +18,8 @@ vi.mock('@/components/ui/media/SafeExpoImage', () => ({
     SafeExpoImage: (props: Record<string, unknown>) => React.createElement('SafeExpoImage', props, null),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     getAgentIconSvgXml: (agentId: string) => (
         agentId === 'claude' ? '<svg viewBox="0 0 10 10" fill="#000"><path d="M0 0h10v10H0z"/></svg>' : null
     ),

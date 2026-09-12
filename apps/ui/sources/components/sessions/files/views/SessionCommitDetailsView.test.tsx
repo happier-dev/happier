@@ -430,7 +430,7 @@ describe('SessionCommitDetailsView', () => {
         expect(node?.type).toBe('DiffReviewCommentsViewer');
     });
 
-    it('starts large commits with only the first file expanded', async () => {
+    it('starts large commits with the initial bounded prefetch window expanded', async () => {
         sessionScmDiffCommitSpy.mockImplementationOnce(async () => ({
             success: true,
             diff: [
@@ -472,11 +472,11 @@ describe('SessionCommitDetailsView', () => {
         const props = getLastDiffFilesListProps() as { files: Array<{ key: string }>; expandedKeys: ReadonlySet<string> };
         expect(props).toBeTruthy();
 
-        expect(Array.from(props.expandedKeys)).toEqual([props.files[0].key]);
+        expect(Array.from(props.expandedKeys)).toEqual(props.files.slice(0, 3).map((file) => file.key));
         expect(typeof (getLastDiffFilesListProps() as { onViewableItemsChanged?: unknown }).onViewableItemsChanged).toBe('function');
     });
 
-    it('does not auto-expand diffs above the first visible file (prevents scroll snap-back)', async () => {
+    it('tracks the bounded prefetch window around the first visible file', async () => {
         sessionScmDiffCommitSpy.mockImplementationOnce(async () => ({
             success: true,
             diff: Array.from({ length: 8 }, (_v, i) => ([
@@ -513,9 +513,11 @@ describe('SessionCommitDetailsView', () => {
         };
         const expandedKeys = afterProps.expandedKeys;
 
-        // Index 4 is above the first visible index 5. Expanding it would change height above the viewport
-        // and make scrolling down feel like it's fighting the user.
-        expect(expandedKeys.has(files[4].key)).toBe(false);
+        expect(expandedKeys.has(files[2].key)).toBe(false);
+        expect(expandedKeys.has(files[3].key)).toBe(true);
+        expect(expandedKeys.has(files[4].key)).toBe(true);
         expect(expandedKeys.has(files[5].key)).toBe(true);
+        expect(expandedKeys.has(files[6].key)).toBe(true);
+        expect(expandedKeys.has(files[7].key)).toBe(false);
     });
 });

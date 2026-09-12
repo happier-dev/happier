@@ -99,6 +99,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                 cache,
                 lifetime: input.accountLifetime,
             });
+            const persistentIsAvailable = persistent.isCurrent();
             const cacheSink = createPluginReactNativeArtifactLeaseCacheSink({
                 cache,
                 lifetime: input.accountLifetime,
@@ -127,7 +128,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                                 clientContribution: input.clientContribution,
                             }),
                     appExact: dependencies.appExact,
-                    persistent,
+                    ...(persistentIsAvailable ? { persistent } : {}),
                     ...(input.daemon
                         ? {
                             daemon: {

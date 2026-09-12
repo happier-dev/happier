@@ -142,7 +142,23 @@ vi.mock('@/components/tools/shell/views/ToolFullView', () => ({
 vi.mock('@/components/tools/shell/presentation/ToolHeader', () => ({ ToolHeader: () => React.createElement('ToolHeader') }));
 vi.mock('@/components/tools/shell/presentation/ToolStatusIndicator', () => ({ ToolStatusIndicator: () => React.createElement('ToolStatusIndicator') }));
 vi.mock('@/components/ui/text/Text', () => ({ Text: ({ children }: any) => React.createElement('Text', null, children) }));
-vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
+vi.mock('@/constants/Typography', () => ({
+  FontWeights: { regular: '400', semiBold: '500', bold: '600' },
+  Typography: {
+    default: () => ({}),
+    mono: () => ({}),
+    header: () => ({}),
+    body: () => ({}),
+    eyebrow: () => ({}),
+    rowTitle: () => ({}),
+    rowMeta: () => ({}),
+    pillLabel: () => ({}),
+    keyHint: () => ({}),
+    timestamp: () => ({}),
+    tabular: () => ({}),
+    logo: () => ({}),
+  },
+}));
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) =>
     React.createElement(
@@ -187,6 +203,11 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
   isExecutionRunNotRunningSendError: () => false,
 }));
 
+const {
+  default: MessageScreen,
+  createSessionMessageRouteStyles,
+} = await import('@/app/(app)/session/[id]/message/[messageId]');
+
 describe('Session message route hydration', () => {
   beforeEach(() => {
     mockSession = { id: 'session-1', accessLevel: 'edit', canApprovePermissions: false };
@@ -224,14 +245,12 @@ describe('Session message route hydration', () => {
 
   it('renders invalid link fallback when session id param is missing', async () => {
     mockSearchParams = { id: '', messageId: 'message-1' };
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
     const screen = await renderMessageScreen(MessageScreen);
     expect(screen.findAllByTestId('session-invalid-link')).toHaveLength(1);
     expect(syncOnSessionVisibleSpy).not.toHaveBeenCalled();
   });
 
   it('does not navigate back until message backfill completes', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -251,7 +270,6 @@ describe('Session message route hydration', () => {
   });
 
   it('keeps a stable tool route open when the route id resolves to a hydrated internal tool message id', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -275,7 +293,6 @@ describe('Session message route hydration', () => {
   });
 
   it('filters ignored Claude teammate lifecycle events from the focused transcript route', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -364,7 +381,6 @@ describe('Session message route hydration', () => {
   });
 
   it('keeps waiting when older paging is not ready instead of redirecting away from the deep link', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -378,7 +394,6 @@ describe('Session message route hydration', () => {
   });
 
   it('does not crash when message kind changes between renders', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -408,7 +423,6 @@ describe('Session message route hydration', () => {
   });
 
   it('does not render the focused-tool composer when there are no participant targets', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -427,8 +441,6 @@ describe('Session message route hydration', () => {
   });
 
   it('keeps the focused tool transcript container shrinkable so the sidechain list can measure on web', async () => {
-    const { createSessionMessageRouteStyles } = await import('@/app/(app)/session/[id]/message/[messageId]');
-
     const styles = createSessionMessageRouteStyles(mockTheme);
 
     expect(styles.routeContent).toEqual(
@@ -446,7 +458,6 @@ describe('Session message route hydration', () => {
   });
 
   it('includes focused execution run target when auto-recipient resolves to execution run', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -466,7 +477,6 @@ describe('Session message route hydration', () => {
 
     const screen = await renderMessageScreen(MessageScreen);
     expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
-    expect(screen.findAllByTestId('agent-input-delivery-chip')).toHaveLength(1);
     expect(screen.findByTestId('agent-input-recipient-chip')?.props.targets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -478,7 +488,6 @@ describe('Session message route hydration', () => {
   });
 
   it('includes focused broadcast target when auto-recipient resolves to agent-team broadcast', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -510,7 +519,6 @@ describe('Session message route hydration', () => {
   });
 
   it('includes focused teammate target when auto-recipient resolves to agent-team member', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();
@@ -549,7 +557,6 @@ describe('Session message route hydration', () => {
   });
 
   it('does not render the focused-tool composer when the focused tool has no auto-recipient, even if other participant targets exist', async () => {
-    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
     ensureSessionVisibleDeferred.resolve();

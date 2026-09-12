@@ -629,8 +629,8 @@ describe('generic client executable contribution registration', () => {
         });
 
         await expect(composition.reconcile([firstActivation, secondActivation])).resolves.toEqual([
-            expect.objectContaining({ result: { ok: false, code: 'activation_failed' } }),
-            expect.objectContaining({ result: { ok: true } }),
+            expect.objectContaining({ result: expect.objectContaining({ ok: false, code: 'activation_failed' }) }),
+            expect.objectContaining({ result: expect.objectContaining({ ok: true }) }),
         ]);
         expect(createExecutableHost).toHaveBeenCalledTimes(1);
         expect(firstActivate).toHaveBeenCalledTimes(1);

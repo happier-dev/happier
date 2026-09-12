@@ -8,7 +8,8 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionAgentPickerCon
     useNewSessionAgentPickerControls: (params: unknown) => pickerControlsMock(params),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     isBundledAgentId: (value: unknown) => value === 'gemini' || value === 'opencode',
     getAgentCore: (agentType: string) => ({
         model: {
@@ -55,6 +56,7 @@ describe('useNewSessionAgentSelectionModelModeReconciliation', () => {
             setSessionConfigOptionOverrides: vi.fn(),
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as ReconciliationParams['settings'],
         };
@@ -91,6 +93,7 @@ describe('useNewSessionAgentSelectionModelModeReconciliation', () => {
             setSessionConfigOptionOverrides: vi.fn(),
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
+            projectionCurrent: true,
             selectedPath: '/repo',
             settings: {} as ReconciliationParams['settings'],
         };

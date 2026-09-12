@@ -55,15 +55,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    FontWeights: { regular: '400', semiBold: '500', bold: '600' },
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-        tabular: () => ({}),
-    },
-}));
-
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (fn: any) => fn(),
 }));
@@ -211,16 +202,16 @@ describe('SessionRightPanel (terminal tab)', () => {
     it('shows the terminal tab only when the feature is enabled', async () => {
         terminalFeatureEnabled = false;
         const initial = await renderPanel();
-        expect(initial.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
+        expect(initial.tree.findAll((node) => typeof node.type === 'string' && node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
 
         terminalFeatureEnabled = true;
         embeddedTerminalDockLocation = 'bottom';
         const dockedElsewhere = await renderPanel();
-        expect(dockedElsewhere.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
+        expect(dockedElsewhere.tree.findAll((node) => typeof node.type === 'string' && node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(0);
 
         embeddedTerminalDockLocation = 'sidebar';
         const enabled = await renderPanel();
-        expect(enabled.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
+        expect(enabled.tree.findAll((node) => typeof node.type === 'string' && node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
     });
 
     it('pads the panel root by the iOS safe-area inset at the top', async () => {

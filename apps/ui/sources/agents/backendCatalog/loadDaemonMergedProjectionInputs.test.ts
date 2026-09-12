@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    defineProtocolNumber,
+    defineProtocolObject,
+    defineProtocolString,
+} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 const projectionDescribeMock = vi.hoisted(() => vi.fn());
 const projectionRevision = vi.hoisted(() => ({ value: 0 }));
@@ -62,6 +67,16 @@ function createAccountLifetime(accountId: string): Readonly<{
 }
 
 const retainedTestAccountLifetime = createAccountLifetime('account-default').lifetime;
+
+const EMPTY_TARGET_INPUT_SCHEMA = defineProtocolObject({}, { policy: 'closed' }).jsonSchema;
+const REVIEW_ID_TARGET_INPUT_SCHEMA = defineProtocolObject(
+    { reviewId: defineProtocolString() },
+    { policy: 'closed' },
+).jsonSchema;
+const NUMERIC_REVIEW_ID_TARGET_INPUT_SCHEMA = defineProtocolObject(
+    { reviewId: defineProtocolNumber() },
+    { policy: 'closed' },
+).jsonSchema;
 
 const automationEligibleEvents = [{
     event: {
@@ -313,12 +328,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             }),
             role: 'detail',
             presentation: 'content' as const,
-            inputSchema: Object.freeze({
-                type: 'object',
-                properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-                required: Object.freeze(['reviewId']),
-                additionalProperties: false,
-            }),
+            inputSchema: REVIEW_ID_TARGET_INPUT_SCHEMA,
         });
         let resolveProjection!: (value: unknown) => void;
         projectionDescribeMock.mockImplementation(async () => await new Promise((resolve) => {
@@ -383,12 +393,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
 
     it('does not revive contributor G after contributor H has become current', async () => {
         const mountedTarget = { pluginId: 'acme.preview', immutableGenerationId: 'target-generation-a' } as const;
-        const inputSchema = Object.freeze({
-            type: 'object',
-            properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-            required: Object.freeze(['reviewId']),
-            additionalProperties: false,
-        });
+        const inputSchema = REVIEW_ID_TARGET_INPUT_SCHEMA;
         const mount = (immutableGenerationId: string) => Object.freeze({
             kind: 'targetedSurface' as const,
             target: mountedTarget,
@@ -505,12 +510,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             type: 'object',
         });
-        const mountH = mount('contributor-generation-h', {
-            type: 'object',
-            properties: { reviewId: { type: 'string' } },
-            required: ['reviewId'],
-            additionalProperties: false,
-        });
+        const mountH = mount('contributor-generation-h', REVIEW_ID_TARGET_INPUT_SCHEMA);
         projectionDescribeMock
             .mockResolvedValueOnce({
                 supported: true,
@@ -656,7 +656,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             },
             role: 'detail',
             presentation: 'content',
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: EMPTY_TARGET_INPUT_SCHEMA,
         }];
         projectionDescribeMock.mockResolvedValueOnce({
             supported: true,
@@ -701,7 +701,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             },
             role: 'detail',
             presentation: 'content' as const,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: EMPTY_TARGET_INPUT_SCHEMA,
         }];
         projectionDescribeMock.mockResolvedValueOnce({
             supported: true,
@@ -762,7 +762,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             },
             role: 'detail',
             presentation: 'content' as const,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: EMPTY_TARGET_INPUT_SCHEMA,
         }];
         let resolveProjection!: (value: unknown) => void;
         projectionDescribeMock.mockImplementationOnce(async () => await new Promise((resolve) => {
@@ -823,7 +823,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             }),
             role: 'detail',
             presentation: 'content' as const,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: EMPTY_TARGET_INPUT_SCHEMA,
         });
         const mountG = mount('contributor-generation-g');
         const mountH = mount('contributor-generation-h');
@@ -932,7 +932,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             },
             role: 'detail',
             presentation: 'content' as const,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: EMPTY_TARGET_INPUT_SCHEMA,
         }];
         let resolveProjection!: (value: unknown) => void;
         projectionDescribeMock.mockImplementationOnce(async () => await new Promise((resolve) => {
@@ -981,12 +981,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
 
     it('retains only the prepared launch-input validator while replacing same-generation private mount facts', async () => {
         const mountedTarget = { pluginId: 'acme.preview', immutableGenerationId: 'target-generation-a' } as const;
-        const inputSchema = Object.freeze({
-            type: 'object',
-            properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-            required: Object.freeze(['reviewId']),
-            additionalProperties: false,
-        });
+        const inputSchema = REVIEW_ID_TARGET_INPUT_SCHEMA;
         const mount = (immutableGenerationId: string, resourceReadable: boolean) => Object.freeze({
             kind: 'targetedSurface' as const,
             target: mountedTarget,
@@ -1080,12 +1075,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
     it('fails closed for schema and presentation drift under one exact admitted authority', async () => {
         const mountedTarget = { pluginId: 'acme.preview', immutableGenerationId: 'target-generation-a' } as const;
         const account = createAccountLifetime('account-a');
-        const canonicalSchema = Object.freeze({
-            type: 'object',
-            properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-            required: Object.freeze(['reviewId']),
-            additionalProperties: false,
-        });
+        const canonicalSchema = REVIEW_ID_TARGET_INPUT_SCHEMA;
         const mount = Object.freeze({
             kind: 'targetedSurface' as const,
             target: mountedTarget,
@@ -1101,12 +1091,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         });
         const schemaDrift = Object.freeze({
             ...mount,
-            inputSchema: Object.freeze({
-                type: 'object',
-                properties: Object.freeze({ reviewId: Object.freeze({ type: 'number' }) }),
-                required: Object.freeze(['reviewId']),
-                additionalProperties: false,
-            }),
+            inputSchema: NUMERIC_REVIEW_ID_TARGET_INPUT_SCHEMA,
         });
         const presentationDrift = Object.freeze({ ...mount, presentation: 'fill' as const });
         projectionDescribeMock
@@ -1164,12 +1149,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
     it('retains a canonical validator through same-authority drift without mounting the drifted response', async () => {
         const mountedTarget = { pluginId: 'acme.preview', immutableGenerationId: 'target-generation-a' } as const;
         const account = createAccountLifetime('account-a');
-        const canonicalSchema = Object.freeze({
-            type: 'object',
-            properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-            required: Object.freeze(['reviewId']),
-            additionalProperties: false,
-        });
+        const canonicalSchema = REVIEW_ID_TARGET_INPUT_SCHEMA;
         const canonicalMount = Object.freeze({
             kind: 'targetedSurface' as const,
             target: mountedTarget,
@@ -1185,12 +1165,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         });
         const driftedMount = Object.freeze({
             ...canonicalMount,
-            inputSchema: Object.freeze({
-                type: 'object',
-                properties: Object.freeze({ reviewId: Object.freeze({ type: 'number' }) }),
-                required: Object.freeze(['reviewId']),
-                additionalProperties: false,
-            }),
+            inputSchema: NUMERIC_REVIEW_ID_TARGET_INPUT_SCHEMA,
         });
         projectionDescribeMock
             .mockResolvedValueOnce({
@@ -1264,12 +1239,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
     it('compiles one validator and reuses it for duplicate exact-authority rows in one response', async () => {
         const mountedTarget = { pluginId: 'acme.preview', immutableGenerationId: 'target-generation-a' } as const;
         const account = createAccountLifetime('account-a');
-        const inputSchema = Object.freeze({
-            type: 'object',
-            properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-            required: Object.freeze(['reviewId']),
-            additionalProperties: false,
-        });
+        const inputSchema = REVIEW_ID_TARGET_INPUT_SCHEMA;
         const mount = Object.freeze({
             kind: 'targetedSurface' as const,
             target: mountedTarget,

@@ -9,6 +9,24 @@ import {
   resolveSessionForkStrategyAvailability,
 } from './forkUiSupport';
 
+const codexCapabilities: CurrentProjectedAgentCapabilities = {
+  agentId: 'codex',
+  identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+  generation: 42,
+  capabilities: {
+    sessions: { open: ['fork'], delivery: ['newTurn'], cancel: true },
+  },
+};
+
+const opencodeCapabilities: CurrentProjectedAgentCapabilities = {
+  agentId: 'opencode',
+  identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+  generation: 42,
+  capabilities: {
+    sessions: { open: ['fork'], delivery: ['newTurn'], cancel: true },
+  },
+};
+
 function makeSession(metadata: any): Session {
   return {
     id: 's1',
@@ -34,8 +52,25 @@ describe('forkUiSupport', () => {
   });
 
   it('allows fork-from-message when replay is disabled but OpenCode server backend is active', () => {
-    const session = makeSession({ machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'server' });
-    expect(canForkFromMessage({ session, messageSeq: 5, replayEnabled: false, agentSwitchingEnabled: false })).toBe(true);
+    const session = makeSession({
+      machineId: 'm1',
+      flavor: 'opencode',
+      opencodeBackendMode: 'server',
+      agentRuntimeCapabilitiesV1: {
+        sessionCapabilities: {
+          sessionListing: 'supported',
+          sessionFork: { conversation: 'supported', fromMessage: 'supported' },
+          sessionRollback: { conversation: 'unsupported' },
+        },
+      },
+    });
+    expect(canForkFromMessage({
+      session,
+      messageSeq: 5,
+      replayEnabled: false,
+      agentSwitchingEnabled: false,
+      currentAgentCapabilities: opencodeCapabilities,
+    })).toBe(true);
   });
 
   it('does not allow fork-from-message for OpenCode ACP when replay and switching are both off', () => {
@@ -45,7 +80,12 @@ describe('forkUiSupport', () => {
 
   it('allows conversation fork for Codex app-server when replay is disabled', () => {
     const session = makeSession({ machineId: 'm1', flavor: 'codex', codexBackendMode: 'appServer' });
-    expect(canForkConversation({ session, replayEnabled: false, agentSwitchingEnabled: false })).toBe(true);
+    expect(canForkConversation({
+      session,
+      replayEnabled: false,
+      agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
+    })).toBe(true);
   });
 
   it('allows conversation fork for older Codex app-server sessions that only have generic codex control metadata', () => {
@@ -60,7 +100,12 @@ describe('forkUiSupport', () => {
         options: [],
       },
     });
-    expect(canForkConversation({ session, replayEnabled: false, agentSwitchingEnabled: false })).toBe(true);
+    expect(canForkConversation({
+      session,
+      replayEnabled: false,
+      agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
+    })).toBe(true);
   });
 
   it('does not allow fork-from-message for Codex app-server when replay and switching are both off', () => {
@@ -70,7 +115,12 @@ describe('forkUiSupport', () => {
 
   it('allows fork conversation for OpenCode ACP when replay is disabled (ACP fork-latest)', () => {
     const session = makeSession({ machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'acp' });
-    expect(canForkConversation({ session, replayEnabled: false, agentSwitchingEnabled: false })).toBe(true);
+    expect(canForkConversation({
+      session,
+      replayEnabled: false,
+      agentSwitchingEnabled: false,
+      currentAgentCapabilities: opencodeCapabilities,
+    })).toBe(true);
   });
 
   it('returns false only when no route at all is offerable', () => {
@@ -153,6 +203,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
       forkPoint: { type: 'latest' },
       replayEnabled: false,
       agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
     })).toEqual({ native: true, replay: false, configure: false, nativeUnavailableReason: null });
   });
 
@@ -165,6 +216,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
       forkPoint: { type: 'seq', upToSeqInclusive: 5 },
       replayEnabled: false,
       agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
     })).toEqual({
       native: false,
       replay: false,
@@ -176,6 +228,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
       forkPoint: { type: 'latest' },
       replayEnabled: false,
       agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
     })).toEqual({ native: true, replay: false, configure: false, nativeUnavailableReason: null });
   });
 
@@ -206,7 +259,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
         v: 1,
         updatedAt: 1,
         selection: {
-          agentTargetKey: 'backend:codex',
+          agentTargetKey: 'agent:happier.agent.codex/codex',
           providerConnectionId: 'pc_work',
           modelId: 'provider-model',
         },
@@ -217,6 +270,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
       forkPoint: { type: 'latest' },
       replayEnabled: true,
       agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
     })).toEqual({
       native: false,
       replay: true,
@@ -236,7 +290,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
         v: 1,
         updatedAt: 1,
         selection: {
-          agentTargetKey: 'backend:codex',
+          agentTargetKey: 'agent:happier.agent.codex/codex',
           providerConnectionId: null,
           modelId: 'gpt-5',
         },
@@ -247,6 +301,7 @@ describe('resolveSessionForkStrategyAvailability', () => {
       forkPoint: { type: 'latest' },
       replayEnabled: false,
       agentSwitchingEnabled: false,
+      currentAgentCapabilities: codexCapabilities,
     })).toEqual({ native: true, replay: false, configure: false, nativeUnavailableReason: null });
   });
 

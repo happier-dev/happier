@@ -1,6 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type {
@@ -46,6 +47,82 @@ type ExternalSessionsBrowseScreenProps = Readonly<{
 }>;
 
 const browseScreenPropsRef = { current: null as ExternalSessionsBrowseScreenProps | null };
+
+function createReviewBotProjection() {
+    return PluginProjectionV2Schema.parse({
+        v: 2,
+        generation: 1,
+        installedPackagesById: {
+            'happier.agent.claude': {
+                id: 'happier.agent.claude',
+                displayName: 'Claude',
+                enabled: true,
+                source: { kind: 'bundled', locator: 'happier.agent.claude' },
+            },
+            'acme.review-bot': {
+                id: 'acme.review-bot',
+                displayName: 'Review Bot',
+                enabled: true,
+                source: { kind: 'local', locator: 'acme.review-bot' },
+            },
+        },
+        agentsById: {
+            claude: {
+                id: 'claude',
+                title: 'Claude',
+                catalogAgentId: 'claude',
+                iconAgentId: 'claude',
+                identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            },
+            'plugin:review-bot': {
+                id: 'plugin:review-bot',
+                title: 'Review Bot Plugin',
+                subtitle: 'plugin agent',
+                channel: 'plugin',
+                isBuiltIn: false,
+                catalogAgentId: 'claude',
+                iconAgentId: 'claude',
+                identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
+                externalSessions: {
+                    agent: { pluginId: 'acme.review-bot', localId: 'review-bot' },
+                    generation: 1,
+                    operations: {
+                        listCandidates: true,
+                        resolveLinkIdentity: true,
+                        pageTranscript: true,
+                        readAfterTranscript: true,
+                    },
+                    sources: [{
+                        sourceKind: 'reviewBotConfig',
+                        schema: {
+                            fields: [
+                                { name: 'kind', kind: 'literal', value: 'reviewBotConfig' },
+                                { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
+                            ],
+                        },
+                        key: {
+                            segments: [
+                                { kind: 'literal', value: 'reviewBotConfig' },
+                                { kind: 'field', field: 'configDir' },
+                            ],
+                        },
+                        instances: [{ kind: 'default', constants: {} }],
+                    }],
+                },
+            },
+        },
+        backendsById: {
+            'plugin-review-bot': {
+                id: 'plugin-review-bot',
+                agentId: 'plugin:review-bot',
+                title: 'Review Bot (plugin)',
+                subtitle: 'plugin backend',
+                catalogAgentId: 'claude',
+                iconAgentId: 'claude',
+            },
+        },
+    });
+}
 
 installPickerCommonModuleMocks({
     reactNative: async () =>
@@ -204,8 +281,11 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
             pathname: '/new',
             params: {
                 agentType: 'claude',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
-                backendTargetKey: 'backend:claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 dataId: 'draft-1',
                 machineId: 'machine-2',
                 spawnServerId: 'server-2',
@@ -248,6 +328,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                 ],
             },
         };
+        externalSessionBrowseSupportState.supportedByProviderId = { 'review-bot': false };
 
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 
@@ -255,7 +336,16 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
         await Promise.resolve();
 
         expect(browseScreenPropsRef.current).toBeNull();
-        expect(routerMock.replace).toHaveBeenCalledWith('/new');
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+                backendTargetKey: 'backend:review-bot:configured:review-bot',
+                dataId: 'draft-1',
+                machineId: 'machine-2',
+                spawnServerId: 'server-2',
+            },
+        });
     });
 
     it('does not treat the last built-in selection as an external-session carrier for an unprojected configured backend', async () => {
@@ -291,70 +381,68 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                 ],
             },
         };
+        externalSessionBrowseSupportState.supportedByProviderId = { 'review-bot': false };
 
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
 
         await renderScreen(React.createElement(ResumeBrowsePickerScreen));
         expect(browseScreenPropsRef.current).toBeNull();
-        expect(routerMock.replace).toHaveBeenCalledWith('/new');
+        expect(routerMock.replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                dataId: 'draft-1',
+                machineId: 'machine-2',
+                spawnServerId: 'server-2',
+            },
+        });
     });
 
     it('uses the projected runtime carrier when browsing direct sessions for a plugin backend', async () => {
         routeParamsState.value = {
-            backendTargetKey: 'backend:plugin-review-bot',
+            backendTarget: JSON.stringify({
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
+            }),
+            backendTargetKey: 'agent:acme.review-bot/review-bot',
             dataId: 'draft-1',
             machineId: 'machine-plugin-2',
             spawnServerId: 'server-2',
         };
         settingsState.value = {
             backendEnabledByTargetKey: {
-                'backend:plugin-review-bot': true,
+                'agent:acme.review-bot/review-bot': true,
             },
         };
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
-            projection: {
-                v: 1,
-                agentsById: {
-                    'plugin:review-bot': {
-                        id: 'plugin:review-bot',
-                        title: 'Review Bot Plugin',
-                        subtitle: 'plugin agent',
-                        channel: 'plugin',
-                        isBuiltIn: false,
-                        catalogAgentId: 'claude',
-                        iconAgentId: 'claude',
-                    },
-                },
-                backendsById: {
-                    'plugin-review-bot': {
-                        id: 'plugin-review-bot',
-                        agentId: 'plugin:review-bot',
-                        title: 'Review Bot (plugin)',
-                        subtitle: 'plugin backend',
-                        catalogAgentId: 'claude',
-                        iconAgentId: 'claude',
-                    },
-                },
-            },
+            projection: createReviewBotProjection(),
         });
 
         const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
         await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+        await flushHookEffects({ cycles: 10 });
 
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith(
+            'machine-plugin-2',
+            expect.objectContaining({ serverId: 'server-2' }),
+        );
         expect(browseScreenPropsRef.current?.lockScope?.providerId).toBe('plugin:review-bot');
     });
 
     it('waits for plugin carrier projection on cold load instead of navigating away through the customAcp fallback', async () => {
         routeParamsState.value = {
-            backendTargetKey: 'backend:plugin-review-bot',
+            backendTarget: JSON.stringify({
+                kind: 'agent',
+                identity: { pluginId: 'acme.review-bot', localId: 'review-bot' },
+            }),
+            backendTargetKey: 'agent:acme.review-bot/review-bot',
             dataId: 'draft-1',
             machineId: 'machine-plugin-2',
             spawnServerId: 'server-2',
         };
         settingsState.value = {
             backendEnabledByTargetKey: {
-                'backend:plugin-review-bot': true,
+                'agent:acme.review-bot/review-bot': true,
             },
         };
         externalSessionBrowseSupportState.supportedByProviderId = {
@@ -379,34 +467,11 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
             await act(async () => {
                 projectionResolver({
                     supported: true,
-                    projection: {
-                        v: 1,
-                        agentsById: {
-                            'plugin:review-bot': {
-                                id: 'plugin:review-bot',
-                                title: 'Review Bot Plugin',
-                                subtitle: 'plugin agent',
-                                channel: 'plugin',
-                                isBuiltIn: false,
-                                catalogAgentId: 'claude',
-                                iconAgentId: 'claude',
-                            },
-                        },
-                        backendsById: {
-                            'plugin-review-bot': {
-                                id: 'plugin-review-bot',
-                                agentId: 'plugin:review-bot',
-                                title: 'Review Bot (plugin)',
-                                subtitle: 'plugin backend',
-                                catalogAgentId: 'claude',
-                                iconAgentId: 'claude',
-                            },
-                        },
-                    },
+                    projection: createReviewBotProjection(),
                 });
             });
         }
-        await flushHookEffects({ cycles: 1, turns: 2 });
+        await flushHookEffects({ cycles: 10 });
 
         expect(routerMock.back).not.toHaveBeenCalled();
         expect(routerMock.replace).not.toHaveBeenCalled();

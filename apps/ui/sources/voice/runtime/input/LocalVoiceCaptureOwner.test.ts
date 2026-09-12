@@ -847,6 +847,7 @@ describe('createLocalVoiceCaptureOwner', () => {
         const createDeviceSttController = vi.fn(() => ({
             start: vi.fn(async () => {}),
             stop: vi.fn(async () => ({ finalText: '' })),
+            setMuted: vi.fn(async () => {}),
         }));
         const createSherpaSttController = vi.fn(() => ({
             start: vi.fn(async () => {}),

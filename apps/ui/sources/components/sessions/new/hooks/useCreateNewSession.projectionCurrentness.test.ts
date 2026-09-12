@@ -165,7 +165,6 @@ async function setupHarness() {
     loadSessionModelModes: () => ({}),
     saveSessionModelModes: vi.fn(),
     loadSessionModelModeUpdatedAts: () => ({}),
-    saveSessionMaterializedMaxSeqById: () => ({}),
     saveSessionMaterializedMaxSeqById: vi.fn(),
     loadChangesCursor: () => null,
     saveChangesCursor: vi.fn(),
@@ -307,7 +306,7 @@ async function setupHarness() {
 }
 
 async function renderCreateHook(
-  useCreateNewSession: ReturnType<typeof setupHarness>['useCreateNewSession'],
+  useCreateNewSession: Awaited<ReturnType<typeof setupHarness>>['useCreateNewSession'],
   params: Readonly<{ daemonMergedProjectionInputs: Record<string, unknown> | null }>,
 ) {
   const setIsCreating = vi.fn();

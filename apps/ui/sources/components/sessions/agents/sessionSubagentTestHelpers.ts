@@ -18,7 +18,6 @@ const sessionSubagentModuleState = vi.hoisted(() => ({
         modal: undefined as SessionSubagentModuleFactory | undefined,
         reactNative: undefined as SessionSubagentModuleFactory | undefined,
         storage: undefined as SessionSubagentModuleFactory | undefined,
-        text: undefined as SessionSubagentModuleFactory | undefined,
         unistyles: undefined as SessionSubagentModuleFactory | undefined,
     },
 }));
@@ -31,7 +30,6 @@ export function installSessionSubagentCommonModuleMocks(
         modal: options.modal,
         reactNative: options.reactNative,
         storage: options.storage,
-        text: options.text,
         unistyles: options.unistyles,
     };
 
@@ -70,10 +68,9 @@ export function installSessionSubagentCommonModuleMocks(
             React.createElement('Text', props, children),
     }));
 
-    vi.mock('@/text', async () => {
-        const activeOptions = sessionSubagentModuleState.options;
-        if (activeOptions.text) {
-            return await activeOptions.text();
+    vi.doMock('@/text', async () => {
+        if (options.text) {
+            return await options.text();
         }
 
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { PetCommandControls } from './buildCommandPaletteCommands';
 import type { KeyboardShortcutHandlers } from '@/keyboard';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { CommandPaletteProvider } from './CommandPaletteProvider';
 
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const applyLocalSettingsMock = vi.hoisted(() => vi.fn());
@@ -14,10 +16,10 @@ const captured = vi.hoisted(() => ({
     keyboardHandlers: null as KeyboardShortcutHandlers | null,
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
-    useSegments: () => [],
-}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ segments: [] }).module;
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -28,20 +30,33 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ logout: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: Object.assign(
-        (selector: (state: unknown) => unknown) => selector({
-            sessions: {},
-            settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] },
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const settings: Settings = {
+        ...settingsDefaults,
+        commandPaletteEnabled: true,
+        keyboardShortcutsV2Enabled: true,
+        keyboardSingleKeyShortcutsEnabled: false,
+        keyboardShortcutOverridesV1: {},
+        keyboardShortcutDisabledCommandIdsV1: [],
+    };
+    const readSnapshot = () => ({ sessions: {}, settings });
+    const storage = Object.assign(
+        ((selector?: (state: ReturnType<typeof readSnapshot>) => unknown) => {
+            const snapshot = readSnapshot();
+            return typeof selector === 'function' ? selector(snapshot) : snapshot;
         }),
         {
-            getState: () => ({
-                sessions: {},
-                settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] },
-            }),
+            getState: readSnapshot,
+            getInitialState: readSnapshot,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
         },
-    ),
-}));
+    );
+    return createStorageModuleStub({ storage });
+});
 
 vi.mock('zustand/react/shallow', () => ({
     useShallow: <T,>(selector: T) => selector,
@@ -90,12 +105,12 @@ vi.mock('@/keyboard', async (importOriginal) => {
             return React.createElement('KeyboardShortcutProvider', null, children);
         },
         buildKeyboardShortcutLabels: (
-            platform: Parameters<typeof actual.buildKeyboardShortcutLabels>[0],
-            surface: Parameters<typeof actual.buildKeyboardShortcutLabels>[1],
+            _platform: Parameters<typeof actual.buildKeyboardShortcutLabels>[0],
+            _surface: Parameters<typeof actual.buildKeyboardShortcutLabels>[1],
             options: NonNullable<Parameters<typeof actual.buildKeyboardShortcutLabels>[2]>,
         ) => {
             captured.shortcutLabelHandlers = options.handlers ?? null;
-            return actual.buildKeyboardShortcutLabels(platform, surface, options);
+            return {};
         },
     };
 });
@@ -123,6 +138,7 @@ vi.mock('./buildCommandPaletteCommands', async (importOriginal) => {
 
 describe('CommandPaletteProvider pet commands', () => {
     beforeEach(() => {
+        vi.clearAllMocks();
         applySettingsMock.mockClear();
         applyLocalSettingsMock.mockClear();
         resetDesktopActivityOverlayPositionMock.mockClear();
@@ -136,8 +152,6 @@ describe('CommandPaletteProvider pet commands', () => {
     });
 
     it('wakes and tucks the Dev activity overlay companion through the pet-specific overlay override', async () => {
-        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
-
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
         captured.keyboardHandlers?.['commandPalette.open']?.();
 
@@ -158,8 +172,6 @@ describe('CommandPaletteProvider pet commands', () => {
     });
 
     it('computes command-palette row shortcut labels from active command handlers', async () => {
-        const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
-
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
 
         expect(captured.shortcutLabelHandlers?.['session.new']).toEqual(expect.any(Function));

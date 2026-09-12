@@ -180,7 +180,9 @@ describe('SessionInstrumentStrip', () => {
             );
         });
         layout(tree!, 280);
-        expect(tree!.root.findAll((n) => n.props?.testID === 'session-instrument-overflow-chip')).toHaveLength(1);
+        expect(tree!.root.findAll((n) => (
+            typeof n.type === 'string' && n.props?.testID === 'session-instrument-overflow-chip'
+        ))).toHaveLength(1);
         // The context gauge is NOT inline (collapsed); permission label still present.
         expect(tree!.root.findAll((n) => n.props?.testID === 'ctx')).toHaveLength(0);
         const texts = tree!.root.findAll((n) => String(n.type) === 'Text');

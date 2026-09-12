@@ -70,7 +70,7 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
     return {
         ...actual,
-        getActiveServerSnapshot: () => ({ serverUrl: '' }),
+        getActiveServerSnapshot: () => ({ serverUrl: 'https://server.test' }),
         isActiveServerSelectionExplicit: () => false,
     };
 });
@@ -95,6 +95,8 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
         getAuthAutoRedirectSuppressedUntil: () => mockState.getSuppressedUntilMock(),
         setPendingExternalAuth: () => mockState.setPendingExternalAuthMock(),
         clearPendingExternalAuth: () => mockState.clearPendingExternalAuthMock(),
+        readPendingExternalAuthState: async () => ({ value: null, serverMismatch: false }),
+        readPendingExternalAuthStateForServerUrl: async () => ({ value: null, serverMismatch: false }),
     },
     isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
@@ -139,6 +141,8 @@ const getServerFeaturesSnapshotMock = vi.fn(async (_params?: unknown): Promise<S
 
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
+    getCachedServerFeaturesSnapshot: () => null,
+    subscribeServerFeaturesSnapshot: () => () => {},
 }));
 
 describe('/ (welcome) auto redirect on web', () => {

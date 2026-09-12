@@ -150,11 +150,25 @@ vi.mock('@/utils/errors/errors', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    applySettings: mocks.applySettingsFn,
-    settingsDefaults: createBaseMockSettings(),
-    settingsParse: mocks.settingsParse,
-}));
+vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/settings/settings')>();
+    mocks.settingsParse.mockImplementation((value: unknown) => {
+        const record =
+            value && typeof value === 'object' && !Array.isArray(value)
+                ? (value as Record<string, unknown>)
+                : {};
+        return actual.settingsParse({
+            ...actual.settingsDefaults,
+            ...record,
+        });
+    });
+    return {
+        ...actual,
+        applySettings: mocks.applySettingsFn,
+        settingsDefaults: actual.settingsDefaults,
+        settingsParse: mocks.settingsParse,
+    };
+});
 
 vi.mock('@/sync/domains/settings/debugSettings', () => ({
     summarizeSettings: () => ({}),
@@ -250,6 +264,7 @@ vi.mock('@/sync/http/client', () => ({
 }));
 
 import { applySettingsLocalDelta, syncSettings } from './syncSettings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const credentials: AuthCredentials = {
     token: 'token',
@@ -367,9 +382,9 @@ describe('syncSettings local-only server-selection settings', () => {
             expect.objectContaining({
                 analyticsOptOut: true,
                 claudeLocalPermissionBridgeEnabled: false,
-                serverSelectionGroups: undefined,
-                serverSelectionActiveTargetKind: undefined,
-                serverSelectionActiveTargetId: undefined,
+                serverSelectionGroups: [],
+                serverSelectionActiveTargetKind: null,
+                serverSelectionActiveTargetId: null,
                 terminalConnectLegacySecretExportEnabled: false,
             }),
             4,
@@ -829,7 +844,7 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         mocks.storageState.settings = {
-            ...createBaseMockSettings(),
+            ...settingsDefaults,
             serverSelectionGroups: [],
             serverSelectionActiveTargetKind: null,
             serverSelectionActiveTargetId: null,
@@ -969,6 +984,10 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
     });
 
     it('captures tracked account and derived setting changes before opting out of analytics', () => {
+        mocks.storageState.settings = {
+            ...settingsDefaults,
+            sessionListDensity: 'detailed',
+        };
         const setPendingSettings = vi.fn();
         const schedulePendingSettingsFlush = vi.fn();
 

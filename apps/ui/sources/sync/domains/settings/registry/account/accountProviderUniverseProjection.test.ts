@@ -55,6 +55,7 @@ describe('account provider universe projection', () => {
 
         const acmeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'acme.review.backend' });
         const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
+        const protocolClaudeTargetKey = 'backend:claude';
         const input = {
             backendEnabledById: {
                 claude: false,
@@ -81,11 +82,11 @@ describe('account provider universe projection', () => {
         });
 
         expect(migrated.backendEnabledByTargetKey).toMatchObject({
-            [claudeTargetKey]: false,
+            [protocolClaudeTargetKey]: false,
             [acmeTargetKey]: false,
         });
         expect(migrated.backendCliSourcePreferenceByTargetKey).toMatchObject({
-            [claudeTargetKey]: 'managed-first',
+            [protocolClaudeTargetKey]: 'managed-first',
             [acmeTargetKey]: 'system-first',
         });
         expect(migrated.sessionDefaultPermissionModeByTargetKey).toMatchObject({

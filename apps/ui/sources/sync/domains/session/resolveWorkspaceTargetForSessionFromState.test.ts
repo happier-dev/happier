@@ -22,6 +22,12 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                             machineId: 'm-direct',
                             remoteSessionId: 'remote-1',
                             source: { kind: 'codexHome', home: 'user' },
+                            linkedAtMs: 1,
+                            qualifiedIdentity: {
+                                v: 1,
+                                agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                                source: { kind: 'codexHome', contractVersion: 1 },
+                            },
                         },
                     },
                 },
@@ -68,7 +74,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                 },
                 'm-direct': {
                     id: 'm-direct',
-                    active: false,
+                    active: true,
                     activeAt: 1,
                     metadata: { host: 'direct.local' },
                 },
@@ -98,6 +104,12 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                             machineId: 'm-direct',
                             remoteSessionId: 'remote-1',
                             source: { kind: 'codexHome', home: 'user' },
+                            linkedAtMs: 1,
+                            qualifiedIdentity: {
+                                v: 1,
+                                agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                                source: { kind: 'codexHome', contractVersion: 1 },
+                            },
                         },
                     },
                 },
@@ -128,7 +140,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
             machines: {
                 'm-direct': {
                     id: 'm-direct',
-                    active: false,
+                    active: true,
                     activeAt: 1,
                     metadata: { host: 'direct.local' },
                 },

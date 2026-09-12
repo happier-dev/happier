@@ -7,6 +7,7 @@ import {
     getTerminalNativeQaCapabilities,
     injectTerminalNativeRendererCrashForQa,
     type TerminalNativeAvailability,
+    type TerminalNativeRuntimePlatform,
 } from '@happier-dev/terminal-native';
 
 import { isDevRouteEnabled } from '@/auth/routing/devRoutePolicy';
@@ -59,14 +60,16 @@ function TerminalQaScreenEnabled(): React.ReactElement {
     const [detectedUrl, setDetectedUrl] = React.useState<EmbeddedTerminalPaneController['detectedUrl']>(null);
     const [pasteText, setPasteText] = React.useState('line one\nline two');
     const qaCapabilities = React.useMemo(() => getTerminalNativeQaCapabilities(), []);
-    const nativeRenderer = React.useMemo(
-        () => createTerminalQaNativeRendererOptions(Platform.OS, getTerminalNativeAvailability({
-            platform: Platform.OS,
+    const nativeRenderer = React.useMemo(() => {
+        const platform: TerminalNativeRuntimePlatform = Platform.OS === 'ios' || Platform.OS === 'android'
+            ? Platform.OS
+            : 'unknown';
+        return createTerminalQaNativeRendererOptions(Platform.OS, getTerminalNativeAvailability({
+            platform,
             featureEnabled: true,
             accessibilityAccepted: true,
-        })),
-        [],
-    );
+        }));
+    }, []);
 
     React.useEffect(() => () => session.dispose(), [session]);
     React.useEffect(() => {
@@ -305,6 +308,7 @@ export function createTerminalQaNativeRendererOptions(
             featureEnabled: true,
             platform,
             availability,
+            accessibilityAccepted: true,
             packageProofAccepted: availability.available,
             crashFallbackAvailable: true,
         };
@@ -314,6 +318,7 @@ export function createTerminalQaNativeRendererOptions(
             featureEnabled: true,
             platform,
             availability,
+            accessibilityAccepted: true,
             packageProofAccepted: availability.available,
             crashFallbackAvailable: true,
         };

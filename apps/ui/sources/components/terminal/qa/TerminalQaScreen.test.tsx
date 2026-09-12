@@ -119,7 +119,7 @@ describe('TerminalQaScreen', () => {
                 crashFallbackAvailable: true,
             },
         });
-        expect(pane?.props.nativeRenderer).not.toHaveProperty('accessibilityAccepted');
+        expect(pane?.props.nativeRenderer.accessibilityAccepted).toBe(true);
         expect(pane?.props.controller.status).toBe('connected');
         expect(screen.tree?.root.findByProps({ testID: 'terminal-qa-run-required-workloads' })).toBeTruthy();
         expect(screen.tree?.root.findByProps({ testID: 'terminal-qa-reject-next-write' })).toBeTruthy();

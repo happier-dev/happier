@@ -19,7 +19,11 @@ function build(params: Readonly<{
         automationFeatureEnabled: params.supported ?? true,
         automationRequestedByRoute: params.requested ?? false,
         selectedMachineId: 'machine-1',
-        selectedMachine: { id: 'machine-1', active: params.machineActive ?? true, activeAt: Date.now() } as any,
+        selectedMachine: {
+            id: 'machine-1',
+            active: params.machineActive ?? true,
+            activeAt: params.machineActive === false ? 0 : Date.now(),
+        } as any,
         selectedPath: '/repo/project',
         buildDraft: (automation) => ({ ...BASE_DRAFT, automation }),
     });

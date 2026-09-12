@@ -42,6 +42,7 @@ import {
     SESSION_LIST_ROW_STATUS_TEXT_METRICS,
 } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { useIsTablet } from '@/utils/platform/responsive';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol';
 
 export { buildNewSessionDraftRowPresentation } from '@/components/sessions/drafts/newSessionDraftPresentation';
 
@@ -288,9 +289,11 @@ export const NewSessionDraftsSection = React.memo(function NewSessionDraftsSecti
             : null;
         const installedPluginIds = new Set(Object.keys(currentPluginProjection?.installedPackagesById ?? {}));
         return Object.fromEntries(drafts.map((draft) => {
-            const machineId = draft.document.target.kind === 'newSession'
-                ? draft.document.target.authoring.machineId?.value
+            const executionTarget = draft.document.target.kind === 'newSession'
+                ? draft.document.target.authoring.executionTarget?.value
                 : null;
+            const parsedExecutionTarget = SessionExecutionTargetV1Schema.safeParse(executionTarget);
+            const machineId = parsedExecutionTarget.success ? parsedExecutionTarget.data.machineId : null;
             const attachmentSummary = currentPluginProjection
                 ? summarizeComposerAttachmentDraftAvailability({
                     values: draft.document.composer.attachments.value,

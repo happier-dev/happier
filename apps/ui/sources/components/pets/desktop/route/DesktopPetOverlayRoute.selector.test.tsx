@@ -771,7 +771,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         expect(screen.findByTestId('desktop-pet-overlay-context-toggle')?.props['data-pet-tray-count']).toBe('3');
     });
 
-    it('uses Codex status icon semantics without making the status badge a reply toggle', async () => {
+    it('uses the canonical status icon semantics without making the status badge a reply toggle', async () => {
         sessionsState.current = [
             createSessionFixture({ id: 'session-status-waiting', active: true, pendingCount: 1 }),
         ];
@@ -780,7 +780,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
         const screen = await renderScreen(<DesktopPetOverlayRoute />);
         const status = screen.findByTestId('desktop-pet-overlay-tray-status-session-status-waiting');
 
-        expect(status?.props['data-pet-status-icon']).toBe('time-outline');
+        expect(status?.props['data-pet-status-icon']).toBe('clock');
         expect(status?.props.accessibilityRole).toBeUndefined();
         expect(status?.props.onPress).toBeUndefined();
     });

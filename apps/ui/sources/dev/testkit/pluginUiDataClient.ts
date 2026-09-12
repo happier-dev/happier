@@ -1,13 +1,11 @@
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 
-function unavailableMember<TMember extends 'accountKv' | 'accountSettings'>(
-    member: TMember,
-): PluginUiDataClient[TMember] {
+function unavailableAccountKv(): PluginUiDataClient['accountKv'] {
     return new Proxy(Object.create(null) as object, {
         get() {
-            throw new Error(`This test fixture does not provide mounted ${member}.`);
+            throw new Error('This test fixture does not provide mounted accountKv.');
         },
-    }) as PluginUiDataClient[TMember];
+    }) as PluginUiDataClient['accountKv'];
 }
 
 /**
@@ -19,7 +17,6 @@ export function completePresentationPluginUiDataClient(
 ): PluginUiDataClient {
     return Object.freeze({
         ...client,
-        accountKv: unavailableMember('accountKv'),
-        accountSettings: unavailableMember('accountSettings'),
+        accountKv: unavailableAccountKv(),
     });
 }

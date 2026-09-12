@@ -142,10 +142,18 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionI
     };
 });
 
-vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {} }));
-vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {} }));
-vi.mock('react-native-reanimated/lib/module/index.js', () => ({ __esModule: true, default: {} }));
-vi.mock('react-native-reanimated/lib/module/index', () => ({ __esModule: true, default: {} }));
+vi.mock('react-native-reanimated', async () =>
+    (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock(),
+);
+vi.mock('react-native-reanimated/lib/module', async () =>
+    (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock(),
+);
+vi.mock('react-native-reanimated/lib/module/index.js', async () =>
+    (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock(),
+);
+vi.mock('react-native-reanimated/lib/module/index', async () =>
+    (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock(),
+);
 vi.mock('expo-linear-gradient', () => ({
     LinearGradient: 'LinearGradient',
 }));
@@ -371,15 +379,12 @@ describe('SessionView info navigation', () => {
     it('opens session info via singular navigate using the explicit route server id for a route-owned session', async () => {
         const { SessionView } = await import('./SessionView');
 
-        await renderScreen(
+        const screen = await renderScreen(
             <SessionView id="s1" routeServerId="server-2" />,
             { wrapper: AppPaneProviderWrapper },
         );
 
-        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-        expect(typeof headerProps?.onAvatarPress).toBe('function');
-
-        headerProps?.onAvatarPress?.();
+        screen.root.findByProps({ accessibilityLabel: 'sessionInfo.title' }).props.onPress();
 
         expect(routerPushSpy).not.toHaveBeenCalled();
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
@@ -396,15 +401,12 @@ describe('SessionView info navigation', () => {
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
         const { SessionView } = await import('./SessionView');
 
-        await renderScreen(
+        const screen = await renderScreen(
             <SessionView id="s1" routeServerId="server-2" />,
             { wrapper: AppPaneProviderWrapper },
         );
 
-        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-        expect(typeof headerProps?.onAvatarPress).toBe('function');
-
-        headerProps?.onAvatarPress?.();
+        screen.root.findByProps({ accessibilityLabel: 'sessionInfo.title' }).props.onPress();
 
         expect(routerPushSpy).not.toHaveBeenCalled();
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
@@ -416,15 +418,12 @@ describe('SessionView info navigation', () => {
     it('opens session info via singular navigate using the cached owning server id when the route is missing server scope', async () => {
         const { SessionView } = await import('./SessionView');
 
-        await renderScreen(
+        const screen = await renderScreen(
             <SessionView id="s1" />,
             { wrapper: AppPaneProviderWrapper },
         );
 
-        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-        expect(typeof headerProps?.onAvatarPress).toBe('function');
-
-        headerProps?.onAvatarPress?.();
+        screen.root.findByProps({ accessibilityLabel: 'sessionInfo.title' }).props.onPress();
 
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({

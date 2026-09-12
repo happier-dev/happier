@@ -242,10 +242,10 @@ describe('buildWorktreeSelectionListSteps', () => {
         const pendingRow = requireOption(pendingSection, 'pending_git_worktree');
         // The subtitle threads the base branch + the predicted on-disk location
         // (from the shared convention) into the localized "From <branch> · <path>"
-        // template — verified via the test text-mock's {key, params} echo.
-        const subtitle = pendingRow.subtitle as unknown as { key?: string; params?: { branch?: string; path?: string } };
-        expect(subtitle.key).toBe('newSession.checkout.pendingWorktreeSubtitle');
-        expect(subtitle.params).toEqual({ branch: 'main', path: '/repo/.dev/worktree/clever-cloud' });
+        // template — verified through the string-shaped translation mock used by product tests.
+        expect(pendingRow.subtitle).toBe(
+            'newSession.checkout.pendingWorktreeSubtitle(branch=main,path=/repo/.dev/worktree/clever-cloud)',
+        );
     });
 
     it('omits the pending row when no worktree creation is pending', async () => {
@@ -715,12 +715,8 @@ describe('buildWorktreeSelectionListSteps', () => {
         // label must be a SHORT singular/plural suffix only — never the same localized string
         // that already embeds the count (otherwise the pill renders "3 3 changes").
         expect(pillProps.count).toBe(3);
-        // The test text mock returns `{ key, params }` for keyed lookups; assert the suffix key
-        // is used (NOT the legacy `changes` key that already embeds the count) and that `count`
-        // is forwarded to the translator so it can pluralize.
-        const labelObject = pillProps.label as { key?: string; params?: Record<string, unknown> };
-        expect(labelObject.key).toBe('newSession.worktree.statusPill.changesSuffix');
-        expect(labelObject.params).toMatchObject({ count: 3 });
+        // Assert the suffix key (not the legacy count-embedding key) and the pluralization count.
+        expect(pillProps.label).toBe('newSession.worktree.statusPill.changesSuffix(count=3)');
     });
 
     // ---- Per-row icon contracts ----

@@ -113,12 +113,12 @@ describe('legacy Voice OpenAI-compatible Chat Provider migration', () => {
         expect(providerChat).toEqual({
             status: 'configured',
             chat: {
-                agentTargetKey: 'backend:opencode',
+                agentTargetKey: 'agent:happier.agent.opencode/opencode',
                 providerConnectionId: connection.id,
                 modelId: 'qwen-chat',
             },
             commit: {
-                agentTargetKey: 'backend:opencode',
+                agentTargetKey: 'agent:happier.agent.opencode/opencode',
                 providerConnectionId: connection.id,
                 modelId: 'qwen-commit',
             },

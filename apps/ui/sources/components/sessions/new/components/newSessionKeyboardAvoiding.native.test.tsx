@@ -379,7 +379,7 @@ describe('new-session native keyboard avoiding', () => {
             mockEnv.keyboardListeners.get('keyboardDidHide')?.();
         });
 
-        expect(composerKeyboardStyle()?.transform?.[0]?.translateY).toBe(-34);
+        expect(composerKeyboardStyle()?.transform?.[0]?.translateY).toBe(-8);
     });
 
     it('uses the scaffold keyboard host for the wizard on iOS', async () => {

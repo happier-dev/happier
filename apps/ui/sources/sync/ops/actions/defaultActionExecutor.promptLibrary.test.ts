@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL } from '@happier-dev/protocol';
+
+import { createDefaultActionExecutor } from './defaultActionExecutor';
 
 const capturedDeps = vi.hoisted<{ current: any | null }>(() => ({ current: null }));
 const writePromptLibraryArtifactToExternalAssetMock = vi.hoisted(() => vi.fn(async () => ({
@@ -136,7 +139,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('passes serverId through prompt asset export operations', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         createDefaultActionExecutor();
 
         await capturedDeps.current.promptAssetExport({
@@ -159,9 +161,8 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('routes exact existing-session model selections to the session-host private transition owner', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const selection = {
-            agentTargetKey: 'backend:claude',
+            agentTargetKey: 'agent:happier.agent.claude/claude',
             providerConnectionId: 'pc_work',
             modelId: 'provider-model',
         };
@@ -169,7 +170,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             ok: false,
             status: 'owner_unavailable',
             activeSelection: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: null,
                 modelId: 'native-model',
             },
@@ -188,7 +189,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             },
         };
         const nativeDefaultSelection = {
-            agentTargetKey: 'backend:claude',
+            agentTargetKey: 'agent:happier.agent.claude/claude',
             providerConnectionId: null,
             modelId: 'default',
         };
@@ -198,7 +199,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             activeSelection: nativeDefaultSelection,
         };
         const inheritedProviderSelection = {
-            agentTargetKey: 'backend:claude',
+            agentTargetKey: 'agent:happier.agent.claude/claude',
             providerConnectionId: 'pc_active',
             modelId: 'provider-next',
         };
@@ -267,7 +268,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             v: 1,
             updatedAt: 10,
             selection: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: 'pc_pending',
                 modelId: 'pending-restart-model',
             },
@@ -310,7 +311,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('returns owner_unavailable when the active session transition owner transport rejects', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
             settings: {
                 promptExternalLinksV1: { v: 1, links: [] },
@@ -351,7 +351,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 status: 'owner_unavailable',
                 activeSelection: null,
                 requestedSelection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: 'pc_work',
                     modelId: 'provider-model',
                 },
@@ -366,7 +366,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('records inactive-session model intent through the existing structured metadata-CAS owner', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
             settings: {
                 promptExternalLinksV1: { v: 1, links: [] },
@@ -407,7 +406,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             v: 1,
             updatedAt: expect.any(Number),
             selection: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: 'pc_work',
                 modelId: 'provider-model',
             },
@@ -428,7 +427,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             v: 1,
             updatedAt: expect.any(Number),
             selection: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: null,
                 modelId: 'default',
             },
@@ -440,7 +439,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         // Neither an unreadable applied binding nor an unreadable persisted
         // intent means "native". Refuse before the transition RPC and before the
         // inactive metadata CAS rather than publishing a native selection.
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         for (const [active, metadata] of [
             [true, {
                 agent: 'claude',
@@ -489,7 +487,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('reroutes an inactive snapshot through the live transition owner after the conditioned metadata CAS observes activation', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
             settings: {
                 promptExternalLinksV1: { v: 1, links: [] },
@@ -504,7 +501,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                             v: 1,
                             updatedAt: 10,
                             selection: {
-                                agentTargetKey: 'backend:claude',
+                                agentTargetKey: 'agent:happier.agent.claude/claude',
                                 providerConnectionId: 'pc_pending',
                                 modelId: 'pending-model',
                             },
@@ -549,7 +546,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             ok: true as const,
             status: 'applied' as const,
             activeSelection: {
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: 'pc_active',
                 modelId: 'provider-next',
             },
@@ -590,7 +587,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('does not retry metadata or invoke an unproven owner after an active conflict', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
             settings: {
                 promptExternalLinksV1: { v: 1, links: [] },
@@ -626,7 +622,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 status: 'owner_unavailable',
                 activeSelection: null,
                 requestedSelection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: null,
                     modelId: 'provider-next',
                 },
@@ -639,7 +635,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('reports an inactive model intent as superseded when a newer CAS winner is observed', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
             settings: {
                 promptExternalLinksV1: { v: 1, links: [] },
@@ -662,7 +657,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                         v: 1,
                         updatedAt: Number.MAX_SAFE_INTEGER,
                         selection: {
-                            agentTargetKey: 'backend:claude',
+                            agentTargetKey: 'agent:happier.agent.claude/claude',
                             providerConnectionId: null,
                             modelId: 'newer-model',
                         },
@@ -685,12 +680,12 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             details: {
                 status: 'superseded',
                 activeSelection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: null,
                     modelId: 'default',
                 },
                 requestedSelection: {
-                    agentTargetKey: 'backend:claude',
+                    agentTargetKey: 'agent:happier.agent.claude/claude',
                     providerConnectionId: 'pc_work',
                     modelId: 'provider-model',
                 },
@@ -701,7 +696,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('passes serverId through prompt registry install operations', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         createDefaultActionExecutor();
 
         await capturedDeps.current.promptRegistryInstall({
@@ -721,7 +715,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('preserves serverId in approval headers when updating approval artifacts', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         createDefaultActionExecutor();
 
         await capturedDeps.current.approvalsUpdate({
@@ -752,7 +745,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('routes simulator runtime actions through the canonical host bridge and keeps other families fail-closed', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         storageState.current = {
             settings: {
                 promptExternalLinksV1: { v: 1, links: [] },
@@ -849,6 +841,19 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
             protocolVersion: 1 as const,
             exposure: publicExposure,
             snapshot: publicPreviewSnapshot,
+        };
+        const redactedPublicExposure = {
+            ...publicExposure,
+            publicUrl: REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL,
+        };
+        const redactedPublicPreviewSnapshot = {
+            ...publicPreviewSnapshot,
+            exposures: [redactedPublicExposure],
+        };
+        const redactedPublicPreviewCreateResponse = {
+            ...publicPreviewCreateResponse,
+            exposure: redactedPublicExposure,
+            snapshot: redactedPublicPreviewSnapshot,
         };
         const publicPreviewCopyUrlResponse = {
             protocolVersion: 1 as const,
@@ -979,7 +984,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 defaultSessionId: 'session_1',
                 serverId: 'server_1',
             },
-        })).resolves.toEqual(publicPreviewSnapshot);
+        })).resolves.toEqual(redactedPublicPreviewSnapshot);
         await expect(capturedDeps.current.runtimeActionExecute({
             actionId: 'localServices.publicPreview.create',
             input: {
@@ -993,7 +998,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 defaultSessionId: 'session_1',
                 serverId: 'server_1',
             },
-        })).resolves.toEqual(publicPreviewCreateResponse);
+        })).resolves.toEqual(redactedPublicPreviewCreateResponse);
         await expect(capturedDeps.current.runtimeActionExecute({
             actionId: 'localServices.publicPreview.copyUrl',
             input: {
@@ -1065,7 +1070,6 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
     });
 
     it('routes browser.navigate through a registered browser surface adapter', async () => {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const {
             applyBrowserControlEvent,
             createBrowserControlState,

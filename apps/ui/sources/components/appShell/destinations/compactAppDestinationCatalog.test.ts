@@ -23,9 +23,16 @@ const compactCatalogProjectionState = vi.hoisted(() => ({
     },
 }));
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useAppShellPluginUiProjection: () => compactCatalogProjectionState.value,
-}));
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', async () => {
+    const { createPluginLocalizedTextResolver } = await import('@/sync/domains/plugins/ui/i18n');
+    return {
+        useAppShellPluginUiProjection: () => compactCatalogProjectionState.value,
+        useProjectedPluginLocalizedTextResolver: () => createPluginLocalizedTextResolver({
+            projection: compactCatalogProjectionState.value.pluginUiProjection,
+            locale: 'en',
+        }),
+    };
+});
 
 const page = Object.freeze({
     id: 'plugin:acme.notes:notes',
@@ -64,6 +71,7 @@ function createProjectedAppPage(): PluginUiSurfacePlacementProjection {
         contributionKind: 'surfacePlacement',
         descriptorId: 'notes',
         binding: {
+            kind: 'destination',
             destination: { pluginId: 'acme.notes', localId: 'notes' },
             container: 'appPage',
             targetKind: 'app',

@@ -39,10 +39,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
-}));
-
 vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
     useChromeSafeAreaInsets: () => ({ top: 19, bottom: 0, left: 0, right: 0 }),
 }));

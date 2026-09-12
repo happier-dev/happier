@@ -164,7 +164,7 @@ function buildSessionInfoMoveTargets(params: Readonly<{
     targets.push(...buildSessionFolderWorkspaceTargets({
         folders: normalized,
         workspace: params.workspace,
-    }).map((folder) => ({
+    }).map<SessionListMoveSheetTarget>((folder) => ({
             id: `session-info-move-folder:${folder.folderId}`,
             kind: 'folder',
             label: folder.title,

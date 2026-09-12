@@ -27,7 +27,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit';
 import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import { SELECTION_LIST_VIRTUALIZATION_THRESHOLD } from '../_constants';
@@ -132,8 +132,7 @@ async function type(screen: Screen, value: string): Promise<void> {
 }
 
 function visibleOptionIds(screen: Screen): ReadonlyArray<string> {
-    return screen
-        .findAll((node) => typeof node.props?.testID === 'string'
+    return findAllHostTestInstances(screen.root, (node) => typeof node.props?.testID === 'string'
             && node.props.testID.startsWith('sl:root:option:'))
         .map((node) => String(node.props.testID).replace('sl:root:option:', ''));
 }

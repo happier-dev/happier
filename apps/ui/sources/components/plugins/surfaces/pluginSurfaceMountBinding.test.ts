@@ -6,6 +6,7 @@ import {
     normalizePluginUiInlineSurfaceBindingV1,
     type PluginUiDestinationBindingV1,
     type PluginUiInlineSurfaceBindingV1,
+    type PluginUiHostMethodV1,
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -25,8 +26,10 @@ import {
     readPluginSurfaceTargetedMountBinding,
 } from './pluginSurfaceMountBinding';
 
+const noRequiredHostMethods: PluginUiHostMethodV1[] = [];
+
 function eventSetupSurface(
-    renderer: Readonly<Record<string, unknown>>,
+    renderer: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1['selectedRenderer']['renderer'],
 ): DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 {
     const pluginId = 'acme.events';
     const localId = 'repository-picker';
@@ -53,7 +56,7 @@ function eventSetupSurface(
             target: { pluginId, immutableGenerationId: 'events-generation-a' },
             points: [],
         },
-    } as DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
+    };
 }
 
 function destinationBinding(): PluginUiDestinationBindingV1 {
@@ -411,8 +414,13 @@ describe('readPluginSurfaceComposerMountBinding', () => {
 describe('readPluginSurfaceEphemeralMountBinding', () => {
     it.each([
         ['declarative', { kind: 'declarative', contributionId: 'repository-picker', model: { visible: true } }],
-        ['reactNative', { kind: 'reactNative', contributionId: 'repository-picker', artifactId: 'picker-native' }],
-        ['hostedWeb', { kind: 'hostedWeb', contributionId: 'repository-picker' }],
+        ['reactNative', { kind: 'reactNative', contributionId: 'repository-picker' }],
+        ['hostedWeb', {
+            kind: 'hostedWeb',
+            contributionId: 'repository-picker',
+            source: { kind: 'artifact', artifact: 'repository-picker-web' },
+            requiredHostMethods: noRequiredHostMethods,
+        }],
     ] as const)('carries the exact %s renderer through the one ephemeral mount seam', (_kind, renderer) => {
         const surface = eventSetupSurface(renderer);
         const binding = readPluginSurfaceEphemeralMountBinding(surface);
@@ -431,6 +439,8 @@ describe('readPluginSurfaceEphemeralMountBinding', () => {
         const surface = eventSetupSurface({
             kind: 'hostedWeb',
             contributionId: 'repository-picker',
+            source: { kind: 'artifact', artifact: 'repository-picker-web' },
+            requiredHostMethods: noRequiredHostMethods,
         });
         expect(readPluginSurfaceEphemeralMountBinding({
             ...surface,

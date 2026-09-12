@@ -283,7 +283,10 @@ describe('AskUserQuestionView', () => {
         });
     }
 
-    function publishReviewAskUserQuestionDescriptor(allowedValues: readonly string[]) {
+    function publishReviewAskUserQuestionDescriptor(
+        allowedValues: readonly string[],
+        scope: 'account' | 'daemon' = 'account',
+    ) {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'machine-1',
             descriptorsByAgentId: {
@@ -298,7 +301,7 @@ describe('AskUserQuestionView', () => {
                             dialogs: [{
                                 dialogId: 'review_scope',
                                 settingMutation: {
-                                    settingId: 'reviewScopePreference',
+                                    settingId: { scope, localId: 'reviewScopePreference' },
                                     allowedValues: [...allowedValues],
                                 },
                             }],
@@ -1002,7 +1005,7 @@ describe('AskUserQuestionView', () => {
     });
 
     it('uses the external Agent setting catalog scope instead of forcing an Account write', async () => {
-        publishReviewAskUserQuestionDescriptor(['always_include']);
+        publishReviewAskUserQuestionDescriptor(['always_include'], 'daemon');
         daemonMergedProjectionState.current.inputs.pluginProjectionById['acme.review']!
             .editableSettingsGroups[0]!.scope.kind = 'daemon';
         askUserQuestionSessionState.current = {

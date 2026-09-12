@@ -292,6 +292,17 @@ describe('useNewSessionComposerDocument', () => {
             attachmentLocalId: 'entry',
             value: { key: 'b', value: { id: 'b' }, presentation: { label: 'B' } },
         };
+        const initialProps: Readonly<{
+            draftId: string;
+            draftScope: ServerAccountScope;
+            scopeKey: string;
+            seeds: readonly NewSessionComposerAttachmentSeedV1[];
+        }> = {
+            draftId: 'draft-a',
+            draftScope: scopeA,
+            scopeKey: 'server-a/account-a',
+            seeds: [seedA],
+        };
         const hook = await renderHook((props: Readonly<{
             draftId: string;
             draftScope: ServerAccountScope;
@@ -308,12 +319,7 @@ describe('useNewSessionComposerDocument', () => {
             canSubmitRef: { current: true },
             isSubmitting: false,
         }), {
-            initialProps: {
-                draftId: 'draft-a',
-                draftScope: scopeA,
-                scopeKey: 'server-a/account-a',
-                seeds: [seedA],
-            },
+            initialProps,
         });
         expect(hook.getCurrent().captureSubmissionSnapshot()?.attachments).toEqual([
             expect.objectContaining({ instanceId: 'seed-a', key: 'a' }),
@@ -877,7 +883,9 @@ describe('useNewSessionComposerDocument', () => {
             writeNewSessionDraft({
                 scope: draftScope,
                 draftId,
-                patch: { authoring: { machineId: 'machine-b' } },
+                patch: {
+                    authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-b' } },
+                },
                 materializationIntent: 'userEdit',
             });
             await flushHookEffects({ cycles: 1, turns: 1 });

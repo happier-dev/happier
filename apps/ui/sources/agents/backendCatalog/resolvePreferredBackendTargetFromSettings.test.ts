@@ -7,6 +7,30 @@ import { BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES } from '@/agents/regist
 const CLAUDE_TARGET = { kind: 'agent' as const, identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES.claude };
 const CODEX_TARGET = { kind: 'agent' as const, identity: BUNDLED_CANONICAL_AGENT_CONTRIBUTION_IDENTITIES.codex };
 
+function configuredAcpBackend(id: string) {
+    return {
+        id,
+        name: id,
+        title: 'Review Bot',
+        description: 'Custom review backend',
+        command: 'review-bot',
+        args: [],
+        env: {},
+        transportProfile: 'generic',
+        defaultMode: 'plan',
+        defaultModel: 'default',
+        capabilities: {
+            supportsLoadSession: false,
+            supportsModes: 'unknown',
+            supportsModels: 'unknown',
+            supportsConfigOptions: 'unknown',
+            promptImageSupport: 'unknown',
+        },
+        createdAt: 1,
+        updatedAt: 1,
+    } as const;
+}
+
 describe('resolvePreferredBackendTargetFromSettings', () => {
     it('prefers a parseable lastUsedBackendTarget from settings', () => {
         expect(resolvePreferredBackendTargetFromSettings({
@@ -48,9 +72,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             backendEnabledByTargetKey: {},
             acpCatalogSettingsV1: {
                 v: 2,
-                backends: [
-                    { id: 'review-bot', name: 'review-bot', title: 'Review Bot' },
-                ],
+                backends: [configuredAcpBackend('review-bot')],
             },
         } as any)).toEqual(CODEX_TARGET);
     });
@@ -62,9 +84,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             backendEnabledByTargetKey: {},
             acpCatalogSettingsV1: {
                 v: 2,
-                backends: [
-                    { id: 'review-bot', name: 'review-bot', title: 'Review Bot' },
-                ],
+                backends: [configuredAcpBackend('review-bot')],
             },
         } as any)).toEqual({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' });
     });
@@ -92,15 +112,15 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             lastUsedAgent: 'customAcp',
             acpCatalogSettingsV1: {
                 v: 2,
-                backends: [
-                    { id: 'review-bot', name: 'review-bot', title: 'Review Bot' },
-                ],
+                backends: [configuredAcpBackend('review-bot')],
             },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['review-bot'],
                 mergedProviderProjectionById: {},
                 mergedBackendProjectionById: {
                     'review-bot': {
+                        backendId: 'review-bot',
+                        agentId: 'review-bot',
                         providerId: 'acp:review-bot',
                         title: 'Review Bot',
                     },
@@ -116,9 +136,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             backendEnabledByTargetKey: {},
             acpCatalogSettingsV1: {
                 v: 2,
-                backends: [
-                    { id: 'review-bot', name: 'review-bot', title: 'Review Bot' },
-                ],
+                backends: [configuredAcpBackend('review-bot')],
             },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: [],

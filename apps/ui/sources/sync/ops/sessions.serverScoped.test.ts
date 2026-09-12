@@ -729,17 +729,24 @@ describe('sessions ops server-scoped routing', () => {
         expect(call?.payload as Record<string, unknown>).not.toHaveProperty('connectedServices');
     });
 
-    it('projects the Codex authoring mode into runtimeDescriptorV1 before resume RPC', async () => {
+    it('passes a canonical Codex runtime descriptor through before resume RPC', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;
         await resumeSession({
             sessionId: 'session-1',
             machineId: 'machine-1',
             directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            codexBackendMode: 'appServer',
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             serverId: 'server-b',
-        } as any);
+        });
 
         const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as { payload?: unknown } | undefined;
         expect(call?.payload).toEqual(expect.objectContaining({
@@ -749,7 +756,12 @@ describe('sessions ops server-scoped routing', () => {
                 agent: expect.objectContaining({ backendMode: 'appServer' }),
             }),
         }));
-        expect(call?.payload as Record<string, unknown>).not.toHaveProperty('codexBackendMode');
+        expect(call?.payload).toEqual(expect.objectContaining({
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+        }));
     });
 
     it('passes the canonical Agent target through resumeSession', async () => {

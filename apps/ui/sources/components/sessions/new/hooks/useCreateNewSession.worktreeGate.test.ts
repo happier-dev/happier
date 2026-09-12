@@ -243,6 +243,7 @@ vi.mock('@/sync/sync', () => ({
         ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteMock,
         refreshMachines: vi.fn(async () => {}),
         sendMessage: vi.fn(async () => {}),
+        acquireUserRequestLease: vi.fn(() => vi.fn()),
         publishSessionAcpSessionModeOverrideToMetadata: vi.fn(async () => {}),
     },
 }));
@@ -315,6 +316,23 @@ async function renderHook<T>(useValue: () => T): Promise<T> {
     return current;
 }
 
+let loadedUseCreateNewSessionOwner: typeof import('./useCreateNewSession')['useCreateNewSession'] | null = null;
+
+async function loadUseCreateNewSession() {
+    loadedUseCreateNewSessionOwner ??= (await import('./useCreateNewSession')).useCreateNewSession;
+    const useCreateNewSessionOwner = loadedUseCreateNewSessionOwner;
+    return {
+        useCreateNewSession: ((params) => useCreateNewSessionOwner({
+            ...params,
+            draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
+            draftId: params.draftId ?? 'test-draft',
+        })) as typeof useCreateNewSessionOwner,
+    };
+}
+
+// Warm the large hook graph during collection after the stable boundary mocks above are installed.
+await loadUseCreateNewSession();
+
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
@@ -359,12 +377,11 @@ afterEach(() => {
     for (const key of Object.keys(storedSessionsState.sessions)) {
         delete storedSessionsState.sessions[key];
     }
-    vi.resetModules();
 });
 
 describe('useCreateNewSession (worktree gating)', () => {
     it('does not launch from a stale authoring snapshot while a selection commit is pending', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const setIsCreating = vi.fn();
         const params = {
             launchIntentSignature: 'test-launch-intent',
@@ -410,7 +427,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(setIsCreating).not.toHaveBeenCalled();
     });
 
-    it('exposes a structured Provider launch refusal for canonical inline recovery without leaking a raw modal', async () => {
+    it('does not reconstruct retired Provider details from a strict Action spawn failure', async () => {
         const providerError = createProviderErrorV1('provider_not_enabled_on_machine', {
             connectionId: 'pc_provider',
             machineId: 'machine-1',
@@ -431,7 +448,7 @@ describe('useCreateNewSession (worktree gating)', () => {
                 activeServerSnapshotMockState.serverId = 'server-b';
                 return spawnRefusal;
             });
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const params: Parameters<typeof useCreateNewSession>[0] = {
             launchIntentSignature: 'test-launch-intent',
             router: { push: vi.fn(), replace: vi.fn() },
@@ -473,9 +490,9 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.getCurrent().handleCreateSession();
         });
 
-        expect(hook.getCurrent().providerLaunchError).toEqual(providerError);
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
         expect(hook.getCurrent().retryProviderLaunch).toBeTypeOf('function');
-        expect(modalAlertMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
 
         await hook.rerender({
             ...params,
@@ -492,7 +509,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.getCurrent().handleCreateSession();
         });
 
-        expect(hook.getCurrent().providerLaunchError).toEqual(providerError);
+        expect(hook.getCurrent().providerLaunchError).toBeNull();
 
         await hook.rerender({
             ...params,
@@ -519,7 +536,7 @@ describe('useCreateNewSession (worktree gating)', () => {
     });
 
     it('does not create a worktree when no checkout creation draft is selected', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const typecheck = useCreateNewSession;
 
         const profile = AIBackendProfileSchema.parse({
@@ -585,21 +602,16 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(materializeNewSessionCheckoutMock).toHaveBeenCalledTimes(1);
-        expect(materializeNewSessionCheckoutMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            selectedPath: '/repo',
-            checkoutCreationDraft: undefined,
-            serverId: 'server-a',
-        }));
+        expect(materializeNewSessionCheckoutMock).not.toHaveBeenCalled();
         expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo',
-            machineId: 'machine-1',
+            checkoutCreationDraft: null,
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
         }));
     });
 
-    it('clears the persisted new-session draft with the screen draft scope after successful creation', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('hands successful draft cleanup to the canonical draft lifecycle before navigation', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const draftScope = { serverId: 'server-a', accountId: 'account-a' };
         const routerReplace = vi.fn();
         const disableDraftPersistence = vi.fn();
@@ -644,12 +656,12 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
-        expect(clearNewSessionDraftMock).toHaveBeenCalledWith(draftScope);
+        expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
     });
 
     it('creates a git worktree on the resolved target server when checkoutCreationDraft is selected', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const typecheck = useCreateNewSession;
 
         const profile = AIBackendProfileSchema.parse({
@@ -719,10 +731,9 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(materializeNewSessionCheckoutMock).toHaveBeenCalledTimes(1);
-        expect(materializeNewSessionCheckoutMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            selectedPath: '/repo',
+        expect(materializeNewSessionCheckoutMock).not.toHaveBeenCalled();
+        expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
+            directory: '/repo',
             checkoutCreationDraft: {
                 kind: 'git_worktree',
                 displayName: 'feature/auth',
@@ -732,7 +743,7 @@ describe('useCreateNewSession (worktree gating)', () => {
     });
 
     it('keeps worktree creation available without auto-creating a workspace first', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const typecheck = useCreateNewSession;
 
         const profile = AIBackendProfileSchema.parse({
@@ -802,14 +813,14 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(materializeNewSessionCheckoutMock).toHaveBeenCalledTimes(1);
+        expect(materializeNewSessionCheckoutMock).not.toHaveBeenCalled();
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
     });
 
-    it('uses the canonical repository root returned by worktree creation when the selected path is a nested subdirectory', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('delegates nested-path worktree materialization to the strict Action owner', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const typecheck = useCreateNewSession;
 
         materializeNewSessionCheckoutMock.mockResolvedValueOnce({
@@ -867,12 +878,18 @@ describe('useCreateNewSession (worktree gating)', () => {
         });
 
         expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
-            directory: '/repo/.dev/worktree/feature/auth/packages/app',
+            directory: '/repo/packages/app',
+            checkoutCreationDraft: {
+                kind: 'git_worktree',
+                displayName: 'feature/auth',
+                baseRef: 'main',
+            },
         }));
+        expect(materializeNewSessionCheckoutMock).not.toHaveBeenCalled();
     });
 
     it('keeps repo-native worktree creation workspace-free', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const typecheck = useCreateNewSession;
 
         const routerReplace = vi.fn();
@@ -932,13 +949,13 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
         expect(machineBashMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
-        expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
+        expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
         expect(setIsCreating).not.toHaveBeenCalledWith(false);
     });
 
-    it('removes the created worktree when spawn fails without linked workspace context', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('leaves failed worktree cleanup to the strict Action owner', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
@@ -995,17 +1012,12 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineBashMock).toHaveBeenCalledWith(
-            'machine-1',
-            { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
-            '/repo',
-            expect.objectContaining({ serverId: expect.anything() }),
-        );
-        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', expect.stringContaining('spawn failed'));
+        expect(machineBashMock).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
     });
 
-    it('removes only the created worktree when spawn fails during a repo-native worktree launch', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('keeps failed repo-native worktree cleanup out of the client launch path', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
@@ -1065,17 +1077,12 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceLocationId');
         expect(sessionSpawnNewActionBoundaryMock.mock.calls[0]?.[0]).not.toHaveProperty('workspaceCheckoutId');
-        expect(machineBashMock).toHaveBeenCalledWith(
-            'machine-1',
-            { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
-            '/repo',
-            expect.objectContaining({ serverId: expect.anything() }),
-        );
-        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', expect.stringContaining('spawn failed'));
+        expect(machineBashMock).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
     });
 
     it('does not attach workspace locations before spawning a repo-native worktree session', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const typecheck = useCreateNewSession;
 
         const params = {
@@ -1132,8 +1139,8 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(machineBashMock).not.toHaveBeenCalled();
     });
 
-    it('rolls back the created worktree when spawn requests directory approval without workspace linkage', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('does not interpret retired directory-approval responses in the client checkout path', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
@@ -1189,17 +1196,12 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineBashMock).toHaveBeenCalledWith(
-            'machine-1',
-            { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
-            '/repo',
-            expect.objectContaining({ serverId: expect.anything() }),
-        );
+        expect(machineBashMock).not.toHaveBeenCalled();
         expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
     });
 
-    it('surfaces worktree cleanup failures even when no workspace artifacts were created', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('does not run or surface client cleanup after a strict Action spawn failure', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
@@ -1262,11 +1264,12 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', expect.stringContaining('cleanup failed'));
+        expect(machineBashMock).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'newSession.failedToStart');
     });
 
-    it('rolls back the created worktree when session spawn throws without workspace linkage', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('does not duplicate Action-owned worktree rollback when Session spawn throws', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1320,12 +1323,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             await hook.handleCreateSession();
         });
 
-        expect(machineBashMock).toHaveBeenCalledWith(
-            'machine-1',
-            { argv: ['git', 'worktree', 'remove', '--force', '--', '/tmp/worktree'] },
-            '/repo',
-            expect.objectContaining({ serverId: expect.anything() }),
-        );
+        expect(machineBashMock).not.toHaveBeenCalled();
         expect(consoleErrorSpy).not.toHaveBeenCalledWith('Failed to roll back new session artifacts', expect.anything());
         expect(consoleErrorSpy).not.toHaveBeenCalledWith('Failed to start session', expect.anything());
         expect(captureExceptionIfEnabledMock).toHaveBeenCalledTimes(1);
@@ -1342,8 +1340,8 @@ describe('useCreateNewSession (worktree gating)', () => {
         consoleErrorSpy.mockRestore();
     });
 
-    it('preserves retryable draft state and avoids opening a non-hydrated session when active follow-up hydration fails before workspace metadata publication', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+    it('preserves draft state and avoids opening a non-hydrated session when follow-up hydration fails', async () => {
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
         const typecheck = useCreateNewSession;
 
@@ -1406,7 +1404,7 @@ describe('useCreateNewSession (worktree gating)', () => {
 
         expect(sessionSpawnNewActionBoundaryMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo',
-            machineId: 'machine-1',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
         }));
         const spawnedOptions = sessionSpawnNewActionBoundaryMock.mock.calls.at(0)?.[0] as
             | {
@@ -1426,16 +1424,14 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(setIsCreating).toHaveBeenCalledWith(false);
-        const retryAlertCall = vi.mocked(Modal.alert).mock.calls.find((call) => {
-            const buttons = call[2];
-            return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
-        });
-        expect(retryAlertCall).toBeTruthy();
-        expect(retryAlertCall?.[0]).toBe('errors.daemonUnavailableTitle');
+        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith(
+            'common.error',
+            'Created session is not available locally yet',
+        );
     });
 
     it('keeps the new-session draft surface active when afterCreated fails after session creation', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { Modal } = await import('@/modal');
 
         for (const key of Object.keys(storedSessionsState.sessions)) {
@@ -1537,7 +1533,7 @@ describe('useCreateNewSession (worktree gating)', () => {
     });
 
     it('keeps the new-session surface active when afterCreated fails before the created session hydrates locally', async () => {
-        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const { useCreateNewSession } = await loadUseCreateNewSession();
         const { readRecoverableFollowUpPayload } = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
         const { Modal } = await import('@/modal');
 

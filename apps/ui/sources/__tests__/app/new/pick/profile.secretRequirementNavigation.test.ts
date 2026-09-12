@@ -382,9 +382,11 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
         expect(routerMock.push).toHaveBeenCalledWith({
             pathname: '/new/pick/secret-requirement',
             params: expect.objectContaining({
-                agentType: 'claude',
-                backendTarget: JSON.stringify({ kind: 'backend', backendId: 'claude' }),
-                backendTargetKey: 'backend:claude',
+                backendTarget: JSON.stringify({
+                    kind: 'agent',
+                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+                }),
+                backendTargetKey: 'agent:happier.agent.claude/claude',
                 dataId: 'draft-1',
                 machineId: 'm1',
                 spawnServerId: 'server-2',

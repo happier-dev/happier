@@ -20,7 +20,8 @@ vi.mock('react-native-unistyles', async () => {
     });
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     getAgentIconSource: () => 1,
     getAgentIconSvgXml: () => null,
     getAgentIconTintColor: () => undefined,

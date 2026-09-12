@@ -62,12 +62,13 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
     const metadata = readSessionOwnerMetadataView(params.session);
     const directoryOverride = normalizeOptionalString(params.directoryOverride);
     const draft = buildNewSessionAuthoringDraft({
+        executionTarget: null,
         directory: directoryOverride ?? snapshot.directory,
         checkoutCreationDraft: null,
+        organizationPlacement: { folderId: null, tagIds: [] },
         prompt: '',
         displayText: '',
-        agentId: snapshot.agentId,
-        backendTarget: snapshot.backendTarget,
+        agentTarget: snapshot.agentTarget,
         transcriptStorage: snapshot.transcriptStorage,
         profileId: snapshot.profileId,
         environmentVariables: null,

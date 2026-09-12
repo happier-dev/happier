@@ -730,7 +730,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
         }));
     });
 
-    it('hydrates structured mentions for surviving tokens and drops stale mentions', async () => {
+    it('hydrates only surviving structured mentions without mutating the synchronized draft during render', async () => {
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const draftValueStore = await importSessionDraftValueStore();
         const survivingMention = {
@@ -767,7 +767,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
             activeScopeState.value,
             'session-a',
             'structuredInput.mentions',
-        )).toEqual([survivingMention]);
+        )).toEqual([survivingMention, staleMention]);
     });
 
     it('does not rerender composer persistence for unrelated draft text writes', async () => {
@@ -903,7 +903,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
         expect(hook.getCurrent().expanded).toBe(true);
     });
 
-    it('garbage collects stale semantic and local UI draft state when the composer persistence hook mounts', async () => {
+    it('garbage collects stale local UI state without deleting synchronized draft state when the hook mounts', async () => {
         vi.useFakeTimers();
         const now = Date.UTC(2026, 4, 27);
         vi.setSystemTime(now);
@@ -957,7 +957,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
             scope,
             'session-a',
             'structuredInput.mentions',
-        )).toBeUndefined();
+        )).toEqual([staleMention]);
         expect(localUiStateStore.readAgentInputLocalUiState(
             scope,
             { kind: 'session', sessionId: 'session-a' },
@@ -968,7 +968,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
         )).toBeNull();
     });
 
-    it('garbage collects stale semantic and local UI draft state when the web document becomes visible', async () => {
+    it('garbage collects stale local UI state without deleting synchronized draft state when the web document becomes visible', async () => {
         vi.useFakeTimers();
         const now = Date.UTC(2026, 4, 27);
         vi.setSystemTime(now);
@@ -1031,7 +1031,7 @@ describe('useSessionAgentInputComposerPersistence', () => {
                 scope,
                 'session-a',
                 'structuredInput.mentions',
-            )).toBeUndefined();
+            )).toEqual([staleMention]);
             expect(localUiStateStore.readAgentInputLocalUiState(
                 scope,
                 { kind: 'session', sessionId: 'session-a' },

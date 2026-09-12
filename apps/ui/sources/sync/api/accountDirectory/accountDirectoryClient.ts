@@ -5,9 +5,11 @@ import {
     AccountDirectoryHomePutResponseV1Schema,
     AccountDirectoryHomesResponseV1Schema,
     AccountDirectoryMeResponseV1Schema,
+    AccountDirectoryPreferredHomePatchRequestV1Schema,
     AccountDirectoryPreferredHomePatchResponseV1Schema,
     HomeConnectionDescriptorV1Schema,
     HomeLoginAssertionResponseV1Schema,
+    HomeLoginAssertionRequestV1Schema,
     HomeLoginRedemptionRequestV1Schema,
     HomeLoginRedemptionResultV1Schema,
     type AccountDirectoryHomeEntryV1,
@@ -25,6 +27,7 @@ import {
 
 export const HomeLoginAssertionV1Schema = HomeLoginAssertionResponseV1Schema;
 export const HomeLoginRedemptionResponseV1Schema = HomeLoginRedemptionResultV1Schema;
+export { HomeConnectionDescriptorV1Schema };
 export type {
     AccountDirectoryHomeEntryV1,
     AccountDirectoryHomesResponseV1,

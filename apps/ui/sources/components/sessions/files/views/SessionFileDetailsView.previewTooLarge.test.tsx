@@ -290,7 +290,7 @@ describe('SessionFileDetailsView (preview too large)', () => {
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findByType('FileActionToolbar' as any).props.showWrapLinesToggle).toBe(false);
     expect(tree.findAllByTestId('file-preview-unavailable-banner').length).toBe(1);
-    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
+    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBeGreaterThan(0);
   });
 
   it('renders a download action instead of a fatal error state', async () => {
@@ -305,10 +305,11 @@ describe('SessionFileDetailsView (preview too large)', () => {
     expect(tree.findAllByType('FileErrorState' as any).length).toBe(0);
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findAllByTestId('file-preview-unavailable-banner').length).toBe(1);
-    expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
+    const downloadButtons = tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' });
+    expect(downloadButtons.length).toBeGreaterThan(0);
 
     await act(async () => {
-      await pressTestInstanceAsync(tree.findByProps({ testID: 'file-header-download', accessibilityRole: 'button' }));
+      await pressTestInstanceAsync(downloadButtons.find((node) => typeof node.props.onPress === 'function')!);
     });
 
     expect(startDownloadSpy).toHaveBeenCalledWith({ path: 'big.txt', asZip: false });

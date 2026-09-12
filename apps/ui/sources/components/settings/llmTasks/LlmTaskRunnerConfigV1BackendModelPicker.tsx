@@ -3,7 +3,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import type { AcpCatalogSettingsV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type AcpCatalogSettingsV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -79,13 +79,13 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   const selectedBackendEntry = React.useMemo(() => {
     const target = props.value?.backendTarget;
     if (!target) return null;
-    const targetKey = resolveBackendTargetKeyV2(target as any);
+    const targetKey = resolveBackendTargetKeyV2(target);
     return backendEntries.find((entry) => entry.backendTargetKey === targetKey) ?? null;
   }, [backendEntries, props.value?.backendTarget]);
 
-  const selectedBackendTargetForModelOptions = React.useMemo(() => {
-    return selectedBackendEntry?.backendTarget ?? null;
-  }, [selectedBackendEntry]);
+  const selectedBackendTargetForModelOptions = props.value
+    ? readBackendTargetRefV2(props.value.backendTarget)
+    : null;
 
   const preflightModels = useNewSessionPreflightModelsState({
     backendTarget: selectedBackendTargetForModelOptions,

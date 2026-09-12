@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { createPluginOpenNewSessionHostApiHandler } from './pluginOpenNewSessionHostApi';
 
@@ -8,11 +9,22 @@ const accountLifetime = Object.freeze({
     onRetire: () => Object.freeze({ dispose() {} }),
 });
 
-function request(payload: unknown) {
+function request(payload: PluginUiJsonValueV1) {
     return {
+        version: 1 as const,
         method: 'openNewSession' as const,
         payload,
         requestId: 'request-1',
+        surface: {
+            pluginId: 'happier.triage',
+            contributionId: 'review',
+            surfaceId: 'review-surface',
+            placement: 'appSurface' as const,
+            platform: 'web' as const,
+            channel: 'development' as const,
+            resourceScope: [],
+            diagnostics: [],
+        },
     };
 }
 

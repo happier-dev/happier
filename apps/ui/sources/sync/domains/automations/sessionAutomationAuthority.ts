@@ -41,7 +41,8 @@ export function captureSessionAutomationAuthority(params: Readonly<{
     const sessionId = String(params.session?.id ?? '').trim();
     const serverId = String(params.session?.serverId ?? '').trim();
     if (
-        !sessionId
+        params.session == null
+        || !sessionId
         || !serverId
         || params.routeSessionId !== sessionId
         || (params.routeServerId != null && params.routeServerId !== serverId)

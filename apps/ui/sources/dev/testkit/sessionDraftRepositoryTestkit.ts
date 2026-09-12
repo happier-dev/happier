@@ -5,9 +5,10 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type {
-    SessionDraftValueByFieldId,
-    SessionDraftValueFieldId,
+import {
+    SessionArmedAgentContinuationSchema,
+    type SessionDraftValueByFieldId,
+    type SessionDraftValueFieldId,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import {
     deleteSessionDraft,
@@ -33,7 +34,10 @@ function readField(scope: ServerAccountScope, sessionId: string, fieldId: Sessio
             ? parsed.data.recipient as StrictJsonValue
             : undefined;
     }
-    if (fieldId === 'routing.agentContinuation') return document.target.routing.agentContinuation.value;
+    if (fieldId === 'routing.agentContinuation') {
+        const parsed = SessionArmedAgentContinuationSchema.safeParse(document.target.routing.agentContinuation.value);
+        return parsed.success ? StrictJsonValueSchema.parse(parsed.data) : undefined;
+    }
     return document.target.routing.executionRunDelivery.value;
 }
 
@@ -59,7 +63,7 @@ export function writeSessionDraftValue<FieldId extends SessionDraftValueFieldId>
             : { routing: fieldId === 'routing.recipient'
                 ? { recipient: StrictJsonValueSchema.parse({ mode: 'manual', recipient: value }) }
                 : fieldId === 'routing.agentContinuation'
-                    ? { agentContinuation: value as StrictJsonValue }
+                    ? { agentContinuation: StrictJsonValueSchema.parse(value) }
                     : { executionRunDelivery: value as StrictJsonValue } };
     writeExistingSessionDraft({ scope: scopeOrLegacy(scope), sessionId, patch });
 }

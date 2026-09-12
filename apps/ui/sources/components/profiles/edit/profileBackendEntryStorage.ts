@@ -22,6 +22,7 @@ export function readProfileTargetKeyValueForEntry<TValue>(
 ): TValue | undefined {
     const canonical = record?.[resolveProfileBackendTargetKeyForEntry(entry)];
     if (canonical !== undefined) return canonical;
+    if (entry.backendTarget.kind !== 'backend') return undefined;
     const legacyKey = buildBackendTargetKey(convertBackendTargetRefV2ToV1(entry.backendTarget));
     return record?.[legacyKey];
 }

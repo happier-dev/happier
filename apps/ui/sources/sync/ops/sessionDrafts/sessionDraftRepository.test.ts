@@ -136,7 +136,7 @@ describe('sessionDraftRepository', () => {
                 text: 'one',
                 mentions: [{ id: 'm1' }],
                 attachments: [{ a: 1, b: 2 }],
-                authoring: { machineId: 'machine-a' },
+                authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-a' } },
             },
             materializationIntent: 'userEdit',
         });
@@ -161,7 +161,7 @@ describe('sessionDraftRepository', () => {
         repository.writeNewSessionDraft({
             scope,
             draftId: address.draftId,
-            patch: { text: 'two', authoring: { machineId: 'machine-b' } },
+            patch: { text: 'two', authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-b' } } },
             materializationIntent: 'userEdit',
         });
         expect(repository.getSessionDraftSnapshot(scope, address)?.revision).toBe(2);
@@ -182,7 +182,10 @@ describe('sessionDraftRepository', () => {
             })(),
             now: () => 10,
         });
-        const patch = { text: 'unchanged', authoring: { machineId: 'machine-a' } } as const;
+        const patch = {
+            text: 'unchanged',
+            authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-a' } },
+        } as const;
         repository.writeNewSessionDraft({
             scope,
             draftId: address.draftId,
@@ -546,7 +549,7 @@ describe('sessionDraftRepository', () => {
         seedingRepository.writeNewSessionDraft({
             scope,
             draftId: address.draftId,
-            patch: { authoring: { machineId: 'mine' } },
+            patch: { authoring: { executionTarget: { serverId: 'server-a', machineId: 'mine' } } },
             materializationIntent: 'userEdit',
         });
         const storageKey = [...storage.values.keys()][0]!;
@@ -556,17 +559,20 @@ describe('sessionDraftRepository', () => {
         const replica = persisted.replicas[canonicalSessionDraftAddressV1(address)]!;
         const original = SessionDraftDocumentV1Schema.parse(replica.localRawDocument);
         assertNewSessionDocument(original);
-        const baseMutationId = original.target.authoring.machineId!.mutationId;
+        const baseMutationId = original.target.authoring.executionTarget!.mutationId;
         const remoteDocument = structuredClone(original);
-        remoteDocument.target.authoring.machineId = { mutationId: uuid(207), value: 'synced' };
+        remoteDocument.target.authoring.executionTarget = {
+            mutationId: uuid(207),
+            value: { serverId: 'server-a', machineId: 'synced' },
+        };
         const localDocument = structuredClone(remoteDocument);
-        delete localDocument.target.authoring.machineId;
+        delete localDocument.target.authoring.executionTarget;
         Object.assign(replica, {
             baseRevision: 2,
             baseRawDocument: remoteDocument,
             localRawDocument: localDocument,
             pendingFieldMutations: [{
-                path: { kind: 'authoring', fieldId: 'machineId' },
+                path: { kind: 'authoring', fieldId: 'executionTarget' },
                 mutationId: uuid(208),
                 intent: 'edit',
                 baseMutationId,
@@ -575,8 +581,8 @@ describe('sessionDraftRepository', () => {
             status: 'conflict',
             conflict: {
                 fields: [{
-                    fieldId: 'target.authoring.machineId',
-                    path: { kind: 'authoring', fieldId: 'machineId' },
+                    fieldId: 'target.authoring.executionTarget',
+                    path: { kind: 'authoring', fieldId: 'executionTarget' },
                     mine: null,
                     synced: 'synced',
                 }],
@@ -601,7 +607,7 @@ describe('sessionDraftRepository', () => {
         await repository.resolveSessionDraftConflict({
             scope,
             address,
-            fieldId: 'target.authoring.machineId',
+            fieldId: 'target.authoring.executionTarget',
             action: 'keepDevice',
         });
 
@@ -609,7 +615,7 @@ describe('sessionDraftRepository', () => {
         expect(snapshot.status).toBe('clean');
         expect(snapshot.document.target.kind).toBe('newSession');
         if (snapshot.document.target.kind !== 'newSession') throw new Error('expected new-session snapshot');
-        expect(snapshot.document.target.authoring.machineId).toBeUndefined();
+        expect(snapshot.document.target.authoring.executionTarget).toBeUndefined();
         expect(vi.mocked(remote.transport.mutate).mock.calls.at(-1)?.[0]).toMatchObject({ expectedRevision: 2 });
     });
 
@@ -692,7 +698,10 @@ describe('sessionDraftRepository', () => {
         repository.writeNewSessionDraft({
             scope,
             draftId: address.draftId,
-            patch: { text: 'launch me', authoring: { machineId: 'machine-a' } },
+            patch: {
+                text: 'launch me',
+                authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-a' } },
+            },
             materializationIntent: 'userEdit',
         });
         await repository.flushSessionDraft({ scope, address });
@@ -744,7 +753,10 @@ describe('sessionDraftRepository', () => {
         repository.writeNewSessionDraft({
             scope,
             draftId: address.draftId,
-            patch: { text: 'captured', authoring: { machineId: 'machine-a' } },
+            patch: {
+                text: 'captured',
+                authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-a' } },
+            },
             materializationIntent: 'userEdit',
         });
         const currentness = repository.captureSessionDraftCurrentness({ scope, address });
@@ -826,7 +838,10 @@ describe('sessionDraftRepository', () => {
         repository.writeNewSessionDraft({
             scope,
             draftId: address.draftId,
-            patch: { text: 'captured', authoring: { machineId: 'machine-a' } },
+            patch: {
+                text: 'captured',
+                authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-a' } },
+            },
             materializationIntent: 'userEdit',
         });
         await repository.flushSessionDraft({ scope, address });

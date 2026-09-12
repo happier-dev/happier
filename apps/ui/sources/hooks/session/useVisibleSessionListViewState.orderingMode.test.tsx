@@ -1349,7 +1349,9 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         const focusedDirectHook = await renderHook(() => useVisibleSessionListViewState('direct'));
         await flushHookEffects();
 
-        expect(focusedDirectHook.getCurrent()?.folderFocus).toEqual(expect.objectContaining({ folderId: 'folder-a' }));
+        expect(focusedDirectHook.getCurrent()?.folderFocus).toEqual(expect.objectContaining({
+            folder: expect.objectContaining({ id: 'folder-a' }),
+        }));
         expect((focusedDirectHook.getCurrent()?.visibleSessionListIndex ?? [])
             .filter((item) => item.type === 'session')
             .map((item) => item.sessionId)).toEqual(['in-folder']);

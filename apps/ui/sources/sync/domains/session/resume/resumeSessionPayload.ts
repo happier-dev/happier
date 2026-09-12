@@ -122,9 +122,10 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         })
         : undefined;
     const canonicalBackendTarget = explicitBackendTarget ?? predecessorBackendTarget;
-    const backendTransportFields = canonicalBackendTarget
+    const backendTransportFields = agentTarget || canonicalBackendTarget
         ? buildBackendTransportFieldsFromUiState({
             machineId,
+            ...(agentTarget ? { agentTarget } : {}),
             backendTarget: canonicalBackendTarget,
             runtimeDescriptorV1,
             providerSessionId: rest.resume,
@@ -158,11 +159,13 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
                 ? { connectedServicesUpdatedAt }
                 : {}
         )),
-        ...(runtimeDescriptorV1
-            ? { runtimeDescriptorV1 }
-            : 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
-                ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
-                : {}),
+        ...(agentTarget && 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
+            ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
+            : runtimeDescriptorV1
+                ? { runtimeDescriptorV1 }
+                : 'runtimeDescriptorV1' in backendTransportFields && backendTransportFields.runtimeDescriptorV1
+                    ? { runtimeDescriptorV1: backendTransportFields.runtimeDescriptorV1 }
+                    : {}),
         ...(canonicalModelSelection ? { modelSelection: canonicalModelSelection } : {}),
     };
     // Validate shape early to avoid accidentally sending secrets in wrong fields.

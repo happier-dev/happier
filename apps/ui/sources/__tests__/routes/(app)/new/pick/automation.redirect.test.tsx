@@ -20,7 +20,7 @@ describe('legacy automation picker route', () => {
         vi.resetModules();
     });
 
-    it('redirects to the inline new-session automation flow and preserves automation params', async () => {
+    it('redirects legacy inline automation params to the draft-backed new-session automation flow', async () => {
         useLocalSearchParamsMock.mockReturnValue({
             automationEnabled: '1',
             automationName: 'Legacy',
@@ -41,13 +41,6 @@ describe('legacy automation picker route', () => {
             pathname: '/new',
             params: {
                 automation: '1',
-                automationEnabled: '1',
-                automationName: 'Legacy',
-                automationDescription: 'Carry this over',
-                automationScheduleKind: 'interval',
-                automationEveryMinutes: '90',
-                automationCronExpr: '0 * * * *',
-                automationTimezone: 'Europe/Zurich',
                 draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
             },
         });

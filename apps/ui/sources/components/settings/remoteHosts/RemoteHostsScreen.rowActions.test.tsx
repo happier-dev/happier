@@ -175,7 +175,7 @@ vi.mock('@/components/systemTasks/SystemTaskProgressCard', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         decryptSecretValue: () => null,
-        encryptSecretValue: () => ({ __brand: 'SecretString', value: 'enc' }),
+        encryptSecretValue: () => ({ _isSecretValue: true, value: 'enc' }),
     },
 }));
 

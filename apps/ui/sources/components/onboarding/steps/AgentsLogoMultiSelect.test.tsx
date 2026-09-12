@@ -16,7 +16,8 @@ const catalogIconState = vi.hoisted(() => ({
     // Agents with a resolvable icon; anything else renders no logo asset.
     iconIds: new Set(['claude', 'codex', 'customAcp', 'opencode']),
 }));
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agents/catalog/catalog')>(),
     getAgentIconSvgXml: (agentId: string) => (catalogIconState.iconIds.has(agentId) ? '<svg/>' : null),
     getAgentIconSource: () => null,
 }));

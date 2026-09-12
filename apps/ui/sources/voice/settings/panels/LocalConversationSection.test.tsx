@@ -118,6 +118,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     isBundledAgentId: (v: any) => v === 'codex' || v === 'claude',
     getAgentCore: (id: string) => ({
       displayNameKey: 'common.ok' as any,
+      availability: { experimental: false },
       ui: { agentPickerIconName: 'sparkles-outline' },
       model: { supportsSelection: true, supportsFreeform: true, allowedModes: ['m1', 'm2'], defaultMode: 'default' },
     }),

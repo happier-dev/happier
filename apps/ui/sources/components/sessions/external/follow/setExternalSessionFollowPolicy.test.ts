@@ -79,7 +79,7 @@ function call(
 describe('setExternalSessionFollowPolicy', () => {
     beforeEach(() => {
         accountCurrentnessState.current = true;
-        machineExternalSessionFollowPolicySetSpy.mockClear();
+        machineExternalSessionFollowPolicySetSpy.mockReset();
         machineExternalSessionFollowPolicySetSpy.mockImplementation(
             async () => ({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 }),
         );
@@ -152,6 +152,8 @@ describe('setExternalSessionFollowPolicy', () => {
         );
 
         const request = call(setExternalSessionFollowPolicy, link);
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        expect(machineExternalSessionFollowPolicySetSpy).toHaveBeenCalledTimes(1);
         accountCurrentnessState.current = false;
         settle?.({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 });
 

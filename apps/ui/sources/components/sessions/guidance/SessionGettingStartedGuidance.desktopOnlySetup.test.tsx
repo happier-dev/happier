@@ -96,6 +96,7 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
     getActiveServerSnapshot: () => ({ serverId: 's1', serverUrl: 'http://127.0.0.1:3005', generation: 1 }),
     getServerProfilesGeneration: () => 1,
     listServerProfiles: () => [{ id: 's1', name: 'dev', serverUrl: 'http://127.0.0.1:3005' }],

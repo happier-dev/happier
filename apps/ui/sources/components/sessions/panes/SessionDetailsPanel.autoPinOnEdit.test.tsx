@@ -64,10 +64,6 @@ vi.mock('react-native-svg', () => ({
     SvgXml: 'SvgXml',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
-}));
-
 const SessionFileDetailsViewMock = vi.fn((props: any) => React.createElement('SessionFileDetailsView', props));
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: (props: any) => SessionFileDetailsViewMock(props),

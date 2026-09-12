@@ -1,9 +1,14 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import {
+    HappierUiEnvironmentProvider,
+    projectHappierUiEnvironment,
+} from '@happier-dev/plugin-ui/environment';
 
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 
 import { installProfilesCommonModuleMocks } from './profilesTestHelpers';
 
@@ -53,6 +58,16 @@ const profile: AIBackendProfile = {
     version: '1.0.0',
 };
 
+const presentationEnvironment = projectHappierUiEnvironment(createPluginSurfaceContextFixture());
+
+function PresentationEnvironmentHarness(props: React.PropsWithChildren) {
+    return (
+        <HappierUiEnvironmentProvider environment={presentationEnvironment}>
+            {props.children}
+        </HappierUiEnvironmentProvider>
+    );
+}
+
 describe('ProfileRequirementsBadge', () => {
     it('does not emit raw text nodes under View when icons render as text on web', async () => {
         const { ProfileRequirementsBadge } = await import('./ProfileRequirementsBadge');
@@ -62,6 +77,7 @@ describe('ProfileRequirementsBadge', () => {
                 profile={profile}
                 machineId={null}
             />,
+            { wrapper: PresentationEnvironmentHarness },
         );
 
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);

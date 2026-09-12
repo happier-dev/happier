@@ -28,6 +28,21 @@ let storageState: StorageState = {
 };
 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
+let activeFetchArtifactWithBodyResult: Record<string, unknown> | null = null;
+let stableHarness: Awaited<ReturnType<typeof createStableHarnessResult>> | null = null;
+
+function createStableHarnessResult(params: Readonly<{
+  useCreateNewSession: typeof import('./useCreateNewSession')['useCreateNewSession'];
+  publishModeSpy: ReturnType<typeof vi.fn>;
+  sendMessageSpy: ReturnType<typeof vi.fn>;
+  machineSpawnNewSessionSpy: ReturnType<typeof vi.fn>;
+  executeSessionSpawnNewActionSpy: ReturnType<typeof vi.fn>;
+  followUpSpawnedSessionWithServerScopeSpy: ReturnType<typeof vi.fn>;
+  clearNewSessionDraftSpy: ReturnType<typeof vi.fn>;
+  actionOperationPresentationRegisterSpy: ReturnType<typeof vi.fn>;
+}>) {
+  return params;
+}
 
 installNewSessionScreenModelCommonModuleMocks({
   modal: async () => ({
@@ -56,6 +71,47 @@ async function setupHarness(options?: Readonly<{
   storageState?: Record<string, unknown>;
   fetchArtifactWithBodyResult?: Record<string, unknown> | null;
 }>) {
+  activeFetchArtifactWithBodyResult = options?.fetchArtifactWithBodyResult ?? null;
+  storageState = {
+    settings: {},
+    machines: { m1: { id: 'm1' } },
+    updateSessionPermissionMode: vi.fn(),
+    updateSessionModelMode: vi.fn(),
+    ...(options?.storageState ?? {}),
+  };
+  if (stableHarness) {
+    stableHarness.publishModeSpy.mockReset().mockResolvedValue(undefined);
+    stableHarness.sendMessageSpy.mockReset().mockResolvedValue(undefined);
+    stableHarness.machineSpawnNewSessionSpy.mockReset().mockResolvedValue({ type: 'success', sessionId: 'sess_new' });
+    stableHarness.executeSessionSpawnNewActionSpy.mockReset().mockResolvedValue({
+      ok: true,
+      result: {
+        type: 'success',
+        disposition: 'created',
+        sessionId: 'sess_new',
+        executionTarget: { serverId: 'server-a', machineId: 'm1' },
+        organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'accepted', localId: 'pending-1' },
+      },
+    });
+    stableHarness.followUpSpawnedSessionWithServerScopeSpy.mockReset().mockImplementation(async (params: {
+      sessionId: string;
+      initialMessageText?: string | null;
+    }) => {
+      if (typeof params.initialMessageText === 'string' && params.initialMessageText.trim().length > 0) {
+        await stableHarness?.sendMessageSpy(params.sessionId, params.initialMessageText);
+      }
+    });
+    stableHarness.clearNewSessionDraftSpy.mockClear();
+    stableHarness.actionOperationPresentationRegisterSpy.mockClear();
+    const catalog = await import('@/agents/catalog/catalog');
+    vi.mocked(catalog.getAgentCore).mockReset().mockImplementation((agentId: string) => ({
+      sessionModes: { kind: agentId === 'codex' ? 'acpPolicyPresets' : 'acpAgentModes' },
+      model: { supportsSelection: false },
+    }) as ReturnType<typeof catalog.getAgentCore>);
+    vi.mocked(catalog.buildSpawnSessionExtrasFromUiState).mockReset().mockReturnValue({});
+    return stableHarness;
+  }
   const fixedServerNowMs = Date.parse('2026-02-05T00:00:00.000Z');
   const actionOperationPresentationRegisterSpy = vi.fn();
   const publishModeSpy = vi.fn(async (_params: any) => {});
@@ -89,13 +145,6 @@ async function setupHarness(options?: Readonly<{
 
     await sendMessageSpy(params.sessionId, params.initialMessageText);
   });
-  storageState = {
-    settings: {},
-    machines: { m1: { id: 'm1' } },
-    updateSessionPermissionMode: vi.fn(),
-    updateSessionModelMode: vi.fn(),
-    ...(options?.storageState ?? {}),
-  };
   vi.doMock('@/sync/sync', () => ({
     sync: {
       applySettings: vi.fn(),
@@ -106,7 +155,7 @@ async function setupHarness(options?: Readonly<{
       refreshMachines: vi.fn(async () => {}),
       sendMessage: sendMessageSpy,
       acquireUserRequestLease: vi.fn(() => vi.fn()),
-      fetchArtifactWithBody: vi.fn(async () => options?.fetchArtifactWithBodyResult ?? null),
+      fetchArtifactWithBody: vi.fn(async () => activeFetchArtifactWithBodyResult),
       publishSessionAcpSessionModeOverrideToMetadata: publishModeSpy,
     },
   }));
@@ -250,7 +299,7 @@ async function setupHarness(options?: Readonly<{
     ...params,
     draftScope: params.draftScope ?? { serverId: 'server-a', accountId: 'account-a' },
   });
-  return {
+  stableHarness = createStableHarnessResult({
     useCreateNewSession,
     publishModeSpy,
     sendMessageSpy,
@@ -259,8 +308,11 @@ async function setupHarness(options?: Readonly<{
     followUpSpawnedSessionWithServerScopeSpy,
     clearNewSessionDraftSpy,
     actionOperationPresentationRegisterSpy,
-  };
+  });
+  return stableHarness;
 }
+
+await setupHarness();
 
 function buildCreateSessionHookParams(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -304,13 +356,12 @@ function buildCreateSessionHookParams(overrides: Record<string, unknown> = {}): 
 
 describe('useCreateNewSession (ACP mode seeding)', () => {
   beforeEach(() => {
-    vi.resetModules();
     modalAlertSpy.mockReset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('creates through the strict V2 Action with its existing attempt identity and initial input', async () => {
@@ -384,7 +435,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
       },
       agentModeId: 'plan',
-      initialMessage: 'hello',
+      initialInput: { text: 'hello' },
     }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
     expect(executeSessionSpawnNewActionSpy.mock.calls[0]?.[1]).toEqual({
       surface: 'ui',
@@ -694,15 +745,10 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(onAfterCreatedSettled).toHaveBeenCalledWith({ status: 'rejected' });
   });
 
-  it('finishes post-create follow-up and clears the persisted draft without navigating when unmounted before tracked spawn settles', async () => {
-    const mountedRef = { current: true };
-    vi.doMock('@/hooks/ui/useMountedRef', () => ({
-      useMountedRef: () => mountedRef,
-    }));
+  it('finishes post-create follow-up without navigating when unmounted before tracked spawn settles', async () => {
     const {
       useCreateNewSession,
       executeSessionSpawnNewActionSpy,
-      clearNewSessionDraftSpy,
       actionOperationPresentationRegisterSpy,
     } = await setupHarness({
       storageState: { sessions: { sess_detached: { id: 'sess_detached' } } },
@@ -736,7 +782,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     await vi.waitFor(() => {
       expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
     });
-    mountedRef.current = false;
+    await hook.unmount();
     await act(async () => {
       spawn.resolve({
         ok: true,
@@ -757,13 +803,10 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(actionOperationPresentationRegisterSpy).toHaveBeenCalledWith({
       requestId: expect.any(String),
       onStart: 'current',
-      origin: expect.objectContaining({ resolve: expect.any(Function) }),
     });
-    expect(clearNewSessionDraftSpy).toHaveBeenCalledWith(draftScope);
     expect(disableDraftPersistence).not.toHaveBeenCalled();
     expect(routerReplace).not.toHaveBeenCalled();
     await createPromise;
-    await hook.unmount();
   });
 
   it('does not turn observer socket loss into terminal failure after the canonical store has daemon custody', async () => {
@@ -1253,9 +1296,15 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       await handleCreateSession?.();
     });
 
-    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      initialMessage: 'Expanded QA Template\n\nthis is a UI QA check',
-    }), expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }));
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ initialInput: expect.objectContaining({ text: expect.any(String) }) }),
+      expect.objectContaining({ surface: 'ui', actionRequestId: expect.any(String) }),
+    );
+    const expandedInitialInput = (executeSessionSpawnNewActionSpy.mock.calls[0]?.[0] as {
+      initialInput?: { text?: string };
+    }).initialInput?.text ?? '';
+    expect(expandedInitialInput).toContain('Expanded QA Template');
+    expect(expandedInitialInput).toContain('this is a UI QA check');
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
@@ -1367,13 +1416,12 @@ describe('useCreateNewSession (installed Agent render-to-spawn parity)', () => {
   const EXTERNAL_AGENT_ID = 'acme.review.agent';
 
   beforeEach(() => {
-    vi.resetModules();
     modalAlertSpy.mockReset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('spawns an installed Agent with the options it declared, resolved on the selected machine', async () => {

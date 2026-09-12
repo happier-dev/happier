@@ -7,9 +7,14 @@ const agentsPackageState = vi.hoisted(() => ({
 }));
 
 // Intentionally omit getAllAgentCatalogDefinitions to mirror minimal mocks used elsewhere in the UI test suite.
-vi.mock('@happier-dev/agents', () => ({
-    ...agentsPackageState,
-}));
+vi.mock('@happier-dev/agents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+    const { getAllAgentCatalogDefinitions: _omitted, ...withoutCatalogEnumeration } = actual;
+    return {
+        ...withoutCatalogEnumeration,
+        ...agentsPackageState,
+    };
+});
 
 describe('agentUniverse', () => {
     it('keeps the provider backend target key canonical when a provider declares a settings backend id', async () => {
@@ -21,7 +26,7 @@ describe('agentUniverse', () => {
         vi.resetModules();
         const { buildAgentUniverseBackendTargetKey } = await import('./agentUniverse');
 
-        expect(buildAgentUniverseBackendTargetKey('antigravity')).toBe('backend:antigravity');
+        expect(buildAgentUniverseBackendTargetKey('antigravity')).toBe('agent:happier.agent.antigravity/antigravity');
     });
 
     it('falls back to AGENT_IDS when getAllAgentCatalogDefinitions is unavailable', async () => {

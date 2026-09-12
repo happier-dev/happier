@@ -29,6 +29,13 @@ installToolCallsGroupViewCommonModuleMocks({
     },
 });
 
+vi.mock('@/components/ui/icons/Icon', () => ({
+    Icon: (props: Record<string, unknown>) => React.createElement('Icon', {
+        ...props,
+        testID: `icon:${String(props.name)}`,
+    }),
+}));
+
 vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
     TranscriptEnterWrapper: (props: any) => React.createElement('TranscriptEnterWrapper', props, props.children),
 }));
@@ -60,9 +67,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
 
         expect(screen.getTextContent()).toContain('session.toolCalls');
         expect(screen.getTextContent()).toContain('2');
-        expect(screen.findByTestId('ionicons:checkmark-circle')).not.toBeNull();
-        expect(screen.findByTestId('ionicons:layers-outline')).not.toBeNull();
-        expect(screen.findByTestId('ionicons:chevron-up-outline')).toBeNull();
+        expect(screen.findByTestId('icon:check-circle')).not.toBeNull();
+        expect(screen.findByTestId('icon:stack-simple')).not.toBeNull();
+        expect(screen.findByTestId('icon:caret-up')).toBeNull();
     });
 
     it('derives a running status spinner when any tool is still running', async () => {
@@ -74,7 +81,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
 
         expect(screen.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('ionicons:checkmark-circle')).toBeNull();
+        expect(screen.findByTestId('icon:check-circle')).toBeNull();
     });
 
     it('derives an error status when any tool errored and none are running', async () => {
@@ -85,7 +92,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findByTestId('ionicons:alert-circle')).not.toBeNull();
+        expect(screen.findByTestId('icon:warning-circle')).not.toBeNull();
         expect(screen.getTextContent()).toContain('common.error');
         expect(screen.findByTestId('tool-calls-group-status:error')).toMatchObject({
             props: {
@@ -168,8 +175,8 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
 
         expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(0);
-        expect(screen.findByTestId('ionicons:checkmark-circle')).toBeNull();
-        expect(screen.findByTestId('ionicons:remove-circle-outline')).not.toBeNull();
+        expect(screen.findByTestId('icon:check-circle')).toBeNull();
+        expect(screen.findByTestId('icon:minus-circle')).not.toBeNull();
         expect(screen.findByTestId('tool-calls-group-status:permission_denied')).toMatchObject({
             props: {
                 accessible: true,
@@ -196,8 +203,8 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
 
         expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(0);
-        expect(screen.findByTestId('ionicons:checkmark-circle')).toBeNull();
-        expect(screen.findByTestId('ionicons:remove-circle-outline')).not.toBeNull();
+        expect(screen.findByTestId('icon:check-circle')).toBeNull();
+        expect(screen.findByTestId('icon:minus-circle')).not.toBeNull();
         expect(screen.findByTestId('tool-calls-group-status:permission_canceled')).toMatchObject({
             props: {
                 accessibilityLabel: 'errors.permissionCanceled',
@@ -222,7 +229,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             setExpanded,
         });
 
-        expect(expanded.findByTestId('ionicons:chevron-up-outline')).not.toBeNull();
+        expect(expanded.findByTestId('icon:caret-up')).not.toBeNull();
         await expanded.pressByTestIdAsync('transcript-tool-calls-header');
         expect(setExpanded).toHaveBeenCalledWith(false);
     });
@@ -238,8 +245,8 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         const container = screen.findByTestId('transcript-tool-calls-unit-header') as any;
         const style = flattenStyleProp(container?.props.style);
         expect(style.marginHorizontal).toBe(16);
-        expect(style.borderTopLeftRadius).toBe(14);
-        expect(style.borderTopRightRadius).toBe(14);
+        expect(style.borderTopLeftRadius).toBe(12);
+        expect(style.borderTopRightRadius).toBe(12);
         expect(style.borderBottomLeftRadius).toBeUndefined();
         expect(style.backgroundColor).toBeTruthy();
         expect(style.marginBottom).toBeUndefined();
@@ -270,7 +277,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         expect(style.paddingHorizontal).toBe(10);
         expect(style.paddingTop).toBe(6);
         expect(style.paddingBottom).toBeUndefined();
-        expect(style.borderTopLeftRadius).toBe(14);
+        expect(style.borderTopLeftRadius).toBe(12);
         expect(style.borderBottomLeftRadius).toBeUndefined();
         expect(style.backgroundColor).toBeTruthy();
     });

@@ -6,7 +6,6 @@ import {
     deriveAttentionDeliveryPolicyFromLegacySettings,
 } from '@happier-dev/protocol';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
-import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
     settingsParse,
@@ -540,7 +539,7 @@ describe('settings', () => {
             expect((parsed as any).actionsSettingsV1).toEqual(DEFAULT_ACTIONS_SETTINGS_V1);
         });
 
-        it('keeps valid actions settings action ids when one entry is invalid', () => {
+        it('preserves well-formed unknown action ids for forward compatibility', () => {
             const parsed = settingsParse({
                 actionsSettingsV1: {
                     v: 1,
@@ -554,6 +553,14 @@ describe('settings', () => {
                 v: 1,
                 actions: {
                     'review.start': {
+                        enabled: false,
+                        enabledPlacements: [],
+                        disabledSurfaces: [],
+                        disabledPlacements: [],
+                        approvalRequiredSurfaces: [],
+                        toolExposureModes: {},
+                    },
+                    'unknown.action': {
                         enabled: false,
                         enabledPlacements: [],
                         disabledSurfaces: [],
@@ -1486,8 +1493,8 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).backendCliSourcePreferenceByTargetKey).toEqual({
-                [buildAgentUniverseBackendTargetKey('codex')]: 'managed-first',
-                [buildAgentUniverseBackendTargetKey('gemini')]: 'system-first',
+                'backend:codex': 'managed-first',
+                'backend:gemini': 'system-first',
             });
         });
 

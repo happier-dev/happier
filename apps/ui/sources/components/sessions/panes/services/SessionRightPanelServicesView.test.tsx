@@ -1,13 +1,21 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { FeatureDecision, FeatureId, RuntimeActionExecute } from '@happier-dev/protocol';
+import type {
+    FeatureDecision,
+    FeatureId,
+    LocalServicePublicExposureModeV1,
+    RuntimeActionExecute,
+} from '@happier-dev/protocol';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import {
     buildLocalServiceInventoryRow,
     buildLocalServiceInventoryState,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import type { IModal } from '@/modal/types';
 import {
     applyLocalServiceLauncherSnapshot,
     createLocalServiceLauncherState,
@@ -31,6 +39,7 @@ const useFeatureDecisionMock = vi.hoisted(() => vi.fn((featureId: FeatureId, _sc
     scope: { scopeKind: 'runtime' },
 })));
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
+const modalShowMock = vi.hoisted(() => vi.fn<IModal['show']>(() => 'modal-id'));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: (featureId: FeatureId, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
@@ -40,7 +49,7 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
         confirmResult: true,
-        spies: { confirm: modalConfirmMock },
+        spies: { confirm: modalConfirmMock, show: modalShowMock },
     }).module;
 });
 
@@ -168,6 +177,8 @@ describe('SessionRightPanelServicesView', () => {
     beforeEach(() => {
         useFeatureDecisionMock.mockImplementation((featureId: FeatureId): FeatureDecision => enabledDecision(featureId));
         modalConfirmMock.mockClear();
+        modalShowMock.mockReset();
+        modalShowMock.mockImplementation(() => 'modal-id');
     });
 
     it('passes supplied local service launcher state into the Services pane', async () => {
@@ -256,11 +267,18 @@ describe('SessionRightPanelServicesView', () => {
             />,
         );
 
-        await pressTestInstanceAsync(
-            screen.findByTestId('session-rightpanel-services-row:inventory:inventory-entry-1-terminate'),
-            'session-rightpanel-services-row:inventory:inventory-entry-1-terminate',
-        );
+        const terminateAction = screen.findAllByType(ItemRowActions)
+            .flatMap((menu) => (
+                menu.props as { actions?: readonly { id: string; onPress?: () => void }[] }
+            ).actions ?? [])
+            .find((action) => action.id === 'terminate');
+        expect(terminateAction).toBeTruthy();
+        await act(async () => {
+            terminateAction?.onPress?.();
+            for (let index = 0; index < 8; index += 1) await Promise.resolve();
+        });
 
+        expect(modalConfirmMock).toHaveBeenCalledOnce();
         expect(runtimeActionExecute).toHaveBeenCalledExactlyOnceWith({
             actionId: 'localServices.actions.terminateDetected',
             input: {
@@ -375,6 +393,19 @@ describe('SessionRightPanelServicesView', () => {
     });
 
     it('creates public preview links through the session Services runtime action host', async () => {
+        modalShowMock.mockImplementationOnce((config) => {
+            const props = (config as unknown as Readonly<{
+                props: Readonly<{
+                    modeChoices: readonly { mode: LocalServicePublicExposureModeV1 }[];
+                    ttlChoices: readonly { ttlMs: number }[];
+                    onResolve: (decision: { mode: LocalServicePublicExposureModeV1; ttlMs: number } | null) => void;
+                }>;
+            }>).props;
+            const mode = props.modeChoices[0];
+            const ttl = props.ttlChoices[0];
+            props.onResolve(mode && ttl ? { mode: mode.mode, ttlMs: ttl.ttlMs } : null);
+            return 'modal-id';
+        });
         const runtimeActionExecute = vi.fn(async () => ({
             protocolVersion: 1,
             previewId: 'preview-session',
@@ -425,11 +456,13 @@ describe('SessionRightPanelServicesView', () => {
         );
 
         await pressTestInstanceAsync(
-            screen.findByTestId('session-rightpanel-services-row:preview:session-feed-public-preview-target:preview-session-create'),
-            'session-rightpanel-services-row:preview:session-feed-public-preview-target:preview-session-create',
+            screen.findByTestId('session-rightpanel-services-public-preview-target:preview-session-create'),
+            'session-rightpanel-services-public-preview-target:preview-session-create',
         );
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
 
-        expect(modalConfirmMock).toHaveBeenCalledOnce();
+        expect(modalShowMock).toHaveBeenCalledOnce();
+        expect(modalConfirmMock).not.toHaveBeenCalled();
         expect(runtimeActionExecute).toHaveBeenCalledExactlyOnceWith({
             actionId: 'localServices.publicPreview.create',
             input: {

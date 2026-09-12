@@ -2,6 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FeatureDecision, FeatureId, RuntimeActionExecute } from '@happier-dev/protocol';
+import type { IModal } from '@/modal/types';
 import {
     buildLocalServiceInventoryState,
     pressTestInstanceAsync,
@@ -28,6 +29,7 @@ const useFeatureDecisionMock = vi.hoisted(() => vi.fn((featureId: FeatureId, _sc
     scope: { scopeKind: 'runtime' },
 })));
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
+const modalShowMock = vi.hoisted(() => vi.fn<IModal['show']>(() => 'modal-id'));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: (featureId: FeatureId, scope?: unknown) => useFeatureDecisionMock(featureId, scope),
@@ -37,7 +39,7 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
         confirmResult: true,
-        spies: { confirm: modalConfirmMock },
+        spies: { confirm: modalConfirmMock, show: modalShowMock },
     }).module;
 });
 
@@ -131,6 +133,8 @@ describe('ProjectRightPanelServicesView', () => {
             scope: { scopeKind: 'runtime' },
         }));
         modalConfirmMock.mockClear();
+        modalShowMock.mockReset();
+        modalShowMock.mockImplementation(() => 'modal-id');
     });
 
     it('passes supplied local service launcher state into the Services pane', async () => {
@@ -219,6 +223,19 @@ describe('ProjectRightPanelServicesView', () => {
     });
 
     it('creates public preview links through the project Services runtime action host', async () => {
+        modalShowMock.mockImplementationOnce((config) => {
+            const props = (config as unknown as Readonly<{
+                props: Readonly<{
+                    modeChoices: readonly { mode: 'secret_link' | 'authenticated' }[];
+                    ttlChoices: readonly { ttlMs: number }[];
+                    onResolve: (decision: { mode: 'secret_link' | 'authenticated'; ttlMs: number } | null) => void;
+                }>;
+            }>).props;
+            const mode = props.modeChoices[0];
+            const ttl = props.ttlChoices[0];
+            props.onResolve(mode && ttl ? { mode: mode.mode, ttlMs: ttl.ttlMs } : null);
+            return 'modal-id';
+        });
         const runtimeActionExecute = vi.fn(async () => ({
             protocolVersion: 1,
             previewId: 'preview-project',
@@ -268,11 +285,13 @@ describe('ProjectRightPanelServicesView', () => {
         );
 
         await pressTestInstanceAsync(
-            screen.findByTestId('project-rightpanel-services-row:preview:project-feed-public-preview-target:preview-project-create'),
-            'project-rightpanel-services-row:preview:project-feed-public-preview-target:preview-project-create',
+            screen.findByTestId('project-rightpanel-services-public-preview-target:preview-project-create'),
+            'project-rightpanel-services-public-preview-target:preview-project-create',
         );
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
 
-        expect(modalConfirmMock).toHaveBeenCalledOnce();
+        expect(modalShowMock).toHaveBeenCalledOnce();
+        expect(modalConfirmMock).not.toHaveBeenCalled();
         expect(runtimeActionExecute).toHaveBeenCalledExactlyOnceWith({
             actionId: 'localServices.publicPreview.create',
             input: {

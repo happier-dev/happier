@@ -40,14 +40,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        eyebrow: () => ({}),
-        keyHint: () => ({}),
-    },
-}));
-
 vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({
     useWebScrollLockBypass: () => {},
 }));

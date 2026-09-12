@@ -183,7 +183,7 @@ describe('TranscriptSendToSessionModal', () => {
             />,
         );
 
-        await screen.pressByTestIdAsync('transcript-send-to-session-list:transcript-send-to-session-root:option:new-session');
+        await screen.pressByTestIdAsync('transcript-send-to-session-option-new-session');
 
         expect(onResolve).toHaveBeenCalledWith({ kind: 'newSession' });
         expect(onClose).toHaveBeenCalledTimes(1);

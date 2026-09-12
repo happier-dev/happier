@@ -33,9 +33,10 @@ vi.mock('@/agents/registry/compat/customAcp', () => ({
   }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => {
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const isBundled = (value: unknown) => value === 'codex' || value === 'opencode' || value === 'claude';
   return {
+    ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
     isBundledAgentId: isBundled,
     // Mirrors the real overloaded reader: a bundled id has a core, any other
     // installed Agent id reports no bundled fact rather than a substitute.

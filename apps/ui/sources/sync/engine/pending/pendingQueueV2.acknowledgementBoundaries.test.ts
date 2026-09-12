@@ -249,6 +249,10 @@ const PENDING_EXPORT_CONTRACT: Readonly<Record<string, PendingExportContract>> =
         kind: 'not-a-server-mutation',
         why: 'Pure response-shape predicate; the enqueue path owns the acknowledgement.',
     },
+    PendingMessageMutationProtocolUnsupportedError: {
+        kind: 'not-a-server-mutation',
+        why: 'Local error constructor; no server exchange.',
+    },
 };
 
 function committedTwin(localId: string | null, seq = LOADED_HEAD_SEQ + 1) {

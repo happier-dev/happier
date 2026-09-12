@@ -842,7 +842,10 @@ export function createActivePluginCollectionClient<
         | ActivePluginCollectionUnavailableV1
         | ActivePluginCollectionRejectedV1
     > => {
-        const absentPut = operations.find((candidate) => (
+        const absentPut = operations.find((candidate): candidate is Extract<
+            ActivePluginCollectionMutationInputV1<TValue>,
+            Readonly<{ kind: 'put' }>
+        > => (
             candidate.kind === 'put' && candidate.expectedRevision === 'absent'
         ));
         if (!absentPut) return { status: 'ready' };

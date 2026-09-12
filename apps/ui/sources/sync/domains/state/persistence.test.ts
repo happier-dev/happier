@@ -605,7 +605,7 @@ describe('persistence', () => {
 
             const pending = loadPendingSettings() as any;
             expect(Object.keys(pending).sort()).toEqual(['voice']);
-            const realtimeConfig = pending.voice?.providers?.realtime_elevenlabs?.config;
+            const realtimeConfig = pending.voice?.providers?.['happier.voice.elevenlabs/realtime-elevenlabs']?.config;
             expect(realtimeConfig?.byo?.agentId).toBe('agent_1');
             expect(realtimeConfig?.byo?.apiKey).toEqual(
                 { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'abc' } },
@@ -854,7 +854,7 @@ describe('persistence', () => {
                 v: 1,
                 updatedAt: 42,
                 ref: {
-                    agentTargetKey: 'backend:codex',
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
                     providerConnectionId: null,
                     modelId: 'gpt-5.5',
                 },
@@ -913,7 +913,7 @@ describe('persistence', () => {
             saveNewSessionDraft(migrated!);
             const stored = JSON.parse(store.get('new-session-draft-v1')!);
             expect(stored).not.toHaveProperty('agentType');
-            expect(stored.backendTarget).toEqual({
+            expect(stored.agentTarget).toEqual({
                 kind: 'agent',
                 identity: {
                     pluginId: 'happier.agent.ohmypi',
@@ -1094,7 +1094,7 @@ describe('persistence', () => {
 
             const draft = loadNewSessionDraft();
             expect(draft?.modelSelection?.ref).toEqual({
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: null,
                 modelId: 'adaptiveUsage',
             });
@@ -1118,7 +1118,7 @@ describe('persistence', () => {
 
             const draft = loadNewSessionDraft();
             expect(draft?.modelSelection?.ref).toEqual({
-                agentTargetKey: 'backend:claude',
+                agentTargetKey: 'agent:happier.agent.claude/claude',
                 providerConnectionId: null,
                 modelId: 'claude-3-5-sonnet-latest',
             });
@@ -1565,8 +1565,15 @@ describe('persistence', () => {
 
             prepareSessionLocalStateScopeForActivation(sessionLocalScopeB);
 
+            const { modelMode: _legacyModelMode, ...canonicalLegacyDraft } = legacyDraft;
             expect(loadNewSessionDraft()).toBeNull();
-            expect(loadNewSessionDraft(sessionLocalScopeB)).toMatchObject(legacyDraft);
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toMatchObject({
+                ...canonicalLegacyDraft,
+                selectedSecretIdByProfileIdByEnvVarName: null,
+                sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+                modelSelection: null,
+            });
+            expect(loadNewSessionDraft(sessionLocalScopeB)).not.toHaveProperty('modelMode');
             expect(store.get(sessionDraftValuesStorageKey())).toBeUndefined();
             expect(store.get(sessionDraftValuesStorageKey(sessionLocalScopeB))).toBe(legacyStructuredDraftValues);
         });

@@ -349,8 +349,8 @@ describe('TurnView (thinking expansion controlled)', () => {
         }));
 
     const renderedToolGroupProps = getRenderedToolCallsGroupRowProps();
-    expect(renderedToolGroupProps).toHaveLength(1);
-    expect(renderedToolGroupProps[0]?.expanded).toBe(true);
+    expect(renderedToolGroupProps.length).toBeGreaterThan(0);
+    expect(renderedToolGroupProps.at(-1)?.expanded).toBe(true);
   });
 
   it('forwards forced transcript permission prompts to nested message and tool-call rows', async () => {

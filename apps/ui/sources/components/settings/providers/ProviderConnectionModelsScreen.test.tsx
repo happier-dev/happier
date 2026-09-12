@@ -48,7 +48,11 @@ const alert = vi.hoisted(() => vi.fn());
 const loadModel = vi.hoisted(() => vi.fn<(_connectionId: string, _modelId: string) => Promise<ProviderModelLoadUiResult>>(
     async (_connectionId, _modelId) => ({ status: 'loaded', source: 'requested' }),
 ));
-const probeProviderConnection = vi.hoisted(() => vi.fn(async (_input: unknown) => ({ status: 'success' as const, models: [], requestFingerprint: 'probe-request:v1:test' })));
+const probeProviderConnection = vi.hoisted(() => vi.fn(async (_input: unknown) => ({
+    status: 'success' as const,
+    models: [] as readonly [],
+    requestFingerprint: 'probe-request:v1:test',
+})));
 const routerPush = vi.hoisted(() => vi.fn());
 const routerBack = vi.hoisted(() => vi.fn());
 const navigationDispatch = vi.hoisted(() => vi.fn());

@@ -16,6 +16,7 @@ import type {
     UiSessionOrganizationTag,
 } from '@/sync/domains/session/organization';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { SessionOrganizationContentEnvelopeSchema } from '@happier-dev/protocol';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
@@ -375,7 +376,10 @@ vi.mock('@/utils/navigation/safeRouterBack', () => ({
     safeRouterBack: (...args: any[]) => safeRouterBackSpy(...args),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({ Text: (props: any) => React.createElement('Text', props, props.children) }));
+vi.mock('@/components/ui/text/Text', async () => {
+    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
+    return createUiTextModuleMock();
+});
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', { ...props, testID: props.testID ?? props.title }, props.children),
 }));
@@ -430,7 +434,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     return {
         ...actual,
         DEFAULT_AGENT_ID: 'claude',
-        getAgentCore: () => mockAgentCore,
+        getAgentCore: () => ({ availability: { experimental: false }, ...mockAgentCore }),
         resolveAgentIdFromFlavor: (flavor: string | null | undefined) => mockResolveAgentIdFromFlavor(flavor),
     };
 });
@@ -1182,28 +1186,30 @@ describe('/session/[id]/info', () => {
             metadata: {},
         };
 
-        const screen = await renderInfoScreen();
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderInfoScreen();
 
-        await screen.pressByTestIdAsync('session-info-session-pin');
-        expect(setSessionPinSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                serverId: 'server-1',
-                serverUrl: 'https://server.example.test',
-            }),
-            sessionId: 'session-1',
-            pinned: true,
-        }));
+            await screen.pressByTestIdAsync('session-info-session-pin');
+            expect(setSessionPinSpy).toHaveBeenCalledWith(expect.objectContaining({
+                scope: expect.objectContaining({
+                    serverId: 'server-1',
+                    serverUrl: 'https://server.example.test',
+                }),
+                sessionId: 'session-1',
+                pinned: true,
+            }));
 
-        await screen.pressByTestIdAsync('session-info-session-tags-edit');
-        await screen.pressByTestIdAsync('session-tags-menu-item:fixture-tag-1');
-        expect(setSessionTagLabelsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                serverId: 'server-1',
-                serverUrl: 'https://server.example.test',
-            }),
-            sessionId: 'session-1',
-            tags: [],
-        }));
+            await screen.pressByTestIdAsync('session-info-session-tags-edit');
+            await screen.pressByTestIdAsync('session-tags-menu-item:fixture-tag-1');
+            expect(setSessionTagLabelsSpy).toHaveBeenCalledWith(expect.objectContaining({
+                scope: expect.objectContaining({
+                    serverId: 'server-1',
+                    serverUrl: 'https://server.example.test',
+                }),
+                sessionId: 'session-1',
+                tags: [],
+            }));
+        });
     });
 
     it('surfaces the existing info-screen error when organization mutation scope is unavailable', async () => {
@@ -1294,7 +1300,7 @@ describe('/session/[id]/info', () => {
         }));
     });
 
-    it('fails closed and hides the handoff quick action when server-routed transfer is the only transport the selected server advertises', async () => {
+    it('surfaces the handoff quick action when the selected server advertises server-routed transfer', async () => {
         sessionHandoffFeatureEnabled = true;
         serverFeaturesSnapshot = {
             status: 'ready',
@@ -1338,7 +1344,7 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
         const handoffItems = screen.findAllByType('Item' as any).filter((node: any) => node.props?.title === 'Hand off session');
-        expect(handoffItems).toHaveLength(0);
+        expect(handoffItems).toHaveLength(1);
     });
 
     it('reacts when machine-rpc direct-peer viability becomes available for the reachable machine target after metadata goes stale', async () => {
@@ -1513,7 +1519,7 @@ describe('/session/[id]/info', () => {
         expect(providerItem?.props.subtitle).toBe('QA ACP Stub Backend');
     });
 
-    it('shows the provider resume surfaces when the vendor resume id only exists in agentRuntimeDescriptorV1', async () => {
+    it('shows the provider resume surfaces from the canonical runtime and native resume identities', async () => {
         mockResolveAgentIdFromFlavor.mockReturnValue('opencode');
         mockAgentCore = {
             resume: {
@@ -1533,13 +1539,17 @@ describe('/session/[id]/info', () => {
             seq: 1,
             metadata: {
                 flavor: 'opencode',
-                agentRuntimeDescriptorV1: {
+                runtimeDescriptorV1: {
                     v: 1,
                     agentId: 'opencode',
                     provider: {
                         backendMode: 'server',
                         providerSessionId: 'runtime-session-1234567890',
                     },
+                },
+                nativeResumeIdentityV1: {
+                    v: 1,
+                    vendorResumeId: 'runtime-session-1234567890',
                 },
             },
         };
@@ -1549,7 +1559,7 @@ describe('/session/[id]/info', () => {
         expect(screen.findByTestId('sessionInfo.copyResumeCommand')).toBeTruthy();
     });
 
-    it('infers the provider from agentRuntimeDescriptorV1 when flavor is missing', async () => {
+    it('infers the provider from runtimeDescriptorV1 when flavor is missing', async () => {
         mockAgentCore = {
             resume: {
                 vendorResumeIdField: 'opencodeSessionId',
@@ -1567,13 +1577,17 @@ describe('/session/[id]/info', () => {
             updatedAt: Date.now(),
             seq: 1,
             metadata: {
-                agentRuntimeDescriptorV1: {
+                runtimeDescriptorV1: {
                     v: 1,
                     agentId: 'opencode',
                     provider: {
                         backendMode: 'server',
                         providerSessionId: 'runtime-session-1234567890',
                     },
+                },
+                nativeResumeIdentityV1: {
+                    v: 1,
+                    vendorResumeId: 'runtime-session-1234567890',
                 },
             },
         };
@@ -1642,7 +1656,11 @@ describe('/session/[id]/info', () => {
                 backendTarget: { kind: 'backend', backendId: 'codex' },
                 profileId: 'profile-1',
                 transcriptStorage: 'direct',
-                codexBackendMode: 'appServer',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    agent: { backendMode: 'appServer' },
+                },
                 sessionModeOverrideV1: {
                     v: 1,
                     updatedAt: 100,
@@ -1676,20 +1694,28 @@ describe('/session/[id]/info', () => {
             machineId: 'machine-target',
             directory: '/workspace/repo',
             agentType: 'codex',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
+            agentTarget: {
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            },
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             selectedProfileId: 'profile-1',
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
             modelSelection: {
                 v: 1,
                 ref: {
-                    agentTargetKey: 'backend:codex',
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
                     modelId: 'gpt-5',
                     providerConnectionId: null,
                 },
                 updatedAt: 102,
             },
-            codexBackendMode: 'appServer',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                agent: { backendMode: 'appServer' },
+            },
             acpSessionModeId: 'plan',
         }));
     });
@@ -1754,6 +1780,10 @@ describe('/session/[id]/info', () => {
                         backendMode: 'appServer',
                         providerSessionId: 'codex-session-1',
                     },
+                },
+                nativeResumeIdentityV1: {
+                    v: 1,
+                    vendorResumeId: 'codex-session-1',
                 },
             },
         };

@@ -31,7 +31,9 @@ export function listSpawnProfilesForActions(
         if (!('compatibilityByTargetKey' in profile)) continue;
         const targetKeys = [
             ...Object.keys(profile.compatibilityByTargetKey),
-            ...(profile.preferredAgentTargetKey ? [profile.preferredAgentTargetKey] : []),
+            ...('preferredAgentTargetKey' in profile && profile.preferredAgentTargetKey
+                ? [profile.preferredAgentTargetKey]
+                : []),
         ];
         for (const targetKey of targetKeys) {
             if (!targetKey.startsWith('agent:')) continue;

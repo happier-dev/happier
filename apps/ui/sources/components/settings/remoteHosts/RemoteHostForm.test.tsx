@@ -81,7 +81,7 @@ vi.mock('@/components/ui/lists/SelectableRow', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        encryptSecretValue: () => ({ __brand: 'SecretString', value: 'enc' }),
+        encryptSecretValue: () => ({ _isSecretValue: true, value: 'enc' }),
     },
 }));
 

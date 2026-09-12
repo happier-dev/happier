@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const routerMock = vi.hoisted(() => ({
     push: vi.fn(),
@@ -25,6 +26,7 @@ const state = vi.hoisted(() => ({
     session: {
         id: 'source-session',
         serverId: 'server-1',
+        metadata: { flavor: 'claude', claudeSessionId: 'claude-session-1' },
         latestTurnId: 'turn-observed',
         latestTurnStatus: 'in_progress',
     } as any,
@@ -45,15 +47,16 @@ vi.mock('expo-router', async () => {
 vi.mock('@/components/ui/selectionList', () => createPassThroughModule(['SelectionListScreen']));
 vi.mock('@/components/ui/surfaces/SurfaceStateCard', () => createPassThroughModule(['SurfaceStateCard']));
 vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
         useSession: () => state.session,
         useAutomations: () => state.automations,
         useAutomationDefinitionNextCursor: () => state.nextCursor,
         useActiveServerAccountScope: () => accountScopeState.value,
-        storage: {
-            getState: () => ({ sessions: { [state.session.id]: state.session } }),
-        },
+        storage: createLiveStorageStoreMock(() => ({
+            sessions: { [state.session.id]: state.session },
+            settings: settingsDefaults,
+        })),
     });
 });
 vi.mock('@/sync/sync', () => ({
@@ -114,6 +117,7 @@ describe('ExactTurnAutomationDestinationScreen', () => {
         state.session = {
             id: 'source-session',
             serverId: 'server-1',
+            metadata: { flavor: 'claude', claudeSessionId: 'claude-session-1' },
             latestTurnId: 'turn-observed',
             latestTurnStatus: 'in_progress',
         };

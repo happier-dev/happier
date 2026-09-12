@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol';
 
 import {
     buildSessionUsageLimitRecoveryPresentation,
@@ -26,7 +27,7 @@ const usageLimitIssue = {
     },
 } as const;
 
-const switchAccountUsageLimitIssue = {
+const switchAccountUsageLimitIssue = SessionRuntimeIssueV1Schema.parse({
     ...usageLimitIssue,
     usageLimit: {
         ...usageLimitIssue.usageLimit,
@@ -38,7 +39,19 @@ const switchAccountUsageLimitIssue = {
             groupExhausted: false,
         },
     },
-} as const;
+});
+const switchAccountUsageLimit = (() => {
+    if (!switchAccountUsageLimitIssue.usageLimit) {
+        throw new Error('expected switch-account usage-limit fixture');
+    }
+    return switchAccountUsageLimitIssue.usageLimit;
+})();
+const switchAccountConnectedService = (() => {
+    if (!switchAccountUsageLimit.connectedService) {
+        throw new Error('expected connected-service usage-limit fixture');
+    }
+    return switchAccountUsageLimit.connectedService;
+})();
 
 const temporaryThrottleIssue = {
     v: 1,
@@ -245,7 +258,7 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             lastRuntimeIssue: {
                 ...switchAccountUsageLimitIssue,
                 usageLimit: {
-                    ...switchAccountUsageLimitIssue.usageLimit,
+                    ...switchAccountUsageLimit,
                     resetAtMs: null,
                 },
             },
@@ -488,9 +501,9 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             lastRuntimeIssue: {
                 ...switchAccountUsageLimitIssue,
                 usageLimit: {
-                    ...switchAccountUsageLimitIssue.usageLimit,
+                    ...switchAccountUsageLimit,
                     connectedService: {
-                        ...switchAccountUsageLimitIssue.usageLimit.connectedService,
+                        ...switchAccountConnectedService,
                         groupExhausted: true,
                     },
                 },

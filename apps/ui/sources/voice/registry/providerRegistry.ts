@@ -408,7 +408,7 @@ export function createDeclaredSettingsProjector(
         ? projectDeclaredSettingsReadiness(declaration, parsedConfigObject.data)
         : projection.status,
       modeId: selectedMode,
-      ...(settingsRequirements ? { requirements: settingsRequirements } : {}),
+      ...(settingsRequirements ? { requirements: [...settingsRequirements] } : {}),
     });
   };
 }

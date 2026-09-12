@@ -15,7 +15,7 @@ describe('newSessionOrganizationPlacementState', () => {
     });
 
     it('clears only a folder whose workspace no longer matches the exact target and path', () => {
-        const placement = { folderId: 'folder-1', tagIds: ['tag-1'] } as const;
+        const placement = { folderId: 'folder-1', tagIds: ['tag-1'] };
         const folders = [{
             folderId: 'folder-1',
             workspace: { t: 'workspaceScope', serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' },
@@ -36,7 +36,7 @@ describe('newSessionOrganizationPlacementState', () => {
     });
 
     it('uses the canonical workspace path normalization instead of raw root-path equality', () => {
-        const placement = { folderId: 'folder-1', tagIds: [] } as const;
+        const placement = { folderId: 'folder-1', tagIds: [] };
         expect(reconcileNewSessionOrganizationPlacementForWorkspace({
             placement,
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },

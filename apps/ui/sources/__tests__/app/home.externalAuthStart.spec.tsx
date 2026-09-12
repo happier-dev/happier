@@ -210,6 +210,10 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
 const tokenStorageMock = vi.hoisted(() => ({
     setPendingExternalAuth: vi.fn(async () => true),
     clearPendingExternalAuth: vi.fn(async () => undefined),
+    readPendingExternalAuthState: vi.fn(async () => ({
+        value: null,
+        serverMismatch: false,
+    })),
     getAuthAutoRedirectSuppressedUntil: vi.fn(async () => 0),
 }));
 vi.mock('@/auth/storage/tokenStorage', () => ({

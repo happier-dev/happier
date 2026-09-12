@@ -4,6 +4,7 @@ import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
 } from '@/agents/registry/agentUiBehaviorProjection';
+import { attachAgentPluginSettings } from '@/agents/registry/agentUiSettingLookup';
 
 import {
     coerceNewSessionTranscriptStorage,
@@ -30,6 +31,10 @@ function publishInstalledAgentBehaviorOnMachine(
 
 function publishInstalledAgentBehavior(behavior: Readonly<Record<string, unknown>>): void {
     publishInstalledAgentBehaviorOnMachine('machine-a', behavior);
+}
+
+function makeAccountScopedAgentSettings(values: Readonly<Record<string, unknown>>) {
+    return attachAgentPluginSettings({}, { account: values });
 }
 
 afterEach(() => {
@@ -119,9 +124,9 @@ describe('supportsDirectTranscriptStorageForNewSession', () => {
     it('still applies provider-specific runtime constraints', () => {
         expect(supportsDirectTranscriptStorageForNewSession({
             agentId: 'opencode',
-            settings: {
+            settings: makeAccountScopedAgentSettings({
                 opencodeBackendMode: 'acp',
-            } as never,
+            }),
         })).toBe(false);
     });
 });
@@ -131,9 +136,9 @@ describe('coerceNewSessionTranscriptStorage', () => {
         expect(coerceNewSessionTranscriptStorage({
             requested: 'direct',
             agentId: 'opencode',
-            settings: {
+            settings: makeAccountScopedAgentSettings({
                 opencodeBackendMode: 'acp',
-            } as never,
+            }),
             externalSessionsEnabled: true,
         })).toBe('persisted');
     });

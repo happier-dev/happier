@@ -561,7 +561,8 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
 }));
 
-vi.mock('@/utils/system/versionUtils', () => ({
+vi.mock('@/utils/system/versionUtils', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/system/versionUtils')>(),
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
 }));
@@ -571,9 +572,12 @@ vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'codex',
     buildResumeSessionExtrasFromUiState: () => null,
     getAgentCore: () => ({
+        displayNameKey: 'agents.codex',
+        availability: { experimental: false },
         model: { defaultMode: 'default' },
         cli: { spawnAgent: 'codex' },
         localControl: { supported: true },
+        ui: { agentPickerIconName: 'code-slash-outline' },
         resume: {
             vendorResumeIdField: 'codexSessionId',
             supportsVendorResume: true,

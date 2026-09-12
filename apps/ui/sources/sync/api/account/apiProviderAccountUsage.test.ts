@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
 import {
     ProviderAccountUsageSnapshotV1Schema,
     buildProviderAccountUsageRecordId,
@@ -76,8 +77,7 @@ describe('apiProviderAccountUsage', () => {
         mockServerConfig();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (isServerFetchConnectivityProbeRequest(input)) {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return {
@@ -106,8 +106,7 @@ describe('apiProviderAccountUsage', () => {
         mockServerConfig();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (isServerFetchConnectivityProbeRequest(input)) {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return {
@@ -136,8 +135,7 @@ describe('apiProviderAccountUsage', () => {
         mockServerConfig();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (isServerFetchConnectivityProbeRequest(input)) {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return {
@@ -175,8 +173,7 @@ describe('apiProviderAccountUsage', () => {
         mockServerConfig();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
-            const url = String(input);
-            if (url === 'https://api.example.test/health') {
+            if (isServerFetchConnectivityProbeRequest(input)) {
                 return { ok: true, status: 200, json: async () => ({ ok: true }) };
             }
             return {

@@ -50,17 +50,15 @@ describe('AgentInputStatusBadge', () => {
 
             const badge = screen.findByTestId('quiet-work-state-badge');
             expect(badge?.type).toBe('Pressable');
-            expect(typeof badge?.props.children).toBe('function');
+            expect(typeof badge?.props.style).toBe('function');
 
-            const badgeSurface = React.isValidElement(badge?.props.children?.({ pressed: false }))
-                ? flattenStyle(badge?.props.children({ pressed: false }).props.style)
-                : undefined;
+            const badgeSurface = flattenStyle(badge?.props.style({ pressed: false }));
 
-            expect(badgeSurface).toEqual(expect.objectContaining({
-                backgroundColor: 'transparent',
-                borderColor: 'transparent',
-                borderWidth: 0,
+            expect(badgeSurface).not.toEqual(expect.objectContaining({
+                backgroundColor: expect.anything(),
+                borderColor: expect.anything(),
             }));
+            expect(screen.find((node) => node.props.chrome === 'plain')).toBeTruthy();
 
             badge?.props.onPress?.();
             expect(onPress).toHaveBeenCalledTimes(1);

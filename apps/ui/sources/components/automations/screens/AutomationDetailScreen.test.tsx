@@ -12,6 +12,7 @@ import {
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     type AutomationEventSourceCatalogStatus,
     type AutomationEventSourceStatusV1,
+    type AutomationAssignmentInput,
     type AutomationTriggerListItem,
 } from '@happier-dev/protocol';
 import { createAutomationDefinitionFromDetail, createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
@@ -117,7 +118,10 @@ const syncSpies = vi.hoisted(() => ({
     resumeAutomation: vi.fn(async () => {}),
     deleteAutomation: vi.fn(async () => {}),
     clearAutomationRunHistory: vi.fn(async () => ({ clearedRuns: 0 })),
-    replaceAutomationAssignments: vi.fn(async () => {}),
+    replaceAutomationAssignments: vi.fn(async (
+        _automationId: string,
+        _assignments: readonly AutomationAssignmentInput[],
+    ) => {}),
 }));
 const automationState = vi.hoisted(() => ({
     // Every test installs a schema-parsed value in beforeEach. This placeholder
@@ -1184,13 +1188,23 @@ describe('AutomationDetailScreen', () => {
                 await firstReplacement.promise;
                 automationState.automation = {
                     ...automationState.automation,
-                    assignments: assignments.map((assignment) => ({ ...assignment, updatedAt: 2 })),
+                    assignments: assignments.map((assignment) => ({
+                        machineId: assignment.machineId,
+                        enabled: assignment.enabled ?? true,
+                        priority: assignment.priority ?? 0,
+                        updatedAt: 2,
+                    })),
                 };
             })
             .mockImplementationOnce(async (_automationId, assignments) => {
                 automationState.automation = {
                     ...automationState.automation,
-                    assignments: assignments.map((assignment) => ({ ...assignment, updatedAt: 3 })),
+                    assignments: assignments.map((assignment) => ({
+                        machineId: assignment.machineId,
+                        enabled: assignment.enabled ?? true,
+                        priority: assignment.priority ?? 0,
+                        updatedAt: 3,
+                    })),
                 };
             });
 
@@ -1303,7 +1317,12 @@ describe('AutomationDetailScreen', () => {
             .mockImplementationOnce(async (_automationId, assignments) => {
                 automationState.automation = {
                     ...automationState.automation,
-                    assignments: assignments.map((assignment) => ({ ...assignment, updatedAt: 4 })),
+                    assignments: assignments.map((assignment) => ({
+                        machineId: assignment.machineId,
+                        enabled: assignment.enabled ?? true,
+                        priority: assignment.priority ?? 0,
+                        updatedAt: 4,
+                    })),
                 };
                 secondReplacementStarted.resolve();
             });

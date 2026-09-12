@@ -81,11 +81,11 @@ vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspace
     useWorkspaceReviewCommentDraftHandlers: () => reviewDraftHandlers,
 }));
 
-const serverFetchSpy = vi.hoisted(() => vi.fn());
+const frontDoorActionExecuteSpy = vi.hoisted(() => vi.fn());
 const reviewCommentsSurfaceSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: serverFetchSpy,
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+    createFrontDoorUiActionExecutor: () => frontDoorActionExecuteSpy,
 }));
 
 vi.mock('@/components/reviews/ReviewCommentsSessionSurface', () => ({
@@ -190,19 +190,13 @@ function reviewComment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV
     };
 }
 
-function jsonResponse(body: unknown): Response {
-    return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-    });
-}
-
 describe('WorkspaceScmReviewDetailsView', () => {
     beforeEach(() => {
         useWorkspaceScmSnapshotControllerSpy.mockClear();
         machineScmDiffFileSpy.mockClear();
         changedFilesReviewSpy.mockClear();
-        serverFetchSpy.mockReset();
+        frontDoorActionExecuteSpy.mockReset();
+        frontDoorActionExecuteSpy.mockResolvedValue({ grants: [], pendingRequests: [] });
         reviewCommentsSurfaceSpy.mockClear();
     });
 
@@ -278,16 +272,18 @@ describe('WorkspaceScmReviewDetailsView', () => {
     });
 
     it('mounts durable review comments in the project SCM review surface', async () => {
-        serverFetchSpy
-            .mockResolvedValueOnce(jsonResponse({
-                grants: [],
-                pendingRequests: [],
-                cursor: null,
-            }))
-            .mockResolvedValue(jsonResponse({
-                items: [reviewComment({ workspaceId: 'wr_1', body: 'Durable project review comment.' })],
-                cursor: null,
-            }));
+        frontDoorActionExecuteSpy.mockImplementation(async (actionId: string) => {
+            if (actionId === 'plugins.permissions.grants.list') {
+                return { grants: [], pendingRequests: [] };
+            }
+            if (actionId === 'reviews.comments.list') {
+                return {
+                    items: [reviewComment({ workspaceId: 'wr_1', body: 'Durable project review comment.' })],
+                    cursor: null,
+                };
+            }
+            throw new Error(`Unexpected action: ${actionId}`);
+        });
         const { WorkspaceScmReviewDetailsView } = await import('./WorkspaceScmReviewDetailsView');
         const screen = await renderScreen(
             <WorkspaceScmReviewDetailsView
@@ -299,6 +295,7 @@ describe('WorkspaceScmReviewDetailsView', () => {
                 serverId="s1"
             />,
         );
+        await settle();
 
         expect(screen.getTextContent()).not.toContain('Durable project review comment.');
 
@@ -310,12 +307,15 @@ describe('WorkspaceScmReviewDetailsView', () => {
             testID: 'workspace-review-comments',
             execute: expect.any(Function),
         }));
-        expect(serverFetchSpy).toHaveBeenCalledWith(
-            '/v1/plugins/permissions/grants/list',
-            expect.objectContaining({
-                body: expect.stringContaining('"targetScope":{"kind":"project","projectId":"wr_1"}'),
-            }),
-            expect.any(Object),
+        expect(frontDoorActionExecuteSpy).toHaveBeenCalledWith(
+            'plugins.permissions.grants.list',
+            {
+                capability: 'reviews.comments.write.direct',
+                targetScope: { kind: 'project', projectId: 'wr_1' },
+                includeRevoked: false,
+                includeResolvedRequests: false,
+                limit: 50,
+            },
         );
 
         const surfaceProps = reviewCommentsSurfaceSpy.mock.calls.at(-1)?.[0];
@@ -326,8 +326,9 @@ describe('WorkspaceScmReviewDetailsView', () => {
             items: [expect.objectContaining({ body: 'Durable project review comment.' })],
             cursor: null,
         });
-        const [path] = serverFetchSpy.mock.calls.find(([calledPath]) => String(calledPath).startsWith('/v1/reviews/comments?')) ?? [];
-        expect(String(path)).toContain('/v1/reviews/comments?');
-        expect(String(path)).toContain('workspaceId=wr_1');
+        expect(frontDoorActionExecuteSpy).toHaveBeenCalledWith('reviews.comments.list', {
+            workspaceId: 'wr_1',
+            includeHistory: true,
+        });
     });
 });

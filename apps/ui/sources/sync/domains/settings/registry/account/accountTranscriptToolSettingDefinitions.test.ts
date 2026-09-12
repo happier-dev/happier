@@ -19,8 +19,8 @@ describe('Protocol transcript Account settings with UI analytics presentation', 
             .analytics;
 
         expect(definition.default).toBe('{{MESSAGES}}');
-        expect(definition.schema.safeParse('x'.repeat(2_000)).success).toBe(true);
-        expect(definition.schema.safeParse('x'.repeat(2_001)).success).toBe(false);
+        expect(definition.parseMutationValue('x'.repeat(2_000)).success).toBe(true);
+        expect(definition.parseMutationValue('x'.repeat(2_001)).success).toBe(false);
         expect(analytics?.valueKind).toBe('bucket');
         expect(analytics?.privacy).toBe('bucketed');
         const serializeCurrent = analytics?.serializeCurrent as ((value: unknown) => string) | undefined;
@@ -32,9 +32,9 @@ describe('Protocol transcript Account settings with UI analytics presentation', 
         const definition = ACCOUNT_SETTING_ARTIFACTS.definitions.transcriptBulkCopyFormat;
 
         expect(definition.default).toBe('markdown_labeled');
-        expect(definition.schema.safeParse('markdown_labeled').success).toBe(true);
-        expect(definition.schema.safeParse('plain').success).toBe(true);
-        expect(definition.schema.safeParse('html').success).toBe(false);
+        expect(definition.parseMutationValue('markdown_labeled').success).toBe(true);
+        expect(definition.parseMutationValue('plain').success).toBe(true);
+        expect(definition.parseMutationValue('html').success).toBe(false);
         expect(ACCOUNT_SETTING_ANALYTICS_ARTIFACTS.definitions.transcriptBulkCopyFormat.analytics?.valueKind).toBe('enum');
     });
 

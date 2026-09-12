@@ -15,7 +15,7 @@ import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import type { ApiTokenExpiryPreset, ApiTokenSettingsController } from './apiTokenSettingsController';
@@ -23,6 +23,12 @@ import { resolveApiTokenOperationErrorMessageKey } from './apiTokenSettingsPrese
 import { useApiTokenSettingsControllerState } from './useApiTokenSettingsControllerState';
 
 const EXPIRY_PRESETS: readonly ApiTokenExpiryPreset[] = ['30d', '90d', '1y', 'none'];
+const EXPIRY_PRESET_LABEL_KEYS = {
+    '30d': 'settingsApiTokens.create.expiryOptions.30d',
+    '90d': 'settingsApiTokens.create.expiryOptions.90d',
+    '1y': 'settingsApiTokens.create.expiryOptions.1y',
+    none: 'settingsApiTokens.create.expiryOptions.none',
+} as const satisfies Record<ApiTokenExpiryPreset, TranslationKey>;
 
 const stylesheet = StyleSheet.create((theme) => ({
     body: {
@@ -238,7 +244,7 @@ function ApiTokenExpiryPresetOption(props: ApiTokenExpiryPresetOptionProps): Rea
             }}
         >
             <Text style={[styles.presetText, props.selected ? styles.presetTextSelected : null]}>
-                {t('settingsApiTokens.create.expiryOptions.' + props.preset)}
+                {t(EXPIRY_PRESET_LABEL_KEYS[props.preset])}
             </Text>
         </Pressable>
     );

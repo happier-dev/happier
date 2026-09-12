@@ -74,6 +74,10 @@ const loadDaemonMergedProjectionInputs = vi.fn(async (): Promise<DaemonMergedPro
     registryDiagnostics: [],
 }));
 
+const CODEX_ACP_PLUGIN_SETTINGS = {
+    account: { codexBackendMode: 'acp' },
+} as const;
+
 async function withMockedNow<T>(initialNowMs: number, run: (setNowMs: (nextNowMs: number) => void) => Promise<T>): Promise<T> {
     let currentNowMs = initialNowMs;
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentNowMs);
@@ -88,7 +92,7 @@ async function withMockedNow<T>(initialNowMs: number, run: (setNowMs: (nextNowMs
 
 describe('ensureAgentInstallablesBackground', () => {
     it('prefetches missing dep status before planning background installs', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         let snapshotResults: MachineCapabilitiesSnapshot['response']['results'] = {};
 
@@ -120,6 +124,7 @@ describe('ensureAgentInstallablesBackground', () => {
                 machineId: 'm1',
                 serverId: 's1',
                 settings,
+                pluginSettings: CODEX_ACP_PLUGIN_SETTINGS,
                 resumeSessionId: '',
             },
             {
@@ -140,7 +145,6 @@ describe('ensureAgentInstallablesBackground', () => {
 
     it('respects autoInstallWhenNeeded=false policy overrides', async () => {
         const settings = settingsParse({
-            codexBackendMode: 'acp',
             installablesPolicyByMachineId: {
                 m1: {
                     'codex-acp': { autoInstallWhenNeeded: false },
@@ -168,6 +172,7 @@ describe('ensureAgentInstallablesBackground', () => {
                 machineId: 'm1',
                 serverId: 's1',
                 settings,
+                pluginSettings: CODEX_ACP_PLUGIN_SETTINGS,
                 resumeSessionId: '',
             },
             {
@@ -182,7 +187,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('invokes background installs without managed install override params', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         const prefetchMachineCapabilities = vi.fn(async () => {});
         const machineCapabilitiesInvoke = vi.fn(
@@ -199,7 +204,7 @@ describe('ensureAgentInstallablesBackground', () => {
         }));
 
         await ensureAgentInstallablesBackground(
-            { agentId: 'codex', machineId: 'm_install', serverId: 's_install', settings, resumeSessionId: '' },
+            { agentId: 'codex', machineId: 'm_install', serverId: 's_install', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
             { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
 
@@ -211,7 +216,7 @@ describe('ensureAgentInstallablesBackground', () => {
 
     it('suppresses duplicate retries during the success cooldown window', async () => {
         await withMockedNow(Date.parse('2026-01-01T00:00:00.000Z'), async (setNowMs) => {
-            const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+            const settings = settingsParse({});
             const prefetchMachineCapabilities = vi.fn(async () => {});
             const machineCapabilitiesInvoke = vi.fn(
                 async (): Promise<MachineCapabilitiesInvokeResult> => ({ supported: true, response: { ok: true, result: null } }),
@@ -225,12 +230,12 @@ describe('ensureAgentInstallablesBackground', () => {
             }));
 
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_cooldown', serverId: 's_cooldown', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
@@ -261,7 +266,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('does not permanently suppress retries after a failed invoke', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         const prefetchMachineCapabilities = vi.fn(async () => {});
         const machineCapabilitiesInvoke = vi
@@ -277,11 +282,11 @@ describe('ensureAgentInstallablesBackground', () => {
         }));
 
         await ensureAgentInstallablesBackground(
-            { agentId: 'codex', machineId: 'm_retry', serverId: 's_retry', settings, resumeSessionId: '' },
+            { agentId: 'codex', machineId: 'm_retry', serverId: 's_retry', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
             { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
         await ensureAgentInstallablesBackground(
-            { agentId: 'codex', machineId: 'm_retry', serverId: 's_retry', settings, resumeSessionId: '' },
+            { agentId: 'codex', machineId: 'm_retry', serverId: 's_retry', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
             { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
 
@@ -289,7 +294,7 @@ describe('ensureAgentInstallablesBackground', () => {
     });
 
     it('does not permanently suppress retries after a non-ok invoke response', async () => {
-        const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+        const settings = settingsParse({});
 
         const prefetchMachineCapabilities = vi.fn(async () => {});
         const machineCapabilitiesInvoke = vi
@@ -305,11 +310,11 @@ describe('ensureAgentInstallablesBackground', () => {
         }));
 
         await ensureAgentInstallablesBackground(
-            { agentId: 'codex', machineId: 'm_nonok', serverId: 's_nonok', settings, resumeSessionId: '' },
+            { agentId: 'codex', machineId: 'm_nonok', serverId: 's_nonok', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
             { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
         await ensureAgentInstallablesBackground(
-            { agentId: 'codex', machineId: 'm_nonok', serverId: 's_nonok', settings, resumeSessionId: '' },
+            { agentId: 'codex', machineId: 'm_nonok', serverId: 's_nonok', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
             { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
         );
 
@@ -318,7 +323,7 @@ describe('ensureAgentInstallablesBackground', () => {
 
     it('retries after a successful invoke if the dep is still missing later', async () => {
         await withMockedNow(Date.parse('2026-01-01T00:00:00.000Z'), async (setNowMs) => {
-            const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+            const settings = settingsParse({});
 
             const prefetchMachineCapabilities = vi.fn(async () => {});
             const machineCapabilitiesInvoke = vi.fn(async () => {
@@ -333,14 +338,14 @@ describe('ensureAgentInstallablesBackground', () => {
             }));
 
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
             setNowMs(Date.parse('2026-01-01T01:00:00.000Z'));
 
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_ok_retry', serverId: 's_ok_retry', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
@@ -350,7 +355,7 @@ describe('ensureAgentInstallablesBackground', () => {
 
     it('retries after an in-flight block ages out', async () => {
         await withMockedNow(Date.parse('2026-01-01T00:00:00.000Z'), async (setNowMs) => {
-            const settings = settingsParse({ codexBackendMode: 'acp' } as any);
+            const settings = settingsParse({});
             const prefetchMachineCapabilities = vi.fn(async () => {});
             let resolveInvoke: (() => void) | null = null;
             const machineCapabilitiesInvoke = vi
@@ -370,7 +375,7 @@ describe('ensureAgentInstallablesBackground', () => {
             }));
 
             const firstCall = ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 
@@ -380,7 +385,7 @@ describe('ensureAgentInstallablesBackground', () => {
             setNowMs(Date.parse('2026-01-01T00:06:00.000Z'));
 
             await ensureAgentInstallablesBackground(
-                { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, resumeSessionId: '' },
+                { agentId: 'codex', machineId: 'm_stale', serverId: 's_stale', settings, pluginSettings: CODEX_ACP_PLUGIN_SETTINGS, resumeSessionId: '' },
                 { prefetchMachineCapabilities, getMachineCapabilitiesSnapshot, machineCapabilitiesInvoke, loadDaemonMergedProjectionInputs },
             );
 

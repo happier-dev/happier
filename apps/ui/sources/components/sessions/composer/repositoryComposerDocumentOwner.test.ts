@@ -26,7 +26,7 @@ describe('repositoryComposerDocumentOwner', () => {
         writeNewSessionDraft({
             scope,
             draftId: ref.instanceId,
-            patch: { authoring: { machineId: 'machine-a' } },
+            patch: { authoring: { executionTarget: { serverId: 'server-a', machineId: 'machine-a' } } },
             materializationIntent: 'userEdit',
         });
 
@@ -155,13 +155,17 @@ describe('repositoryComposerDocumentOwner Session revision', () => {
         });
         const owner = createRepositoryComposerDocumentOwner({ scope, ref });
         const currentness = owner.captureCurrentness();
-        const attachment = {
+        const persistedAttachment = {
             v: 1 as const,
             instanceId: 'attachment-42',
             attachment: { pluginId: 'acme.issues', localId: 'issue' },
             key: '42',
             value: { issueId: 42 },
             presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        };
+        const attachment = {
+            ...persistedAttachment,
+            availability: { status: 'ready' as const },
         };
         expect(owner.apply(owner.read().revision, {
             text: owner.read().document.text,
@@ -180,7 +184,7 @@ describe('repositoryComposerDocumentOwner Session revision', () => {
         expect(owner.read().document).toEqual({
             text: '',
             structuredInputMentions: [],
-            composerAttachments: [attachment],
+            composerAttachments: [persistedAttachment],
         });
     });
 

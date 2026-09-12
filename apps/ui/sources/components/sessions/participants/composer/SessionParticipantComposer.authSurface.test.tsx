@@ -2,6 +2,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,6 +17,9 @@ vi.mock('react-native-mmkv', () => {
         }
         delete(key: string) {
             kvStore.delete(key);
+        }
+        getAllKeys() {
+            return [...kvStore.keys()];
         }
         clearAll() {
             kvStore.clear();
@@ -93,15 +97,19 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     },
 }));
 
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { RpcError } from '@happier-dev/protocol/rpcErrors';
-
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import {
+    primeServerFeaturesSnapshot,
+    resetServerFeaturesClientForTests,
+} from '@/sync/api/capabilities/serverFeaturesClient';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { Encryption } from '@/sync/encryption/encryption';
-import { HappyError } from '@/utils/errors/errors';
+import { SessionParticipantComposer } from './SessionParticipantComposer';
 
 const initialStorageState = storage.getState();
 
@@ -114,6 +122,8 @@ function createActiveSession(sessionId: string): Session {
         updatedAt: now,
         active: true,
         activeAt: now,
+        pendingVersion: 2,
+        pendingCount: 0,
         metadata: null,
         metadataVersion: 0,
         agentState: null,
@@ -146,43 +156,58 @@ describe('SessionParticipantComposer auth send surface', () => {
         appStateAddListener.mockClear();
         agentInputSpy.mockClear();
         modalAlertSpy.mockClear();
+        resetServerFeaturesClientForTests();
     });
 
     afterEach(() => {
+        resetServerFeaturesClientForTests();
         vi.restoreAllMocks();
     });
 
     it('surfaces not_authenticated from the real pending send path instead of silently enqueueing', async () => {
         const sessionId = 's_auth_surface';
+        const activeServer = upsertAndActivateServer({
+            serverUrl: 'https://server-auth-surface.example.test',
+            scope: 'device',
+        });
+        const activeScope = {
+            serverId: activeServer.id,
+            accountId: 'account-auth-surface',
+        } as const;
+        storage.getState().activateProfileScope(activeScope);
+        expect(getActiveServerSnapshot().serverId).toBe(activeServer.id);
+        expect(getActiveServerAccountScope()).toEqual(activeScope);
+        primeServerFeaturesSnapshot({
+            serverId: activeServer.id,
+            snapshot: {
+                status: 'ready',
+                features: FeaturesResponseSchema.parse({
+                    features: {},
+                    capabilities: {
+                        session: {
+                            pendingInput: { protocolVersion: 1 },
+                        },
+                    },
+                }),
+            },
+        });
         storage.getState().applySessions([createActiveSession(sessionId)]);
         storage.getState().applySettingsLocal({ sessionMessageSendMode: 'agent_queue' });
 
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
         await encryption.initializeSessions(new Map([[sessionId, null]]));
 
-        const { sync } = await import('@/sync/sync');
         sync.encryption = encryption;
-        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(
-            new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
+        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(
+            new Response('auth failed', { status: 401 }),
         );
-        const send = vi.fn();
-        sync.setMessageTransport({
-            emitWithAck: vi.fn(async () => {
-                throw new HappyError('Authentication required', false, {
-                    kind: 'auth',
-                    code: 'not_authenticated',
-                });
-            }),
-            send,
-        });
-
-        const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 
         await renderScreen(<SessionParticipantComposer
             sessionId={sessionId}
             canSendMessages
             recipient={null}
         />);
+        expect(getActiveServerAccountScope()).toEqual(activeScope);
 
         await act(async () => {
             readLatestAgentInputProps().onChangeText('stale auth send');
@@ -196,7 +221,10 @@ describe('SessionParticipantComposer auth send surface', () => {
         await vi.waitFor(() => {
             expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'Authentication required');
         });
-        expect(send).not.toHaveBeenCalled();
+        expect(request).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}/pending`,
+            expect.objectContaining({ method: 'POST' }),
+        );
         expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
     });
 });

@@ -82,6 +82,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
+    getRandomBytes: (n: number) => new Uint8Array(n).fill(9),
     getRandomBytesAsync: async (n: number) => new Uint8Array(n).fill(9),
 }));
 
@@ -104,6 +105,15 @@ vi.mock('@/auth/providers/registry', () => ({
         displayName: 'GitHub',
         getExternalAuthUrl: mockState.getExternalAuthUrl,
     }),
+}));
+
+vi.mock('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth', () => ({
+    guardAccountEncryptionFirstKeyCredentialMutation: vi.fn(async () => ({
+        kind: 'allowed' as const,
+    })),
+    abandonAccountEncryptionFirstKeyExternalAuth: vi.fn(async () => ({
+        kind: 'abandoned' as const,
+    })),
 }));
 
 const baseWelcomeFeatures = createWelcomeFeaturesResponse({

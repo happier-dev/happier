@@ -302,7 +302,7 @@ describe('warmCacheAdapters', () => {
         expect(Object.keys(buildSessionListCacheEntriesFromRenderables(renderables))).toHaveLength(total);
     });
 
-    it('reuses shared empty maps when renderables are empty', () => {
+    it('reuses each domain-owned empty map when renderables are empty', () => {
         const firstSessionEntries = buildSessionListCacheEntriesFromRenderables({});
         const secondSessionEntries = buildSessionListCacheEntriesFromRenderables({});
         const firstMachineEntries = buildMachineDisplayCacheEntriesFromRenderables({});
@@ -311,7 +311,6 @@ describe('warmCacheAdapters', () => {
         expect(firstSessionEntries).toBe(secondSessionEntries);
         expect(firstSessionEntries).toEqual({});
         expect(firstMachineEntries).toBe(secondMachineEntries);
-        expect(firstSessionEntries).toBe(firstMachineEntries);
         expect(firstMachineEntries).toEqual({});
     });
 

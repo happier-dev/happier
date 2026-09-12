@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 
-const ensureAgentInstallablesBackgroundMock = vi.hoisted(() => vi.fn(async () => {}));
+const ensureAgentInstallablesBackgroundMock = vi.hoisted(() => vi.fn<
+    (params: unknown) => Promise<void>
+>(async (_params) => {}));
 const handleCreateSessionMock = vi.hoisted(() => vi.fn(async () => {}));
 const createSessionParamsSeen = vi.hoisted(() => ({ current: undefined as unknown }));
 
@@ -47,7 +49,7 @@ describe('useNewSessionCreateSessionAction', () => {
             resolvedSettingsAllowedServerIds: [],
             capabilityServerId: 'server-1',
         } as never;
-        const hook = renderHook(() => useNewSessionCreateSessionAction(params));
+        const hook = await renderHook(() => useNewSessionCreateSessionAction(params));
 
         await hook.getCurrent().handleCreateSession();
 

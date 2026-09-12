@@ -1,5 +1,8 @@
-import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import {
+    buildQualifiedPluginContributionKey,
+    ConnectedServiceAuthGroupPolicyV1Schema,
+    type ConnectedServicesDefaultAuthByAgentIdV1,
+} from '@happier-dev/protocol';
 import { CANONICAL_AGENTS_CORE } from '@happier-dev/agents';
 
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -205,11 +208,13 @@ function buildDemoQualifiedAccounts(): { accounts: DemoAccountV4[]; groups: Demo
         lastUsedAgoMs: number;
     }>): DemoAccountV4 => ({
         revisionSemantics: 'legacy_unfenced',
+        credentialRevision: null,
         ref: { service: params.service, accountId: params.accountId },
         status: 'connected',
         authenticationModeId: null,
         configurationReady: true,
         configurationRevision: null,
+        scopes: [],
         kind: 'oauth',
         expiresAt: null,
         lastUsedAt: DEMO_NOW_MS - params.lastUsedAgoMs,
@@ -224,7 +229,7 @@ function buildDemoQualifiedAccounts(): { accounts: DemoAccountV4[]; groups: Demo
         demoAccount({ service: CLAUDE_SUBSCRIPTION_SERVICE, accountId: 'team', email: 'team@acme.test', displayName: 'Team', lastUsedAgoMs: 7_200_000 }),
         demoAccount({ service: GITHUB_SERVICE, accountId: 'personal', email: 'you@happier.dev', displayName: 'Personal', lastUsedAgoMs: 1_800_000 }),
     ];
-    const demoPolicy = {
+    const demoPolicy = ConnectedServiceAuthGroupPolicyV1Schema.parse({
         v: 1 as const,
         strategy: 'least_limited' as const,
         autoSwitch: true,
@@ -234,7 +239,7 @@ function buildDemoQualifiedAccounts(): { accounts: DemoAccountV4[]; groups: Demo
             accountChanged: false,
             refreshFailure: true,
         },
-    };
+    });
     const groups: DemoGroupV4[] = [
         {
             v: 1 as const,

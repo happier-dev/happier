@@ -10,6 +10,7 @@ type InstallRootLayoutRouteCommonModuleMocksOptions = Readonly<{
     activityBadgeRuntime?: RootLayoutRouteModuleFactory;
     desktopActivityOverlayRuntime?: RootLayoutRouteModuleFactory;
     mainAppTabState?: RootLayoutRouteModuleFactory;
+    modal?: RootLayoutRouteModuleFactory;
     reactNative?: RootLayoutRouteModuleFactory;
     router?: RootLayoutRouteModuleFactory;
     storage?: RootLayoutRouteStorageModuleFactory;
@@ -25,6 +26,7 @@ const rootLayoutRouteModuleState = vi.hoisted(() => ({
         activityBadgeRuntime: undefined as RootLayoutRouteModuleFactory | undefined,
         desktopActivityOverlayRuntime: undefined as RootLayoutRouteModuleFactory | undefined,
         mainAppTabState: undefined as RootLayoutRouteModuleFactory | undefined,
+        modal: undefined as RootLayoutRouteModuleFactory | undefined,
         unistyles: undefined as RootLayoutRouteModuleFactory | undefined,
         text: undefined as RootLayoutRouteModuleFactory | undefined,
     },
@@ -40,6 +42,7 @@ export function installRootLayoutRouteCommonModuleMocks(
         activityBadgeRuntime: options.activityBadgeRuntime,
         desktopActivityOverlayRuntime: options.desktopActivityOverlayRuntime,
         mainAppTabState: options.mainAppTabState,
+        modal: options.modal,
         unistyles: options.unistyles,
         text: options.text,
     };
@@ -99,6 +102,16 @@ export function installRootLayoutRouteCommonModuleMocks(
     vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
         ActivityLocalNotificationRuntime: () => null,
     }));
+
+    vi.mock('@/modal', async () => {
+        const activeOptions = rootLayoutRouteModuleState.options;
+        if (activeOptions.modal) {
+            return await activeOptions.modal();
+        }
+
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock().module;
+    });
 
     vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', async () => {
         const activeOptions = rootLayoutRouteModuleState.options;
