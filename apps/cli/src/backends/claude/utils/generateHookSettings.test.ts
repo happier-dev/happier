@@ -312,6 +312,7 @@ describe('generateHookPluginDir', () => {
 
     const hooksPath = join(pluginDir!, 'hooks', 'hooks.json');
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf8')) as any;
+    expect(parsed.hooks?.PermissionRequest?.[0]?.matcher).toBe('*');
     const permissionCommand = parsed.hooks?.PermissionRequest?.[0]?.hooks?.[0]?.command as string;
     expect(permissionCommand).toContain('permission_hook_forwarder.cjs');
     expect(permissionCommand).toContain(pluginDir!);

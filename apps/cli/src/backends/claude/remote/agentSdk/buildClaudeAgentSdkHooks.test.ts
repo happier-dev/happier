@@ -73,7 +73,7 @@ describe('buildClaudeAgentSdkHooks', () => {
     const { hooks } = buildHooks();
 
     expect(hooks.PermissionRequest).toEqual([
-      expect.objectContaining({ matcher: '' }),
+      expect.objectContaining({ matcher: '*' }),
     ]);
     expect(hooks.PreToolUse).toEqual([
       expect.objectContaining({ matcher: 'AskUserQuestion' }),

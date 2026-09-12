@@ -168,7 +168,7 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
     SubagentStart: [buildObservationHook()],
     SubagentStop: [buildObservationHook()],
     PermissionRequest: [{
-      matcher: '',
+      matcher: '*',
       hooks: [buildPermissionHook('PermissionRequest')],
       timeout: permissionHookTimeoutSeconds,
     }],

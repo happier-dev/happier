@@ -231,7 +231,7 @@ function writeHookPluginConfiguration(params: Readonly<{
                 : { permissionHookTimeoutSeconds: params.permissionHookTimeoutSeconds }),
         });
         hooks.PermissionRequest = [{
-            matcher: '',
+            matcher: '*',
             hooks: [{ type: 'command', command: buildPermissionCommand('PermissionRequest'), timeout }],
         }];
         hooks.PreToolUse = [{
