@@ -1,7 +1,6 @@
-import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import type { AcpBackend, AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { McpServerConfig } from '@/agent';
-import type { AgentBackend } from '@/agent/core';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -35,6 +34,7 @@ type CreateConfiguredAcpRuntimeParams = Readonly<{
 }>;
 
 export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimeParams) {
+  let activeBackend: AcpBackend | null = null;
   const sendPermissionPush = (evt: { permissionId: string; toolName: string }): void => {
     if (!params.pushSender) return;
     try {
@@ -61,10 +61,21 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    sessionIdentity: {
-      kind: 'runtime-only',
-      reason: 'vendor-resume-unsupported',
-    },
+    sessionIdentity: params.backend.capabilities.supportsLoadSession
+      ? {
+          kind: 'persist-bound',
+          persistBound: async (event) => {
+            if (activeBackend?.getNegotiatedSessionLoadSupport() !== true) return;
+            await Promise.resolve(params.session.updateMetadata((metadata) => ({
+              ...metadata,
+              customAcpSessionId: event.vendorSessionId,
+            })));
+          },
+        }
+      : {
+          kind: 'runtime-only',
+          reason: 'vendor-resume-unsupported',
+        },
     memoryRecallGuidance: params.memoryRecallGuidance,
     hooks: {
       onPermissionRequest: (evt) => {
@@ -86,8 +97,9 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
         permissionHandler: params.permissionHandler,
         ...(permissionMode ? { permissionMode } : {}),
       });
+      activeBackend = backend;
       logger.debug(`[${params.loggerLabel}] Backend created`);
-      return backend as unknown as AgentBackend;
+      return backend;
     },
     createReplayBackend: async () => {
       return createConfiguredAcpBackend({
@@ -96,7 +108,7 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
         launchEnv: params.launchEnv,
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
-      }) as unknown as AgentBackend;
+      });
     },
   });
 }

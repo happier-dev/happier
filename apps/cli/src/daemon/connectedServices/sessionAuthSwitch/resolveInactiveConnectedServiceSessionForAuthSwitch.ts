@@ -66,7 +66,7 @@ export async function resolveInactiveConnectedServiceSessionForAuthSwitch(params
   const attachContext = await resolver({
     token,
     sessionId: params.sessionId,
-    agent: params.agentId,
+    backendTarget: { kind: 'builtInAgent', agentId: params.agentId },
     credentials: params.credentials,
   }).catch(() => null);
   if (!attachContext?.ok) return null;

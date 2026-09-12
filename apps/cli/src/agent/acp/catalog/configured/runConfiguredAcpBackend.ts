@@ -53,6 +53,7 @@ export async function runConfiguredAcpBackend(
     backendDisplayName: backend.title,
     uiLogPrefix: `[${backend.title}]`,
     providerName: backend.title,
+    failClosedOnResumeFailure: true,
     waitingForCommandLabel: backend.title,
     agentMessageType: `acp:${backend.backendId}`,
     machineMetadata: initialMachineMetadata,

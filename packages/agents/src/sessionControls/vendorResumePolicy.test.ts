@@ -6,6 +6,7 @@ import type { AgentId } from '../types.js';
 
 import {
   evaluateVendorResumeEligibility,
+  resolveProviderSessionIdForBackendTarget,
   resolveVendorResumeIdFromSessionMetadata,
 } from './vendorResumePolicy.js';
 
@@ -21,6 +22,65 @@ describe('vendorResumePolicy', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('claude', { claudeSessionId: '   ' })).toBeNull();
   });
 
+  it('resolves provider session ids through an exact backend target', () => {
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'builtInAgent', agentId: 'claude' },
+      { flavor: 'claude', claudeSessionId: ' claude-1 ' },
+    )).toBe('claude-1');
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      {
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'review-bot',
+          title: 'Review Bot',
+        },
+        customAcpSessionId: ' acp-1 ',
+      },
+    )).toBe('acp-1');
+  });
+
+  it('rejects stale or contradictory provider session ids for an exact backend target', () => {
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      {
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'other-bot',
+          title: 'Other Bot',
+        },
+        customAcpSessionId: 'stale-acp-id',
+      },
+    )).toBeNull();
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      { flavor: 'acp:review-bot', customAcpSessionId: 'stale-flat-id' },
+    )).toBeNull();
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'builtInAgent', agentId: 'claude' },
+      { flavor: 'codex', claudeSessionId: 'stale-claude-id' },
+    )).toBeNull();
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'builtInAgent', agentId: 'claude' },
+      {
+        flavor: 'claude',
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'review-bot',
+          title: 'Review Bot',
+        },
+        claudeSessionId: 'stale-claude-id',
+      },
+    )).toBeNull();
+  });
+
   it('resolves Cursor ACP session ids from cursorSessionId metadata', () => {
     expect(AGENTS_CORE[cursorAgentId]?.resume.vendorResumeIdField).toBe('cursorSessionId');
     expect(resolveVendorResumeIdFromSessionMetadata(cursorAgentId, { cursorSessionId: ' cursor-session ' })).toBe('cursor-session');
@@ -33,6 +93,10 @@ describe('vendorResumePolicy', () => {
       experimentalResumePolicy: 'runtime_checked',
     });
     expect(resolveVendorResumeIdFromSessionMetadata('grok', { grokSessionId: ' grok-session ' })).toBe('grok-session');
+  });
+
+  it('keeps configured ACP targets out of the built-in AgentId resume policy', () => {
+    expect(AGENTS_CORE.customAcp.resume).toEqual({ vendorResume: 'unsupported' });
   });
 
   it('prefers vendor session ids from agentRuntimeDescriptorV1 over legacy top-level metadata', () => {

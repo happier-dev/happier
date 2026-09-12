@@ -649,6 +649,89 @@ describe('createOnHappySessionWebhook', () => {
     expect(marker.respawn?.vendorResumeId).toBe('vendor-session-557');
   });
 
+  it('persists the exact configured ACP provider session id into tracked state and the respawn marker', async () => {
+    const tracked: TrackedSession = {
+      pid: 558,
+      startedBy: 'daemon',
+      spawnOptions: {
+        directory: '/tmp/workspace',
+        backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-backend' },
+      },
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[558, tracked]]);
+    let markerArgs: SessionMarkerWriteArgs | null = null;
+    let resolveMarker!: () => void;
+    const markerWritten = new Promise<void>((resolve) => { resolveMarker = resolve; });
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter: new Map(),
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async (args) => {
+        markerArgs = args;
+        resolveMarker();
+      },
+    });
+
+    onWebhook('session-daemon-558', {
+      ...createMetadata(558, 'daemon', '/tmp/workspace'),
+      flavor: 'acp:misleading-flavor',
+      acpConfiguredBackendV1: {
+        v: 1,
+        updatedAt: 1,
+        backendId: 'custom-backend',
+        title: 'Custom backend',
+      },
+      customAcpSessionId: 'configured-session-558',
+    } as unknown as Metadata);
+    await markerWritten;
+
+    expect(tracked.vendorResumeId).toBe('configured-session-558');
+    expect(expectSessionMarkerWriteArgs(markerArgs).respawn?.vendorResumeId).toBe('configured-session-558');
+  });
+
+  it('clears a stale configured ACP provider session id when exact metadata mismatches the tracked target', async () => {
+    const tracked: TrackedSession = {
+      pid: 559,
+      startedBy: 'daemon',
+      vendorResumeId: 'stale-configured-session',
+      spawnOptions: {
+        directory: '/tmp/workspace',
+        backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-backend' },
+      },
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[559, tracked]]);
+    let markerArgs: SessionMarkerWriteArgs | null = null;
+    let resolveMarker!: () => void;
+    const markerWritten = new Promise<void>((resolve) => { resolveMarker = resolve; });
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter: new Map(),
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async (args) => {
+        markerArgs = args;
+        resolveMarker();
+      },
+    });
+
+    onWebhook('session-daemon-559', {
+      ...createMetadata(559, 'daemon', '/tmp/workspace'),
+      flavor: 'acp:custom-backend',
+      acpConfiguredBackendV1: {
+        v: 1,
+        updatedAt: 1,
+        backendId: 'other-backend',
+        title: 'Other backend',
+      },
+      customAcpSessionId: 'other-session-559',
+    } as unknown as Metadata);
+    await markerWritten;
+
+    expect(tracked.vendorResumeId).toBeUndefined();
+    expect(expectSessionMarkerWriteArgs(markerArgs).respawn?.vendorResumeId).toBeUndefined();
+  });
+
   it('matches an unknown webhook PID to a daemon-tracked wrapper PID via PPID and resolves awaiter', () => {
     const wrapperPid = 111;
     const runnerPid = 222;

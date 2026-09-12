@@ -1,10 +1,15 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol';
-import type { AgentId } from '../types.js';
+import {
+  buildBackendTargetKey,
+  readAcpConfiguredBackendV1FromMetadata,
+  type BackendTargetRefV1,
+} from '@happier-dev/protocol';
+import { AGENT_IDS, type AgentId } from '../types.js';
 import { isAbsolutePathLike } from '../path/isAbsolutePathLike.js';
 import { AGENTS_CORE } from '../manifest.js';
 import { isCodexVendorResumeBackendEnabled } from '../providerSettings/definitions/codex.js';
 import { resolveCodexSessionBackendMode } from './providerSessionBackends.js';
 import { readSessionMetadataRuntimeDescriptor } from './agentRuntimeDescriptor.js';
+import { resolveAgentIdFromSessionMetadata } from '../resolveAgentIdFromSessionMetadata.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
@@ -59,6 +64,28 @@ export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metad
   const trimmed = raw.trim();
   if (!trimmed) return null;
   return trimmed;
+}
+
+/** Resolve a provider-owned session identifier only for its exact backend target. */
+export function resolveProviderSessionIdForBackendTarget(
+  target: BackendTargetRefV1,
+  metadata: unknown,
+): string | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+
+  if (target.kind === 'configuredAcpBackend') {
+    const configuredBackend = readAcpConfiguredBackendV1FromMetadata(record);
+    if (!configuredBackend || configuredBackend.backendId !== target.backendId) return null;
+    const raw = record.customAcpSessionId;
+    return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
+  }
+
+  if (readAcpConfiguredBackendV1FromMetadata(record)) return null;
+  const resolvedAgentId = resolveAgentIdFromSessionMetadata(record);
+  if (resolvedAgentId && resolvedAgentId !== target.agentId) return null;
+  if (!(AGENT_IDS as readonly string[]).includes(target.agentId)) return null;
+  return resolveVendorResumeIdFromSessionMetadata(target.agentId as AgentId, record);
 }
 
 /**

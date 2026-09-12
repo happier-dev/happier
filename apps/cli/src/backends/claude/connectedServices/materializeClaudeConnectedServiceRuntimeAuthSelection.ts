@@ -61,7 +61,7 @@ async function resolvePersistedClaudeSessionMetadata(params: Readonly<{
   const attachContext = await resolveExistingSessionAttachContext({
     token,
     sessionId: params.sessionId,
-    agent: params.agentId,
+    backendTarget: { kind: 'builtInAgent', agentId: params.agentId },
     credentials: params.credentials,
   }).catch(() => null);
   return attachContext?.ok === true ? attachContext.metadata : null;

@@ -40,6 +40,29 @@ const latestAgentInputProps = vi.hoisted(() => ({
 const latestContextSectionProps = vi.hoisted(() => ({
     value: null as any,
 }));
+const configuredAcpAccountSettings = {
+    acpCatalogSettingsV1: {
+        v: 2 as const,
+        backends: [{
+            id: 'review-bot',
+            name: 'review-bot',
+            title: 'Review Bot',
+            command: 'review-bot',
+            args: [],
+            env: {},
+            transportProfile: 'generic' as const,
+            capabilities: {
+                supportsLoadSession: true,
+                supportsModes: 'unknown' as const,
+                supportsModels: 'unknown' as const,
+                supportsConfigOptions: 'unknown' as const,
+                promptImageSupport: 'unknown' as const,
+            },
+            createdAt: 1,
+            updatedAt: 1,
+        }],
+    },
+};
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -98,7 +121,7 @@ installAutomationScreensCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSession: () => sessionState.session,
-            useSettings: () => ({}),
+            useSettings: () => configuredAcpAccountSettings,
             storage: Object.assign(
                 ((selector?: (value: StorageState) => unknown) => (
                     typeof selector === 'function'
@@ -500,6 +523,7 @@ describe('SessionAutomationCreateScreen', () => {
                     backendId: 'review-bot',
                     title: 'Review Bot',
                 },
+                customAcpSessionId: 'review-bot-session-1',
                 terminal: {
                     mode: 'tmux',
                     tmux: { target: 'happy-dev' },

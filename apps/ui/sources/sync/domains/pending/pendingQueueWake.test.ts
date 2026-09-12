@@ -610,17 +610,43 @@ describe('getPendingQueueWakeResumeOptions', () => {
                     backendId: 'custom-kiro',
                     title: 'Custom Kiro',
                 },
+                customAcpSessionId: 'custom-kiro-session-1',
             },
         };
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: { accountSettings: {} },
+            resumeCapabilityOptions: {
+                accountSettings: {
+                    acpCatalogSettingsV1: {
+                        v: 2,
+                        backends: [{
+                            id: 'custom-kiro',
+                            name: 'custom-kiro',
+                            title: 'Custom Kiro',
+                            command: 'kiro-cli',
+                            args: [],
+                            env: {},
+                            transportProfile: 'generic',
+                            capabilities: {
+                                supportsLoadSession: true,
+                                supportsModes: 'unknown',
+                                supportsModels: 'unknown',
+                                supportsConfigOptions: 'unknown',
+                                promptImageSupport: 'unknown',
+                            },
+                            createdAt: 1,
+                            updatedAt: 1,
+                        }],
+                    },
+                },
+            },
         })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro' },
+            resume: 'custom-kiro-session-1',
         });
     });
 });

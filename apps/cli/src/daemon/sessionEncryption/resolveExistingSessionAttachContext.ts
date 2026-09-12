@@ -13,6 +13,7 @@ import {
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import type { SessionSnapshotRefreshReasonInput } from '@/api/session/sessionSnapshotRefreshReason';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 export type ExistingSessionAttachContext = Readonly<{
   ok: true;
@@ -75,7 +76,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
     encryptionMode?: unknown;
     seq?: unknown;
   }>;
-  agent: unknown;
+  backendTarget: BackendTargetRefV1;
   credentials: Credentials | null;
 }>): ExistingSessionAttachContext | ExistingSessionAttachContextFailure {
   const metadata = resolveExistingSessionMetadata({
@@ -94,7 +95,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
         ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
       },
       vendorResumeId: resolveVendorResumeIdForExistingSession({
-        agent: params.agent,
+        backendTarget: params.backendTarget,
         credentials: params.credentials,
         rawSession: params.rawSession,
       }),
@@ -118,7 +119,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
       ...(lastObservedMessageSeq !== undefined ? { lastObservedMessageSeq } : {}),
     },
     vendorResumeId: resolveVendorResumeIdForExistingSession({
-      agent: params.agent,
+      backendTarget: params.backendTarget,
       credentials: params.credentials,
       rawSession: params.rawSession,
     }),
@@ -130,7 +131,7 @@ function buildExistingSessionAttachContext(params: Readonly<{
 export async function resolveExistingSessionAttachContext(_params: Readonly<{
   token: string;
   sessionId: string;
-  agent: unknown;
+  backendTarget: BackendTargetRefV1;
   credentials: Credentials | null;
   reason?: SessionSnapshotRefreshReasonInput;
 }>): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> {
@@ -150,7 +151,7 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
 
     return buildExistingSessionAttachContext({
       rawSession: raw,
-      agent: _params.agent,
+      backendTarget: _params.backendTarget,
       credentials: _params.credentials,
     });
   } catch (error) {

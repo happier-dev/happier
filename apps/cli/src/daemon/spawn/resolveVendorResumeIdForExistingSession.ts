@@ -1,11 +1,12 @@
-import { inferAgentIdFromSessionMetadata, resolveAgentIdFromFlavor, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { resolveProviderSessionIdForBackendTarget } from '@happier-dev/agents';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
 export function resolveVendorResumeIdForExistingSession(params: Readonly<{
-  agent: unknown;
+  backendTarget: BackendTargetRefV1;
   credentials: Credentials | null;
   rawSession: Readonly<{ metadata?: unknown; dataEncryptionKey?: unknown; encryptionMode?: unknown }>;
 }>): string | null {
@@ -22,9 +23,5 @@ export function resolveVendorResumeIdForExistingSession(params: Readonly<{
 
   if (!metaRecord) return null;
 
-  const explicitAgentId = resolveAgentIdFromFlavor(params.agent);
-  const agentId = explicitAgentId ?? inferAgentIdFromSessionMetadata(metaRecord);
-
-  return resolveVendorResumeIdFromSessionMetadata(agentId, metaRecord);
+  return resolveProviderSessionIdForBackendTarget(params.backendTarget, metaRecord);
 }
-

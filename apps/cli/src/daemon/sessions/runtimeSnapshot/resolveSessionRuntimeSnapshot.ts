@@ -5,6 +5,7 @@ import {
   AGENT_IDS,
   LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
   inferAgentIdFromSessionMetadata,
+  resolveProviderSessionIdForBackendTarget,
   resolveMetadataStringOverrideStateV1FromAliases,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
@@ -255,14 +256,21 @@ function chooseVendorResumeId(params: ResolveSessionRuntimeSnapshotParams): Sess
   if (incomingResume) {
     return { value: incomingResume, updatedAt: null };
   }
-  if (params.incomingOptions.backendTarget?.kind === 'configuredAcpBackend') {
-    return null;
+  const backendTarget = params.incomingOptions.backendTarget ?? params.trackedSpawnOptions?.backendTarget;
+  const metadataVendorResumeId = backendTarget
+    ? resolveProviderSessionIdForBackendTarget(backendTarget, metadata)
+    : resolveVendorResumeIdFromSessionMetadata(
+        readAgentIdFromOptions(params.incomingOptions)
+          ?? readAgentIdFromOptions(params.trackedSpawnOptions)
+          ?? inferAgentIdFromSessionMetadata(metadata),
+        metadata,
+      );
+  if (backendTarget?.kind === 'configuredAcpBackend') {
+    if (!metadataVendorResumeId) return null;
+    // Persisted configured-backend metadata is the only target-bound durable
+    // resume identity. Unscoped tracked/marker ids cannot override it.
+    return { value: metadataVendorResumeId, updatedAt: null };
   }
-  const agentId =
-    readAgentIdFromOptions(params.incomingOptions)
-    ?? readAgentIdFromOptions(params.trackedSpawnOptions)
-    ?? inferAgentIdFromSessionMetadata(metadata);
-  const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
   const value =
     normalizeNonEmptyString(params.trackedSpawnOptions?.resume)
     ?? normalizeNonEmptyString(params.trackedVendorResumeId)
