@@ -359,11 +359,7 @@ export const AGENTS_CORE = {
         flavorAliases: ['custom-acp'],
         cloudConnect: null,
         connectedServices: null,
-        resume: {
-            vendorResume: 'experimental',
-            vendorResumeIdField: 'customAcpSessionId',
-            experimentalResumePolicy: 'runtime_checked',
-        },
+        resume: { vendorResume: 'unsupported' },
         sessionStorage: { direct: true, persisted: true },
         sessionCapabilities: {
             sessionListing: 'unsupported',

@@ -5,6 +5,7 @@ import {
   AGENT_IDS,
   LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
   inferAgentIdFromSessionMetadata,
+  resolveProviderSessionIdForBackendTarget,
   resolveMetadataStringOverrideStateV1FromAliases,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
@@ -81,16 +82,8 @@ function readSessionId(options: SpawnSessionOptions): string | null {
   return normalizeNonEmptyString(options.existingSessionId) ?? normalizeNonEmptyString(options.sessionId);
 }
 
-function readConfiguredAcpBackendIdFromFlavor(metadata: unknown): string | null {
-  const flavor = (metadata as { flavor?: unknown } | null)?.flavor;
-  if (typeof flavor !== 'string') return null;
-  const trimmed = flavor.trim();
-  if (!trimmed.toLowerCase().startsWith('acp:')) return null;
-  const backendId = trimmed.slice(4).trim();
-  return backendId.length > 0 ? backendId : null;
-}
-
-function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined): AgentId | null {  const rawAgentId = options?.backendTarget?.kind === 'builtInAgent' ? options.backendTarget.agentId : null;
+function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined): AgentId | null {
+  const rawAgentId = options?.backendTarget?.kind === 'builtInAgent' ? options.backendTarget.agentId : null;
   return typeof rawAgentId === 'string' && (AGENT_IDS as readonly string[]).includes(rawAgentId)
     ? rawAgentId as AgentId
     : null;
@@ -263,20 +256,21 @@ function chooseVendorResumeId(params: ResolveSessionRuntimeSnapshotParams): Sess
   if (incomingResume) {
     return { value: incomingResume, updatedAt: null };
   }
-  const agentId =
-    readAgentIdFromOptions(params.incomingOptions)
-    ?? readAgentIdFromOptions(params.trackedSpawnOptions)
-    ?? inferAgentIdFromSessionMetadata(metadata);
-  if (params.incomingOptions.backendTarget?.kind === 'configuredAcpBackend') {
-    // A configured-backend session must never inherit a built-in agent's resume id from
-    // contradictory persisted metadata, nor a different configured backend's session id
-    // (metadata flavor `acp:<backendId>` must match the spawn target's backend id).
-    const flavorBackendId = readConfiguredAcpBackendIdFromFlavor(metadata);
-    if (agentId !== 'customAcp' || (flavorBackendId !== null && flavorBackendId !== params.incomingOptions.backendTarget.backendId)) {
-      return null;
-    }
+  const backendTarget = params.incomingOptions.backendTarget ?? params.trackedSpawnOptions?.backendTarget;
+  const metadataVendorResumeId = backendTarget
+    ? resolveProviderSessionIdForBackendTarget(backendTarget, metadata)
+    : resolveVendorResumeIdFromSessionMetadata(
+        readAgentIdFromOptions(params.incomingOptions)
+          ?? readAgentIdFromOptions(params.trackedSpawnOptions)
+          ?? inferAgentIdFromSessionMetadata(metadata),
+        metadata,
+      );
+  if (backendTarget?.kind === 'configuredAcpBackend') {
+    if (!metadataVendorResumeId) return null;
+    // Persisted configured-backend metadata is the only target-bound durable
+    // resume identity. Unscoped tracked/marker ids cannot override it.
+    return { value: metadataVendorResumeId, updatedAt: null };
   }
-  const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
   const value =
     normalizeNonEmptyString(params.trackedSpawnOptions?.resume)
     ?? normalizeNonEmptyString(params.trackedVendorResumeId)

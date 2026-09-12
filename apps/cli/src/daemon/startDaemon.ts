@@ -432,6 +432,8 @@ import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { isBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
+import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveConfiguredAcpBackendFromAccountSettings';
 import { fetchSessionByIdCompat, fetchSessionsPage, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { persistExplicitSessionStopUsageLimitRecoveryCancellation } from '@/session/usageLimitRecoveryControls/persistUsageLimitRecoveryFieldDurably';
@@ -818,7 +820,7 @@ async function resolvePersistedConnectedServiceSwitchSessionMetadata(params: Rea
   const attachContext = await resolveExistingSessionAttachContext({
     token,
     sessionId: params.sessionId,
-    agent: params.agentId,
+    backendTarget: { kind: 'builtInAgent', agentId: params.agentId },
     credentials: params.credentials,
   }).catch(() => null);
   return attachContext?.ok ? attachContext.metadata : null;
@@ -1379,9 +1381,10 @@ async function applyAlreadyRunningExistingSessionRuntimeSnapshot(params: Readonl
   const attachContext = await resolveExistingSessionAttachContext({
     token: tokenForFetch,
     sessionId: params.sessionId,
-    agent: params.incomingOptions.backendTarget?.kind === 'builtInAgent'
-      ? params.incomingOptions.backendTarget.agentId
-      : 'customAcp',
+    backendTarget: params.incomingOptions.backendTarget ?? {
+      kind: 'builtInAgent',
+      agentId: resolveCatalogAgentIdFromBackendTarget(params.incomingOptions.backendTarget),
+    },
     credentials: effectiveCredentials,
   });
 
@@ -3212,7 +3215,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   const attachContext = await resolveExistingSessionAttachContext({
                     token: tokenForFetch,
                     sessionId: normalizedExistingSessionId,
-                    agent: backendTarget?.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp',
+                    backendTarget: backendTarget ?? { kind: 'builtInAgent', agentId: catalogAgentId },
                     credentials: effectiveCredentials,
                   });
 
@@ -3346,28 +3349,40 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               // Only gate vendor resume. Happy-session reconnect (existingSessionId) is supported for all agents.
               if (effectiveResume) {
                 if (backendTarget?.kind === 'configuredAcpBackend') {
-                  return {
-                    type: 'error',
-                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-                    errorMessage: `Resume is not supported for configured ACP backend '${backendTarget.backendId}'.`,
-                  };
-                }
-                const vendorResumeSupport = await getVendorResumeSupport(
-                  catalogAgentId,
-                );
-                const ok = vendorResumeSupport(
-                  canonicalCodexBackendMode
-                    ? { codexBackendMode: canonicalCodexBackendMode }
-                    : { experimentalCodexAcp },
-                );
-                if (!ok) {
-                  const supportLevel = requireCatalogEntry(catalogAgentId).vendorResumeSupport;
-                  const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
-                  return {
-                    type: 'error',
-                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-                    errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
-                  };
+                  const accountSettings = getActiveAccountSettingsSnapshot()?.settings as Record<string, unknown> | undefined;
+                  const configuredBackend = accountSettings
+                    ? resolveConfiguredAcpBackendFromAccountSettings(accountSettings, backendTarget.backendId)
+                    : null;
+                  const supportsConfiguredResume = Boolean(
+                    configuredBackend?.capabilities.supportsLoadSession
+                    && accountSettings
+                    && isBackendEnabledByAccountSettings({ backendTarget, settings: accountSettings }),
+                  );
+                  if (!supportsConfiguredResume) {
+                    return {
+                      type: 'error',
+                      errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+                      errorMessage: `Resume is not supported for configured ACP backend '${backendTarget.backendId}'.`,
+                    };
+                  }
+                } else {
+                  const vendorResumeSupport = await getVendorResumeSupport(
+                    catalogAgentId,
+                  );
+                  const ok = vendorResumeSupport(
+                    canonicalCodexBackendMode
+                      ? { codexBackendMode: canonicalCodexBackendMode }
+                      : { experimentalCodexAcp },
+                  );
+                  if (!ok) {
+                    const supportLevel = requireCatalogEntry(catalogAgentId).vendorResumeSupport;
+                    const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
+                    return {
+                      type: 'error',
+                      errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+                      errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
+                    };
+                  }
                 }
               }
               let directoryCreated = false;

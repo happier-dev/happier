@@ -76,8 +76,7 @@ export type VendorResumeIdField =
     | 'piSessionId'
     | 'copilotSessionId'
     | 'cursorSessionId'
-    | 'grokSessionId'
-    | 'customAcpSessionId';
+    | 'grokSessionId';
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';

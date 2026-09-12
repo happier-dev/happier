@@ -377,6 +377,7 @@ export {
   computeNextModelOverrideMetadataV1,
 } from './sessionControls/publish.js';
 export {
+  resolveProviderSessionIdForBackendTarget,
   resolveVendorResumeIdFromSessionMetadata,
   resolveAgentNativeTranscriptPathFromSessionMetadata,
   evaluateVendorResumeEligibility,
@@ -385,6 +386,8 @@ export {
 } from './sessionControls/vendorResumePolicy.js';
 export {
   evaluateExistingSessionAutomationEligibility,
+  resolveConfiguredAcpSessionResume,
+  type ConfiguredAcpSessionResumeResolution,
   type ExistingSessionAutomationEligibility,
   type ExistingSessionAutomationEligibilityReasonCode,
 } from './sessionControls/existingSessionAutomationPolicy.js';

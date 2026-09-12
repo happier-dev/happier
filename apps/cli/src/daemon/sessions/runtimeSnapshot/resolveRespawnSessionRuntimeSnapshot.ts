@@ -17,11 +17,6 @@ export type ResolveRespawnSessionRuntimeSnapshotParams = Readonly<{
   resolveAttachContext?: ResolveExistingSessionAttachContext;
 }>;
 
-function resolveAttachAgent(options: SpawnSessionOptions): string {
-  const backendTarget = options.backendTarget;
-  return backendTarget?.kind === 'builtInAgent' ? backendTarget.agentId : 'customAcp';
-}
-
 export async function resolveRespawnSessionRuntimeSnapshot(
   params: ResolveRespawnSessionRuntimeSnapshotParams,
 ): Promise<SpawnSessionOptions> {
@@ -30,11 +25,13 @@ export async function resolveRespawnSessionRuntimeSnapshot(
   const effectiveCredentials = storedCredentials ?? params.credentials;
   const token = typeof effectiveCredentials?.token === 'string' ? effectiveCredentials.token.trim() : '';
   if (!token) return params.defaultOptions;
+  const backendTarget = params.defaultOptions.backendTarget ?? params.spawnOptions.backendTarget;
+  if (!backendTarget) return params.defaultOptions;
 
   const attachContext = await resolver({
     token,
     sessionId: params.sessionId,
-    agent: resolveAttachAgent(params.defaultOptions),
+    backendTarget,
     credentials: effectiveCredentials,
   }).catch(() => null);
   if (!attachContext?.ok) return params.defaultOptions;

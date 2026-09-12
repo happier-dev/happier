@@ -87,7 +87,7 @@ describe('resolveRespawnSessionRuntimeSnapshot', () => {
     expect(resolveAttachContext).toHaveBeenCalledWith(expect.objectContaining({
       token: 'fresh-token',
       sessionId: 'session-1',
-      agent: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
     }));
     expect(result).toMatchObject({
       connectedServices: persistedConnectedServices,

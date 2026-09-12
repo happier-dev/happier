@@ -13,7 +13,11 @@ describe('resolveVendorResumeIdForExistingSession', () => {
       dataEncryptionKey: null,
     };
 
-    expect(resolveVendorResumeIdForExistingSession({ agent: 'codex', credentials: null, rawSession })).toBe('vendor-plain-1');
+    expect(resolveVendorResumeIdForExistingSession({
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      credentials: null,
+      rawSession,
+    })).toBe('vendor-plain-1');
   });
 
   it('extracts vendor resume id for e2ee sessions using legacy credentials', () => {
@@ -38,7 +42,33 @@ describe('resolveVendorResumeIdForExistingSession', () => {
       dataEncryptionKey: null,
     };
 
-    expect(resolveVendorResumeIdForExistingSession({ agent: 'codex', credentials, rawSession })).toBe('vendor-e2ee-1');
+    expect(resolveVendorResumeIdForExistingSession({
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      credentials,
+      rawSession,
+    })).toBe('vendor-e2ee-1');
+  });
+
+  it('resolves configured ACP identity only for the exact configured backend target', () => {
+    const rawSession = {
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        flavor: 'acp:misleading-flavor',
+        acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: 'review-bot', title: 'Review Bot' },
+        customAcpSessionId: 'provider-session-1',
+      }),
+      dataEncryptionKey: null,
+    };
+
+    expect(resolveVendorResumeIdForExistingSession({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      credentials: null,
+      rawSession,
+    })).toBe('provider-session-1');
+    expect(resolveVendorResumeIdForExistingSession({
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'other-bot' },
+      credentials: null,
+      rawSession,
+    })).toBeNull();
   });
 });
-

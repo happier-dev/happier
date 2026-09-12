@@ -81,6 +81,9 @@ export const executionRunsCapability: Capability = {
     });
 
     const resolveSupportsVendorResume = async (backendId: CatalogAgentId): Promise<boolean> => {
+      // Configured ACP resume is target- and catalog-specific; the generic
+      // customAcp row cannot advertise that capability globally.
+      if (backendId === 'customAcp') return false;
       try {
         const fn = await getVendorResumeSupport(backendId);
         return backendId === 'codex' ? fn(codexDefaultVendorResumeParams) : fn({});

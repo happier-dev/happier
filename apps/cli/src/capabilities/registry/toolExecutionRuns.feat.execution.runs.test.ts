@@ -65,7 +65,7 @@ describe('executionRunsCapability', () => {
     expect(typeof res.backends.kiro.supportsVendorResume).toBe('boolean');
     expect(res.backends.customAcp).toMatchObject({
       available: true,
-      supportsVendorResume: true,
+      supportsVendorResume: false,
     });
     expect(res.backends.pi).toBeTruthy();
     expect(typeof res.backends.pi.supportsVendorResume).toBe('boolean');

@@ -14,7 +14,6 @@ import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationCo
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 
 import { createConfiguredAcpBackend } from './createConfiguredAcpBackend';
-import { createConfiguredAcpSessionIdentityPublication } from './createConfiguredAcpSessionIdentityPublication';
 import type { ResolvedConfiguredAcpBackend } from './resolveConfiguredAcpBackendFromAccountSettings';
 
 type CreateConfiguredAcpRuntimeParams = Readonly<{
@@ -53,11 +52,6 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
     }
   };
 
-  // The backend is created lazily by ensureBackend (below) and only learns
-  // whether the adapter supports session/load once the ACP initialize
-  // handshake completes; the identity publication re-checks on every bind.
-  let sessionLoadSupportProbe: { supportsSessionLoad?: () => boolean } | null = null;
-
   return createAcpRuntime({
     provider: `acp:${params.backend.backendId}`,
     directory: params.directory,
@@ -67,10 +61,20 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    sessionIdentity: createConfiguredAcpSessionIdentityPublication({
-      session: params.session,
-      isSessionLoadSupported: () => sessionLoadSupportProbe?.supportsSessionLoad?.() === true,
-    }),
+    sessionIdentity: params.backend.capabilities.supportsLoadSession
+      ? {
+          kind: 'persist-bound',
+          persistBound: async (event) => {
+            await Promise.resolve(params.session.updateMetadata((metadata) => ({
+              ...metadata,
+              customAcpSessionId: event.vendorSessionId,
+            })));
+          },
+        }
+      : {
+          kind: 'runtime-only',
+          reason: 'vendor-resume-unsupported',
+        },
     memoryRecallGuidance: params.memoryRecallGuidance,
     hooks: {
       onPermissionRequest: (evt) => {
@@ -92,7 +96,6 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
         permissionHandler: params.permissionHandler,
         ...(permissionMode ? { permissionMode } : {}),
       });
-      sessionLoadSupportProbe = backend as unknown as { supportsSessionLoad?: () => boolean };
       logger.debug(`[${params.loggerLabel}] Backend created`);
       return backend as unknown as AgentBackend;
     },

@@ -26,5 +26,6 @@ export function createConfiguredAcpBackend(options: ConfiguredAcpBackendOptions)
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     transportHandler: resolveAcpCatalogTransportHandler(options.backend.transportProfile),
+    declaredSessionLoadSupport: options.backend.capabilities.supportsLoadSession,
   });
 }

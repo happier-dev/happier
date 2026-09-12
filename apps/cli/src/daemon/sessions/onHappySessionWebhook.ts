@@ -2,7 +2,11 @@ import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 
-import { inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+  inferAgentIdFromSessionMetadata,
+  resolveProviderSessionIdForBackendTarget,
+  resolveVendorResumeIdFromSessionMetadata,
+} from '@happier-dev/agents';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { execFileSync } from 'node:child_process';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
@@ -324,9 +328,15 @@ export function createOnHappySessionWebhook(params: Readonly<{
     }
 
     if (trackedForPid) {
-      const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
-      const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
+      const backendTarget = trackedForPid.spawnOptions?.backendTarget;
+      const vendorResumeId = backendTarget
+        ? resolveProviderSessionIdForBackendTarget(backendTarget, normalizedMetadata)
+        : resolveVendorResumeIdFromSessionMetadata(
+            inferAgentIdFromSessionMetadata(normalizedMetadata),
+            normalizedMetadata,
+          );
       if (vendorResumeId) trackedForPid.vendorResumeId = vendorResumeId;
+      else if (backendTarget?.kind === 'configuredAcpBackend') delete trackedForPid.vendorResumeId;
       if (!isPlaceholderSessionId) {
         // Best-effort report observers must not wait on strict startup reconciliation:
         // terminal-host serviceability is produced by this exact report and is independently useful.

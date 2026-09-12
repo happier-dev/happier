@@ -6,6 +6,7 @@ import type { AgentId } from '../types.js';
 
 import {
   evaluateVendorResumeEligibility,
+  resolveProviderSessionIdForBackendTarget,
   resolveVendorResumeIdFromSessionMetadata,
 } from './vendorResumePolicy.js';
 
@@ -19,6 +20,65 @@ describe('vendorResumePolicy', () => {
   it('resolves vendor resume ids from metadata (trimmed)', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('claude', { claudeSessionId: ' c1 ' })).toBe('c1');
     expect(resolveVendorResumeIdFromSessionMetadata('claude', { claudeSessionId: '   ' })).toBeNull();
+  });
+
+  it('resolves provider session ids through an exact backend target', () => {
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'builtInAgent', agentId: 'claude' },
+      { flavor: 'claude', claudeSessionId: ' claude-1 ' },
+    )).toBe('claude-1');
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      {
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'review-bot',
+          title: 'Review Bot',
+        },
+        customAcpSessionId: ' acp-1 ',
+      },
+    )).toBe('acp-1');
+  });
+
+  it('rejects stale or contradictory provider session ids for an exact backend target', () => {
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      {
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'other-bot',
+          title: 'Other Bot',
+        },
+        customAcpSessionId: 'stale-acp-id',
+      },
+    )).toBeNull();
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      { flavor: 'acp:review-bot', customAcpSessionId: 'stale-flat-id' },
+    )).toBeNull();
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'builtInAgent', agentId: 'claude' },
+      { flavor: 'codex', claudeSessionId: 'stale-claude-id' },
+    )).toBeNull();
+
+    expect(resolveProviderSessionIdForBackendTarget(
+      { kind: 'builtInAgent', agentId: 'claude' },
+      {
+        flavor: 'claude',
+        acpConfiguredBackendV1: {
+          v: 1,
+          updatedAt: 1,
+          backendId: 'review-bot',
+          title: 'Review Bot',
+        },
+        claudeSessionId: 'stale-claude-id',
+      },
+    )).toBeNull();
   });
 
   it('resolves Cursor ACP session ids from cursorSessionId metadata', () => {
@@ -35,34 +95,8 @@ describe('vendorResumePolicy', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('grok', { grokSessionId: ' grok-session ' })).toBe('grok-session');
   });
 
-  it('gates configured ACP backend resume on a runtime-persisted session id', () => {
-    expect(AGENTS_CORE.customAcp.resume).toEqual({
-      vendorResume: 'experimental',
-      vendorResumeIdField: 'customAcpSessionId',
-      experimentalResumePolicy: 'runtime_checked',
-    });
-    expect(resolveVendorResumeIdFromSessionMetadata('customAcp', { customAcpSessionId: ' acp-session ' })).toBe('acp-session');
-    expect(resolveVendorResumeIdFromSessionMetadata('customAcp', { customAcpSessionId: '   ' })).toBeNull();
-  });
-
-  it('allows configured ACP backend sessions with a persisted session id and lets runtime load failures surface later', () => {
-    expect(
-      evaluateVendorResumeEligibility({
-        agentId: 'customAcp',
-        metadata: { customAcpSessionId: 'acp-session' },
-        accountSettings: {},
-      }),
-    ).toEqual({ eligible: true, vendorResumeId: 'acp-session' });
-  });
-
-  it('rejects configured ACP backend resume when the adapter never persisted a session id', () => {
-    expect(
-      evaluateVendorResumeEligibility({
-        agentId: 'customAcp',
-        metadata: { flavor: 'acp:some-adapter' },
-        accountSettings: {},
-      }),
-    ).toEqual({ eligible: false, reasonCode: 'vendor_resume_id_missing' });
+  it('keeps configured ACP targets out of the built-in AgentId resume policy', () => {
+    expect(AGENTS_CORE.customAcp.resume).toEqual({ vendorResume: 'unsupported' });
   });
 
   it('prefers vendor session ids from agentRuntimeDescriptorV1 over legacy top-level metadata', () => {
