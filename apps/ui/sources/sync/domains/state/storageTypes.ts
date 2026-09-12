@@ -496,6 +496,7 @@ export interface Session {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextSizeIsExact?: boolean;
         contextWindowTokens?: number;
         timestamp: number;
     } | null;

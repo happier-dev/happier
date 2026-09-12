@@ -34,13 +34,14 @@ export function formatContextTokenCount(value: number): string {
 }
 
 export function getContextUsageState(
-    contextSize: number,
+    contextSize: number | null | undefined,
     alwaysShow: boolean = false,
     contextWindowTokens: number | null = null,
 ): ContextUsageState | null {
     const safeContextWindowTokens = normalizeContextWindowTokens(contextWindowTokens);
     if (safeContextWindowTokens === null) return null;
-    const safeContextSize = Number.isFinite(contextSize) ? Math.max(0, contextSize) : 0;
+    if (typeof contextSize !== 'number' || !Number.isFinite(contextSize)) return null;
+    const safeContextSize = Math.max(0, contextSize);
     const warningWindowTokens = toContextWarningWindowTokens(safeContextWindowTokens);
     // A stale window can undercount the real maximum (e.g. 1M enabled provider-side); usage can
     // then exceed it. Never report >100% — raw token counts stay honest for detail copy.

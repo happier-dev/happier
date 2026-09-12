@@ -1118,7 +1118,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        }',
         '        if (text === "bridge-token-usage") {',
         '            setTimeout(() => {',
-        '                process.stdout.write(JSON.stringify({ method: "thread/tokenUsage/updated", params: { threadId: msg.params?.threadId ?? null, turnId, tokenUsage: { total: { totalTokens: 1200, inputTokens: 700, cachedInputTokens: 200, outputTokens: 250, reasoningOutputTokens: 50 }, last: { totalTokens: 1200, inputTokens: 700, cachedInputTokens: 200, outputTokens: 250, reasoningOutputTokens: 50 }, modelContextWindow: 1000000 } } }) + "\\n");',
+        '                process.stdout.write(JSON.stringify({ method: "thread/tokenUsage/updated", params: { threadId: msg.params?.threadId ?? null, turnId, tokenUsage: { total: { totalTokens: 12000, inputTokens: 7000, cachedInputTokens: 2000, outputTokens: 2500, reasoningOutputTokens: 500 }, last: { totalTokens: 1200, inputTokens: 700, cachedInputTokens: 200, outputTokens: 250, reasoningOutputTokens: 50 }, modelContextWindow: 1000000 } } }) + "\\n");',
         '            }, 8);',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
@@ -7256,16 +7256,14 @@ describe('createCodexAppServerRuntime', () => {
             type: 'token_count',
             model: 'gpt-5.4',
             size: 1_000_000,
+            used: 1_200,
             tokens: expect.objectContaining({
-                total: 1200,
-                input: 700,
-                cache_read: 200,
-                output: 250,
-                thought: 50,
+                total: 12_000,
+                input: 7_000,
+                cache_read: 2_000,
+                output: 2_500,
+                thought: 500,
             }),
-        }));
-        expect(sendCodexMessage).toHaveBeenCalledWith(expect.not.objectContaining({
-            used: expect.any(Number),
         }));
 
         const latestMetadata = updateMetadata.mock.results.at(-1)?.value as Record<string, unknown>;

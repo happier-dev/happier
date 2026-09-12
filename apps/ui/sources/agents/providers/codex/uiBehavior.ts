@@ -108,9 +108,6 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     guidance: {
         includeInSessionGettingStartedCliExamples: true,
     },
-    sessionUsage: {
-        supportsExactContextUsageBadge: false,
-    },
     workState: {
         supportsEditableGoals: ({ agentId, session }) => {
             if (agentId !== 'codex') return false;

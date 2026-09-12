@@ -281,6 +281,10 @@ describe('context warning window resolution', () => {
 });
 
 describe('getContextUsageState overflow guard', () => {
+    it('does not synthesize zero usage when exact context telemetry is unavailable', () => {
+        expect(getContextUsageState(undefined, true, 258_000)).toBeNull();
+    });
+
     it('never reports more than 100% usage even when used tokens exceed a stale window', () => {
         const usageState = getContextUsageState(733_000, true, 200_000);
         expect(usageState?.usedPercentage).toBe(100);

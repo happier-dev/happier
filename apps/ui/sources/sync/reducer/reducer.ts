@@ -252,6 +252,7 @@ export type ReducerState = {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextSizeIsExact: boolean;
         contextWindowTokens?: number;
         timestamp: number;
     };
@@ -291,6 +292,7 @@ export type ReducerResult = {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextSizeIsExact: boolean;
         contextWindowTokens?: number;
     };
     hasReadyEvent?: boolean;
@@ -629,6 +631,7 @@ export function reducer(
             cacheCreation: state.latestUsage.cacheCreation,
             cacheRead: state.latestUsage.cacheRead,
             contextSize: state.latestUsage.contextSize,
+            contextSizeIsExact: state.latestUsage.contextSizeIsExact,
             ...(typeof state.latestUsage.contextWindowTokens === 'number'
                 ? { contextWindowTokens: state.latestUsage.contextWindowTokens }
                 : {})
@@ -666,10 +669,11 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
     // Only update if this is newer than the current latest usage
     if (!state.latestUsage || timestamp > state.latestUsage.timestamp) {
         const reportedContextWindowTokens = readContextWindowTokensFromUsage(usage);
+        const reportedContextUsedTokens = readContextUsedTokensFromUsage(usage);
         const contextWindowTokens = reportedContextWindowTokens ?? state.latestUsage?.contextWindowTokens ?? null;
         const derivedContextSize = (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0) + usage.input_tokens;
         const contextSize =
-            readContextUsedTokensFromUsage(usage) ??
+            reportedContextUsedTokens ??
             (reportedContextWindowTokens !== null ? state.latestUsage?.contextSize ?? 0 : derivedContextSize);
         state.latestUsage = {
             inputTokens: usage.input_tokens,
@@ -677,6 +681,7 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
             cacheCreation: usage.cache_creation_input_tokens || 0,
             cacheRead: usage.cache_read_input_tokens || 0,
             contextSize,
+            contextSizeIsExact: reportedContextUsedTokens !== null,
             ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
             timestamp: timestamp
         };

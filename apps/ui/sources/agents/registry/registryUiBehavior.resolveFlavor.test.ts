@@ -41,7 +41,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
 
         expect(behavior?.permissions?.footer?.stopHandling).toBe('denyOnly');
         expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(true);
-        expect(behavior?.sessionUsage?.supportsExactContextUsageBadge).toBe(false);
+        expect(behavior?.sessionUsage?.supportsExactContextUsageBadge).toBe(true);
     });
 
     it('projects pending delivery presentation through the Claude provider behavior', () => {

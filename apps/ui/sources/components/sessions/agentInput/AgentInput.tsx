@@ -321,6 +321,7 @@ interface AgentInputProps {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextSizeIsExact?: boolean;
         contextWindowTokens?: number;
     };
     providerUsageGauge?: ConnectedServiceQuotaGaugeViewModel | null;
@@ -1361,12 +1362,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         [agentId, props.metadata, props.usageData, supportsExactContextUsageBadge],
     );
 
-    const contextUsageState = supportsExactContextUsageBadge && (
-        (props.usageData && typeof props.usageData.contextSize === 'number')
-        || props.alwaysShowContextSize === true
-    )
+    const contextUsageState = supportsExactContextUsageBadge && props.usageData?.contextSizeIsExact === true
         ? getContextUsageState(
-            props.usageData?.contextSize ?? 0,
+            props.usageData?.contextSize,
             props.alwaysShowContextSize ?? false,
             contextWindowTokens,
         )
