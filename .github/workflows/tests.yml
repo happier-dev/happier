@@ -583,16 +583,16 @@ jobs:
   ui-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
     needs: [trusted_ref_guard]
-    name: UI Unit Tests / part ${{ matrix.part }}/4
+    name: UI Unit Tests / part ${{ matrix.part }}/16
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3, 4]
+        part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
-      HAPPIER_UI_VITEST_PARTS: "4"
+      HAPPIER_UI_VITEST_PARTS: "16"
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

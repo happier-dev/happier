@@ -43,10 +43,12 @@ test('tests workflow keeps slow CI jobs above the observed timeout floor', async
   assert.match(
     uiUnitJob,
     /name:\s*UI Unit Tests[\s\S]*?timeout-minutes:\s*120\b/,
-    'each UI unit partition should reserve enough time for eight heap-bounded shards',
+    'each UI unit partition should reserve enough time for 15–16 heap-bounded shards',
   );
-  assert.match(uiUnitJob, /part:\s*\[1, 2, 3, 4\]/);
+  assert.match(uiUnitJob, /name:\s*UI Unit Tests \/ part \$\{\{ matrix\.part \}\}\/16/);
+  assert.match(uiUnitJob, /part:\s*\[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16\]/);
   assert.match(uiUnitJob, /HAPPIER_UI_VITEST_PART:\s*\$\{\{ matrix\.part \}\}/);
+  assert.match(uiUnitJob, /HAPPIER_UI_VITEST_PARTS:\s*["']16["']/);
   assert.match(uiIntegrationJob, /name:\s*UI Integration Tests[\s\S]*?timeout-minutes:\s*240\b/);
 
   assert.match(

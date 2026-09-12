@@ -10,6 +10,7 @@ import {
     runVitestShardRunPlan,
     resolveVitestConfigPath,
     resolveVitestShardCount,
+    resolveVitestShardCountForFileCount,
     resolveVitestPassthroughArgs,
     shouldVitestShardRunProceedWithoutFiles,
     summarizeVitestShardOutcomes,
@@ -27,6 +28,13 @@ describe('apps/ui runVitestShards', () => {
     it('ignores invalid shard overrides', () => {
         expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: '0' })).toBe(32);
         expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: 'nope' })).toBe(32);
+    });
+
+    it('derives enough shards to keep the default file budget at sixteen', () => {
+        expect(resolveVitestShardCountForFileCount({}, 16)).toBe(1);
+        expect(resolveVitestShardCountForFileCount({}, 17)).toBe(2);
+        expect(resolveVitestShardCountForFileCount({}, 5_056)).toBe(316);
+        expect(resolveVitestShardCountForFileCount({ HAPPIER_UI_VITEST_SHARDS: '7' }, 5_056)).toBe(7);
     });
 
     it('partitions the configured shard count into balanced CI parts', () => {
@@ -117,12 +125,15 @@ describe('apps/ui runVitestShards', () => {
         ).toEqual(['sources/dev/runVitestShards.test.ts', '--reporter', 'dot']);
     });
 
-    it('partitions files across shards deterministically', () => {
+    it('partitions sorted files round-robin so adjacent heavy files do not concentrate in one shard', () => {
         const buckets = partitionVitestFilesIntoShards(['c', 'a', 'b', 'd', 'e'], 2);
         expect(buckets).toEqual([
-            ['a', 'b', 'c'],
-            ['d', 'e'],
+            ['a', 'c', 'e'],
+            ['b', 'd'],
         ]);
+        expect(buckets.map((bucket) => bucket.length)).toEqual([3, 2]);
+        expect(buckets.flat().slice().sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+        expect(new Set(buckets.flat()).size).toBe(5);
     });
 
     it('creates a shard run plan skipping empty shards', () => {

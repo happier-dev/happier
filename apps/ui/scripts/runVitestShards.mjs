@@ -52,12 +52,21 @@ function resolveConcurrencyFlagValue(argv) {
   return null;
 }
 
+const DEFAULT_MAX_FILES_PER_SHARD = 16;
+
 export function resolveVitestShardCount(env) {
   const override = parsePositiveInt(env?.HAPPIER_UI_VITEST_SHARDS);
-  // The UI suite has a large module graph (React Native stubs + Expo/web shims).
-  // Running too many files in a single Vitest process can cause heap growth over time,
-  // even with `isolate: true`. More shards keeps each process smaller and avoids OOMs.
   return override ?? 32;
+}
+
+export function resolveVitestShardCountForFileCount(env, fileCount) {
+  const override = parsePositiveInt(env?.HAPPIER_UI_VITEST_SHARDS);
+  // The UI suite has a large module graph (React Native stubs + Expo/web shims).
+  // Keep each process small enough to complete inside the canonical shard watchdog even
+  // when its sorted bucket includes one of the route-heavy files. Explicit overrides remain
+  // available for focused diagnosis and constrained CI experiments.
+  const collectedFileCount = Number.isFinite(fileCount) && fileCount > 0 ? Math.floor(fileCount) : 1;
+  return override ?? Math.ceil(collectedFileCount / DEFAULT_MAX_FILES_PER_SHARD);
 }
 
 export function resolveVitestShardRange(env, shardCount) {
@@ -113,7 +122,7 @@ export function resolveVitestPassthroughArgs(argv) {
 /**
  * Vitest ORs positional filters: a shard invocation that carries both the caller's path
  * filter and the shard's file list re-runs the whole filtered set, so every shard executes
- * the same files (32x by default) instead of once. The shard file list is already the
+ * the same files once per shard instead of once. The shard file list is already the
  * resolved form of those filters, so the filters must be dropped from the per-shard run.
  *
  * Classification uses Vitest's own CLI parser rather than a local option table plus a
@@ -163,15 +172,8 @@ export function partitionVitestFilesIntoShards(files, shardCount) {
   const buckets = Array.from({ length: count }, () => []);
   const sortedFiles = Array.from(files ?? []).filter(Boolean).sort();
 
-  const total = sortedFiles.length;
-  const baseSize = Math.floor(total / count);
-  const extra = total % count;
-  let cursor = 0;
-  for (let bucketIndex = 0; bucketIndex < count; bucketIndex += 1) {
-    const size = baseSize + (bucketIndex < extra ? 1 : 0);
-    if (size <= 0) continue;
-    buckets[bucketIndex].push(...sortedFiles.slice(cursor, cursor + size));
-    cursor += size;
+  for (let fileIndex = 0; fileIndex < sortedFiles.length; fileIndex += 1) {
+    buckets[fileIndex % count].push(sortedFiles[fileIndex]);
   }
   return buckets;
 }
@@ -414,8 +416,6 @@ async function main(argv) {
     process.exit(1);
   }
 
-  const shardCount = resolveVitestShardCount(process.env);
-  const shardRange = resolveVitestShardRange(process.env, shardCount);
   const shardConcurrency = resolveVitestShardConcurrency(process.env, argv);
   const shardTimeoutMs = resolveVitestShardTimeoutMs(process.env);
   const sizeMb = resolveMaxOldSpaceSizeMb(process.env);
@@ -436,6 +436,8 @@ async function main(argv) {
     process.exit(1);
     return;
   }
+  const shardCount = resolveVitestShardCountForFileCount(process.env, allFiles.length);
+  const shardRange = resolveVitestShardRange(process.env, shardCount);
   const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount);
   const plan = createVitestShardRunPlan({
     shardFiles,

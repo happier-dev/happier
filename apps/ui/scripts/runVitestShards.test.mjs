@@ -10,11 +10,23 @@ import {
   buildVitestShardRunArgs,
   resolveVitestPassthroughArgs,
   resolveVitestPositionalFilters,
+  resolveVitestShardCountForFileCount,
 } from './runVitestShards.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(scriptsDir);
 const runnerPath = join(scriptsDir, 'runVitestShards.mjs');
+
+test('the file-count shard resolver keeps each Vitest process within the file budget', () => {
+  assert.equal(resolveVitestShardCountForFileCount({}, 1_264), 64);
+  assert.equal(resolveVitestShardCountForFileCount({}, 1), 1);
+  assert.equal(resolveVitestShardCountForFileCount({}, 20), 1);
+  assert.equal(resolveVitestShardCountForFileCount({}, 21), 2);
+});
+
+test('an explicit shard count override remains authoritative', () => {
+  assert.equal(resolveVitestShardCountForFileCount({ HAPPIER_UI_VITEST_SHARDS: '32' }, 5_056), 32);
+});
 
 test('the list pass keeps the caller filters that select the files', () => {
   const argv = ['node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts', 'sources/voice'];
@@ -24,7 +36,7 @@ test('the list pass keeps the caller filters that select the files', () => {
 test('a bare-name positional filter is not forwarded into the per-shard run', async () => {
   // Vitest ORs positional filters with an explicit file list, so a filter that survives into the
   // shard invocation makes EVERY shard re-run the whole filtered set - the same file executed once
-  // per shard (24x by default) instead of once. A bare name carries no separator and no extension,
+  // per shard instead of once. A bare name carries no separator and no extension,
   // which is exactly what the previous shape heuristic could not recognise.
   const passthroughArgs = ['legendListRenderer'];
   const positionalFilters = await resolveVitestPositionalFilters(passthroughArgs);
