@@ -6,7 +6,10 @@ type AgentKey = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[0];
 type AgentPayload = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[1];
 type SessionWithKeepAlive = Pick<AcpRuntimeSessionClient, 'keepAlive' | 'sendAgentMessage'>;
 type SessionWithSendOnly = Pick<AcpRuntimeSessionClient, 'sendAgentMessage'>;
-type MessageBufferForModelOutput = Pick<MessageBuffer, 'removeLastMessage' | 'addMessage' | 'updateLastMessage'>;
+type MessageBufferForModelOutput = Pick<
+  MessageBuffer,
+  'removeLastMessage' | 'addMessage' | 'updateLastMessage' | 'replaceLastMessage'
+>;
 
 export function handleAcpModelOutputDelta(params: {
   delta: string;
@@ -14,11 +17,15 @@ export function handleAcpModelOutputDelta(params: {
   getIsResponseInProgress: () => boolean;
   setIsResponseInProgress: (value: boolean) => void;
   appendToAccumulatedResponse: (delta: string) => void;
+  replaceBufferedAssistantText?: string;
 }): void {
   const delta = params.delta ?? '';
-  if (!delta) return;
+  if (!delta && params.replaceBufferedAssistantText === undefined) return;
 
-  if (!params.getIsResponseInProgress()) {
+  if (params.replaceBufferedAssistantText !== undefined) {
+    params.messageBuffer.replaceLastMessage(params.replaceBufferedAssistantText, 'assistant');
+    params.setIsResponseInProgress(true);
+  } else if (!params.getIsResponseInProgress()) {
     params.messageBuffer.removeLastMessage('system');
     params.messageBuffer.addMessage(delta, 'assistant');
     params.setIsResponseInProgress(true);

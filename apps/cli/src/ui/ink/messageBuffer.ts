@@ -29,24 +29,31 @@ export class MessageBuffer {
      * Useful for streaming responses where deltas should accumulate in one message
      */
     updateLastMessage(contentDelta: string, type: BufferedMessage['type'] = 'assistant'): void {
-        // Find the last message of the specified type
-        for (let i = this.messages.length - 1; i >= 0; i--) {
-            if (this.messages[i].type === type) {
-                // Create a new message object with updated content (for React to detect change)
-                const oldMessage = this.messages[i];
-                const updatedMessage: BufferedMessage = {
-                    ...oldMessage,
-                    content: oldMessage.content + contentDelta
-                };
-                // Replace the old message with the new one
-                this.messages[i] = updatedMessage;
-                this.notifyListeners()
-                return
+        const index = this.findLastMessageIndex(type)
+        if (index >= 0) {
+            // Create a new message object with updated content (for React to detect change)
+            const oldMessage = this.messages[index]
+            this.messages[index] = {
+                ...oldMessage,
+                content: oldMessage.content + contentDelta
             }
+            this.notifyListeners()
+            return
         }
         // If no message of this type exists, create a new one
         // This can happen if updateLastMessage is called before the first message is added
         this.addMessage(contentDelta, type)
+    }
+
+    replaceLastMessage(content: string, type: BufferedMessage['type'] = 'assistant'): void {
+        const index = this.findLastMessageIndex(type)
+        if (index >= 0) {
+            const oldMessage = this.messages[index]
+            this.messages[index] = { ...oldMessage, content }
+            this.notifyListeners()
+            return
+        }
+        this.addMessage(content, type)
     }
 
     /**
@@ -54,12 +61,11 @@ export class MessageBuffer {
      * Useful for removing placeholder messages like "Thinking..." when actual response starts
      */
     removeLastMessage(type: BufferedMessage['type']): boolean {
-        for (let i = this.messages.length - 1; i >= 0; i--) {
-            if (this.messages[i].type === type) {
-                this.messages.splice(i, 1)
-                this.notifyListeners()
-                return true
-            }
+        const index = this.findLastMessageIndex(type)
+        if (index >= 0) {
+            this.messages.splice(index, 1)
+            this.notifyListeners()
+            return true
         }
         return false
     }
@@ -88,6 +94,13 @@ export class MessageBuffer {
         if (this.listeners.length === 0) return
         const messages = this.getMessages()
         this.listeners.forEach(listener => listener(messages))
+    }
+
+    private findLastMessageIndex(type: BufferedMessage['type']): number {
+        for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+            if (this.messages[index].type === type) return index
+        }
+        return -1
     }
 
     private trimToMaxMessages(): void {

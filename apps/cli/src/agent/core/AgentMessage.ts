@@ -28,6 +28,8 @@ export type AgentStatus = 'starting' | 'running' | 'idle' | 'stopped' | 'error';
  */
 export interface ModelOutputMessage {
   type: 'model-output';
+  /** Starts a new assistant segment for segment-scoped fullText reconciliation. */
+  startsNewSegment?: true;
   /** Incremental text delta (streaming) */
   textDelta?: string;
   /** Authoritative cumulative text snapshot. */

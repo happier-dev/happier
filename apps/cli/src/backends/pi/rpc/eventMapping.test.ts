@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { mapPiRpcEventToAgentMessages } from './eventMapping';
 
 describe('mapPiRpcEventToAgentMessages', () => {
+  it('preserves assistant message boundaries for snapshot reconciliation', () => {
+    expect(mapPiRpcEventToAgentMessages({
+      type: 'message_start',
+      message: { role: 'assistant', content: [] },
+    })).toEqual([{ type: 'model-output', startsNewSegment: true }]);
+  });
+
   it('maps assistant text deltas from message_update to streaming model output', () => {
     const output = mapPiRpcEventToAgentMessages({
       type: 'message_update',

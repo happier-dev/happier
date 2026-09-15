@@ -2,7 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
 
-import { createStreamedTranscriptWriter } from './streamedTranscriptWriter';
+import type { ACPProvider } from './sessionMessageTypes';
+import {
+  createStreamedTranscriptWriter,
+  type StreamedTranscriptWriter,
+  type StreamedTranscriptWriterSession,
+} from './streamedTranscriptWriter';
+
+type Mutable<T> = { -readonly [Key in keyof T]: T[Key] };
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+  readonly reject: (error: unknown) => void;
+}
+
+const TEST_PROVIDER = 'codex' satisfies ACPProvider;
 
 type DurableCall = {
   provider: string;
@@ -21,8 +35,8 @@ function createSessionStub(opts: { withLive?: boolean } = {}) {
   const bestEffortCalls: DurableCall[] = [];
   const liveCalls: LiveCall[] = [];
 
-  const session = {
-    sendAgentMessage: (provider: any, body: any, opts: any) => {
+  const session: Mutable<StreamedTranscriptWriterSession> = {
+    sendAgentMessage: (provider, body, opts) => {
       bestEffortCalls.push({
         provider: String(provider),
         localId: typeof opts?.localId === 'string' ? opts.localId : '',
@@ -32,7 +46,7 @@ function createSessionStub(opts: { withLive?: boolean } = {}) {
     },
     ...(opts.withLive
       ? {
-          sendAgentMessageEphemeral: (provider: any, body: any, opts: any) => {
+          sendAgentMessageEphemeral: (provider, body, opts) => {
             liveCalls.push({
               provider: String(provider),
               localId: String(opts.localId),
@@ -45,7 +59,7 @@ function createSessionStub(opts: { withLive?: boolean } = {}) {
           },
         }
       : {}),
-    sendAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
+    sendAgentMessageCommitted: async (provider, body, opts) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -65,6 +79,16 @@ async function settleCommittedSnapshot() {
   }
 }
 
+const createDeferred = <T>(): Deferred<T> => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe('createStreamedTranscriptWriter', () => {
   it('emits live snapshots ahead of durable checkpoints and flushes the latest text on the live cadence', async () => {
     vi.useFakeTimers();
@@ -73,8 +97,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls, liveCalls } = createSessionStub({ withLive: true });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 1_000,
@@ -89,7 +113,7 @@ describe('createStreamedTranscriptWriter', () => {
     expect(durableCalls).toHaveLength(1);
     expect(liveCalls).toHaveLength(1);
     expect(liveCalls[0]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'segment-1',
       body: { type: 'message', message: 'H' },
     });
@@ -107,7 +131,7 @@ describe('createStreamedTranscriptWriter', () => {
     expect(durableCalls).toHaveLength(1);
     expect(liveCalls).toHaveLength(2);
     expect(liveCalls[1]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'segment-1',
       body: { type: 'message', message: 'Hi' },
     });
@@ -128,10 +152,10 @@ describe('createStreamedTranscriptWriter', () => {
     vi.setSystemTime(new Date(0));
 
     const liveCalls: LiveCall[] = [];
-    const session = {
+    const session: StreamedTranscriptWriterSession & { liveCalls: LiveCall[] } = {
       liveCalls,
       sendAgentMessageCommitted: vi.fn(async () => {}),
-      sendAgentMessageEphemeral(provider: any, body: any, opts: any) {
+      sendAgentMessageEphemeral(provider, body, opts) {
         this.liveCalls.push({
           provider: String(provider),
           localId: String(opts.localId),
@@ -145,8 +169,8 @@ describe('createStreamedTranscriptWriter', () => {
     };
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 1_000,
@@ -160,7 +184,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(liveCalls).toHaveLength(1);
     expect(liveCalls[0]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'segment-1',
       body: { type: 'message', message: 'H' },
     });
@@ -172,8 +196,8 @@ describe('createStreamedTranscriptWriter', () => {
 
     const liveCalls: LiveCall[] = [];
     const outboxCalls: DurableCall[] = [];
-    const session = {
-      enqueueAgentMessageCommitted: vi.fn(async (provider: any, body: any, opts: any) => {
+    const session: StreamedTranscriptWriterSession = {
+      enqueueAgentMessageCommitted: vi.fn(async (provider, body, opts) => {
         outboxCalls.push({
           provider: String(provider),
           localId: String(opts.localId),
@@ -185,7 +209,7 @@ describe('createStreamedTranscriptWriter', () => {
       sendAgentMessageCommitted: vi.fn(async () => {
         throw new Error('direct committed path should not be used when outbox hook exists');
       }),
-      sendAgentMessageEphemeral(provider: any, body: any, opts: any) {
+      sendAgentMessageEphemeral(provider, body, opts) {
         liveCalls.push({
           provider: String(provider),
           localId: String(opts.localId),
@@ -199,8 +223,8 @@ describe('createStreamedTranscriptWriter', () => {
     };
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       initialCheckpointDelayMs: 10_000,
       checkpointIntervalMs: 10_000,
@@ -221,7 +245,7 @@ describe('createStreamedTranscriptWriter', () => {
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
     expect(outboxCalls).toEqual([
       expect.objectContaining({
-        provider: 'codex',
+        provider: TEST_PROVIDER,
         localId: 'segment-1',
         body: { type: 'message', message: 'partial' },
         meta: expect.objectContaining({
@@ -238,8 +262,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls, liveCalls } = createSessionStub({ withLive: true });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'l1',
       initialCheckpointDelayMs: 200,
       checkpointIntervalMs: 2_000,
@@ -263,7 +287,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(1);
     expect(durableCalls[0]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'l1',
       body: { type: 'message', message: 'Hello' },
     });
@@ -276,8 +300,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub({ withLive: true });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'l1',
       initialCheckpointDelayMs: 0,
       checkpointIntervalMs: 50,
@@ -299,7 +323,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[1]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'l1',
       body: { type: 'message', message: 'Hello world' },
     });
@@ -312,8 +336,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'l1',
       checkpointIntervalMs: 50,
       checkpointMinChars: 1,
@@ -338,7 +362,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[1]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'l1',
       body: { type: 'message', message: 'Hello world!' },
     });
@@ -352,7 +376,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(3);
     expect(durableCalls[2]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'l1',
       body: { type: 'message', message: 'Hello world!?' },
     });
@@ -366,8 +390,8 @@ describe('createStreamedTranscriptWriter', () => {
     const ids = ['segment-1'];
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => ids.shift() ?? 'missing',
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
@@ -401,8 +425,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 0,
       checkpointMinChars: 1,
@@ -413,7 +437,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(1);
     expect(durableCalls[0]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'segment-1',
       body: { type: 'message', message: 'Hello' },
     });
@@ -423,7 +447,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[1]).toMatchObject({
-      provider: 'codex',
+      provider: TEST_PROVIDER,
       localId: 'segment-1',
       body: { type: 'message', message: 'Hello world' },
     });
@@ -437,8 +461,8 @@ describe('createStreamedTranscriptWriter', () => {
     const ids = ['segment-1', 'segment-2'];
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => ids.shift() ?? 'missing',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -477,8 +501,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'l1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -505,8 +529,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -527,6 +551,225 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
+  it('can override the assistant segment most recently flushed at a tool boundary', async () => {
+    const { session, durableCalls } = createSessionStub();
+    let segmentOrdinal = 0;
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => `segment-${++segmentOrdinal}`,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Draft.');
+    await writer.flushAll({ reason: 'tool-call-boundary' });
+
+    const didOverride = writer.overrideAssistantText('Final.');
+    await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(didOverride).toBe(true);
+    expect(durableCalls.at(-1)).toMatchObject({
+      localId: 'segment-1',
+      body: { type: 'message', message: 'Final.' },
+    });
+    expect(new Set(durableCalls.map((call) => call.localId))).toEqual(new Set(['segment-1']));
+    expect(writer.overrideAssistantText('Stale.')).toBe(false);
+  });
+
+  it('does not reuse a durably cleared segment for later text', async () => {
+    const { session, durableCalls } = createSessionStub();
+    let segmentOrdinal = 0;
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => `segment-${++segmentOrdinal}`,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Draft.');
+    expect(writer.overrideAssistantText('')).toBe(true);
+    await writer.flushAll({ reason: 'turn-end' });
+
+    writer.appendAssistantDelta('Next turn.');
+    await writer.flushAll({ reason: 'turn-end' });
+
+    expect(durableCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        localId: 'segment-1',
+        body: { type: 'message', message: '' },
+      }),
+      expect.objectContaining({
+        localId: 'segment-2',
+        body: { type: 'message', message: 'Next turn.' },
+      }),
+    ]));
+  });
+
+  it('keeps a completed tool-boundary rewrite complete when the turn aborts', async () => {
+    const { session, durableCalls } = createSessionStub();
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => 'segment-1',
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Draft.');
+    await writer.flushAll({ reason: 'tool-call-boundary' });
+    expect(writer.overrideAssistantText('Final.')).toBe(true);
+
+    await expect(writer.flushAll({ reason: 'abort', interruptedReason: 'cancelled' })).resolves.toMatchObject({
+      assistantRoot: { sawText: true, didDurablyFlush: true },
+    });
+    expect(durableCalls.at(-1)).toMatchObject({
+      localId: 'segment-1',
+      body: { type: 'message', message: 'Final.' },
+      meta: { happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }) },
+    });
+  });
+
+  it('does not append post-tool text into a failed tool-boundary segment', async () => {
+    const { session } = createSessionStub();
+    let segmentOrdinal = 0;
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => `segment-${++segmentOrdinal}`,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    session.sendAgentMessageCommitted = async () => {
+      throw new Error('transcript unavailable');
+    };
+    writer.appendAssistantDelta('Before tool.');
+    await expect(writer.flushAll({ reason: 'tool-call-boundary' })).resolves.toMatchObject({
+      assistantRoot: { sawText: true, didDurablyFlush: false },
+    });
+
+    const retryCalls: Array<{ localId: string; body: unknown }> = [];
+    session.sendAgentMessageCommitted = async (_provider, body, opts) => {
+      retryCalls.push({ localId: String(opts.localId), body });
+    };
+    writer.appendAssistantDelta('After tool.');
+    await writer.flushAll({ reason: 'turn-end' });
+
+    expect(retryCalls).toEqual(expect.arrayContaining([
+      { localId: 'segment-1', body: { type: 'message', message: 'Before tool.' } },
+      { localId: 'segment-2', body: { type: 'message', message: 'After tool.' } },
+    ]));
+  });
+
+  it('keeps overlapping failed tool-boundary segments isolated from later text', async () => {
+    const { session } = createSessionStub({ withLive: true });
+    const firstCommit = createDeferred<void>();
+    const secondCommit = createDeferred<void>();
+    const pendingCommits = [firstCommit, secondCommit];
+    let segmentOrdinal = 0;
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => `segment-${++segmentOrdinal}`,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    session.sendAgentMessageCommitted = async () => {
+      const commit = pendingCommits.shift();
+      if (!commit) throw new Error('unexpected commit');
+      await commit.promise;
+    };
+
+    writer.appendAssistantDelta('First.');
+    const firstFlush = writer.flushAll({ reason: 'tool-call-boundary' });
+    writer.appendAssistantDelta('Second.');
+    const secondFlush = writer.flushAll({ reason: 'tool-call-boundary' });
+
+    firstCommit.reject(new Error('first unavailable'));
+    secondCommit.reject(new Error('second unavailable'));
+    await Promise.all([firstFlush, secondFlush]);
+
+    const retryCalls: Array<{ localId: string; body: unknown }> = [];
+    session.sendAgentMessageCommitted = async (_provider, body, opts) => {
+      retryCalls.push({ localId: String(opts.localId), body });
+    };
+    writer.appendAssistantDelta('Third.');
+    await writer.flushAll({ reason: 'turn-end' });
+
+    expect(retryCalls).toEqual(expect.arrayContaining([
+      { localId: 'segment-1', body: { type: 'message', message: 'First.' } },
+      { localId: 'segment-2', body: { type: 'message', message: 'Second.' } },
+      { localId: 'segment-3', body: { type: 'message', message: 'Third.' } },
+    ]));
+  });
+
+  it('reports and retries a failed replacement of a tool-boundary rewrite candidate', async () => {
+    const { session } = createSessionStub();
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => 'segment-1',
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Draft.');
+    await writer.flushAll({ reason: 'tool-call-boundary' });
+    session.sendAgentMessageCommitted = async () => {
+      throw new Error('replacement unavailable');
+    };
+
+    expect(writer.overrideAssistantText('Final.')).toBe(true);
+    await expect(writer.flushAll({ reason: 'turn-end' })).resolves.toMatchObject({
+      assistantRoot: { sawText: true, didDurablyFlush: false },
+    });
+
+    session.sendAgentMessageCommitted = async () => {};
+    await expect(writer.flushAll({ reason: 'tool-call-boundary' })).resolves.toMatchObject({
+      assistantRoot: { sawText: true, didDurablyFlush: true },
+    });
+  });
+
+  it('retries both a failed rewrite candidate and a newer failed active segment', async () => {
+    const { session } = createSessionStub();
+    let segmentOrdinal = 0;
+    const writer = createStreamedTranscriptWriter({
+      provider: TEST_PROVIDER,
+      session,
+      makeLocalId: () => `segment-${++segmentOrdinal}`,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Draft.');
+    await writer.flushAll({ reason: 'tool-call-boundary' });
+    session.sendAgentMessageCommitted = async () => {
+      throw new Error('transcript unavailable');
+    };
+
+    expect(writer.overrideAssistantText('Final.')).toBe(true);
+    writer.appendAssistantDelta('Newer.');
+    await expect(writer.flushAll({ reason: 'turn-end' })).resolves.toMatchObject({
+      assistantRoot: { sawText: true, didDurablyFlush: false },
+    });
+
+    const retryCalls: Array<{ localId: string; body: unknown }> = [];
+    session.sendAgentMessageCommitted = async (_provider, body, opts) => {
+      retryCalls.push({ localId: String(opts.localId), body });
+    };
+    await expect(writer.flushAll({ reason: 'tool-call-boundary' })).resolves.toMatchObject({
+      assistantRoot: { sawText: true, didDurablyFlush: true },
+    });
+    expect(retryCalls).toEqual(expect.arrayContaining([
+      { localId: 'segment-1', body: { type: 'message', message: 'Final.' } },
+      { localId: 'segment-2', body: { type: 'message', message: 'Newer.' } },
+    ]));
+  });
+
   it('does not create a new durable segment when overrideAssistantText is called before any streamed delta', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -534,8 +777,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -556,8 +799,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -582,8 +825,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -617,8 +860,8 @@ describe('createStreamedTranscriptWriter', () => {
     };
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'l1',
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
@@ -640,8 +883,8 @@ describe('createStreamedTranscriptWriter', () => {
     };
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -672,8 +915,8 @@ describe('createStreamedTranscriptWriter', () => {
     session.sendAgentMessage = vi.fn(() => new Promise<void>(() => {}));
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'l1',
       checkpointIntervalMs: 1_000,
       checkpointMinChars: 1,
@@ -704,8 +947,8 @@ describe('createStreamedTranscriptWriter', () => {
     const { session, durableCalls } = createSessionStub();
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -743,7 +986,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     const { session, durableCalls } = createSessionStub();
     let resolveFirstCommit: (() => void) | undefined;
-    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+    session.sendAgentMessageCommitted = vi.fn(async (provider, body, opts) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -758,8 +1001,8 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -797,7 +1040,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     const { session, durableCalls } = createSessionStub();
     let resolveFirstCommit: (() => void) | undefined;
-    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+    session.sendAgentMessageCommitted = vi.fn(async (provider, body, opts) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -812,8 +1055,8 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -851,7 +1094,7 @@ describe('createStreamedTranscriptWriter', () => {
 
   it('flushes the latest complete snapshot when flushAll runs immediately after another delta while the first durable snapshot is still in flight', async () => {
     const { session, durableCalls } = createSessionStub();
-    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+    session.sendAgentMessageCommitted = vi.fn(async (provider, body, opts) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -861,8 +1104,8 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -889,7 +1132,7 @@ describe('createStreamedTranscriptWriter', () => {
 
     const { session, durableCalls } = createSessionStub();
     let resolveFirstCommit: (() => void) | undefined;
-    session.sendAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => {
+    session.sendAgentMessageCommitted = vi.fn(async (provider, body, opts) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -904,8 +1147,8 @@ describe('createStreamedTranscriptWriter', () => {
     });
 
     const writer = createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       checkpointIntervalMs: 10_000,
       checkpointMinChars: 999,
@@ -954,8 +1197,8 @@ describe('createStreamedTranscriptWriter', () => {
 
     try {
       const writer = createStreamedTranscriptWriter({
-        provider: 'codex' as any,
-        session: session as any,
+        provider: TEST_PROVIDER,
+        session,
         makeLocalId: () => 'segment-secret',
         initialCheckpointDelayMs: 0,
         checkpointIntervalMs: 1_000,
@@ -1003,8 +1246,8 @@ function createDeltaSessionStub() {
   const durableCalls: DurableCall[] = [];
   let connectionEpoch = 1;
 
-  const session = {
-    sendAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
+  const session: StreamedTranscriptWriterSession = {
+    sendAgentMessageCommitted: async (provider, body, opts) => {
       durableCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -1012,7 +1255,7 @@ function createDeltaSessionStub() {
         body,
       });
     },
-    sendAgentMessageEphemeral: (provider: any, body: any, opts: any) => {
+    sendAgentMessageEphemeral: (provider, body, opts) => {
       liveCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -1021,10 +1264,10 @@ function createDeltaSessionStub() {
         createdAt: Number(opts.createdAt),
         updatedAt: Number(opts.updatedAt),
         ...(typeof opts.tick === 'number' ? { tick: opts.tick } : {}),
-      } as LiveCall);
+      });
       return { accepted: true as const, epoch: connectionEpoch };
     },
-    sendAgentMessageEphemeralDelta: (provider: any, body: any, opts: any) => {
+    sendAgentMessageEphemeralDelta: (provider, body, opts) => {
       deltaCalls.push({
         provider: String(provider),
         localId: String(opts.localId),
@@ -1052,10 +1295,13 @@ function createDeltaSessionStub() {
 }
 
 describe('createStreamedTranscriptWriter delta live streaming', () => {
-  function createDeltaWriter(session: unknown, overrides: Record<string, unknown> = {}) {
+  const createDeltaWriter = (
+    session: StreamedTranscriptWriterSession,
+    overrides: Partial<Parameters<typeof createStreamedTranscriptWriter>[0]> = {},
+  ): StreamedTranscriptWriter => {
     return createStreamedTranscriptWriter({
-      provider: 'codex' as any,
-      session: session as any,
+      provider: TEST_PROVIDER,
+      session,
       makeLocalId: () => 'segment-1',
       initialCheckpointDelayMs: 10_000,
       checkpointIntervalMs: 10_000,
@@ -1065,7 +1311,7 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
       liveCheckpointIntervalMs: 1_000,
       ...overrides,
     });
-  }
+  };
 
   it('emits a full snapshot first, then append-only deltas with chained ticks and base lengths', async () => {
     vi.useFakeTimers();
@@ -1092,7 +1338,7 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
       expect(liveCalls).toHaveLength(1);
       expect(deltaCalls).toHaveLength(1);
       expect(deltaCalls[0]).toMatchObject({
-        provider: 'codex',
+        provider: TEST_PROVIDER,
         localId: 'segment-1',
         body: { type: 'message', message: ' wor' },
         tick: 2,

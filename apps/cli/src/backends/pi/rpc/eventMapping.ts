@@ -133,6 +133,13 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     return [];
   }
 
+  if (type === 'message_start') {
+    const message = asRecord(record.message);
+    return message?.role === 'assistant'
+      ? [{ type: 'model-output', startsNewSegment: true }]
+      : [];
+  }
+
   if (type === 'compaction_start') {
     const lifecycleId = readPiCompactionLifecycleId(record);
     return [{

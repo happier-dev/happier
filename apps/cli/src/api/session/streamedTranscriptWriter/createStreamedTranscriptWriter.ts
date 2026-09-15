@@ -54,20 +54,23 @@ type SegmentRuntime = StreamedTranscriptSegmentRuntime;
 const DURABLE_COMMIT_FAILURE_RETRY_DELAY_MS = 2_000;
 
 function didSegmentDurablyFlush(segment: SegmentRuntime, expectedState: SegmentState): boolean {
-  if (segment.accumulatedText.length === 0) return false;
   return segment.lastCommittedTextVersion === segment.textVersion && segment.lastCommittedState === expectedState;
 }
 
 function buildFlushSummary(params: {
   flushedSegments: ReadonlyArray<SegmentRuntime>;
   expectedState: SegmentState;
+  completeSegments?: ReadonlySet<SegmentRuntime>;
 }): StreamedTranscriptFlushSummary {
   const segments: StreamedTranscriptSegmentFlushSummary[] = params.flushedSegments.map((segment) => ({
     kind: segment.kind,
     sidechainId: segment.sidechainId,
     localId: segment.segmentLocalId,
     sawText: segment.accumulatedText.length > 0,
-    didDurablyFlush: didSegmentDurablyFlush(segment, params.expectedState),
+    didDurablyFlush: didSegmentDurablyFlush(
+      segment,
+      params.completeSegments?.has(segment) ? 'complete' : params.expectedState,
+    ),
     lastCommittedState: segment.lastCommittedState,
     commitResult: segment.lastCommitResult,
   }));
@@ -117,6 +120,9 @@ export function createStreamedTranscriptWriter(params: {
   const liveCheckpointIntervalMs = resolveLiveCheckpointIntervalMs(params.liveCheckpointIntervalMs);
 
   const segments = new Map<SegmentKey, SegmentRuntime>();
+  const toolBoundaryRewriteCandidates = new Map<SegmentKey, SegmentRuntime>();
+  const inFlightToolBoundaryRewriteCandidates = new Set<SegmentRuntime>();
+  const pendingRewriteRetries = new Set<SegmentRuntime>();
   let scheduleDurableCheckpoint: (segment: SegmentRuntime) => void;
 
   const clearLiveSnapshotTimer = (segment: SegmentRuntime) => {
@@ -531,8 +537,18 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   const overrideSegmentText = (kind: SegmentKind, text: string, sidechainId: string | null): boolean => {
-    const segment = getExistingSegment(kind, sidechainId);
-    if (!segment) return false;
+    const key = buildStreamedTranscriptSegmentKey(kind, sidechainId);
+    const segment = segments.get(key);
+    if (!segment) {
+      const rewriteCandidate = toolBoundaryRewriteCandidates.get(key);
+      if (!rewriteCandidate) return false;
+      if (rewriteCandidate.accumulatedText === text) return true;
+      rewriteCandidate.accumulatedText = text;
+      rewriteCandidate.appendOnlySinceLastDurableSnapshot = false;
+      rewriteCandidate.textVersion += 1;
+      commitDurableSnapshot(rewriteCandidate, { state: 'complete', force: true });
+      return true;
+    }
     if (segment.accumulatedText === text) return true;
     segment.accumulatedText = text;
     segment.appendOnlySinceLastDurableSnapshot = false;
@@ -553,6 +569,29 @@ export function createStreamedTranscriptWriter(params: {
     return true;
   };
 
+  const updateToolBoundaryRewriteCandidates = (
+    reason: 'tool-call-boundary' | 'turn-end' | 'abort',
+    flushedSegments: ReadonlyArray<SegmentRuntime>,
+  ): SegmentRuntime[] => {
+    const candidatesToDrain = reason === 'tool-call-boundary'
+      ? []
+      : Array.from(new Set([
+          ...toolBoundaryRewriteCandidates.values(),
+          ...inFlightToolBoundaryRewriteCandidates,
+        ]));
+    if (reason === 'tool-call-boundary') {
+      for (const segment of flushedSegments) {
+        if (segment.accumulatedText.length > 0) {
+          toolBoundaryRewriteCandidates.set(segment.key, segment);
+          inFlightToolBoundaryRewriteCandidates.add(segment);
+        }
+      }
+    } else {
+      toolBoundaryRewriteCandidates.clear();
+    }
+    return candidatesToDrain;
+  };
+
   const flushAll = async (opts: {
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;
@@ -560,6 +599,18 @@ export function createStreamedTranscriptWriter(params: {
     const state: SegmentState = opts.reason === 'abort' ? 'interrupted' : 'complete';
     const drainPromises: Promise<void>[] = [];
     const flushedSegments = Array.from(segments.values());
+    const rewriteCandidatesToDrain = Array.from(new Set([
+      ...pendingRewriteRetries,
+      ...updateToolBoundaryRewriteCandidates(opts.reason, flushedSegments),
+    ]));
+    pendingRewriteRetries.clear();
+    const rewriteCandidateSet = new Set(rewriteCandidatesToDrain);
+
+    for (const segment of rewriteCandidatesToDrain) {
+      if (!segment.isCommittingDurable && !didSegmentDurablyFlush(segment, 'complete')) {
+        commitDurableSnapshot(segment, { state: 'complete', force: true });
+      }
+    }
 
     for (const segment of flushedSegments) {
       clearDurableCheckpointTimer(segment);
@@ -576,18 +627,41 @@ export function createStreamedTranscriptWriter(params: {
       })());
     }
 
-    await Promise.all(drainPromises);
-    for (const segment of flushedSegments) {
+    await Promise.all([
+      ...drainPromises,
+      ...rewriteCandidatesToDrain.map((segment) => waitForSegmentDrain(segment)),
+    ]);
+    const settledSegments = Array.from(new Set([
+      ...flushedSegments,
+      ...rewriteCandidatesToDrain,
+    ]));
+    for (const segment of settledSegments) {
+      const isRewriteCandidate = rewriteCandidateSet.has(segment)
+        || inFlightToolBoundaryRewriteCandidates.has(segment)
+        || toolBoundaryRewriteCandidates.get(segment.key) === segment;
+      const expectedState = isRewriteCandidate ? 'complete' : state;
       if (
         segment.commitMode === 'compatibility'
-        && (segment.lastCommitError !== null || !didSegmentDurablyFlush(segment, state))
+        && (segment.lastCommitError !== null || !didSegmentDurablyFlush(segment, expectedState))
       ) {
-        segments.set(segment.key, segment);
+        if (isRewriteCandidate) {
+          pendingRewriteRetries.add(segment);
+        } else {
+          segments.set(segment.key, segment);
+        }
       }
     }
-    const failedExactSegment = flushedSegments.find((segment) =>
+    if (opts.reason === 'tool-call-boundary') {
+      for (const segment of flushedSegments) {
+        inFlightToolBoundaryRewriteCandidates.delete(segment);
+      }
+    }
+    const failedExactSegment = settledSegments.find((segment) =>
       segment.commitMode === 'exact'
-      && (segment.lastCommitError !== null || !didSegmentDurablyFlush(segment, state)),
+      && (
+        segment.lastCommitError !== null
+        || !didSegmentDurablyFlush(segment, rewriteCandidateSet.has(segment) ? 'complete' : state)
+      ),
     );
     if (failedExactSegment) {
       const reason = failedExactSegment.lastCommitError instanceof Error
@@ -595,8 +669,12 @@ export function createStreamedTranscriptWriter(params: {
         : 'durable acknowledgement was not received';
       throw new Error(`Exact transcript segment commit failed for ${failedExactSegment.segmentLocalId}: ${reason}`);
     }
-    for (const segment of flushedSegments) logUnresolvedLiveFailureSummary(segment);
-    return buildFlushSummary({ flushedSegments, expectedState: state });
+    for (const segment of settledSegments) logUnresolvedLiveFailureSummary(segment);
+    return buildFlushSummary({
+      flushedSegments: settledSegments,
+      expectedState: state,
+      completeSegments: rewriteCandidateSet,
+    });
   };
 
   const flushAllThroughDurableAdmission = async (opts: {
@@ -605,6 +683,9 @@ export function createStreamedTranscriptWriter(params: {
   }): Promise<void> => {
     const state: SegmentState = opts.reason === 'abort' ? 'interrupted' : 'complete';
     const flushedSegments = Array.from(segments.values());
+    for (const segment of updateToolBoundaryRewriteCandidates(opts.reason, flushedSegments)) {
+      pendingRewriteRetries.add(segment);
+    }
 
     await Promise.all(flushedSegments.map(async (segment) => {
       clearDurableCheckpointTimer(segment);
@@ -646,6 +727,9 @@ export function createStreamedTranscriptWriter(params: {
       segment.idleWaiters.splice(0, segment.idleWaiters.length).forEach((resolve) => resolve());
     }
     segments.clear();
+    toolBoundaryRewriteCandidates.clear();
+    inFlightToolBoundaryRewriteCandidates.clear();
+    pendingRewriteRetries.clear();
   };
 
   return {
