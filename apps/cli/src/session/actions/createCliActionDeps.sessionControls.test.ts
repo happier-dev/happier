@@ -1112,7 +1112,6 @@ describe('createCliActionDeps session controls', () => {
       sessionId: 'sess_inactive',
       objective: 'Ship native goals',
       status: 'paused',
-      tokenBudget: null,
     })).resolves.toEqual({
       ok: true,
       workState: { v: 1, items: [], primaryItemId: null, updatedAt: 1 },
@@ -1125,7 +1124,6 @@ describe('createCliActionDeps session controls', () => {
       request: {
         objective: 'Ship native goals',
         status: 'paused',
-        tokenBudget: null,
       },
       metadata: expect.objectContaining({ machineId: 'machine-local' }),
       currentMachineId: 'machine-local',

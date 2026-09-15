@@ -96,8 +96,7 @@ function shouldReactivateForObjectiveEdit(params: Readonly<{
 
     const goalItem = readCurrentGoalItem(params.metadata, params.threadId);
     if (!goalItem) return false;
-    if (goalItem.status === 'complete') return true;
-    return goalItem.status === 'blocked' && goalItem.statusReason === 'budgetLimited';
+    return goalItem.status === 'complete';
 }
 
 function normalizeNativeStatus(status: SessionWorkStateStatusV1 | undefined): 'active' | 'paused' | 'complete' | undefined | null {
@@ -108,8 +107,7 @@ function normalizeNativeStatus(status: SessionWorkStateStatusV1 | undefined): 'a
 
 function hasMutationField(mutation: CodexAppServerGoalSetMutation): boolean {
     return typeof mutation.objective === 'string'
-        || typeof mutation.status === 'string'
-        || Object.prototype.hasOwnProperty.call(mutation, 'tokenBudget');
+        || typeof mutation.status === 'string';
 }
 
 function buildGoalSetParams(params: Readonly<{
@@ -137,9 +135,6 @@ function buildGoalSetParams(params: Readonly<{
             threadId: params.threadId,
             mutation: params.mutation,
         }) ? { status: 'active' } : {}),
-        ...(Object.prototype.hasOwnProperty.call(params.mutation, 'tokenBudget')
-            ? { tokenBudget: params.mutation.tokenBudget ?? null }
-            : {}),
     };
 }
 
@@ -208,9 +203,6 @@ async function setGoal(
             const mutation: CodexAppServerGoalSetMutation = {
                 ...(typeof params.objective === 'string' ? { objective: params.objective } : {}),
                 ...(typeof params.status === 'string' ? { status: params.status } : {}),
-                ...(Object.prototype.hasOwnProperty.call(params, 'tokenBudget')
-                    ? { tokenBudget: params.tokenBudget ?? null }
-                    : {}),
             };
             const requestParams = buildGoalSetParams({ threadId, metadata, mutation });
             if (!requestParams) {
@@ -314,9 +306,6 @@ export const codexAppServerGoalControlAdapter: GenericSessionGoalControlAdapter 
             metadata: params.metadata,
             ...(typeof params.request.objective === 'string' ? { objective: params.request.objective } : {}),
             ...(typeof params.request.status === 'string' ? { status: params.request.status } : {}),
-            ...(Object.prototype.hasOwnProperty.call(params.request, 'tokenBudget')
-                ? { tokenBudget: params.request.tokenBudget ?? null }
-                : {}),
         });
     },
     clearGoal: async (params) => {

@@ -152,7 +152,6 @@ async function executeResolvedGoalControl(params: Readonly<{
   request?: Readonly<{
     objective?: string;
     status?: string;
-    tokenBudget?: number | null;
   }>;
   deps?: RegisterMachineSessionGoalRpcHandlersDeps;
 }>): Promise<unknown> {
@@ -193,7 +192,6 @@ async function executeResolvedGoalControl(params: Readonly<{
     sessionId: transport.sessionId,
     ...(typeof request.objective === 'string' ? { objective: request.objective } : {}),
     ...(typeof request.status === 'string' ? { status: request.status } : {}),
-    ...(Object.prototype.hasOwnProperty.call(request, 'tokenBudget') ? { tokenBudget: request.tokenBudget } : {}),
   });
 }
 

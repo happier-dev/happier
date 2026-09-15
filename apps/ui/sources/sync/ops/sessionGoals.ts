@@ -18,7 +18,6 @@ import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/
 export type SessionGoalMutationRequest = Readonly<{
     objective?: string;
     status?: 'active' | 'paused' | 'complete';
-    tokenBudget?: number | null;
     resumeInactiveWithInitialGoal?: boolean;
 }>;
 
@@ -224,7 +223,6 @@ async function resumeInactiveSessionWithInitialGoal(
         initialGoal: {
             objective,
             ...(request.status ? { status: request.status } : {}),
-            ...('tokenBudget' in request ? { tokenBudget: request.tokenBudget } : {}),
         },
     });
 
@@ -243,7 +241,6 @@ function buildGoalSetPayload(request: SessionGoalMutationRequest): Record<string
     return {
         ...(typeof request.objective === 'string' ? { objective: request.objective } : {}),
         ...(typeof request.status === 'string' ? { status: request.status } : {}),
-        ...('tokenBudget' in request ? { tokenBudget: request.tokenBudget } : {}),
     };
 }
 

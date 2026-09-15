@@ -1264,7 +1264,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     ) => Promise<CodexConnectedServiceAuthReadRuntimeIdentityResult>;
     invalidateConnectedServiceAuthTransports: () => Promise<Readonly<{ ok: true }> | UnsupportedSessionRuntimeMethodResult>;
     flushTurn: () => Promise<void>;
-    setGoal: (_objective: string | undefined, _options?: Readonly<{ status?: string; tokenBudget?: number | null }>) => Promise<void | UnsupportedSessionRuntimeMethodResult | GoalControlNotFoundResult | InvalidGoalStatusResult>;
+    setGoal: (_objective: string | undefined, _options?: Readonly<{ status?: string }>) => Promise<void | UnsupportedSessionRuntimeMethodResult | GoalControlNotFoundResult | InvalidGoalStatusResult>;
     clearGoal: () => Promise<void | UnsupportedSessionRuntimeMethodResult>;
     refreshGoal: () => Promise<void | UnsupportedSessionRuntimeMethodResult>;
     enableUsageLimitWaitResume: (_request: Readonly<{
@@ -4330,9 +4330,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 threadId: startOrLoadResult.nextThreadId,
                 objective: trimStringValue(initialGoal.objective),
                 ...(initialGoal.status ? { status: initialGoal.status } : {}),
-                ...(Object.prototype.hasOwnProperty.call(initialGoal, 'tokenBudget')
-                    ? { tokenBudget: initialGoal.tokenBudget ?? null }
-                    : {}),
             });
             await publishGoalWorkState(response);
         }
@@ -5445,7 +5442,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         },
         setGoal: async (
             objective: string | undefined,
-            options?: Readonly<{ status?: string; tokenBudget?: number | null }>,
+            options?: Readonly<{ status?: string }>,
         ) => {
             const activeThreadId = threadId;
             if (!activeThreadId) {
@@ -5455,8 +5452,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             const nativeStatus = normalizeNativeGoalSetStatus(options?.status);
             if (nativeStatus === null) return invalidGoalStatus();
             const hasStatus = nativeStatus !== undefined;
-            const hasTokenBudget = Boolean(options && Object.prototype.hasOwnProperty.call(options, 'tokenBudget'));
-            if (!trimmedObjective && !hasStatus && !hasTokenBudget) {
+            if (!trimmedObjective && !hasStatus) {
                 throw new Error('Codex app-server setGoal requires a non-empty objective');
             }
             const client = await ensureClient();
@@ -5465,7 +5461,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 ...(trimmedObjective ? { objective: trimmedObjective } : {}),
                 ...(!trimmedObjective && fallbackObjective ? { objective: fallbackObjective } : {}),
                 ...(hasStatus ? { status: nativeStatus } : {}),
-                ...(hasTokenBudget ? { tokenBudget: options?.tokenBudget ?? null } : {}),
             });
             try {
                 const response = await client.request('thread/goal/set', buildRequest());

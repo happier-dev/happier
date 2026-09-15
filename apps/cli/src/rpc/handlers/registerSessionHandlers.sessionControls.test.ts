@@ -146,7 +146,6 @@ describe('registerSessionHandlers session controls', () => {
       handlers.get(SESSION_RPC_METHODS.SESSION_GOAL_SET)?.({
         objective: '  Ship native goal  ',
         status: 'paused',
-        tokenBudget: 1200,
       }),
     ).resolves.toEqual({ workState });
     await expect(handlers.get(SESSION_RPC_METHODS.SESSION_GOAL_CLEAR)?.({})).resolves.toEqual({ workState });
@@ -154,7 +153,6 @@ describe('registerSessionHandlers session controls', () => {
     expect(refreshGoal).toHaveBeenCalledTimes(1);
     expect(setGoal).toHaveBeenCalledWith('Ship native goal', {
       status: 'paused',
-      tokenBudget: 1200,
     });
     expect(clearGoal).toHaveBeenCalledTimes(1);
   });

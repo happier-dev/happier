@@ -44,18 +44,15 @@ export type SessionGoalGetRequestV1 = z.infer<typeof SessionGoalGetRequestV1Sche
 const sessionGoalMutationHasField = (value: Readonly<{
   objective?: unknown;
   status?: unknown;
-  tokenBudget?: unknown;
 }>): boolean => (
   typeof value.objective === 'string'
   || typeof value.status === 'string'
-  || Object.prototype.hasOwnProperty.call(value, 'tokenBudget')
 );
 
 const SessionGoalMutationFieldsV1Schema = z
   .object({
     objective: z.string().trim().min(1).max(4000).optional(),
     status: SessionWorkStateStatusV1Schema.optional(),
-    tokenBudget: z.number().finite().positive().nullable().optional(),
   })
   .passthrough()
   .refine(sessionGoalMutationHasField, { message: 'At least one goal mutation field is required' });
@@ -453,7 +450,6 @@ export const DaemonSessionGoalSetRequestV1Schema = z
     sessionId: z.string().trim().min(1),
     objective: z.string().trim().min(1).max(4000).optional(),
     status: SessionWorkStateStatusV1Schema.optional(),
-    tokenBudget: z.number().finite().positive().nullable().optional(),
   })
   .passthrough()
   .refine(sessionGoalMutationHasField, { message: 'At least one goal mutation field is required' });

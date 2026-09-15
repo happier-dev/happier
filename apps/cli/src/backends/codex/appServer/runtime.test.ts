@@ -395,8 +395,8 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32601, message: "Method not found: thread/goal/set" } }) + "\\n");',
         '            continue;',
         '        }',
-        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { goal: { threadId: msg.params?.threadId ?? "thread-started", objective: msg.params?.objective ?? "Current objective", status: msg.params?.status ?? "active", tokenBudget: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "tokenBudget") ? msg.params.tokenBudget : undefined, updatedAt: "2026-05-13T10:05:00.000Z" } } }) + "\\n");',
-        '        process.stdout.write(JSON.stringify({ method: "thread/goal/updated", params: { threadId: msg.params?.threadId ?? "thread-started", goal: { threadId: msg.params?.threadId ?? "thread-started", objective: msg.params?.objective ?? "Current objective", status: msg.params?.status ?? "active", tokenBudget: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "tokenBudget") ? msg.params.tokenBudget : undefined, updatedAt: "2026-05-13T10:05:00.000Z" } } }) + "\\n");',
+        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { goal: { threadId: msg.params?.threadId ?? "thread-started", objective: msg.params?.objective ?? "Current objective", status: msg.params?.status ?? "active", updatedAt: "2026-05-13T10:05:00.000Z" } } }) + "\\n");',
+        '        process.stdout.write(JSON.stringify({ method: "thread/goal/updated", params: { threadId: msg.params?.threadId ?? "thread-started", goal: { threadId: msg.params?.threadId ?? "thread-started", objective: msg.params?.objective ?? "Current objective", status: msg.params?.status ?? "active", updatedAt: "2026-05-13T10:05:00.000Z" } } }) + "\\n");',
         `        if (${JSON.stringify(params.emitGoalContinuationTurn === true || params.emitGoalContinuationUsageLimitFailure === true)}) {`,
         '            const goalThreadId = msg.params?.threadId ?? "thread-started";',
         '            const goalTurnId = "turn-goal-continuation";',
@@ -2930,8 +2930,8 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.startOrLoad({});
         await (runtime as unknown as {
-            setGoal: (objective: string, options?: { status?: string; tokenBudget?: number | null }) => Promise<void>;
-        }).setGoal('Finish native goal wiring', { status: 'paused', tokenBudget: 1200 });
+            setGoal: (objective: string, options?: { status?: string }) => Promise<void>;
+        }).setGoal('Finish native goal wiring', { status: 'paused' });
         await (runtime as unknown as { clearGoal: () => Promise<void> }).clearGoal();
 
         const requestLog = await readRequestLog(requestLogPath);
@@ -2946,7 +2946,6 @@ describe('createCodexAppServerRuntime', () => {
                     threadId: 'thread-started',
                     objective: 'Finish native goal wiring',
                     status: 'paused',
-                    tokenBudget: 1200,
                 },
             }),
             expect.objectContaining({
@@ -3014,37 +3013,6 @@ describe('createCodexAppServerRuntime', () => {
 
         const requestLog = await readRequestLog(requestLogPath);
         expect(requestLog.filter((entry) => entry.method === 'thread/goal/set')).toEqual([]);
-    });
-
-    it('sends live budget-only goal mutations without starting a turn', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-goal-budget-only-');
-        const sessionTurnLifecycle = createSessionTurnLifecycleTestDouble();
-
-        const runtime = createCodexAppServerRuntime({
-            directory: root,
-            onThinkingChange: vi.fn(),
-            session: { updateMetadata: vi.fn(), sessionTurnLifecycle } as any,
-            permissionMode: 'default',
-        });
-
-        await runtime.startOrLoad({});
-        await (runtime as unknown as {
-            setGoal: (objective: string | undefined, options?: { tokenBudget?: number | null }) => Promise<void>;
-        }).setGoal(undefined, { tokenBudget: null });
-
-        const requestLog = await readRequestLog(requestLogPath);
-        expect(requestLog).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                method: 'thread/goal/set',
-                params: {
-                    threadId: 'thread-started',
-                    tokenBudget: null,
-                },
-            }),
-        ]));
-        expect(requestLog.filter((entry) => entry.method === 'turn/start')).toEqual([]);
-        expect(sessionTurnLifecycle.beginTurn).not.toHaveBeenCalled();
-        expect(sessionTurnLifecycle.completeTurn).not.toHaveBeenCalled();
     });
 
     it('adopts native app-server goal continuation turns and bridges their stream events', async () => {

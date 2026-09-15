@@ -302,7 +302,6 @@ function buildGrokGoalWorkState(update: JsonObject, now: number): SessionWorkSta
   const itemId = `grok.goal:${goalId}`;
   const totalDeliverables = readNonNegativeInteger(update.total_deliverables) ?? 0;
   const completedDeliverables = readNonNegativeInteger(update.completed_deliverables) ?? 0;
-  const tokenBudget = readNonNegativeNumber(update.token_budget);
   const tokensUsed = readNonNegativeInteger(update.tokens_used);
   const elapsedMs = readNonNegativeNumber(update.elapsed_ms);
   const status = mapGoalStatus(update.status);
@@ -316,11 +315,9 @@ function buildGrokGoalWorkState(update: JsonObject, now: number): SessionWorkSta
       kind: 'goal',
       origin: 'vendor',
       status,
-      ...(status === 'blocked' && update.status === 'budget_limited'
-        ? { statusReason: 'budgetLimited' as const }
-        : status === 'blocked'
-          ? { statusReason: 'blocked' as const }
-          : {}),
+      ...(status === 'blocked'
+        ? { statusReason: 'blocked' as const }
+        : {}),
       title: objective,
       backendId: 'grok',
       agentId: 'grok',
@@ -328,7 +325,6 @@ function buildGrokGoalWorkState(update: JsonObject, now: number): SessionWorkSta
       ...(totalDeliverables > 0
         ? { progress: Math.min(1, completedDeliverables / totalDeliverables) }
         : {}),
-      ...(tokenBudget !== null && tokenBudget > 0 ? { tokenBudget } : {}),
       ...(tokensUsed !== null ? { tokensUsed } : {}),
       ...(elapsedMs !== null ? { timeUsedSeconds: elapsedMs / 1_000 } : {}),
       updatedAt: now,

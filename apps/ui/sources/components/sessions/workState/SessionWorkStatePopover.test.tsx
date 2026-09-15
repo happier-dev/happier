@@ -16,9 +16,6 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).insta
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).installTextModuleMock({
     translate: (key, params) => {
-        if (key === 'session.workState.goal.budgetProgress' && params?.used && params?.budget) {
-            return `${params.used} / ${params.budget}`;
-        }
         if (key === 'session.workState.goal.tokensSuffix' && params?.count != null) {
             return `${params.count} tokens`;
         }
@@ -412,7 +409,7 @@ describe('SessionWorkStatePopover', () => {
         act(() => tree?.unmount());
     });
 
-    it('renders the set-first-goal form as creation-only: no usage metrics, budget collapsed, cancel available', async () => {
+    it('renders the set-first-goal form as creation-only: no usage metrics, cancel available', async () => {
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SessionWorkStateContent
@@ -427,9 +424,6 @@ describe('SessionWorkStatePopover', () => {
 
         // The confusing pre-goal usage cards are gone: no time/tokens metadata before a goal exists.
         expect(() => tree?.root.findByProps({ testID: 'session-goal-usage-meta' })).toThrow();
-        // Budget is a collapsed optional disclosure, not a competing primary control.
-        expect(tree?.root.findByProps({ testID: 'session-goal-budget-disclosure' })).toBeTruthy();
-        expect(() => tree?.root.findByProps({ testID: 'session-goal-budget-input' })).toThrow();
         expect(tree?.root.findByProps({ testID: 'session-goal-cancel-button' })).toBeTruthy();
 
         act(() => tree?.unmount());
@@ -619,49 +613,6 @@ describe('SessionWorkStatePopover', () => {
         act(() => tree?.unmount());
     });
 
-    it('shows budget-limited goals precisely and hides pause controls', async () => {
-        const anchorRef = { current: null } as React.RefObject<any>;
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(<SessionWorkStatePopover
-                    sessionId="sess_1"
-                open
-                anchorRef={anchorRef}
-                snapshot={{
-                    v: 1,
-                    backendId: 'codex',
-                    updatedAt: 10,
-                    primaryItemId: 'goal:codex',
-                    items: [
-                        {
-                            id: 'goal:codex',
-                            kind: 'goal',
-                            origin: 'vendor',
-                            status: 'blocked',
-                            statusReason: 'budgetLimited',
-                            title: 'Ship goals',
-                            updatedAt: 10,
-                        },
-                    ],
-                }}
-                editableGoal
-                onRequestClose={vi.fn()}
-                onSetGoal={vi.fn()}
-                onClearGoal={vi.fn()}
-            />);
-        });
-
-        expect(collectText(tree?.toJSON())).toContain('session.workState.goal.statusBudgetLimited:');
-        openGoalActionsMenu(tree);
-        expect(() => tree?.root.findByProps({ testID: 'session-goal-pause-resume-button' })).toThrow();
-        expect(() => tree?.root.findByProps({ testID: 'session-goal-complete-button' })).toThrow();
-        expect(tree?.root.findByProps({ testID: 'session-goal-clear-button' })).toBeTruthy();
-        expect(tree?.root.findByProps({ testID: 'session-goal-edit-button' })).toBeTruthy();
-
-        act(() => tree?.unmount());
-    });
-
     it('reactivates complete goals when saving an edit', async () => {
         const anchorRef = { current: null } as React.RefObject<any>;
         const onSetGoal = vi.fn().mockResolvedValue({ ok: true });
@@ -802,91 +753,7 @@ describe('SessionWorkStatePopover', () => {
         act(() => tree?.unmount());
     });
 
-    it('validates token budget edits before saving', async () => {
-        const anchorRef = { current: null } as React.RefObject<any>;
-        const onSetGoal = vi.fn().mockResolvedValue({ ok: true });
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(<SessionWorkStatePopover
-                    sessionId="sess_1"
-                open
-                anchorRef={anchorRef}
-                snapshot={{
-                    v: 1,
-                    backendId: 'codex',
-                    updatedAt: 10,
-                    primaryItemId: 'goal:codex',
-                    items: [
-                        { id: 'goal:codex', kind: 'goal', origin: 'vendor', status: 'active', title: 'Ship goals', updatedAt: 10, tokenBudget: 1000, tokensUsed: 250 },
-                    ],
-                }}
-                editableGoal
-                onRequestClose={vi.fn()}
-                onSetGoal={onSetGoal}
-                onClearGoal={vi.fn()}
-            />);
-        });
-
-        await act(async () => {
-            await tree?.root.findByProps({ testID: 'session-goal-edit-button' }).props.onPress();
-        });
-        act(() => {
-            tree?.root.findByProps({ testID: 'session-goal-budget-input' }).props.onChangeText('0');
-        });
-        await act(async () => {
-            await tree?.root.findByProps({ testID: 'session-goal-save-button' }).props.onPress();
-        });
-
-        expect(onSetGoal).not.toHaveBeenCalled();
-        expect(tree?.root.findByProps({ testID: 'session-goal-budget-error' })).toBeTruthy();
-
-        act(() => tree?.unmount());
-    });
-
-    it('renders goal budget progress with the shared token usage ring', async () => {
-        const anchorRef = { current: null } as React.RefObject<any>;
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(<SessionWorkStatePopover
-                    sessionId="sess_1"
-                open
-                anchorRef={anchorRef}
-                snapshot={{
-                    v: 1,
-                    backendId: 'codex',
-                    updatedAt: 10,
-                    primaryItemId: 'goal:codex',
-                    items: [
-                        {
-                            id: 'goal:codex',
-                            kind: 'goal',
-                            origin: 'vendor',
-                            status: 'active',
-                            title: 'Ship goals',
-                            updatedAt: 10,
-                            tokenBudget: 1000,
-                            tokensUsed: 250,
-                        },
-                    ],
-                }}
-                editableGoal
-                onRequestClose={vi.fn()}
-                onSetGoal={vi.fn()}
-                onClearGoal={vi.fn()}
-            />);
-        });
-
-        const budgetMeta = collectText(tree?.root.findByProps({ testID: 'session-goal-usage-meta' }).props.children);
-        expect(budgetMeta).toContain('250 / 1k');
-        expect(budgetMeta).toContain('25%');
-        expect(tree?.root.findByProps({ testID: 'session-goal-budget-meter' })).toBeTruthy();
-
-        act(() => tree?.unmount());
-    });
-
-    it('shows the no-budget state when a goal has no token budget', async () => {
+    it('shows token usage when available', async () => {
         const anchorRef = { current: null } as React.RefObject<any>;
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -921,7 +788,6 @@ describe('SessionWorkStatePopover', () => {
 
         const noBudgetMeta = collectText(tree?.root.findByProps({ testID: 'session-goal-usage-meta' }).props.children);
         expect(noBudgetMeta).toContain('250 tokens');
-        expect(() => tree?.root.findByProps({ testID: 'session-goal-budget-meter' })).toThrow();
 
         act(() => tree?.unmount());
     });
@@ -1122,7 +988,7 @@ describe('SessionWorkStatePopover', () => {
             />);
         });
 
-        // Claude does not publish canStop → no pause/resume/complete and no token-budget editor.
+        // Claude does not publish canStop → no pause/resume/complete.
         openGoalActionsMenu(tree);
         expect(() => tree?.root.findByProps({ testID: 'session-goal-pause-resume-button' })).toThrow();
         expect(() => tree?.root.findByProps({ testID: 'session-goal-complete-button' })).toThrow();
@@ -1132,8 +998,6 @@ describe('SessionWorkStatePopover', () => {
         await act(async () => {
             await tree?.root.findByProps({ testID: 'session-goal-edit-button' }).props.onPress();
         });
-        expect(() => tree?.root.findByProps({ testID: 'session-goal-budget-disclosure' })).toThrow();
-        expect(() => tree?.root.findByProps({ testID: 'session-goal-budget-input' })).toThrow();
 
         act(() => tree?.unmount());
     });
@@ -1170,7 +1034,6 @@ describe('SessionWorkStatePopover', () => {
         await act(async () => {
             await tree?.root.findByProps({ testID: 'session-goal-edit-button' }).props.onPress();
         });
-        expect(tree?.root.findByProps({ testID: 'session-goal-budget-disclosure' })).toBeTruthy();
 
         act(() => tree?.unmount());
     });
@@ -1359,50 +1222,5 @@ describe('SessionWorkStatePopover', () => {
         } finally {
             vi.useRealTimers();
         }
-    });
-
-    it('clears an existing token budget when no limit is selected', async () => {
-        const anchorRef = { current: null } as React.RefObject<any>;
-        const onSetGoal = vi.fn().mockResolvedValue({ ok: true });
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(<SessionWorkStatePopover
-                    sessionId="sess_1"
-                open
-                anchorRef={anchorRef}
-                snapshot={{
-                    v: 1,
-                    backendId: 'codex',
-                    updatedAt: 10,
-                    primaryItemId: 'goal:codex',
-                    items: [
-                        { id: 'goal:codex', kind: 'goal', origin: 'vendor', status: 'active', title: 'Ship goals', updatedAt: 10, tokenBudget: 1000, tokensUsed: 250 },
-                    ],
-                }}
-                editableGoal
-                onRequestClose={vi.fn()}
-                onSetGoal={onSetGoal}
-                onClearGoal={vi.fn()}
-            />);
-        });
-
-        await act(async () => {
-            await tree?.root.findByProps({ testID: 'session-goal-edit-button' }).props.onPress();
-        });
-        await act(async () => {
-            await tree?.root.findByProps({ testID: 'session-goal-budget-remove-button' }).props.onPress();
-        });
-        await act(async () => {
-            await tree?.root.findByProps({ testID: 'session-goal-save-button' }).props.onPress();
-        });
-
-        expect(onSetGoal).toHaveBeenCalledWith({
-            objective: 'Ship goals',
-            tokenBudget: null,
-            resumeInactiveWithInitialGoal: false,
-        });
-
-        act(() => tree?.unmount());
     });
 });

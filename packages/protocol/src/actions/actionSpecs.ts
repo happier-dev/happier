@@ -415,11 +415,9 @@ const SessionGoalSetInputSchema = z.object({
   sessionId: z.string().min(1),
   objective: z.string().trim().min(1).max(4000).optional(),
   status: SessionWorkStateStatusV1Schema.optional(),
-  tokenBudget: z.number().finite().positive().nullable().optional(),
 }).passthrough().refine((value) => (
   typeof value.objective === 'string'
   || typeof value.status === 'string'
-  || Object.prototype.hasOwnProperty.call(value, 'tokenBudget')
 ), { message: 'At least one goal mutation field is required' });
 
 const SessionCatalogListInputSchema = z.object({
@@ -2566,7 +2564,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'objective', title: 'Objective', widget: 'textarea' },
         { path: 'status', title: 'Status', widget: 'text' },
-        { path: 'tokenBudget', title: 'Token budget', widget: 'text' },
       ],
     },
     inputSchema: SessionGoalSetInputSchema,

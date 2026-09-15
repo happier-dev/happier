@@ -293,7 +293,6 @@ export type ActionExecutorDeps = Readonly<{
     sessionId: string;
     objective?: string;
     status?: string;
-    tokenBudget?: number | null;
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionGoalClear?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
@@ -2393,14 +2392,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const data = parsed.data as Record<string, unknown>;
-          const tokenBudget = data.tokenBudget;
           const res = await deps.sessionGoalSet({
             sessionId,
             ...(typeof data.objective === 'string' ? { objective: data.objective } : {}),
             ...(typeof data.status === 'string' ? { status: data.status } : {}),
-            ...(Object.prototype.hasOwnProperty.call(data, 'tokenBudget') && (typeof tokenBudget === 'number' || tokenBudget === null)
-              ? { tokenBudget }
-              : {}),
             ...(serverId ? { serverId } : {}),
           });
           return { ok: true, result: res };

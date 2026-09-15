@@ -327,7 +327,7 @@ export async function runCodex(opts: {
         refreshGoal?: () => Promise<unknown>;
         setGoal?: (
             objective: string | undefined,
-            options?: Readonly<{ status?: string; tokenBudget?: number | null }>,
+            options?: Readonly<{ status?: string }>,
         ) => Promise<unknown>;
         clearGoal?: () => Promise<unknown>;
         listVendorPlugins?: () => Promise<unknown>;

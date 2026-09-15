@@ -208,20 +208,16 @@ export function useSessionWorkStateGoalController(params: Readonly<{
                     capabilityFallback={params.goalActionCapabilityFallback ?? null}
                     draftObjective={draftObjective}
                     onDraftObjectiveChange={setDraftObjective}
-                    onSave={(budgetDraft) => {
+                    onSave={() => {
                         const objective = draftObjective.trim();
                         if (!objective) return;
                         const request: {
                             objective: string;
                             status?: 'active';
-                            tokenBudget?: number | null;
                             resumeInactiveWithInitialGoal: false;
                         } = { objective, resumeInactiveWithInitialGoal: false };
-                        if (goal?.status === 'complete' || goal?.statusReason === 'budgetLimited') {
+                        if (goal?.status === 'complete') {
                             request.status = 'active';
-                        }
-                        if (budgetDraft.tokenBudgetChanged) {
-                            request.tokenBudget = budgetDraft.tokenBudget;
                         }
                         void runGoalMutation(request);
                     }}

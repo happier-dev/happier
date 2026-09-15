@@ -67,17 +67,6 @@ describe('SessionWorkStateV1', () => {
     });
 
     it('accepts only provider-neutral status reasons', () => {
-        const item = SessionWorkStateItemV1Schema.parse({
-            id: 'goal:thread-1',
-            kind: 'goal',
-            origin: 'vendor',
-            status: 'blocked',
-            statusReason: 'budgetLimited',
-            title: 'Budget-limited goal',
-            updatedAt: 1,
-        });
-
-        expect(item.statusReason).toBe('budgetLimited');
         expect(SessionWorkStateItemV1Schema.parse({
             id: 'goal:blocked',
             kind: 'goal',
@@ -96,6 +85,26 @@ describe('SessionWorkStateV1', () => {
             title: 'Usage-limited goal',
             updatedAt: 3,
         }).statusReason).toBe('usageLimited');
+        expect(SessionWorkStateItemV1Schema.parse({
+            id: 'goal:interrupted',
+            kind: 'goal',
+            origin: 'vendor',
+            status: 'paused',
+            statusReason: 'interrupted',
+            title: 'Interrupted goal',
+            updatedAt: 4,
+        }).statusReason).toBe('interrupted');
+        expect(() =>
+            SessionWorkStateItemV1Schema.parse({
+                id: 'goal:thread-1',
+                kind: 'goal',
+                origin: 'vendor',
+                status: 'blocked',
+                statusReason: 'budgetLimited',
+                title: 'Budget-limited goal',
+                updatedAt: 1,
+            }),
+        ).toThrow();
         expect(() =>
             SessionWorkStateItemV1Schema.parse({
                 id: 'goal:thread-1',

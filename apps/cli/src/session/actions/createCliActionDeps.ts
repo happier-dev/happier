@@ -1759,11 +1759,10 @@ export function createCliActionDeps(params: Readonly<{
       return await callRoutedSessionGoalControl(sessionId, 'get', {});
     },
 
-    sessionGoalSet: async ({ sessionId, objective, status, tokenBudget }) => {
+    sessionGoalSet: async ({ sessionId, objective, status }) => {
       return await callRoutedSessionGoalControl(sessionId, 'set', {
         ...(typeof objective === 'string' ? { objective } : {}),
         ...(typeof status === 'string' && status.trim().length > 0 ? { status: status.trim() } : {}),
-        ...(typeof tokenBudget !== 'undefined' ? { tokenBudget: tokenBudget ?? null } : {}),
       });
     },
 

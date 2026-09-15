@@ -26,7 +26,6 @@ type WorkStateBadgeTranslationKey =
     | 'session.workState.badge.goal'
     | 'session.workState.badge.goalPaused'
     | 'session.workState.badge.goalBlocked'
-    | 'session.workState.badge.goalBudgetLimited'
     | 'session.workState.badge.goalComplete'
     | 'session.workState.badge.item'
     | 'session.workState.goal.title';
@@ -110,8 +109,6 @@ function readItem(value: unknown): ReadItemResult {
             ...(readString(raw.parentId) ? { parentId: readString(raw.parentId) as string } : {}),
             ...(typeof raw.priority === 'string' ? { priority: raw.priority } : {}),
             ...(typeof raw.progress === 'number' && Number.isFinite(raw.progress) && raw.progress >= 0 && raw.progress <= 1 ? { progress: raw.progress } : {}),
-            ...(typeof raw.tokenBudget === 'number' && Number.isFinite(raw.tokenBudget) ? { tokenBudget: raw.tokenBudget } : {}),
-            ...(raw.tokenBudget === null ? { tokenBudget: null } : {}),
             ...(typeof raw.tokensUsed === 'number' && Number.isFinite(raw.tokensUsed) ? { tokensUsed: raw.tokensUsed } : {}),
             ...(typeof raw.timeUsedSeconds === 'number' && Number.isFinite(raw.timeUsedSeconds) ? { timeUsedSeconds: raw.timeUsedSeconds } : {}),
             ...(readNonNegativeNumber(raw.createdAt) !== null ? { createdAt: readNonNegativeNumber(raw.createdAt) as number } : {}),
@@ -181,7 +178,6 @@ function readLegacyGoalSnapshot(metadata: Record<string, unknown>): SessionWorkS
             title,
             updatedAt,
             ...(statusReason ? { statusReason } : {}),
-            ...(typeof raw.tokenBudget === 'number' && Number.isFinite(raw.tokenBudget) ? { tokenBudget: raw.tokenBudget } : {}),
             ...(typeof raw.tokensUsed === 'number' && Number.isFinite(raw.tokensUsed) ? { tokensUsed: raw.tokensUsed } : {}),
             ...(typeof raw.timeUsedSeconds === 'number' && Number.isFinite(raw.timeUsedSeconds) ? { timeUsedSeconds: raw.timeUsedSeconds } : {}),
             ...(readNonNegativeNumber(raw.createdAt) !== null ? { createdAt: readNonNegativeNumber(raw.createdAt) as number } : {}),
@@ -248,7 +244,6 @@ export function formatSessionWorkStateBadgeLabel(item: SessionWorkStateItem | nu
         // means the cleared goal produces no badge, so clearing a goal removes the badge.
         if (item.status === 'cancelled') return null;
         if (item.status === 'paused') return translate('session.workState.badge.goalPaused');
-        if (item.statusReason === 'budgetLimited') return translate('session.workState.badge.goalBudgetLimited');
         if (item.status === 'blocked') return translate('session.workState.badge.goalBlocked');
         if (item.status === 'complete') return translate('session.workState.badge.goalComplete');
         return translate('session.workState.badge.goal', { title: item.title });

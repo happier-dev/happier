@@ -12,7 +12,6 @@ export const CodexAppServerGoalStatusSchema = z.enum([
   'paused',
   'blocked',
   'usageLimited',
-  'budgetLimited',
   'complete',
 ]);
 export type CodexAppServerGoalStatus = z.infer<typeof CodexAppServerGoalStatusSchema>;
@@ -22,7 +21,6 @@ export const CodexAppServerGoalSchema = z
     threadId: z.string().min(1),
     objective: z.string().trim().min(1).max(4000),
     status: CodexAppServerGoalStatusSchema,
-    tokenBudget: z.number().finite().positive().nullable().optional(),
     tokensUsed: z.number().int().nonnegative().optional(),
     timeUsedSeconds: z.number().finite().nonnegative().optional(),
     createdAt: z.union([z.string(), z.number()]).optional(),
@@ -42,13 +40,13 @@ function normalizeTimestampMs(value: unknown): number | null {
 }
 
 function normalizeCodexGoalStatus(status: CodexAppServerGoalStatus): SessionWorkStateStatusV1 {
-  if (status === 'blocked' || status === 'usageLimited' || status === 'budgetLimited') return 'blocked';
+  if (status === 'blocked' || status === 'usageLimited') return 'blocked';
   if (status === 'complete') return 'complete';
   return status;
 }
 
 function normalizeCodexGoalStatusReason(status: CodexAppServerGoalStatus): SessionWorkStateStatusReasonV1 | undefined {
-  if (status === 'blocked' || status === 'usageLimited' || status === 'budgetLimited') return status;
+  if (status === 'blocked' || status === 'usageLimited') return status;
   return undefined;
 }
 
@@ -76,7 +74,6 @@ export function normalizeCodexAppServerGoalToSessionWorkStateItem(params: Readon
     backendId: params.backendId,
     ...(params.agentId ? { agentId: params.agentId } : {}),
     vendorRef: parsed.data.threadId,
-    ...(Object.prototype.hasOwnProperty.call(parsed.data, 'tokenBudget') ? { tokenBudget: parsed.data.tokenBudget } : {}),
     ...(typeof parsed.data.tokensUsed === 'number' ? { tokensUsed: parsed.data.tokensUsed } : {}),
     ...(typeof parsed.data.timeUsedSeconds === 'number' ? { timeUsedSeconds: parsed.data.timeUsedSeconds } : {}),
     ...(createdAt !== null ? { createdAt } : {}),
