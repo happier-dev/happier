@@ -133,7 +133,6 @@ describe('Grok ACP session notifications', () => {
         origin: 'vendor',
         status: 'active',
         title: 'Ship',
-        tokenBudget: 1_000,
         tokensUsed: 250,
         progress: 0.5,
       })],

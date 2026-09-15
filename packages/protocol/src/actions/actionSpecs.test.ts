@@ -571,12 +571,11 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.skill_catalog.list' as any).bindings?.mcpToolName).toBe('session_skill_catalog_list');
   });
 
-  it('accepts status-only and budget-only session goal mutations', () => {
+  it('accepts status-only and objective-only session goal mutations', () => {
     const schema = getActionSpec('session.goal.set' as any).inputSchema;
 
     expect(schema.safeParse({ sessionId: 's1', status: 'paused' }).success).toBe(true);
-    expect(schema.safeParse({ sessionId: 's1', tokenBudget: 50_000 }).success).toBe(true);
-    expect(schema.safeParse({ sessionId: 's1', tokenBudget: null }).success).toBe(true);
+    expect(schema.safeParse({ sessionId: 's1', objective: 'Ship goals' }).success).toBe(true);
     expect(schema.safeParse({ sessionId: 's1' }).success).toBe(false);
   });
 

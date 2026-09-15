@@ -36,7 +36,6 @@ export type CodexAppServerGoalControlContext = Readonly<{
 export type CodexAppServerGoalSetMutation = Readonly<{
     objective?: string;
     status?: SessionWorkStateStatusV1;
-    tokenBudget?: number | null;
 }>;
 
 export type CodexAppServerGoalControlAdapter = Readonly<{

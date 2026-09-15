@@ -327,7 +327,7 @@ describe('core e2e: Codex app-server goal session controls', () => {
         ui: socket,
         sessionId,
         method: SESSION_RPC_METHODS.SESSION_GOAL_SET,
-        req: { objective, tokenBudget: 7000 },
+        req: { objective },
         secret,
         schema: SessionWorkStateGetResponseV1Schema,
         timeoutMs: 45_000,

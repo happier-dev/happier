@@ -24,8 +24,7 @@ export type FakeCodexAppServerRequest = Readonly<{
 export type FakeCodexAppServerGoal = Readonly<{
   threadId: string;
   objective: string;
-  status: 'active' | 'paused' | 'budgetLimited' | 'complete';
-  tokenBudget?: number | null;
+  status: 'active' | 'paused' | 'complete';
   tokensUsed?: number;
   timeUsedSeconds?: number;
 }>;
@@ -352,14 +351,10 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     '      process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "objective required" } }) + "\\n");',
     '      continue;',
     '    }',
-    '    const tokenBudget = Object.prototype.hasOwnProperty.call(msg.params ?? {}, "tokenBudget")',
-    '      ? msg.params.tokenBudget',
-    '      : (goalSetBehavior === "nativePartial" && currentGoal && Object.prototype.hasOwnProperty.call(currentGoal, "tokenBudget") ? currentGoal.tokenBudget : null);',
     '    currentGoal = {',
     '      threadId: typeof msg.params?.threadId === "string" ? msg.params.threadId : "thread-started",',
     '      objective,',
     '      status: typeof msg.params?.status === "string" ? msg.params.status : (goalSetBehavior === "nativePartial" && currentGoal?.status ? currentGoal.status : "active"),',
-    '      tokenBudget,',
     '      tokensUsed: goalSetBehavior === "nativePartial" && typeof currentGoal?.tokensUsed === "number" ? currentGoal.tokensUsed : 0,',
     '      timeUsedSeconds: goalSetBehavior === "nativePartial" && typeof currentGoal?.timeUsedSeconds === "number" ? currentGoal.timeUsedSeconds : 0,',
     '      createdAt: goalSetBehavior === "nativePartial" && typeof currentGoal?.createdAt === "string" ? currentGoal.createdAt : nowIso,',

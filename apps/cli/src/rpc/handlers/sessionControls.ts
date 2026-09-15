@@ -52,7 +52,6 @@ export type SessionRuntimeControls = {
     objective: string | undefined,
     options?: Readonly<{
       status?: string;
-      tokenBudget?: number | null;
     }>,
   ) => unknown;
   clearGoal?: () => unknown;
@@ -305,9 +304,6 @@ export function registerSessionControlHandlers(
     const objective = parsed.data.objective ?? readCurrentGoalObjective(opts.getSessionMetadata) ?? undefined;
     const result = readRuntimeControlErrorResult(await opts.sessionRuntimeControls.setGoal(objective, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
-      ...(Object.prototype.hasOwnProperty.call(parsed.data, 'tokenBudget')
-        ? { tokenBudget: parsed.data.tokenBudget ?? null }
-        : {}),
     }));
     if (result) return result;
     return { workState: readWorkState(opts.getSessionMetadata) };

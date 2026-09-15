@@ -14,14 +14,12 @@ export type SessionWorkStateStatusV1 = z.infer<typeof SessionWorkStateStatusV1Sc
 // Provider-neutral status reasons (additive, shared across providers):
 //  - `blocked`: provider reported a generic blocked state without a narrower reason (Codex).
 //  - `usageLimited`: provider usage limits currently prevent further work (Codex).
-//  - `budgetLimited`: goal paused/blocked because a token budget was reached (Codex).
 //  - `interrupted`: goal was left `active` when its CLI session tore down gracefully without the
 //    goal being met (G-6). Status stays `active` (the goal may resume); the reason lets the UI mark
 //    it "(interrupted)" and resume-injection distinguish it from a freshly-set goal.
 export const SessionWorkStateStatusReasonV1Schema = z.enum([
   'blocked',
   'usageLimited',
-  'budgetLimited',
   'interrupted',
 ]);
 export type SessionWorkStateStatusReasonV1 = z.infer<typeof SessionWorkStateStatusReasonV1Schema>;

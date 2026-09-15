@@ -37,11 +37,10 @@ describe('isNoOpGoalMutation', () => {
         expect(isNoOpGoalMutation(goal({ status: 'active' }), { objective: '  Ship goals  ' })).toBe(true);
     });
 
-    it('is not a no-op when the objective changes, the status transitions, or a budget is set', () => {
+    it('is not a no-op when the objective changes or the status transitions', () => {
         const active = goal({ status: 'active' });
         expect(isNoOpGoalMutation(active, { objective: 'Different' })).toBe(false);
         expect(isNoOpGoalMutation(active, { objective: 'Ship goals', status: 'paused' })).toBe(false);
-        expect(isNoOpGoalMutation(active, { tokenBudget: 1000 })).toBe(false);
     });
 
     it('treats a same-status-only request as a no-op and a different-status request as a change', () => {

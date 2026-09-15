@@ -414,44 +414,9 @@ describe('sessionWorkStatePresentation', () => {
         expect(snapshot?.truncated).toEqual({ reason: 'item_limit', omittedCount: 3 });
     });
 
-    it('preserves precise budget-limited status reason and time fields from canonical metadata', () => {
-        const snapshot = readSessionWorkStateFromMetadata({
-            sessionWorkStateV1: {
-                v: 1,
-                backendId: 'codex',
-                updatedAt: 20,
-                primaryItemId: 'goal:thread-1',
-                items: [
-                    {
-                        id: 'goal:thread-1',
-                        kind: 'goal',
-                        origin: 'vendor',
-                        status: 'blocked',
-                        statusReason: 'budgetLimited',
-                        title: 'Ship budget display',
-                        createdAt: 11,
-                        startedAt: 12,
-                        completedAt: 19,
-                        updatedAt: 20,
-                    },
-                ],
-            },
-        });
-
-        expect(snapshot?.items[0]).toEqual(expect.objectContaining({
-            status: 'blocked',
-            statusReason: 'budgetLimited',
-            createdAt: 11,
-            startedAt: 12,
-            completedAt: 19,
-        }));
-        expect(formatSessionWorkStateBadgeLabel(snapshot?.items[0] ?? null, translate)).toBe('session.workState.badge.goalBudgetLimited:');
-    });
-
     it.each([
         ['blocked', 'session.workState.badge.goalBlocked:'],
         ['usageLimited', 'session.workState.badge.goalBlocked:'],
-        ['budgetLimited', 'session.workState.badge.goalBudgetLimited:'],
     ] as const)('preserves the %s blocked-family reason without losing the warning presentation', (statusReason, expectedLabel) => {
         const snapshot = readSessionWorkStateFromMetadata({
             sessionWorkStateV1: {

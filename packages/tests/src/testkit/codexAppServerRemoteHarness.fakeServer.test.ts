@@ -313,7 +313,6 @@ describe('fake Codex app-server harness', () => {
           threadId: 'thread-started',
           objective: 'existing goal',
           status: 'active',
-          tokenBudget: 4000,
           tokensUsed: 10,
           timeUsedSeconds: 2,
         },
@@ -326,18 +325,6 @@ describe('fake Codex app-server harness', () => {
           result: expect.objectContaining({
             objective: 'existing goal',
             status: 'paused',
-            tokenBudget: 4000,
-          }),
-        });
-
-        await expect(request('thread/goal/set', {
-          threadId: 'thread-started',
-          tokenBudget: null,
-        })).resolves.toMatchObject({
-          result: expect.objectContaining({
-            objective: 'existing goal',
-            status: 'paused',
-            tokenBudget: null,
           }),
         });
 
@@ -347,7 +334,7 @@ describe('fake Codex app-server harness', () => {
             params: expect.objectContaining({
               goal: expect.objectContaining({
                 objective: 'existing goal',
-                tokenBudget: null,
+                status: 'paused',
               }),
             }),
           }),
@@ -367,11 +354,9 @@ describe('fake Codex app-server harness', () => {
           await expect(request('thread/goal/set', {
             threadId: 'thread-started',
             objective: 'persisted goal',
-            tokenBudget: 1234,
           })).resolves.toMatchObject({
             result: expect.objectContaining({
               objective: 'persisted goal',
-              tokenBudget: 1234,
             }),
           });
         },
@@ -387,7 +372,6 @@ describe('fake Codex app-server harness', () => {
             result: expect.objectContaining({
               objective: 'persisted goal',
               status: 'paused',
-              tokenBudget: 1234,
             }),
           });
         },
@@ -404,7 +388,6 @@ describe('fake Codex app-server harness', () => {
           threadId: 'thread-started',
           objective: 'ship goal controls',
           status: 'active',
-          tokenBudget: 4000,
           tokensUsed: 10,
           timeUsedSeconds: 2,
         },
@@ -432,7 +415,6 @@ describe('fake Codex app-server harness', () => {
           result: expect.objectContaining({
             objective: 'ship goal controls',
             status: 'active',
-            tokenBudget: 4000,
           }),
         });
 
@@ -440,12 +422,10 @@ describe('fake Codex app-server harness', () => {
           threadId: 'thread-started',
           objective: 'round trip a goal',
           status: 'paused',
-          tokenBudget: 2000,
         })).resolves.toMatchObject({
           result: expect.objectContaining({
             objective: 'round trip a goal',
             status: 'paused',
-            tokenBudget: 2000,
           }),
         });
         expect(notifications).toEqual(expect.arrayContaining([

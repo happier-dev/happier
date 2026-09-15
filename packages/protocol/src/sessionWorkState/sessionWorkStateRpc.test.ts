@@ -134,22 +134,15 @@ describe('session work-state RPC contracts', () => {
 
     it('parses work-state and vendor plugin catalog response shapes', () => {
         expect(SessionWorkStateGetResponseV1Schema.parse({ workState: null })).toEqual({ workState: null });
-        expect(SessionGoalSetRequestV1Schema.parse({ objective: 'Ship goals', status: 'active', tokenBudget: null })).toEqual({
+        expect(SessionGoalSetRequestV1Schema.parse({ objective: 'Ship goals', status: 'active' })).toEqual({
             objective: 'Ship goals',
             status: 'active',
-            tokenBudget: null,
         });
         expect(SessionGoalSetRequestV1Schema.parse({ objective: 'Line one\nLine two' })).toEqual({
             objective: 'Line one\nLine two',
         });
         expect(SessionGoalSetRequestV1Schema.parse({ status: 'paused' })).toEqual({
             status: 'paused',
-        });
-        expect(SessionGoalSetRequestV1Schema.parse({ tokenBudget: 50_000 })).toEqual({
-            tokenBudget: 50_000,
-        });
-        expect(SessionGoalSetRequestV1Schema.parse({ tokenBudget: null })).toEqual({
-            tokenBudget: null,
         });
         expect(() => SessionGoalSetRequestV1Schema.parse({})).toThrow();
         expect(DaemonSessionGoalSetRequestV1Schema.parse({ sessionId: 's1', status: 'paused' })).toEqual({

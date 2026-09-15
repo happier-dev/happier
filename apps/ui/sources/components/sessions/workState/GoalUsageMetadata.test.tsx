@@ -77,40 +77,12 @@ describe('GoalUsageMetadata', () => {
         act(() => tree.unmount());
     });
 
-    it('renders inline time + tokens with no budget meter when no budget is set', () => {
+    it('renders inline time + tokens', () => {
         const tree = render({ ...base, tokensUsed: 89000, timeUsedSeconds: 190 });
         const meta = collectText(tree.root.findByProps({ testID: 'session-goal-usage-meta' }).props.children);
         expect(meta).toContain('3m 10s');
         expect(meta).toContain('89k tokens');
         expect(meta).toContain('·');
-        expect(() => tree.root.findByProps({ testID: 'session-goal-budget-meter' })).toThrow();
         act(() => tree.unmount());
-    });
-
-    it('renders a consumed-fill meter (fillFraction=ratio, not inverted), percent, and caption when a budget exists', () => {
-        const tree = render({ ...base, tokensUsed: 250, tokenBudget: 1000 });
-        const meta = collectText(tree.root.findByProps({ testID: 'session-goal-usage-meta' }).props.children);
-        expect(meta).toContain('250 / 1k');
-        expect(meta).toContain('25%');
-        const meter = tree.root.findByProps({ testID: 'session-goal-budget-meter' });
-        // fill = consumed ratio (0.25), NOT the old remaining (0.75).
-        expect(meter.props.fillFraction).toBeCloseTo(0.25, 5);
-        expect(meter.props.tone).toBe('neutral');
-        expect(collectText(tree.root.findByProps({ testID: 'session-goal-budget-caption' }).props.children))
-            .toContain('of 1k budget');
-        act(() => tree.unmount());
-    });
-
-    it('escalates the meter tone toward danger as consumed fill approaches the budget', () => {
-        const warn = render({ ...base, tokensUsed: 900, tokenBudget: 1000 });
-        expect(warn.root.findByProps({ testID: 'session-goal-budget-meter' }).props.tone).toBe('warning');
-        act(() => warn.unmount());
-
-        const danger = render({ ...base, tokensUsed: 1200, tokenBudget: 1000 });
-        const dangerMeter = danger.root.findByProps({ testID: 'session-goal-budget-meter' });
-        expect(dangerMeter.props.tone).toBe('danger');
-        // Over-budget fill is clamped by MeterBar to 1; the passed fraction is >= 1.
-        expect(dangerMeter.props.fillFraction).toBeGreaterThanOrEqual(1);
-        act(() => danger.unmount());
     });
 });

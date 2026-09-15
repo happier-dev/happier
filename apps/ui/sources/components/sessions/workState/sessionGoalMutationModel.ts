@@ -12,7 +12,6 @@ export type SessionWorkStateGoalOperationResult = { ok: true } | { ok: false; er
 export type SessionWorkStateGoalSetRequest = Readonly<{
     objective?: string;
     status?: 'active' | 'paused' | 'complete';
-    tokenBudget?: number | null;
     resumeInactiveWithInitialGoal?: boolean;
 }>;
 
@@ -77,8 +76,6 @@ export function goalSignature(goal: SessionWorkStateItem | null): string {
  */
 export function isNoOpGoalMutation(goal: SessionWorkStateItem | null, request: SessionWorkStateGoalSetRequest): boolean {
     if (!goal) return false;
-    // A budget change always mutates the goal.
-    if (request.tokenBudget !== undefined) return false;
     if (request.objective !== undefined) {
         if (request.objective.trim() !== goal.title.trim()) return false;
         // The objective matches; only a no-op if no status transition is requested.

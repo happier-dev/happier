@@ -508,7 +508,7 @@ describe('createActionExecutor (session control)', () => {
     await executor.execute('session.goal.get' as any, { sessionId: 's1' }, { surface: 'cli' });
     await executor.execute(
       'session.goal.set' as any,
-      { sessionId: 's1', objective: 'Ship goals', status: 'active', tokenBudget: null },
+      { sessionId: 's1', objective: 'Ship goals', status: 'active' },
       { surface: 'cli' },
     );
     await executor.execute('session.goal.clear' as any, { sessionId: 's1' }, { surface: 'cli' });
@@ -519,7 +519,6 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       objective: 'Ship goals',
       status: 'active',
-      tokenBudget: null,
       serverId: 'server-a',
     });
     expect(sessionGoalClear).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
@@ -543,23 +542,6 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       status: 'paused',
       serverId: 'server-a',
-    });
-  });
-
-  it('preserves budget-clearing session goal mutations through protocol deps', async () => {
-    const sessionGoalSet = vi.fn(async () => ({ ok: true }));
-    const executor = createExecutor({ sessionGoalSet });
-
-    const res = await executor.execute(
-      'session.goal.set' as any,
-      { sessionId: 's1', tokenBudget: null },
-      { surface: 'cli' },
-    );
-
-    expect(res).toEqual({ ok: true, result: { ok: true } });
-    expect(sessionGoalSet).toHaveBeenCalledWith({
-      sessionId: 's1',
-      tokenBudget: null,
     });
   });
 

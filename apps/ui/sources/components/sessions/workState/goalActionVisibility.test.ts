@@ -91,11 +91,6 @@ describe('resolveGoalStatusLabelKey', () => {
             .toBe('session.workState.goal.statusInterrupted');
     });
 
-    it('does not override budget-limited with interrupted', () => {
-        expect(resolveGoalStatusLabelKey(goal({ status: 'active', statusReason: 'budgetLimited' })))
-            .toBe('session.workState.goal.statusBudgetLimited');
-    });
-
     it.each(['blocked', 'usageLimited'] as const)('surfaces the generic blocked label while preserving the %s reason on the item', (statusReason) => {
         const item = goal({ status: 'blocked', statusReason });
         expect(resolveGoalStatusLabelKey(item)).toBe('session.workState.badge.goalBlocked');

@@ -45,7 +45,7 @@ async function writeGoalControlFakeAppServer(params: Readonly<{
             '  }',
             '  if (msg.method === "initialized") continue;',
             '  if (msg.method === "thread/goal/get") {',
-            '    const goal = returnNoGoal ? null : { threadId: msg.params?.threadId ?? "thread-1", objective: "Current objective", status: "active", tokenBudget: 1000, tokensUsed: 25, timeUsedSeconds: 3, updatedAt: "2026-05-13T10:00:00.000Z" };',
+            '    const goal = returnNoGoal ? null : { threadId: msg.params?.threadId ?? "thread-1", objective: "Current objective", status: "active", tokensUsed: 25, timeUsedSeconds: 3, updatedAt: "2026-05-13T10:00:00.000Z" };',
             '    process.stdout.write(JSON.stringify({ id: msg.id, result: directGoalResult ? goal : { goal } }) + "\\n");',
             '    continue;',
             '  }',
@@ -58,7 +58,6 @@ async function writeGoalControlFakeAppServer(params: Readonly<{
             '      threadId: msg.params?.threadId ?? "thread-1",',
             '      objective: msg.params?.objective ?? "Current objective",',
             '      status: msg.params?.status ?? "active",',
-            '      tokenBudget: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "tokenBudget") ? msg.params.tokenBudget : 1000,',
             '      tokensUsed: 25,',
             '      timeUsedSeconds: 3,',
             '      updatedAt: "2026-05-13T10:05:00.000Z",',
@@ -158,28 +157,6 @@ describe('codexAppServerGoalControlAdapter', () => {
         });
     });
 
-    it('sets a token budget without sending an objective', async () => {
-        await withTempDir('happier-codex-goal-control-budget-', async (root) => {
-            const requestLogPath = join(root, 'requests.jsonl');
-            const fakeAppServer = await writeGoalControlFakeAppServer({ dir: root, requestLogPath });
-            const adapter = await createAdapter();
-
-            await adapter.setGoal({
-                cwd: root,
-                metadata: metadataForThread('thread-1'),
-                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-                tokenBudget: 50000,
-            });
-
-            expect(await readRequests(requestLogPath)).toEqual(expect.arrayContaining([
-                expect.objectContaining({
-                    method: 'thread/goal/set',
-                    params: { threadId: 'thread-1', tokenBudget: 50000 },
-                }),
-            ]));
-        });
-    });
-
     it('projects direct native goal set responses into returned work-state metadata', async () => {
         await withTempDir('happier-codex-goal-control-direct-goal-result-', async (root) => {
             const requestLogPath = join(root, 'requests.jsonl');
@@ -203,7 +180,6 @@ describe('codexAppServerGoalControlAdapter', () => {
                                 id: 'goal:thread-1',
                                 status: 'paused',
                                 title: 'Current objective',
-                                tokenBudget: 1000,
                             }),
                         ]),
                     },
@@ -214,33 +190,10 @@ describe('codexAppServerGoalControlAdapter', () => {
                             id: 'goal:thread-1',
                             status: 'paused',
                             title: 'Current objective',
-                            tokenBudget: 1000,
                         }),
                     ]),
                 },
             });
-        });
-    });
-
-    it('clears a token budget by sending tokenBudget null', async () => {
-        await withTempDir('happier-codex-goal-control-budget-clear-', async (root) => {
-            const requestLogPath = join(root, 'requests.jsonl');
-            const fakeAppServer = await writeGoalControlFakeAppServer({ dir: root, requestLogPath });
-            const adapter = await createAdapter();
-
-            await adapter.setGoal({
-                cwd: root,
-                metadata: metadataForThread('thread-1'),
-                processEnv: createCodexAppServerProcessEnv(fakeAppServer),
-                tokenBudget: null,
-            });
-
-            expect(await readRequests(requestLogPath)).toEqual(expect.arrayContaining([
-                expect.objectContaining({
-                    method: 'thread/goal/set',
-                    params: { threadId: 'thread-1', tokenBudget: null },
-                }),
-            ]));
         });
     });
 

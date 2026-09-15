@@ -39,7 +39,6 @@ export type SessionWorkStateItem = Readonly<{
     priority?: string;
     /** Fractional completion in [0,1] for progress-bearing items (W2). */
     progress?: number;
-    tokenBudget?: number | null;
     tokensUsed?: number;
     timeUsedSeconds?: number;
     createdAt?: number;

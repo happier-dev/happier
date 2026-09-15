@@ -5,23 +5,17 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { GoalBudgetDisclosure } from './GoalBudgetDisclosure';
 import { SessionGoalActionsMenu, type SessionGoalMenuAction } from './SessionGoalActionsMenu';
 import { GoalUsageMetadata } from './GoalUsageMetadata';
 import { canPauseOrResumeGoal, resolveGoalActionCapabilities, resolveGoalStatusLabelKey, type GoalActionCapabilities } from './goalActionVisibility';
 import type { SessionWorkStateItem } from './sessionWorkStateTypes';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 
-type GoalSaveBudgetDraft = Readonly<{
-    tokenBudgetChanged: boolean;
-    tokenBudget?: number | null;
-}>;
-
 export function SessionGoalControlContent(props: Readonly<{
     goal: SessionWorkStateItem | null;
     draftObjective: string;
     onDraftObjectiveChange: (value: string) => void;
-    onSave: (budgetDraft: GoalSaveBudgetDraft) => void;
+    onSave: () => void;
     onPause: () => void;
     onResume: () => void;
     onComplete: () => void;
@@ -31,7 +25,7 @@ export function SessionGoalControlContent(props: Readonly<{
     busy?: boolean;
     /**
      * Provider capability profile applied when there is no goal item yet (the set-first-goal form),
-     * so a provider like Claude shows only edit/clear with no budget. Ignored once a goal item
+     * so a provider like Claude shows only edit/clear. Ignored once a goal item
      * carries its own `goalCapabilities`.
      */
     capabilityFallback?: GoalActionCapabilities | null;
@@ -39,69 +33,28 @@ export function SessionGoalControlContent(props: Readonly<{
     const { theme } = useUnistyles();
     const isPaused = props.goal?.status === 'paused';
     const capabilities = resolveGoalActionCapabilities(props.goal, props.capabilityFallback);
-    const canComplete = Boolean(props.goal && props.goal.status !== 'complete' && props.goal.statusReason !== 'budgetLimited');
+    const canComplete = Boolean(props.goal && props.goal.status !== 'complete');
     const showPauseResume = capabilities.canStop && canPauseOrResumeGoal(props.goal);
     const showComplete = capabilities.canStop && canComplete;
     const [editing, setEditing] = React.useState(!props.goal);
-    const [budgetEnabled, setBudgetEnabled] = React.useState(typeof props.goal?.tokenBudget === 'number');
-    const [draftBudget, setDraftBudget] = React.useState(
-        typeof props.goal?.tokenBudget === 'number' ? String(Math.trunc(props.goal.tokenBudget)) : '',
-    );
-    const [budgetError, setBudgetError] = React.useState(false);
 
     React.useEffect(() => {
         setEditing(!props.goal);
     }, [props.goal?.id]);
-
-    React.useEffect(() => {
-        setBudgetEnabled(typeof props.goal?.tokenBudget === 'number');
-        setDraftBudget(typeof props.goal?.tokenBudget === 'number' ? String(Math.trunc(props.goal.tokenBudget)) : '');
-        setBudgetError(false);
-    }, [props.goal?.id, props.goal?.tokenBudget]);
 
     const statusText = t(resolveGoalStatusLabelKey(props.goal));
     const canSave = props.draftObjective.trim().length > 0 && !props.busy;
     const { onDraftObjectiveChange, goal } = props;
     const cancelEdit = React.useCallback(() => {
         onDraftObjectiveChange(goal?.title ?? '');
-        setBudgetEnabled(typeof goal?.tokenBudget === 'number');
-        setDraftBudget(typeof goal?.tokenBudget === 'number' ? String(Math.trunc(goal.tokenBudget)) : '');
-        setBudgetError(false);
         if (goal) setEditing(false);
     }, [onDraftObjectiveChange, goal]);
-    const budgetChanged = React.useMemo(() => {
-        const currentBudget = typeof props.goal?.tokenBudget === 'number' ? Math.trunc(props.goal.tokenBudget) : null;
-        if (!budgetEnabled) return currentBudget !== null;
-        const trimmedBudget = draftBudget.trim();
-        if (!trimmedBudget) return currentBudget !== null;
-        const parsedBudget = Number(trimmedBudget);
-        return currentBudget !== parsedBudget;
-    }, [budgetEnabled, draftBudget, props.goal?.tokenBudget]);
+
     const save = React.useCallback(() => {
-        setBudgetError(false);
         if (!canSave) return;
-        if (!budgetEnabled) {
-            props.onSave({
-                tokenBudgetChanged: budgetChanged,
-                ...(budgetChanged ? { tokenBudget: null } : {}),
-            });
-            return;
-        }
-        const trimmedBudget = draftBudget.trim();
-        if (!/^\d+$/.test(trimmedBudget)) {
-            setBudgetError(true);
-            return;
-        }
-        const parsedBudget = Number(trimmedBudget);
-        if (!Number.isSafeInteger(parsedBudget) || parsedBudget <= 0) {
-            setBudgetError(true);
-            return;
-        }
-        props.onSave({
-            tokenBudgetChanged: budgetChanged,
-            ...(budgetChanged ? { tokenBudget: parsedBudget } : {}),
-        });
-    }, [budgetChanged, budgetEnabled, canSave, draftBudget, props]);
+        props.onSave();
+    }, [canSave, props]);
+
     const saveButton = (
         <Pressable
             testID="session-goal-save-button"
@@ -120,23 +73,6 @@ export function SessionGoalControlContent(props: Readonly<{
                 {props.goal ? t('common.save') : t('session.workState.goal.set')}
             </Text>
         </Pressable>
-    );
-    const budgetDisclosure = (
-        <GoalBudgetDisclosure
-            budgetConfigurable={capabilities.canConfigureBudget}
-            budgetEnabled={budgetEnabled}
-            draftBudget={draftBudget}
-            budgetError={budgetError}
-            busy={props.busy}
-            onBudgetEnabledChange={(enabled) => {
-                setBudgetEnabled(enabled);
-                setBudgetError(false);
-            }}
-            onDraftBudgetChange={(value) => {
-                setDraftBudget(value);
-                setBudgetError(false);
-            }}
-        />
     );
 
     return (
@@ -257,7 +193,6 @@ export function SessionGoalControlContent(props: Readonly<{
                 </View>
             ) : null}
             {props.goal && !editing ? <GoalUsageMetadata goal={props.goal} /> : null}
-            {editing ? budgetDisclosure : null}
             {!props.goal && editing ? (
                 <View style={styles.footerActions}>
                     <Pressable

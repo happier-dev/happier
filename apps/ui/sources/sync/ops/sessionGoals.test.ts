@@ -223,14 +223,13 @@ describe('session goal operations', () => {
         });
         const { sessionGoalSet } = await import('./sessionGoals');
 
-        const result = await sessionGoalSet('session-1', { objective: 'ship budget UI', tokenBudget: 25_000 });
+        const result = await sessionGoalSet('session-1', { objective: 'ship budget UI' });
 
         expect(result).toEqual({ ok: true });
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
         expect(resumeSessionMock).toHaveBeenCalledWith(expect.objectContaining({
             initialGoal: {
                 objective: 'ship budget UI',
-                tokenBudget: 25_000,
             },
         }));
     });

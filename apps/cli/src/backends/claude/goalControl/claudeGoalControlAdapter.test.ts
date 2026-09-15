@@ -93,26 +93,9 @@ describe('claudeGoalControlAdapter (inactive path)', () => {
     expect(goals).toHaveLength(0);
   });
 
-  // G-2: the INACTIVE-session adapter mirrors the runtime control (G-1) — Claude cannot honor a token
-  // budget or a status transition, so instead of silently dropping the field while seeding a goal
+  // G-2: the INACTIVE-session adapter mirrors the runtime control (G-1) — Claude cannot honor a
+  // status transition, so instead of silently dropping the field while seeding a goal
   // (the original bug), it rejects with the same typed, non-fallback error.
-  it('rejects a setGoal that requests a token budget (unsupported on Claude, inactive path)', async () => {
-    const result = await claudeGoalControlAdapter.setGoal?.({
-      ...baseParams({}),
-      request: { objective: 'ship it', tokenBudget: 120_000 },
-    });
-    expect(result).toMatchObject({ ok: false, errorCode: 'session_goal_control_unsupported' });
-    expect(readGoalItems(result)).toHaveLength(0);
-  });
-
-  it('rejects a setGoal that clears the token budget (tokenBudget:null is still a budget mutation)', async () => {
-    const result = await claudeGoalControlAdapter.setGoal?.({
-      ...baseParams({}),
-      request: { objective: 'ship it', tokenBudget: null },
-    });
-    expect(result).toMatchObject({ ok: false, errorCode: 'session_goal_control_unsupported' });
-  });
-
   it('rejects a setGoal that requests a status transition (unsupported on Claude, inactive path)', async () => {
     const result = await claudeGoalControlAdapter.setGoal?.({
       ...baseParams({}),
