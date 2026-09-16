@@ -2359,6 +2359,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             const clientId = update.clientId;
             const isHappierOriginated = clientId !== null && (
                 typeof params.session.getCommittedUserMessageSeq?.(clientId) === 'number'
+                || params.session.hasPendingProviderInputAcceptance?.(clientId) === true
                 || Array.from(pendingProviderPrompts).some((candidate) => candidate.localIds?.includes(clientId))
             );
             if (isHappierOriginated) return;

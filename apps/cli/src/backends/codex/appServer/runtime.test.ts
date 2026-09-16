@@ -4915,26 +4915,31 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
-    it('commits attached-client user prompts without duplicating Happier-originated prompts', async () => {
+    it.each(['committed', 'accepted-before-commit'] as const)('commits attached-client user prompts without duplicating Happier-originated prompts (%s)', async (deliveryState) => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-provider-user-');
 
+        const acceptedLocalIds = new Set<string>();
         const sendUserTextMessageCommitted = vi.fn(async () => {});
-        const session = {
-            updateMetadata: vi.fn(),
-            getCommittedUserMessageSeq: vi.fn((localId: string) => localId === 'happier-local-1' ? 17 : null),
-            sendUserTextMessageCommitted,
-            sendAgentMessageCommitted: vi.fn(async () => {}),
-            sendCodexMessage: vi.fn(),
-        };
+        const session = createApiSessionClientFixture();
+        session.getCommittedUserMessageSeq = vi.fn((localId: string) => (
+            deliveryState === 'committed' && localId === 'happier-local-1' ? 17 : null
+        ));
+        session.hasPendingProviderInputAcceptance = (localId) => acceptedLocalIds.has(localId);
+        session.sendUserTextMessageCommitted = sendUserTextMessageCommitted;
+        session.sendCodexMessage = vi.fn();
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
-            session: session as unknown as ApiSessionClient,
+            session,
+        });
+        runtime.setOnPromptAcceptedByProvider(({ localIds }) => {
+            for (const localId of localIds ?? []) acceptedLocalIds.add(localId);
         });
 
         await runtime.startOrLoad({});
         await runtime.sendPrompt('bridge-provider-user-projection', { localId: 'happier-local-1' });
 
+        expect(acceptedLocalIds).toEqual(new Set(['happier-local-1']));
         expect(sendUserTextMessageCommitted).toHaveBeenCalledTimes(1);
         expect(sendUserTextMessageCommitted).toHaveBeenCalledWith(
             'hello from attached Codex TUI',
