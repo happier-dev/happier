@@ -40,7 +40,7 @@ export type TmuxTerminalHostUtility = Readonly<{
     args: string[],
     options?: TmuxSpawnOptions,
     env?: Record<string, string>,
-  ): Promise<{ success: boolean; sessionId?: string; sessionName?: string; windowName?: string; pid?: number; error?: string }>;
+  ): Promise<{ success: boolean; sessionId?: string; sessionName?: string; windowName?: string; windowId?: string; pid?: number; error?: string }>;
   captureCurrentInput(session?: string, window?: string, pane?: string): Promise<string>;
   captureCursorPosition(session?: string, window?: string, pane?: string): Promise<Readonly<{ x: number; y: number }> | null>;
   sendKeys(keys: string | TmuxControlSequence, session?: string, window?: string, pane?: string): Promise<boolean>;
@@ -48,7 +48,9 @@ export type TmuxTerminalHostUtility = Readonly<{
 }>;
 
 function targetFromHandle(handle: TerminalHostHandle): string {
-  return handle.paneId ? `${handle.sessionName}:${handle.paneId}` : handle.sessionName;
+  const ownedWindow = handle.paneId?.trim();
+  if (ownedWindow?.startsWith('@')) return ownedWindow;
+  return ownedWindow ? `${handle.sessionName}:${ownedWindow}` : handle.sessionName;
 }
 
 export function resolveTmuxCommandEnvironmentForHostHandle(
@@ -186,7 +188,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
       }
       return createTmuxTerminalHostHandle({
         sessionName: result.sessionName ?? opts.sessionName,
-        windowName: result.windowName,
+        windowId: result.windowId ?? '',
         topology: 'exclusive',
       });
     },

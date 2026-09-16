@@ -83,9 +83,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'private-tmux-session:runner',
+      sessionId: 'private-tmux-session:@7',
       sessionName: 'private-tmux-session',
       windowName: 'runner',
+      windowId: '@7',
       pid: 4242,
     });
     const input = {
@@ -244,9 +245,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockImplementationOnce(async (_args, options) => ({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: `happy:${options.windowName}`,
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: options.windowName,
+      windowId: '@7',
       pid: 4242,
     }));
     const input = params();
@@ -255,7 +257,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
     await vi.waitFor(() => expect(input.pidToAwaiter.has(4242)).toBe(true));
     const tracked = input.pidToTrackedSession.get(4242);
-    expect(tracked).toMatchObject({ pid: 4242, tmuxSessionId: expect.stringMatching(/^happy:happy-/u) });
+    expect(tracked).toMatchObject({ pid: 4242, tmuxSessionId: 'happy:@7' });
     expect(mocks.spawnInTmux.mock.calls.at(-1)?.[1]?.windowName).toMatch(
       /^happy-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-codex$/u,
     );
@@ -273,7 +275,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
       handle: expect.objectContaining({
         kind: 'tmux',
         sessionName: 'happy',
-        paneId: expect.stringMatching(/^happy-/u),
+        paneId: '@7',
         attachMetadata: expect.objectContaining({ topology: 'shared' }),
       }),
     });
@@ -283,9 +285,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'happy:early-webhook',
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: 'early-webhook',
+      windowId: '@7',
       pid: 4243,
     });
     let resolveMarker!: () => void;
@@ -318,9 +321,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'happy:binding-failure',
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: 'binding-failure',
+      windowId: '@7',
       pid: 4260,
     });
     mocks.writeTerminalHostAttachmentInfo.mockRejectedValueOnce(new Error('synthetic descriptor failure'));
@@ -339,7 +343,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         errorMessage: 'terminal_attachment_binding_failed',
       },
     });
-    expect(mocks.killWindow).toHaveBeenCalledWith('happy:binding-failure');
+    expect(mocks.killWindow).toHaveBeenCalledWith('happy:@7');
     expect(input.pidToTrackedSession.has(4260)).toBe(false);
   });
 
@@ -347,9 +351,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'happy:marker-refused',
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: 'marker-refused',
+      windowId: '@7',
       pid: 4244,
     });
     const input = params();
@@ -365,7 +370,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     ).rejects.toThrow('marker refused');
     expect(mocks.killWindow).toHaveBeenCalledOnce();
     expect(mocks.killWindow).toHaveBeenCalledWith(
-      'happy:marker-refused',
+      'happy:@7',
     );
     expect(input.onChildExited).toHaveBeenCalledWith(
       4244,
@@ -380,9 +385,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'happy:readiness-refused',
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: 'readiness-refused',
+      windowId: '@7',
       pid: 4245,
     });
     const input = params();
@@ -413,7 +419,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     });
     expect(mocks.killWindow).toHaveBeenCalledOnce();
     expect(mocks.killWindow).toHaveBeenCalledWith(
-      'happy:readiness-refused',
+      'happy:@7',
     );
     expect(input.cleanupSpawnResources).toHaveBeenCalledOnce();
     expect(
@@ -430,9 +436,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'happy:absence-unverified',
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: 'absence-unverified',
+      windowId: '@7',
       pid,
     });
     mocks.killWindow.mockResolvedValueOnce(false);
@@ -470,9 +477,10 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     mocks.spawnInTmux.mockResolvedValueOnce({
       success: true,
       creationDisposition: 'created_or_uncertain',
-      sessionId: 'happy:promoted-before-cancel',
+      sessionId: 'happy:@7',
       sessionName: 'happy',
       windowName: 'promoted-before-cancel',
+      windowId: '@7',
       pid: wrapperPid,
     });
     const input = params();
@@ -504,7 +512,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
       },
     });
     expect(mocks.killWindow).toHaveBeenCalledWith(
-      'happy:promoted-before-cancel',
+      'happy:@7',
     );
     expect(input.onChildExited).toHaveBeenCalledWith(
       runnerPid,

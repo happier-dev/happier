@@ -2,6 +2,7 @@ import { isPidPresent } from '@happier-dev/cli-common/process';
 import { logger } from '@/ui/logger';
 import type { StoredCredentials } from '@/persistence';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { hasActiveTerminalControlServiceabilityDescriptor } from '@/daemon/startup/terminalControlServiceabilityProjection';
 import {
   resolveCatalogAgentId,
   resolveCatalogAgentIdForCliSubcommand,
@@ -642,7 +643,10 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
             attachmentId: attachmentState.info.attachmentId,
             handle: attachmentState.info.handle,
             terminalMode,
-            controlDescriptorAvailable: false,
+            controlDescriptorAvailable: hasActiveTerminalControlServiceabilityDescriptor({
+              terminal: marker.metadata?.terminal,
+              attachmentId: attachmentState.info.attachmentId,
+            }),
           });
           continue;
         }

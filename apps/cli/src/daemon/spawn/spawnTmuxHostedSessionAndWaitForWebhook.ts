@@ -379,7 +379,7 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
         sessionId,
         handle: createTmuxTerminalHostHandle({
           sessionName: tmuxSession,
-          windowName: tmuxResult.windowName ?? windowName,
+          windowId: tmuxResult.windowId,
           ...(tmuxTmpDir ? { tmuxTmpDir } : {}),
           topology: 'shared',
         }),

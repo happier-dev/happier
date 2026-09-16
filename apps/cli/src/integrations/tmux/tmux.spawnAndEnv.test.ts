@@ -153,8 +153,8 @@ describe('TmuxUtilities.spawnInTmux', () => {
             }
 
             if (cmd[0] === 'has-session') return { returncode: 0, stdout: '', stderr: '', command: cmd };
-            if (cmd[0] === 'new-session') return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
-            if (cmd[0] === 'new-window') return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+            if (cmd[0] === 'new-session') return { returncode: 0, stdout: '@7\t4242\n', stderr: '', command: cmd };
+            if (cmd[0] === 'new-window') return { returncode: 0, stdout: '@7\t4242\n', stderr: '', command: cmd };
             return { returncode: 0, stdout: '', stderr: '', command: cmd };
         }
     }
@@ -249,6 +249,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
             success: true,
             sessionName: 'owned-session',
             windowName: 'provider',
+            windowId: '@7',
             pid: 4242,
         });
         expect(tmux.calls.some((call) => call.cmd[0] === 'new-session')).toBe(true);
@@ -307,7 +308,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
 
         expect(result.success).toBe(true);
         if (!result.success) throw new Error(result.error ?? 'expected tmux launch to succeed');
-        expect(result.sessionId).toBe('newSess:my-window');
+        expect(result.sessionId).toBe('newSess:@7');
         const usedLastAttachedFormat = tmux.calls.some(
             (call) => call.cmd[0] === 'list-sessions' && call.cmd[1] === '-F' && Boolean(call.cmd[2]?.includes('session_last_attached')),
         );
@@ -327,7 +328,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
                 if (this.newWindowAttempts === 1) {
                     return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
                 }
-                return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                return { returncode: 0, stdout: '@7\t4242\n', stderr: '', command: cmd };
             }
         }
 
@@ -377,7 +378,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
                     const tIndex = cmd.indexOf('-t');
                     const target = tIndex >= 0 ? cmd[tIndex + 1] : undefined;
                     if (target === 'my-session:3') {
-                        return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                        return { returncode: 0, stdout: '@7\t4242\n', stderr: '', command: cmd };
                     }
                     return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
                 }
@@ -416,7 +417,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
                     const tIndex = cmd.indexOf('-t');
                     const target = tIndex >= 0 ? cmd[tIndex + 1] : undefined;
                     if (target === 'my-session:2') {
-                        return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                        return { returncode: 0, stdout: '@7\t4242\n', stderr: '', command: cmd };
                     }
                     return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
                 }
@@ -453,7 +454,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
                     const tIndex = cmd.indexOf('-t');
                     const target = tIndex >= 0 ? cmd[tIndex + 1] : undefined;
                     if (target === 'my-session:2') {
-                        return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
+                        return { returncode: 0, stdout: '@7\t4242\n', stderr: '', command: cmd };
                     }
                     if (this.attempts === 1) {
                         return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
@@ -636,8 +637,9 @@ describe('TmuxUtilities.spawnInTmux', () => {
 
         expect(result).toMatchObject({
             success: true,
-            sessionId: 'my-session:my-window',
+            sessionId: 'my-session:@7',
             windowName: 'my-window',
+            windowId: '@7',
             pid: 4242,
         });
         expect(tmux.calls.filter((call) => call.cmd[0] === 'new-window')).toHaveLength(1);

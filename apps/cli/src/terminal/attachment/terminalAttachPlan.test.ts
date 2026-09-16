@@ -103,6 +103,20 @@ describe('createTerminalAttachPlan', () => {
     });
   });
 
+  it('plans attach against an immutable tmux window id', () => {
+    const terminal: NonNullable<Metadata['terminal']> = {
+      mode: 'tmux',
+      tmux: { target: 'happy:@7' },
+    };
+
+    expect(createTerminalAttachPlan({ terminal, insideTmux: false })).toMatchObject({
+      type: 'tmux',
+      sessionName: 'happy',
+      target: '@7',
+      selectWindowArgs: ['select-window', '-t', '@7'],
+    });
+  });
+
   it('plans select-window only when already in tmux shared server', () => {
     const terminal: NonNullable<Metadata['terminal']> = {
       mode: 'tmux',

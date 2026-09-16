@@ -231,12 +231,16 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             if (!result.success) throw new Error(result.error ?? 'expected tmux launch to succeed');
             expect(typeof result.pid).toBe('number');
             expect(result.pid).toBeGreaterThan(0);
+            expect(result.windowId).toMatch(/^@\d+$/);
 
             // Ground truth: query tmux directly for the pane pid.
             const panes = runTmux(['-S', socketPath, 'list-panes', '-t', `${sessionName}:${windowName}`, '-F', '#{pane_pid}']);
             expect(panes.status).toBe(0);
             const listedPid = Number.parseInt(panes.stdout.trim(), 10);
             expect(listedPid).toBe(result.pid);
+            const listedWindowId = runTmux(['-S', socketPath, 'display-message', '-p', '-t', `${sessionName}:${windowName}`, '#{window_id}']);
+            expect(listedWindowId.status).toBe(0);
+            expect(listedWindowId.stdout.trim()).toBe(result.windowId);
 
             await waitForFile(outFile, 2_000);
             const payload = readDumpPayload(outFile);
@@ -248,6 +252,12 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             expect(parts.length).toBeGreaterThanOrEqual(3);
             expect(parts[0]!.length).toBeGreaterThan(0);
             expect(/^\d+$/.test(parts[1]!)).toBe(true);
+
+            expect(runTmux(['-S', socketPath, 'rename-window', '-t', result.windowId, 'renamed-after-bind']).status).toBe(0);
+            await expect(utils.killWindow(result.windowId)).resolves.toBe(true);
+            const remainingIds = runTmux(['-S', socketPath, 'list-windows', '-a', '-F', '#{window_id}']);
+            expect(remainingIds.status).toBe(0);
+            expect(remainingIds.stdout.split('\n')).not.toContain(result.windowId);
         } finally {
             // Kill only the isolated server (never touch the user's default tmux server).
             killIsolatedTmuxServer(socketPath);

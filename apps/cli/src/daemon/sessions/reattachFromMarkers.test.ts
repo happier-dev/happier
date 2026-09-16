@@ -446,6 +446,17 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       updatedAt: 1,
       startedBy: 'daemon',
       cwd: '/workspace/project',
+      metadata: {
+        terminal: {
+          mode: 'zellij',
+          controlServiceabilityV1: {
+            v: 1,
+            attachmentId: 'attachment-exact-terminal',
+            state: 'servable',
+            observedAt: 2,
+          },
+        },
+      },
     };
     const attachmentId = 'attachment-exact-terminal' as NonNullable<TerminalHostHandle['attachmentId']>;
     const handle: TerminalHostHandle & { attachmentId: NonNullable<TerminalHostHandle['attachmentId']> } = {
@@ -478,7 +489,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         attachmentId,
         handle,
         terminalMode: 'zellij',
-        controlDescriptorAvailable: false,
+        controlDescriptorAvailable: true,
       }],
       connectedServiceRestartIntents: [],
     });

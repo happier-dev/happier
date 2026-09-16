@@ -77,6 +77,7 @@ export type TmuxSpawnResult<TCommitRefusal = never> =
       sessionId: string;
       sessionName: string;
       windowName: string;
+      windowId: string;
       pid: number;
       commitRefusal?: never;
     }>
@@ -724,7 +725,8 @@ export class TmuxUtilities {
         : parsePositivePid(createOutputParts[0]);
       const createCompletedNormally = createResult?.returncode === 0 && createResult.timedOut !== true;
 
-      let panePid = createCompletedNormally ? directlyReportedPid : null;
+      let resolvedWindowId = createdWindowId;
+      let panePid = createCompletedNormally && resolvedWindowId ? directlyReportedPid : null;
       if (panePid === null) {
         type ListedWindow = Readonly<{ windowId: string; windowName: string; panePid: number | null }>;
         const listCreatedWindows = async (): Promise<readonly ListedWindow[] | null> => {
@@ -761,6 +763,7 @@ export class TmuxUtilities {
           : (windowNameIsUnique && exactNameMatches?.length === 1 ? exactNameMatches[0]! : null);
 
         if (recoveredWindow?.panePid) {
+          resolvedWindowId = recoveredWindow.windowId;
           panePid = recoveredWindow.panePid;
         } else {
           const absenceWasAlreadyVerified = listedWindows !== null && (
@@ -803,12 +806,16 @@ export class TmuxUtilities {
         }
       }
 
+      if (!resolvedWindowId) {
+        throw new Error('Failed to resolve immutable tmux window id');
+      }
       logTmuxDebug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
 
-      // Return tmux session info and PID
+      // Persist the display name separately, while every ownership target uses tmux's
+      // immutable server-wide window id so automatic or manual renames cannot retarget it.
       const sessionIdentifier: TmuxSessionIdentifier = {
         session: sessionName,
-        window: windowName,
+        window: resolvedWindowId,
       };
 
       return {
@@ -817,6 +824,7 @@ export class TmuxUtilities {
         sessionId: formatTmuxSessionIdentifier(sessionIdentifier),
         sessionName,
         windowName,
+        windowId: resolvedWindowId,
         pid: panePid,
       };
     } catch (error) {
@@ -854,10 +862,33 @@ export class TmuxUtilities {
    */
   async killWindow(sessionIdentifier: string): Promise<boolean> {
     try {
+      const immutableWindowId = sessionIdentifier.trim().match(/^@\d+$/)?.[0] ?? null;
+      if (immutableWindowId) {
+        const result = await this.executeTmuxCommand(['kill-window', '-t', immutableWindowId]);
+        if (!result || result.returncode !== 0 || result.timedOut === true) return false;
+        const inventory = await this.executeTmuxCommand([
+          'list-windows',
+          '-a',
+          '-F',
+          '#{window_id}\t#{window_name}',
+        ]);
+        if (!inventory || inventory.timedOut === true) return false;
+        if (inventory.returncode === 0) {
+          return !inventory.stdout
+            .split('\n')
+            .map((line) => line.split('\t', 1)[0]?.trim())
+            .filter(Boolean)
+            .includes(immutableWindowId);
+        }
+        return /(?:no server running|failed to connect to server)/iu.test(inventory.stderr);
+      }
+
       const parsed = parseTmuxSessionIdentifier(sessionIdentifier);
       if (!parsed.window) {
         throw new TmuxSessionIdentifierError(`Window identifier required: ${sessionIdentifier}`);
       }
+      const directWindowId = parsed.window.match(/^@\d+$/)?.[0] ?? null;
+      if (directWindowId) return await this.killWindow(directWindowId);
 
       const result = await this.executeTmuxCommand(['kill-window'], parsed.session, parsed.window);
       if (!result || result.returncode !== 0 || result.timedOut === true) {

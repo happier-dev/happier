@@ -37,7 +37,7 @@ export function parseTmuxSessionIdentifier(identifier: string): TmuxSessionIdent
     const windowAndPane = parts[1].split('.');
     result.window = windowAndPane[0]?.trim();
 
-    if (result.window && !/^[a-zA-Z0-9._ -]+$/.test(result.window)) {
+    if (result.window && !/^(?:[a-zA-Z0-9._ -]+|@\d+)$/.test(result.window)) {
       throw new TmuxSessionIdentifierError(
         `Invalid window name: "${result.window}". Only alphanumeric characters, spaces, dots, hyphens, and underscores are allowed.`,
       );
@@ -132,7 +132,7 @@ export function buildTmuxSessionIdentifier(params: {
       throw new TmuxSessionIdentifierError(`Invalid session name: "${params.session}"`);
     }
 
-    if (params.window && !/^[a-zA-Z0-9._ -]+$/.test(params.window)) {
+    if (params.window && !/^(?:[a-zA-Z0-9._ -]+|@\d+)$/.test(params.window)) {
       throw new TmuxSessionIdentifierError(`Invalid window name: "${params.window}"`);
     }
 

@@ -12,6 +12,18 @@ export type TerminalControlServiceabilityEvidence = Readonly<{
   reason?: string;
 }>;
 
+export function hasActiveTerminalControlServiceabilityDescriptor(params: Readonly<{
+  terminal: Metadata['terminal'] | null | undefined;
+  attachmentId: string | null | undefined;
+}>): boolean {
+  const attachmentId = typeof params.attachmentId === 'string' ? params.attachmentId.trim() : '';
+  if (!attachmentId || !params.terminal || params.terminal.mode === 'plain') return false;
+  const existing = params.terminal.controlServiceabilityV1;
+  return existing?.v === 1
+    && existing.retired !== true
+    && existing.attachmentId === attachmentId;
+}
+
 export function shouldPublishReportedTerminalControlServiceability(params: Readonly<{
   terminal: Metadata['terminal'] | null | undefined;
   attachmentId: string | null | undefined;
@@ -19,12 +31,10 @@ export function shouldPublishReportedTerminalControlServiceability(params: Reado
 }>): boolean {
   const attachmentId = typeof params.attachmentId === 'string' ? params.attachmentId.trim() : '';
   if (!attachmentId || !params.terminal || params.terminal.mode === 'plain') return false;
-  const existing = params.terminal.controlServiceabilityV1;
-  if (
-    existing?.v === 1
-    && existing.retired !== true
-    && existing.attachmentId === attachmentId
-  ) {
+  if (hasActiveTerminalControlServiceabilityDescriptor({
+    terminal: params.terminal,
+    attachmentId,
+  })) {
     return false;
   }
   return params.publishedAttachmentId !== attachmentId;

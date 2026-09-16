@@ -16,7 +16,7 @@ function createUtility(overrides?: Partial<TmuxTerminalHostUtility>): TmuxTermin
       stderr: '',
       command: [...args],
     })),
-    spawnInTmux: vi.fn(async () => ({ success: true, sessionName: 'session-a', windowName: 'claude' })),
+    spawnInTmux: vi.fn(async () => ({ success: true, sessionName: 'session-a', windowName: 'claude', windowId: '@7' })),
     captureCurrentInput: vi.fn(async () => ''),
     captureCursorPosition: vi.fn(async () => null),
     sendKeys: vi.fn(async () => true),
@@ -39,6 +39,22 @@ describe('createTmuxTerminalHostAdapter', () => {
         liveProbe: 'required',
       },
     })).toEqual({ TMUX_TMPDIR: '/tmp/happier-tmux-root' });
+  });
+
+  it('persists the immutable tmux window id returned by the host', async () => {
+    const adapter = createTmuxTerminalHostAdapter({ tmux: createUtility() });
+
+    await expect(adapter.createOrAttachHost({
+      sessionName: 'session-a',
+      workingDirectory: '/workspace/project',
+      spawnArgv: ['/managed/node', 'claude_local_launcher.cjs'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    })).resolves.toMatchObject({
+      kind: 'tmux',
+      sessionName: 'session-a',
+      paneId: '@7',
+    });
   });
 
   it('forwards inherited environment removals to the tmux window owner', async () => {
