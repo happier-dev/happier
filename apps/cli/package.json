@@ -182,13 +182,14 @@
     "tar": "^7.5.8",
     "tmp": "^0.2.5",
     "tweetnacl": "^1.0.3",
-    "ws": "^8.18.3",
+    "ws-node": "npm:ws@^8.18.3",
     "zod": "4.3.6"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
     "@types/archiver": "^7.0.0",
     "@types/node": ">=20",
+    "@types/ws-node": "npm:@types/ws@^8.18.1",
     "cross-env": "^10.1.0",
     "dotenv": "^16.6.1",
     "eslint": "^9",

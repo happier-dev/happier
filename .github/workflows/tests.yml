@@ -730,7 +730,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       # Discovery-only source trees for website availability claims. These moving branch refs do
       # not establish release identity or authorize publication.
@@ -946,6 +946,12 @@ jobs:
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
 
+      - name: Setup Bun for the Codex transport regression
+        if: matrix.part == 1
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+
       - name: Install system dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
@@ -1016,7 +1022,9 @@ jobs:
         id: integration-tests
         if: ${{ matrix.part == 1 && !cancelled() }}
         continue-on-error: true
-        run: yarn workspace @happier-dev/cli test:integration
+        run: |
+          yarn --cwd apps/cli vitest run --config vitest.integration.config.ts src/backends/codex/appServer/client/createCodexUnixWebSocket.bun.integration.test.ts
+          yarn workspace @happier-dev/cli test:integration
 
       - name: Run slow tests
         id: slow-tests
@@ -1162,7 +1170,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1213,7 +1221,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1264,7 +1272,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1328,7 +1336,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1387,7 +1395,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1661,7 +1669,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1721,7 +1729,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1771,7 +1779,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1822,7 +1830,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn
@@ -1874,7 +1882,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.3.5
+          bun-version: 1.4.2
 
       - name: Enable Corepack
         uses: ./.github/actions/enable-corepack-yarn

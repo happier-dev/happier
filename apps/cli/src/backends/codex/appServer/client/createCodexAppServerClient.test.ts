@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import { describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws-node';
 
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -29,29 +29,10 @@ vi.mock('node:child_process', async (importOriginal) => {
 describe('createCodexAppServerClient', () => {
     it('speaks JSON-RPC over the shared app-server Unix WebSocket', async () => {
         await withTempDir('happier-codex-app-server-client-websocket-', async (root) => {
-            type TestSocket = Readonly<{
-                on: (event: 'message', listener: (payload: unknown) => void) => void;
-                send: (payload: string) => void;
-            }>;
-            type TestWebSocketServer = Readonly<{
-                on: (event: 'connection', listener: (socket: TestSocket) => void) => void;
-                close: (callback: () => void) => void;
-            }>;
-            type TestWebSocketModule = Readonly<{
-                WebSocketServer: new (params: Readonly<{
-                    server: ReturnType<typeof createServer>;
-                    verifyClient: (
-                        info: Readonly<{ req: Readonly<{ headers: Readonly<Record<string, string | string[] | undefined>> }> }>,
-                        done: (allowed: boolean) => void,
-                    ) => void;
-                }>) => TestWebSocketServer;
-            }>;
-
             const socketPath = process.platform === 'win32'
                 ? `\\\\.\\pipe\\happier-codex-test-${process.pid}-${Date.now()}`
                 : join(root, 'app-server.sock');
             const httpServer = createServer();
-            const { WebSocketServer } = createRequire(import.meta.url)('ws') as unknown as TestWebSocketModule;
             const webSocketServer = new WebSocketServer({
                 server: httpServer,
                 // Codex's tungstenite endpoint closes the handshake when clients offer
@@ -84,7 +65,12 @@ describe('createCodexAppServerClient', () => {
                 expect(spawn).not.toHaveBeenCalled();
             } finally {
                 await client.dispose();
-                await new Promise<void>((resolve) => webSocketServer.close(resolve));
+                await new Promise<void>((resolve, reject) => {
+                    webSocketServer.close((error?: Error): void => {
+                        if (error) reject(error);
+                        else resolve();
+                    });
+                });
                 await new Promise<void>((resolve) => httpServer.close(() => resolve()));
             }
         });

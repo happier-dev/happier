@@ -1,6 +1,4 @@
 import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
-import { createConnection } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { appendFile, rename, rm, stat } from 'node:fs/promises';
 
@@ -11,6 +9,7 @@ import { resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
 import { resolveConfiguredCodexConfigTomlPath } from '../../utils/resolveConfiguredCodexHome';
 import { createCodexAppServerJsonLineReader } from './codexAppServerJsonLineReader';
+import { createCodexUnixWebSocket, type CodexUnixWebSocket } from './createCodexUnixWebSocket';
 import { readCodexAppServerRequestTimeoutMs } from './codexAppServerRpcTimeout';
 import {
     sanitizeCodexAppServerRpcDiagnosticString,
@@ -69,28 +68,6 @@ type PendingRequest = Readonly<{
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
 }>;
-
-type CodexUnixWebSocket = Readonly<{
-    send: (payload: string, callback: (error?: Error) => void) => void;
-    terminate: () => void;
-    on: (event: string, listener: (...args: unknown[]) => void) => CodexUnixWebSocket;
-    once: (event: string, listener: (...args: unknown[]) => void) => CodexUnixWebSocket;
-    removeListener: (event: string, listener: (...args: unknown[]) => void) => CodexUnixWebSocket;
-}>;
-
-type CodexUnixWebSocketConstructor = new (
-    address: string,
-    options: Readonly<{
-        createConnection: () => ReturnType<typeof createConnection>;
-        perMessageDeflate: false;
-    }>,
-) => CodexUnixWebSocket;
-
-function loadCodexUnixWebSocketConstructor(): CodexUnixWebSocketConstructor {
-    // `ws` has no bundled TypeScript declarations. Keep its untyped CommonJS boundary isolated
-    // here and expose only the small structural contract used by the Codex transport.
-    return createRequire(import.meta.url)('ws') as unknown as CodexUnixWebSocketConstructor;
-}
 
 function toError(error: unknown): Error {
     return error instanceof Error ? error : new Error(String(error));
@@ -407,13 +384,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     let webSocket: CodexUnixWebSocket | null = null;
     let connectionReady = Promise.resolve();
     if (transport.kind === 'unixWebSocket') {
-        const WebSocket = loadCodexUnixWebSocketConstructor();
-        webSocket = new WebSocket('ws://localhost/', {
-            createConnection: () => createConnection(transport.socketPath),
-            // Codex's tungstenite Unix-socket endpoint does not negotiate this extension and
-            // closes the HTTP upgrade when `ws` offers it by default.
-            perMessageDeflate: false,
-        });
+        webSocket = createCodexUnixWebSocket(transport.socketPath);
         const socket = webSocket;
         connectionReady = new Promise<void>((resolve, reject) => {
             const onOpen = () => {
