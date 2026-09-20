@@ -68,6 +68,7 @@ const styles = StyleSheet.create((theme) => ({
     titleContainer: {
         flex: 1,
         alignItems: 'flex-start',
+        marginLeft: -4,
     },
     titleText: {
         fontSize: 16,
