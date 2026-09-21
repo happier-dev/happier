@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Platform, StatusBar, Pressable } from 'react-native';
+import { View, Platform, StatusBar, Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { useLayoutMaxWidth } from '../ui/layout/layout';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -19,6 +19,7 @@ interface HeaderProps {
     headerLeft?: (() => React.ReactNode) | null;
     headerRight?: (() => React.ReactNode) | null;
     headerStyle?: any;
+    headerContentStyle?: StyleProp<ViewStyle>;
     headerTitleStyle?: any;
     headerSubtitleStyle?: any;
     headerTintColor?: string;
@@ -38,6 +39,7 @@ export const Header = React.memo((props: HeaderProps) => {
         headerLeft,
         headerRight,
         headerStyle,
+        headerContentStyle,
         headerTitleStyle,
         headerSubtitleStyle,
         headerTintColor, // Accept but ignore - using theme instead
@@ -83,7 +85,7 @@ export const Header = React.memo((props: HeaderProps) => {
                 <View
                     testID="desktop-route-header-content"
                     pointerEvents="box-none"
-                    style={[styles.content, { height: headerHeight, maxWidth }]}
+                    style={[styles.content, { height: headerHeight, maxWidth }, headerContentStyle]}
                 >
                     <View pointerEvents="box-none" style={styles.leftContainer}>
                         {headerLeft && headerLeft()}
