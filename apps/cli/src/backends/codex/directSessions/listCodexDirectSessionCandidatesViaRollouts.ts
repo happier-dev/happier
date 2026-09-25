@@ -71,22 +71,32 @@ function parseResumeIdFromRolloutFilename(filePath: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Codex app-server resume accepts canonical UUID thread IDs. */
 function isCanonicalCodexThreadId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
+/** Reads the resumable thread UUID from either supported rollout filename form. */
+function parseThreadIdFromRolloutFilename(filePath: string): string | null {
+  const name = basename(filePath);
+  const match = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.jsonl$/i.exec(name);
+  return match ? match[1] : null;
+}
+
+/** Resolves a rollout to a validated Codex thread ID without exposing arbitrary filename suffixes. */
 async function resolveResumeIdFromRolloutFile(filePath: string): Promise<string | null> {
   const filenameId = parseResumeIdFromRolloutFilename(filePath);
   if (!filenameId) return null;
 
-  // Codex normally ends rollout filenames with the thread UUID. Newer Codex versions can append
-  // a second UUID for a fork/continuation (for example `<thread>_<turn>`), while session_meta.id
-  // remains the UUID accepted by thread/resume. Keep the fast filename path for canonical IDs and
-  // consult the rollout metadata only for non-canonical suffixes.
-  if (isCanonicalCodexThreadId(filenameId)) return filenameId;
+  // Codex rollout filenames end with the thread UUID, optionally followed by a turn UUID for
+  // continuations (`<thread>_<turn>`). Both filename forms identify the resumable thread directly.
+  // Other suffixes need metadata to prove the ID; never expose an unresolved suffix as a resume ID.
+  const filenameThreadId = parseThreadIdFromRolloutFilename(filePath);
+  if (filenameThreadId) return filenameThreadId;
+
   const metadata = await readCodexSessionMetaFromRollout(filePath);
   const metadataId = typeof metadata?.id === 'string' ? metadata.id.trim() : '';
-  return metadataId || filenameId;
+  return isCanonicalCodexThreadId(metadataId) ? metadataId : null;
 }
 
 function parseRolloutTimestampMs(filePath: string): number {
@@ -253,21 +263,15 @@ export async function listCodexDirectSessionCandidatesViaRollouts(params: Readon
     );
   }
 
-  if (searchTerm && canSearchRolloutFilename(searchTerm)) {
+  if (searchTerm && canSearchRolloutFilename(searchTerm) && params.searchMode === 'fast') {
     const filenameMatches = await collectGroupedCandidates(searchTerm);
     if (filenameMatches.length > 0) {
       const pageEntries = filenameMatches.slice(offset, offset + requestedLimit);
       const candidates = await buildCandidates(pageEntries);
       const exactIdMatch = filenameMatches.some(({ remoteSessionId }) => remoteSessionId.toLowerCase() === searchTerm);
-      return {
-        candidates,
-        totalCount: filenameMatches.length,
-        searchIncomplete: params.searchMode === 'fast' && !exactIdMatch,
-      };
+      return { candidates, totalCount: filenameMatches.length, searchIncomplete: !exactIdMatch };
     }
-    if (params.searchMode === 'fast') {
-      return { candidates: [], totalCount: 0, searchIncomplete: true };
-    }
+    return { candidates: [], totalCount: 0, searchIncomplete: true };
   }
 
   const groupedCandidates = await collectGroupedCandidates();
