@@ -112,7 +112,6 @@ import type {
 import { registerPetRpcHandlers } from '@/pets/rpc/registerPetRpcHandlers';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { configuration } from '@/configuration';
-import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveFilesystemPolicyDefaultDirectory } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
@@ -149,6 +148,7 @@ import {
 } from '@/daemon/actionOperations/coreActionOperationProjection';
 import { createSessionHandoffCoordinator } from '@/session/handoff/orchestration/sessionHandoffCoordinator';
 import { bindSessionHandoffTarget } from '@/session/handoff/orchestration/sessionHandoffTargetBinding';
+import { readSessionHandoffServerFeatures } from '@/session/handoff/orchestration/sessionHandoffServerFeatures';
 import { buildTrackedSessionHandoffMachineCall } from '@/session/handoff/trackedSessionHandoffMachineCall';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
@@ -1241,13 +1241,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
             request: payload,
           }));
           const coordinator = createSessionHandoffCoordinator({
-            readServerFeatures: async () => {
-              const snapshot = await observeServerFeaturesSnapshot({
-                serverUrl: configuration.serverUrl,
-                token: credentials.token,
-              });
-              return snapshot.status === 'ready' ? snapshot.features : null;
-            },
+            readServerFeatures: async (signal) => await readSessionHandoffServerFeatures({
+              token: credentials.token,
+              ...(signal ? { signal } : {}),
+            }),
             directPeerAvailable: Boolean(handlers.directPeerTransfer),
             preferredTransportStrategies: request.preferredTransportStrategies,
             transportStrategy: request.negotiatedTransportStrategy,

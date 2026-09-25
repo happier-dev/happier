@@ -97,7 +97,7 @@ export type SessionHandoffCoordinatorPort = Readonly<{
   abortTarget: (request: Readonly<{ handoffId: string; sessionId: string; reason: string }>) => Promise<unknown>;
   abortSource: (request: Readonly<{ handoffId: string; reason: string }>) => Promise<unknown>;
   wait: (signal?: AbortSignal) => Promise<void>;
-  readServerFeatures: () => Promise<FeaturesResponse | null>;
+  readServerFeatures: (signal?: AbortSignal) => Promise<FeaturesResponse | null>;
   directPeerAvailable: boolean;
   preferredTransportStrategies: readonly ('server_routed_stream' | 'direct_peer')[];
   transportStrategy?: 'server_routed_stream' | 'direct_peer';
@@ -258,7 +258,9 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
         try {
           const cancelledBeforeStart = await acknowledgeCancellation();
           if (cancelledBeforeStart) return cancelledBeforeStart;
-          const serverFeatures = await port.readServerFeatures();
+          const serverFeatures = await port.readServerFeatures(signal);
+          const cancelledDuringPolicyRead = await acknowledgeCancellation();
+          if (cancelledDuringPolicyRead) return cancelledDuringPolicyRead;
           if (!serverFeatures) {
             return { ok: false, errorCode: 'server_features_unavailable', error: SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR };
           }
@@ -276,8 +278,6 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
             return { ok: false, errorCode: transport.reasonCode, error: 'Machine transfer is disabled on the selected server' };
           }
           const strategy = transport.strategy;
-          const cancelledAfterNegotiation = await acknowledgeCancellation();
-          if (cancelledAfterNegotiation) return cancelledAfterNegotiation;
           phase(update, 'starting_source', 'Preparing source');
           const startedRaw = await port.startSource({
             sessionId: input.sessionId,

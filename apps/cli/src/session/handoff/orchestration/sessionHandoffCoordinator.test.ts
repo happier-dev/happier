@@ -370,6 +370,28 @@ describe('sessionHandoffCoordinator', () => {
     expect(port.commitTarget).toHaveBeenCalledOnce();
   });
 
+  it('lets cancellation interrupt the pending transfer-policy read before the source is touched', async () => {
+    const controller = new AbortController();
+    const readServerFeatures = vi.fn((signal?: AbortSignal) => new Promise<null>((resolve) => {
+      // Settles only through the forwarded cancellation signal, like a fetch that is still in flight.
+      signal?.addEventListener('abort', () => resolve(null), { once: true });
+    }));
+    const { coordinator, port, update } = createHarness({ readServerFeatures });
+
+    const pending = (await coordinator.admit(baseInput)).execute({ update, signal: controller.signal });
+    await vi.waitFor(() => expect(readServerFeatures).toHaveBeenCalledOnce());
+    controller.abort();
+
+    const result = await Promise.race([
+      pending,
+      new Promise<'still_waiting'>((resolve) => setTimeout(() => resolve('still_waiting'), 1_000)),
+    ]);
+    expect(result).toEqual({ kind: 'cancelled' });
+    expect(readServerFeatures).toHaveBeenCalledWith(controller.signal);
+    expect(port.startSource).not.toHaveBeenCalled();
+    expect(port.abortSource).not.toHaveBeenCalled();
+  });
+
   it('acknowledges tracked-operation cancellation through the canonical abort primitives before commit', async () => {
     const controller = new AbortController();
     const { coordinator, port, update } = createHarness({

@@ -36,6 +36,29 @@ describe('fetchServerFeaturesSnapshot', () => {
     );
   });
 
+  it('aborts a fresh observation when the caller cancels before the attempt timeout', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      }, { once: true });
+    }));
+
+    const pending = observeServerFeaturesSnapshot({
+      serverUrl: 'https://example.test',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+    controller.abort();
+
+    const result = await Promise.race([
+      pending,
+      new Promise<'still_waiting'>((resolve) => setTimeout(() => resolve('still_waiting'), 1_000)),
+    ]);
+    expect(result).toMatchObject({ status: 'error' });
+  });
+
   it('does not let one caller wait budget cancel the shared request', async () => {
     vi.useFakeTimers();
     let resolveFetch!: (response: Response) => void;
