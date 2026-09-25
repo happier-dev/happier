@@ -151,7 +151,17 @@ export const TranscriptRowShell = React.memo(function TranscriptRowShell(props: 
         reconciler: props.reconciler,
         signature: props.signature,
     });
-    const reservedMinHeight = reservation?.minHeight;
+    // Row-local collapsibles (tool-row details, thinking bodies) change this row's painted height
+    // WITHOUT changing its signature, so a reservation measured in one local state is not valid in
+    // the other and a `minHeight` would self-fulfil a blank gap after collapsing. Once a mounted row
+    // has toggled locally its natural content is authoritative (no reservation), and heights
+    // measured while a local body is open are not recorded: a remount resets that local state to
+    // collapsed, so only collapsed-state measurements may seed its reservation.
+    const [hasRowLocalLayoutMutation, setHasRowLocalLayoutMutation] = React.useState(false);
+    const openRowLocalBodiesRef = React.useRef(0);
+    const latestSignatureRef = React.useRef(props.signature);
+    latestSignatureRef.current = props.signature;
+    const reservedMinHeight = hasRowLocalLayoutMutation ? undefined : reservation?.minHeight;
     const shellStyle = React.useMemo(() => (
         reservedMinHeight === undefined ? undefined : { minHeight: reservedMinHeight }
     ), [reservedMinHeight]);
@@ -160,7 +170,9 @@ export const TranscriptRowShell = React.memo(function TranscriptRowShell(props: 
         const height = event?.nativeEvent?.layout?.height;
         if (typeof height === 'number' && Number.isFinite(height)) {
             const heightPx = Math.max(1, Math.trunc(height));
-            props.reconciler.recordMeasuredHeight({ signature: props.signature, heightPx });
+            if (openRowLocalBodiesRef.current === 0) {
+                props.reconciler.recordMeasuredHeight({ signature: props.signature, heightPx });
+            }
             props.onRowMeasured?.({
                 itemId: props.itemId,
                 rowKind: props.signature.kind,
@@ -192,12 +204,24 @@ export const TranscriptRowShell = React.memo(function TranscriptRowShell(props: 
         });
     }, [props.onRowLayoutMutation, props.reconciler, props.itemId, signatureKey, props.signature]);
     const handleChildRowLayoutMutation = React.useCallback((mutation: TranscriptRowLayoutMutation) => {
+        if (mutation.reason === 'expand') {
+            openRowLocalBodiesRef.current += 1;
+        } else if (mutation.reason === 'collapse') {
+            // A body mounted open (default-expanded) collapses without a prior expand notification.
+            openRowLocalBodiesRef.current = Math.max(0, openRowLocalBodiesRef.current - 1);
+            // Drop the growth floor recorded while it was open; the next onLayout re-seeds it.
+            props.reconciler.resetReservationForStructuralChange({
+                itemId: props.itemId,
+                signature: latestSignatureRef.current,
+            });
+        }
+        setHasRowLocalLayoutMutation(true);
         props.onRowLayoutMutation?.({
             itemId: props.itemId,
             mutation,
             rowKind: props.signature.kind,
         });
-    }, [props.itemId, props.onRowLayoutMutation, props.signature.kind]);
+    }, [props.itemId, props.onRowLayoutMutation, props.reconciler, props.signature.kind]);
 
     return (
         <TranscriptRowLayoutMutationProvider value={handleChildRowLayoutMutation}>
