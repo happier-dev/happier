@@ -7,12 +7,20 @@ import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfig
 const CODEX_NATIVE_SEARCH_MAX_DEPTH = 8;
 
 /**
- * Codex rollout file names are `rollout-<ISO-timestamp>-<sessionId>.jsonl`. A match for a vendor
- * resume id is an exact `-<id>.jsonl` SUFFIX on a `rollout-` prefixed name — never a substring of the
- * id (so `-6425384658.jsonl` does not match the full uuid) and never a non-rollout `session-<id>.jsonl`.
+ * Codex rollout file names are usually `rollout-<ISO-timestamp>-<sessionId>.jsonl`. Newer Codex
+ * continuations can append a turn UUID to the thread UUID (`<sessionId>_<turnId>`); both forms are
+ * accepted, but the thread id itself must remain an exact suffix component and never a substring.
  */
 export function isMatchingCodexRolloutFileName(name: string, vendorResumeId: string): boolean {
-  return name.startsWith('rollout-') && name.endsWith(`-${vendorResumeId}.jsonl`);
+  if (!name.startsWith('rollout-')) return false;
+  if (name.endsWith(`-${vendorResumeId}.jsonl`)) return true;
+
+  const escapedVendorResumeId = vendorResumeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const continuationPattern = new RegExp(
+    `-${escapedVendorResumeId}_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.jsonl$`,
+    'i',
+  );
+  return continuationPattern.test(name);
 }
 
 /**

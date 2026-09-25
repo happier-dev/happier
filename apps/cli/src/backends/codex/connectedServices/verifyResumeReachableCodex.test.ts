@@ -86,6 +86,34 @@ describe('verifyResumeReachableCodex', () => {
     }
   });
 
+  it('finds a continuation rollout whose filename appends a turn id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-reachable-continuation-'));
+    const vendorResumeId = '019d94f3-0a6f-7c41-bb18-d26425384658';
+    const continuationId = '019d94f4-0a6f-7c41-bb18-d26425384659';
+    const foundPath = join(
+      root,
+      'codex-home',
+      'sessions',
+      '2026',
+      '09',
+      '25',
+      `rollout-2026-09-25T11-50-33-${vendorResumeId}_${continuationId}.jsonl`,
+    );
+    try {
+      await mkdir(join(root, 'codex-home', 'sessions', '2026', '09', '25'), { recursive: true });
+      await writeFile(foundPath, '{}\n');
+
+      await expect(verifyResumeReachableCodex({
+        targetMaterializedRoot: root,
+        targetMaterializedEnv: { CODEX_HOME: join(root, 'codex-home') },
+        vendorResumeId,
+        cwd: root,
+      })).resolves.toEqual({ ok: true, resolvedPath: foundPath });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not accept a persisted candidate file whose rollout id does not match the vendor resume id', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-reachable-stale-candidate-'));
     try {

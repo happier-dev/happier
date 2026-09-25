@@ -18,6 +18,13 @@ describe('isMatchingCodexRolloutFileName', () => {
     )).toBe(true);
   });
 
+  it('matches a continuation rollout with a thread id and appended turn id', () => {
+    expect(isMatchingCodexRolloutFileName(
+      'rollout-2026-09-25T11-50-33-019d94f3-0a6f-7c41-bb18-d26425384658_019d94f4-0a6f-7c41-bb18-d26425384659.jsonl',
+      '019d94f3-0a6f-7c41-bb18-d26425384658',
+    )).toBe(true);
+  });
+
   it('does not match a different id sharing a suffix substring', () => {
     expect(isMatchingCodexRolloutFileName(
       'rollout-2026-04-16T08-20-49-aaaaaaaa-0a6f-7c41-bb18-d26425384658.jsonl',
@@ -28,6 +35,13 @@ describe('isMatchingCodexRolloutFileName', () => {
   it('does not match a non-rollout jsonl file', () => {
     expect(isMatchingCodexRolloutFileName(
       'session-019d94f3-0a6f-7c41-bb18-d26425384658.jsonl',
+      '019d94f3-0a6f-7c41-bb18-d26425384658',
+    )).toBe(false);
+  });
+
+  it('does not match a continuation with a different thread id', () => {
+    expect(isMatchingCodexRolloutFileName(
+      'rollout-2026-09-25T11-50-33-aaaaaaaa-0a6f-7c41-bb18-d26425384658_019d94f4-0a6f-7c41-bb18-d26425384659.jsonl',
       '019d94f3-0a6f-7c41-bb18-d26425384658',
     )).toBe(false);
   });

@@ -71,6 +71,24 @@ function parseResumeIdFromRolloutFilename(filePath: string): string | null {
   return match ? match[1] : null;
 }
 
+function isCanonicalCodexThreadId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function resolveResumeIdFromRolloutFile(filePath: string): Promise<string | null> {
+  const filenameId = parseResumeIdFromRolloutFilename(filePath);
+  if (!filenameId) return null;
+
+  // Codex normally ends rollout filenames with the thread UUID. Newer Codex versions can append
+  // a second UUID for a fork/continuation (for example `<thread>_<turn>`), while session_meta.id
+  // remains the UUID accepted by thread/resume. Keep the fast filename path for canonical IDs and
+  // consult the rollout metadata only for non-canonical suffixes.
+  if (isCanonicalCodexThreadId(filenameId)) return filenameId;
+  const metadata = await readCodexSessionMetaFromRollout(filePath);
+  const metadataId = typeof metadata?.id === 'string' ? metadata.id.trim() : '';
+  return metadataId || filenameId;
+}
+
 function parseRolloutTimestampMs(filePath: string): number {
   const name = basename(filePath);
   const match = /^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-/i.exec(name);
@@ -187,7 +205,7 @@ export async function listCodexDirectSessionCandidatesViaRollouts(params: Readon
         ...(await collectRolloutFiles({ rootDir: join(homeEntry.codexHome, 'archived_sessions'), maxDepth: 10, archived: true, filenameIncludes })),
       ];
       for (const entry of files) {
-        const resumeId = parseResumeIdFromRolloutFilename(entry.filePath);
+        const resumeId = await resolveResumeIdFromRolloutFile(entry.filePath);
         if (!resumeId) continue;
         const existing = grouped.get(resumeId);
         const entrySortMs = parseRolloutTimestampMs(entry.filePath);

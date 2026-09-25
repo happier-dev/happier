@@ -105,6 +105,43 @@ describe('listCodexSessionCandidates', () => {
     expect(second.nextCursor).toBeNull();
   });
 
+  it('uses session_meta.id when a continuation rollout filename contains a composite id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-list-composite-rollout-id-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const threadId = 'aaaaaaaa-1111-1111-1111-111111111111';
+    const continuationId = 'bbbbbbbb-2222-2222-2222-222222222222';
+    const regularRollout = join(sessionsDir, `rollout-2026-01-01T00-00-00-${threadId}.jsonl`);
+    const continuationRollout = join(sessionsDir, `rollout-2026-01-02T00-00-00-${threadId}_${continuationId}.jsonl`);
+
+    await writeFile(
+      regularRollout,
+      sessionMetaLine({ id: threadId, timestamp: '2026-01-01T00:00:00.000Z', cwd: '/repo/composite' })
+        + responseItemLine({ type: 'message', role: 'user', content: [{ type: 'text', text: 'initial' }] }),
+      'utf8',
+    );
+    await writeFile(
+      continuationRollout,
+      sessionMetaLine({ id: threadId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/composite' })
+        + responseItemLine({ type: 'message', role: 'assistant', content: [{ type: 'text', text: 'continued' }] }),
+      'utf8',
+    );
+    await utimes(regularRollout, new Date('2026-01-01T00:00:00.000Z'), new Date('2026-01-01T00:00:00.000Z'));
+    await utimes(continuationRollout, new Date('2026-01-02T00:00:00.000Z'), new Date('2026-01-02T00:00:00.000Z'));
+
+    const result = await listCodexSessionCandidates({
+      source: { kind: 'codexHome', home: 'user' },
+      env: createDirectSessionsEnv(codexHome),
+      activeServerDir: join(root, 'servers', 'cloud'),
+      limit: 10,
+    });
+
+    expect(result.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([threadId]);
+    expect(result.candidates[0]?.details).toEqual(expect.objectContaining({ cwd: '/repo/composite' }));
+  });
+
   it('does not read rollout metadata for sessions outside the requested page when no search term is provided', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-list-page-only-'));
     const codexHome = join(root, 'codex-home');
