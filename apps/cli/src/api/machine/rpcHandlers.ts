@@ -112,6 +112,7 @@ import type {
 import { registerPetRpcHandlers } from '@/pets/rpc/registerPetRpcHandlers';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { configuration } from '@/configuration';
+import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveFilesystemPolicyDefaultDirectory } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
@@ -1240,8 +1241,16 @@ export function registerMachineRpcHandlers(params: Readonly<{
             request: payload,
           }));
           const coordinator = createSessionHandoffCoordinator({
-            transportStrategy: request.negotiatedTransportStrategy
-              ?? (request.preferredTransportStrategies.includes('direct_peer') ? 'direct_peer' : 'server_routed_stream'),
+            readServerFeatures: async () => {
+              const snapshot = await observeServerFeaturesSnapshot({
+                serverUrl: configuration.serverUrl,
+                token: credentials.token,
+              });
+              return snapshot.status === 'ready' ? snapshot.features : null;
+            },
+            directPeerAvailable: Boolean(handlers.directPeerTransfer),
+            preferredTransportStrategies: request.preferredTransportStrategies,
+            transportStrategy: request.negotiatedTransportStrategy,
             probeTargetCapability: async () => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, {}),
             startSource,
             prepareTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2, payload),

@@ -1,4 +1,6 @@
 import {
+  readServerEnabledBit,
+  type FeaturesResponse,
   SessionHandoffCommitResponseSchema,
   SessionHandoffPrepareTargetResultGetResponseSchema,
   SessionHandoffStartResponseSchema,
@@ -13,6 +15,7 @@ import {
   type SessionHandoffStatus,
   type SessionHandoffWorkspaceTransfer,
 } from '@happier-dev/protocol';
+import { resolveMachineTransferRoute, SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR } from '@happier-dev/transfers';
 
 export type SessionHandoffCoordinatorInput = Readonly<{
   sessionId: string;
@@ -51,7 +54,7 @@ export type SessionHandoffCoordinatorPort = Readonly<{
     sourceMachineId: string;
     targetMachineId: string;
     sessionStorageMode: 'direct' | 'persisted';
-    preferredTransportStrategies: readonly ['server_routed_stream'] | readonly ['direct_peer'];
+    preferredTransportStrategies: readonly ('server_routed_stream' | 'direct_peer')[];
     negotiatedTransportStrategy: 'server_routed_stream' | 'direct_peer';
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
   }>) => Promise<unknown>;
@@ -94,6 +97,9 @@ export type SessionHandoffCoordinatorPort = Readonly<{
   abortTarget: (request: Readonly<{ handoffId: string; sessionId: string; reason: string }>) => Promise<unknown>;
   abortSource: (request: Readonly<{ handoffId: string; reason: string }>) => Promise<unknown>;
   wait: (signal?: AbortSignal) => Promise<void>;
+  readServerFeatures: () => Promise<FeaturesResponse | null>;
+  directPeerAvailable: boolean;
+  preferredTransportStrategies: readonly ('server_routed_stream' | 'direct_peer')[];
   transportStrategy?: 'server_routed_stream' | 'direct_peer';
 }>;
 
@@ -215,7 +221,6 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
         update: (value: OperationUpdate) => void;
         signal?: AbortSignal;
       }>): Promise<CoordinatorExecutionResult> => {
-        const strategy = port.transportStrategy ?? 'server_routed_stream';
         let handoffId: string | null = null;
         let targetCommitted = false;
         let cancellationClosed = false;
@@ -253,13 +258,35 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
         try {
           const cancelledBeforeStart = await acknowledgeCancellation();
           if (cancelledBeforeStart) return cancelledBeforeStart;
+          const serverFeatures = await port.readServerFeatures();
+          if (!serverFeatures) {
+            return { ok: false, errorCode: 'server_features_unavailable', error: SERVER_TRANSFER_POLICY_UNAVAILABLE_ERROR };
+          }
+          if (readServerEnabledBit(serverFeatures, 'sessions.handoff') !== true) {
+            return { ok: false, errorCode: 'handoff_disabled', error: 'Session handoff is disabled on the selected server' };
+          }
+          const transport = resolveMachineTransferRoute({
+            serverFeatures,
+            preferredStrategies: port.transportStrategy
+              ? [port.transportStrategy, ...port.preferredTransportStrategies]
+              : port.preferredTransportStrategies,
+            directPeerAvailable: port.directPeerAvailable,
+          });
+          if (transport.kind === 'unavailable') {
+            return { ok: false, errorCode: transport.reasonCode, error: 'Machine transfer is disabled on the selected server' };
+          }
+          const strategy = transport.strategy;
+          const cancelledAfterNegotiation = await acknowledgeCancellation();
+          if (cancelledAfterNegotiation) return cancelledAfterNegotiation;
           phase(update, 'starting_source', 'Preparing source');
           const startedRaw = await port.startSource({
             sessionId: input.sessionId,
             sourceMachineId: input.sourceMachineId,
             targetMachineId: input.targetMachineId,
             sessionStorageMode: input.sessionStorageMode,
-            preferredTransportStrategies: [strategy],
+            preferredTransportStrategies: strategy === 'direct_peer' && transport.allowServerRoutedFallback
+              ? ['direct_peer', 'server_routed_stream']
+              : [strategy],
             negotiatedTransportStrategy: strategy,
             ...(input.workspaceTransfer ? { workspaceTransfer: input.workspaceTransfer } : {}),
           });
@@ -280,7 +307,7 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
             sourceMachineId: input.sourceMachineId,
             targetMachineId: input.targetMachineId,
             negotiatedTransportStrategy: strategy,
-            allowServerRoutedFallback: false,
+            allowServerRoutedFallback: transport.allowServerRoutedFallback,
             sourceSessionStorageMode: input.sessionStorageMode,
             ...(input.targetSessionStorageMode ? { targetSessionStorageMode: input.targetSessionStorageMode } : {}),
             targetPath: input.targetPath ?? started.targetPath,

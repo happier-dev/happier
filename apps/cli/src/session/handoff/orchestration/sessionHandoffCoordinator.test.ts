@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 import { createSessionHandoffCoordinator } from './sessionHandoffCoordinator';
 
@@ -39,6 +40,15 @@ function createHarness(overrides: Partial<Parameters<typeof createSessionHandoff
   const calls: string[] = [];
   const update = vi.fn();
   const port = {
+    readServerFeatures: async () => FeaturesResponseSchema.parse({
+      features: {
+        sessions: { enabled: true, handoff: { enabled: true } },
+        machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: true } } },
+      },
+      capabilities: {},
+    }),
+    directPeerAvailable: true,
+    preferredTransportStrategies: ['direct_peer', 'server_routed_stream'] as const,
     probeTargetCapability: vi.fn(async () => ({ protocolVersion: 2 as const, atomicTargetResume: true, targetCleanup: true })),
     startSource: vi.fn(async () => { calls.push('start'); return readyStart(); }),
     prepareTarget: vi.fn(async () => { calls.push('prepare'); return readyTarget(); }),
@@ -79,6 +89,81 @@ describe('sessionHandoffCoordinator', () => {
       'starting_source', 'preparing_target', 'resuming_target', 'confirming_target',
       'binding_target', 'committing_target', 'cleaning_source', 'finalizing_target',
     ]);
+  });
+
+  it('uses the enabled relay when direct peer is preferred but disabled by the server', async () => {
+    const { coordinator, port, update } = createHarness({ transportStrategy: 'direct_peer' });
+    const result = await (await coordinator.admit(baseInput)).execute({ update });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(port.startSource).toHaveBeenCalledWith(expect.objectContaining({
+      negotiatedTransportStrategy: 'server_routed_stream',
+    }));
+    expect(port.prepareTarget).toHaveBeenCalledWith(expect.objectContaining({
+      negotiatedTransportStrategy: 'server_routed_stream',
+      allowServerRoutedFallback: true,
+    }));
+  });
+
+  it.each([true, false])('allows direct-peer relay fallback only when enabled (%s)', async (relayEnabled) => {
+    const { coordinator, port, update } = createHarness({
+      readServerFeatures: async () => FeaturesResponseSchema.parse({
+        features: {
+          sessions: { enabled: true, handoff: { enabled: true } },
+          machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: relayEnabled } } },
+        },
+        capabilities: {},
+      }),
+    });
+    expect(await (await coordinator.admit(baseInput)).execute({ update })).toMatchObject({ ok: true });
+    expect(port.startSource).toHaveBeenCalledWith(expect.objectContaining({
+      preferredTransportStrategies: relayEnabled ? ['direct_peer', 'server_routed_stream'] : ['direct_peer'],
+    }));
+    expect(port.prepareTarget).toHaveBeenCalledWith(expect.objectContaining({
+      negotiatedTransportStrategy: 'direct_peer',
+      allowServerRoutedFallback: relayEnabled,
+    }));
+  });
+
+  it('uses the relay when the source has no direct-peer transport', async () => {
+    const { coordinator, port, update } = createHarness({
+      directPeerAvailable: false,
+      readServerFeatures: async () => FeaturesResponseSchema.parse({
+        features: {
+          sessions: { enabled: true, handoff: { enabled: true } },
+          machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: true } } },
+        },
+        capabilities: {},
+      }),
+    });
+    expect(await (await coordinator.admit(baseInput)).execute({ update })).toMatchObject({ ok: true });
+    expect(port.startSource).toHaveBeenCalledWith(expect.objectContaining({
+      negotiatedTransportStrategy: 'server_routed_stream',
+    }));
+  });
+
+  it.each([
+    [null, 'server_features_unavailable'],
+    [FeaturesResponseSchema.parse({ features: {}, capabilities: {} }), 'handoff_disabled'],
+    [
+      FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, handoff: { enabled: true } } }, capabilities: {} }),
+      'transfer_disabled',
+    ],
+    [
+      FeaturesResponseSchema.parse({
+        features: {
+          sessions: { enabled: true, handoff: { enabled: true } },
+          machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } },
+        },
+        capabilities: {},
+      }),
+      'server_routed_transfer_disabled',
+    ],
+  ] as const)('fails closed before mutating the source when transfer policy is unavailable or disabled (%#)', async (features, errorCode) => {
+    const { coordinator, port, update } = createHarness({ readServerFeatures: async () => features });
+    expect(await (await coordinator.admit(baseInput)).execute({ update })).toMatchObject({ ok: false, errorCode });
+    expect(port.startSource).not.toHaveBeenCalled();
+    expect(port.prepareTarget).not.toHaveBeenCalled();
   });
 
   it('uses an explicitly selected target directory instead of the source-derived path', async () => {
