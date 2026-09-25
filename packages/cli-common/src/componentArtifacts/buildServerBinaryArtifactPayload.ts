@@ -1,4 +1,5 @@
-import { cp, mkdir, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -31,6 +32,77 @@ async function ensureFile(path: string, message: string): Promise<void> {
   if (!info?.isFile()) {
     throw new Error(message);
   }
+}
+
+// Prisma client directories are always staged before pruning runs (resolveServerBinarySidecarEntries
+// asserts their existence), so a missing directory here is not itself an error worth failing the
+// build over -- but any other readdir failure (permission denied, path is actually a file, ...) must
+// not be silently treated as "nothing to prune": that would let foreign-platform engines, unreachable
+// WASM engines, or sourcemaps survive into the release artifact while validateServerPrismaEnginesForTarget
+// still passes (it only checks that the *kept* engine file exists, not that pruning actually ran).
+async function readdirOrEmptyIfMissing(directoryPath: string): Promise<Dirent<string>[]> {
+  return readdir(directoryPath, { withFileTypes: true, encoding: 'utf8' }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+}
+
+// Each generated Prisma client directory (generated/*-client, node_modules/.prisma/client) ships a
+// native query-engine file per platform (binaryTargets in schema.prisma lists all 5: linux-x64,
+// linux-arm64, darwin-x64, darwin-arm64, windows-x64), but a single-platform release payload only
+// ever runs on the one platform it was built for. Keep only that target's engine file.
+async function pruneNonTargetPrismaEngineFiles(directoryPath: string, target: BinaryTarget): Promise<void> {
+  const keepFileName = resolvePrismaEngineFileNameForTarget(target);
+  const entries = await readdirOrEmptyIfMissing(directoryPath);
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const isEngineFile = entry.name.startsWith('libquery_engine-') || entry.name.startsWith('query_engine-');
+    if (isEngineFile && entry.name !== keepFileName) {
+      await rm(join(directoryPath, entry.name), { force: true });
+    }
+  }
+}
+
+// @prisma/client's runtime/ directory bundles WASM query engines for every database Prisma
+// supports (postgresql, mysql, sqlite, cockroachdb, sqlserver) plus .map sourcemaps for every
+// bundled format, regardless of which providers this build actually generated clients for.
+// ServerDbProvider (serverSidecars.ts) is only ever 'sqlite' | 'mysql', and a postgres client is
+// always generated as the default -- cockroachdb and sqlserver are never reachable, and
+// sourcemaps are never needed by a production binary. Delete both classes unconditionally.
+const PRISMA_RUNTIME_NEVER_REACHABLE_PROVIDER_MARKERS = ['.cockroachdb.', '.sqlserver.'];
+
+async function pruneUnreachablePrismaRuntimeFiles(runtimeDirectoryPath: string): Promise<void> {
+  const entries = await readdirOrEmptyIfMissing(runtimeDirectoryPath);
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const isNeverReachableProviderFile = PRISMA_RUNTIME_NEVER_REACHABLE_PROVIDER_MARKERS.some(
+      (marker) => entry.name.includes(marker),
+    );
+    const isSourceMap = entry.name.endsWith('.map');
+    if (isNeverReachableProviderFile || isSourceMap) {
+      await rm(join(runtimeDirectoryPath, entry.name), { force: true });
+    }
+  }
+}
+
+export async function pruneServerPrismaArtifactsForTarget({
+  payloadDir,
+  target,
+}: {
+  payloadDir: string;
+  target: BinaryTarget;
+}): Promise<void> {
+  await pruneNonTargetPrismaEngineFiles(join(payloadDir, 'node_modules', '.prisma', 'client'), target);
+
+  const generatedDir = join(payloadDir, 'generated');
+  const generatedEntries = await readdirOrEmptyIfMissing(generatedDir);
+  for (const entry of generatedEntries) {
+    if (entry.isDirectory() && entry.name.endsWith('-client')) {
+      await pruneNonTargetPrismaEngineFiles(join(generatedDir, entry.name), target);
+    }
+  }
+
+  await pruneUnreachablePrismaRuntimeFiles(join(payloadDir, 'node_modules', '@prisma', 'client', 'runtime'));
 }
 
 async function validateServerPrismaEnginesForTarget({
@@ -156,6 +228,8 @@ export async function buildServerBinaryArtifactPayload({
       copyPath,
     });
   }
+
+  await pruneServerPrismaArtifactsForTarget({ payloadDir, target });
 
   await validateServerPrismaEnginesForTarget({
     payloadDir,
