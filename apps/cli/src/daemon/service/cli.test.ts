@@ -1668,7 +1668,10 @@ describe('runDaemonServiceCliCommand', () => {
     });
   });
 
-  it('restarts the linux service on start when its own running daemon is not the installed CLI version', async () => {
+  it.each([
+    ['start', ['start', '--json']],
+    ['install', ['install', '--takeover', '--yes', '--json']],
+  ])('restarts the linux service on %s when its own running daemon is not the installed CLI version', async (_action, argv) => {
     await withTempDir('happier-service-start-stale-version-owner-', async (homeDir) => {
       const spawnedCommands: Array<{ command: string; args: readonly string[] }> = [];
       const happierHomeDir = `${homeDir}/.happier`;
@@ -1755,7 +1758,7 @@ describe('runDaemonServiceCliCommand', () => {
 
       const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
       try {
-        await runDaemonServiceCliCommand({ argv: ['start', '--json'] });
+        await runDaemonServiceCliCommand({ argv });
         const payload = output.json();
         expect(payload.ok).toBe(true);
         expect(spawnedCommands.some((entry) => entry.command === 'systemctl' && entry.args.includes('restart'))).toBe(true);
@@ -1950,7 +1953,10 @@ describe('runDaemonServiceCliCommand', () => {
     });
   });
 
-  it('stops the current Windows service owner before reinstalling the same service label', async () => {
+  it.each([
+    ['a drifted', false],
+    ['the current', true],
+  ])('stops and restarts the current Windows service owner when reinstalling the same service label over %s definition', async (_case, definitionIsCurrent) => {
     await withTempDir('happier-service-install-win32-same-owner-', async (homeDir) => {
       const happierHomeDir = `${homeDir}/.happier`;
       const lifecycleEvents: string[] = [];
@@ -2022,7 +2028,29 @@ describe('runDaemonServiceCliCommand', () => {
       const paths = resolveDaemonServicePaths(runtime);
       const currentPublicReleaseChannel = runtime.channel === 'publicdev' ? 'dev' : runtime.channel;
       mkdirSync(dirname(paths.installedPath), { recursive: true });
-      writeValidInstalledWindowsDaemonServiceFile(paths.installedPath);
+      if (definitionIsCurrent) {
+        const expectedPlan = planDaemonServiceInstall({
+          platform: runtime.platform,
+          mode: 'user',
+          channel: runtime.channel,
+          targetMode: runtime.targetMode,
+          instanceId: runtime.instanceId,
+          activeServerId: runtime.activeServerId,
+          userHomeDir: runtime.userHomeDir,
+          happierHomeDir: runtime.happierHomeDir,
+          serverUrl: runtime.serverUrl,
+          webappUrl: runtime.webappUrl,
+          publicServerUrl: runtime.publicServerUrl,
+          nodePath: runtime.nodePath,
+          entryPath: runtime.entryPath,
+        });
+        for (const file of expectedPlan.files) {
+          mkdirSync(dirname(file.path), { recursive: true });
+          writeFileSync(file.path, file.content, 'utf-8');
+        }
+      } else {
+        writeValidInstalledWindowsDaemonServiceFile(paths.installedPath);
+      }
       writeDaemonState({
         pid: process.pid,
         httpPort: 43140,
@@ -2048,8 +2076,8 @@ describe('runDaemonServiceCliCommand', () => {
       const createIndex = lifecycleEvents.indexOf('/Create');
       const runIndex = lifecycleEvents.indexOf('/Run');
       expect(stopIndex).toBeGreaterThanOrEqual(0);
-      expect(createIndex).toBeGreaterThan(stopIndex);
-      expect(runIndex).toBeGreaterThan(createIndex);
+      expect(runIndex).toBeGreaterThan(stopIndex);
+      if (!definitionIsCurrent) expect(createIndex).toBeGreaterThan(stopIndex);
     });
   });
 

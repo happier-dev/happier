@@ -413,9 +413,9 @@ async function stopCurrentWindowsServiceOwnerIfNeeded(params: Readonly<{
   ownership: Awaited<ReturnType<typeof evaluateCurrentDaemonOwner>>;
   expectedServiceLabel: string;
   action: 'install' | 'uninstall' | 'start' | 'stop' | 'restart';
-}>): Promise<void> {
+}>): Promise<boolean> {
   if (!shouldStopCurrentWindowsServiceOwnerBeforeLifecycleAction(params)) {
-    return;
+    return false;
   }
 
   try {
@@ -427,6 +427,7 @@ async function stopCurrentWindowsServiceOwnerIfNeeded(params: Readonly<{
       `Failed to stop the current background service owner before ${actionText}ing the background service.\n${detail}`,
     );
   }
+  return true;
 }
 
 function runCommandCaptureBestEffort(command: Readonly<{ cmd: string; args: readonly string[] }>): { ok: boolean; out: string | null } {
@@ -1607,7 +1608,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
         shouldTakeOverManualOwner: takeoverDecision.kind === 'manual-owner-takeover',
         action: 'install',
         run: async () => {
-          await stopCurrentWindowsServiceOwnerIfNeeded({
+          const stoppedWindowsOwner = await stopCurrentWindowsServiceOwnerIfNeeded({
             platform: installRuntime.platform,
             ownership,
             expectedServiceLabel: paths.label,
@@ -1624,6 +1625,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
             targetMode: installRuntime.targetMode,
             autostart: effectiveAutostart,
             darwinInstallMode: shouldKickstartCurrentDarwinInstall ? 'kickstart' : undefined,
+            restartRunningDaemon: stoppedWindowsOwner || isOwnServiceDaemonOnAnotherCli(ownership, paths.label),
             instanceId: installRuntime.instanceId,
             activeServerId: installRuntime.activeServerId,
             serverUrl: installRuntime.serverUrl,
