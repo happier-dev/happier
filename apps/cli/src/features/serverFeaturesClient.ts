@@ -26,6 +26,8 @@ export type ObserveServerFeaturesSnapshotParams = Readonly<{
   serverUrl: string;
   token?: string;
   timeoutMs?: number;
+  /** Caller cancellation; aborts the in-flight request in addition to the attempt timeout. */
+  signal?: AbortSignal;
   /** Injectable system boundary for probes/tests. */
   fetchImpl?: typeof fetch;
 }>;
@@ -66,12 +68,12 @@ async function requestServerFeaturesSnapshot(
   const token = params.token?.trim();
   const fetchImpl = params.fetchImpl ?? fetch;
   try {
-    const response = await withAbortTimeout(params.timeoutMs ?? REQUEST_ATTEMPT_TIMEOUT_MS, async (signal) =>
+    const response = await withAbortTimeout(params.timeoutMs ?? REQUEST_ATTEMPT_TIMEOUT_MS, async (timeoutSignal) =>
       await fetchImpl(`${key}/v1/features`, {
         method: 'GET',
         redirect: 'manual',
         ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-        signal,
+        signal: params.signal ? AbortSignal.any([timeoutSignal, params.signal]) : timeoutSignal,
       }),
     );
 

@@ -148,6 +148,7 @@ import {
 } from '@/daemon/actionOperations/coreActionOperationProjection';
 import { createSessionHandoffCoordinator } from '@/session/handoff/orchestration/sessionHandoffCoordinator';
 import { bindSessionHandoffTarget } from '@/session/handoff/orchestration/sessionHandoffTargetBinding';
+import { readSessionHandoffServerFeatures } from '@/session/handoff/orchestration/sessionHandoffServerFeatures';
 import { buildTrackedSessionHandoffMachineCall } from '@/session/handoff/trackedSessionHandoffMachineCall';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
@@ -1240,8 +1241,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
             request: payload,
           }));
           const coordinator = createSessionHandoffCoordinator({
-            transportStrategy: request.negotiatedTransportStrategy
-              ?? (request.preferredTransportStrategies.includes('direct_peer') ? 'direct_peer' : 'server_routed_stream'),
+            readServerFeatures: async (signal) => await readSessionHandoffServerFeatures({
+              token: credentials.token,
+              ...(signal ? { signal } : {}),
+            }),
+            directPeerAvailable: Boolean(handlers.directPeerTransfer),
+            preferredTransportStrategies: request.preferredTransportStrategies,
+            transportStrategy: request.negotiatedTransportStrategy,
             probeTargetCapability: async () => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET, {}),
             startSource,
             prepareTarget: async (payload) => await targetRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V2, payload),
