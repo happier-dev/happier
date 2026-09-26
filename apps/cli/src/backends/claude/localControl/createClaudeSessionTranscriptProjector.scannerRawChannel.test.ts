@@ -45,6 +45,7 @@ function createSessionFixture(claudeSessionId: string): Readonly<{
     client: {
       sessionId: 'happy-session-id',
       sendClaudeSessionMessage: vi.fn(),
+      sendClaudeSessionMessageCommittedExact: vi.fn(async () => {}),
       sendSessionEvent: vi.fn(),
       updateMetadata: (updater: (current: Metadata) => Metadata) => {
         metadata = updater(metadata);

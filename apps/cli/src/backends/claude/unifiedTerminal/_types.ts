@@ -131,10 +131,7 @@ export type ClaudeUnifiedInputArbiter<Mode = unknown> = Readonly<{
    */
   claimPendingInputInterruptAndRun(localId: string): boolean;
   confirmPromptAcceptedByProvider(): Promise<boolean>;
-  confirmPromptAcceptedByProviderIf(
-    matcher: (batch: ClaudeUnifiedPromptBatch<Mode>) => boolean,
-    evidence?: 'prompt_submit' | 'transcript',
-  ): Promise<boolean>;
+  confirmPromptAcceptedByProviderIf(matcher: (batch: ClaudeUnifiedPromptBatch<Mode>) => boolean): Promise<boolean>;
   observePendingProviderAcceptanceTerminalFailure(): Promise<boolean>;
   drainWhenSafe(): Promise<void>;
   waitForPendingQueuePumpStateChange(options: Readonly<{

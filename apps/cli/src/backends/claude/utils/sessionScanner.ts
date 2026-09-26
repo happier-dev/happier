@@ -69,8 +69,6 @@ export async function createSessionScanner(opts: {
     initialProcessedMessageKeys?: Iterable<string>
     /** Replay initial transcript rows instead of treating the whole file as already processed. */
     replayInitialMessages?: boolean
-    /** Byte boundary captured before resume baseline loading; later initial-snapshot rows are live. */
-    initialLiveTranscriptStartOffsetBytes?: number
     /**
      * Replay-coverage cutoff (Lane N4): one-time session SNAPSHOT rows older than this timestamp
      * (or without a parseable timestamp) are marked processed without being emitted — they
@@ -176,10 +174,6 @@ export async function createSessionScanner(opts: {
     const trustedRawTranscriptSessionIds = new Set<string>();
     if (opts.sessionId) trustedRawTranscriptSessionIds.add(opts.sessionId);
     let closed = false;
-    const initialLiveTranscriptStartOffsets = new Map<string, number>();
-    if (opts.sessionId && opts.initialLiveTranscriptStartOffsetBytes !== undefined) {
-        initialLiveTranscriptStartOffsets.set(opts.sessionId, opts.initialLiveTranscriptStartOffsetBytes);
-    }
 
     function observeRawJsonlValue(
         value: unknown,
@@ -325,10 +319,6 @@ export async function createSessionScanner(opts: {
                 // the scanner binding after classification completes.
                 if (!isMainSessionAllowed(sessionId)) continue;
                 trustRawTranscriptSession(sessionId);
-                // Discovery excludes files present at startup. This newly created, exactly
-                // identified main transcript is live from its first row; import it in order
-                // before allowing its prompt evidence to settle Pending.
-                initialLiveTranscriptStartOffsets.set(sessionId, 0);
                 opts.onDiscoveredMainSession?.({ filePath, sessionId });
             }
             discoveredSessions.add(sessionId);
@@ -493,7 +483,7 @@ export async function createSessionScanner(opts: {
         let messages = await readClaudeSessionJsonlMessages({
             sessionFilePath: getSessionFilePath(opts.sessionId),
             logLabel: 'SESSION_SCANNER',
-            onJsonValue: opts.replayInitialMessages ? undefined : (value) => observeReplayableRawJsonlValueForTrustedSession(
+            onJsonValue: (value) => observeReplayableRawJsonlValueForTrustedSession(
                 opts.sessionId!,
                 value,
                 initialReplayOpts,
@@ -643,31 +633,27 @@ export async function createSessionScanner(opts: {
             suppressBeforeMs: opts.replaySuppressRowsBeforeMs ?? null,
             suppressSideEffects: true,
         };
-        const liveStartOffsetBytes = initialLiveTranscriptStartOffsets.get(session);
-        const rows: Array<Readonly<{ value: unknown; lineStartOffsetBytes: number }>> = [];
-        await readClaudeSessionJsonlMessages({
+        const sessionMessages = await readClaudeSessionJsonlMessages({
             sessionFilePath: getSessionFilePath(session),
             logLabel: 'SESSION_SCANNER',
-            onJsonValue: (value, source) => { rows.push({ value, ...source }); },
+            onJsonValue: (value) => observeReplayableRawJsonlValueForTrustedSession(
+                session,
+                value,
+                replayOpts,
+            ),
         });
         if (closed) return startOffsetBytes;
         let skipped = 0;
         let sent = 0;
-        for (const row of rows) {
+        for (const file of sessionMessages) {
             if (!isMainSessionAllowed(session)) break;
-            // Leave startup appends to the one live follower, beginning at the captured boundary.
-            // It observes raw queue evidence only after prior visible messages have committed.
-            if (liveStartOffsetBytes !== undefined && row.lineStartOffsetBytes >= liveStartOffsetBytes) continue;
-            observeReplayableRawJsonlValueForTrustedSession(session, row.value, replayOpts);
-            const parsed = parseClaudeJsonlValue(row.value);
-            if (parsed && await processSessionMessage(parsed, replayOpts)) sent += 1;
+            if (await processSessionMessage(normalizeClaudeToolUseNamesInRawJsonLines(file), replayOpts)) sent += 1;
             else skipped += 1;
         }
-        if (rows.length > 0) {
-            logger.debug(`[SESSION_SCANNER] Session ${session}: found=${rows.length}, skipped=${skipped}, sent=${sent}`);
+        if (sessionMessages.length > 0) {
+            logger.debug(`[SESSION_SCANNER] Session ${session}: found=${sessionMessages.length}, skipped=${skipped}, sent=${sent}`);
         }
-        initialLiveTranscriptStartOffsets.delete(session);
-        return liveStartOffsetBytes === undefined ? startOffsetBytes : Math.min(startOffsetBytes, liveStartOffsetBytes);
+        return startOffsetBytes;
     }
 
     async function ensureSessionFollower(session: string): Promise<void> {
