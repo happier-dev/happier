@@ -1,6 +1,8 @@
 import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchOptions } from '@/utils/spawnHappyCLI';
 import type { CatalogAgentId } from '@/backends/types';
 import { buildCgroupSelfMigratingHappyCliLaunchSpec } from '../linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
+import { buildSpawnChildProcessEnv, DAEMON_DECIDED_CHILD_ENV_KEYS } from '../../spawn/buildSpawnChildProcessEnv';
+import type { HappierRuntimeServerContext } from '@/utils/env/resolveHappierRuntimeContextEnv';
 
 type TmuxSpawnAgentId = CatalogAgentId | 'acp-catalog';
 
@@ -40,6 +42,8 @@ export async function buildTmuxSpawnConfig(params: {
   tmuxCommandEnv?: Record<string, string>;
   extraArgs?: string[];
   launchOptions?: HappyCliSubprocessLaunchOptions;
+  processEnv?: NodeJS.ProcessEnv;
+  serverSelectionEnv?: HappierRuntimeServerContext;
 }): Promise<{
   commandTokens: string[];
   tmuxEnv: Record<string, string>;
@@ -56,7 +60,18 @@ export async function buildTmuxSpawnConfig(params: {
   ];
 
   const launchSpec = buildHappyCliSubprocessLaunchSpec(args, params.launchOptions);
-  const tmuxEnv = buildTmuxWindowEnv(process.env, { ...params.extraEnv, ...(launchSpec.env ?? {}) });
+  const processEnv = params.processEnv ?? process.env;
+  const extraEnv = { ...params.extraEnv, ...(launchSpec.env ?? {}) };
+  // The tmux server's global env can be stale; `-e` cannot unset, so '' stands for absent.
+  const childEnv = buildSpawnChildProcessEnv({
+    processEnv,
+    extraEnv,
+    serverSelectionEnv: params.serverSelectionEnv,
+  });
+  const daemonDecidedEnv = Object.fromEntries(
+    DAEMON_DECIDED_CHILD_ENV_KEYS.map((key) => [key, childEnv[key] ?? '']),
+  );
+  const tmuxEnv = buildTmuxWindowEnv(processEnv, { ...extraEnv, ...daemonDecidedEnv });
   const scopedLaunchSpec = process.platform === 'linux'
     ? await buildCgroupSelfMigratingHappyCliLaunchSpec({ launchSpec, environment: tmuxEnv })
     : null;

@@ -3624,6 +3624,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 };
                 const sessionChildProcessEnv: NodeJS.ProcessEnv = { ...process.env };
                 delete sessionChildProcessEnv[HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY];
+                const childServerSelectionEnv = {
+                  activeServerId: configuration.activeServerId,
+                  canonicalServerUrl: configuration.serverUrl,
+                  apiServerUrl: configuration.apiServerUrl,
+                  webappUrl: configuration.webappUrl,
+                };
 
                 const spawnEnvironment = await resolveSpawnChildEnvironment({
                   options: { ...effectiveSpawnOptionsBase, directory: resolvedDirectory },
@@ -3788,6 +3794,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     agent: agentSubcommand,
                     directory: resolvedDirectory,
                     extraEnv: extraEnvForChildWithMessage,
+                    processEnv: sessionChildProcessEnv,
+                    serverSelectionEnv: childServerSelectionEnv,
                     tmuxCommandEnv,
                     launchOptions: runnerLaunchOptions,
                     extraArgs: [
@@ -4140,12 +4148,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     ...extraEnvForChildWithMessage,
                     ...(launchSpec.env ?? {}),
                   },
-                  serverSelectionEnv: {
-                    activeServerId: configuration.activeServerId,
-                    canonicalServerUrl: configuration.serverUrl,
-                    apiServerUrl: configuration.apiServerUrl,
-                    webappUrl: configuration.webappUrl,
-                  },
+                  serverSelectionEnv: childServerSelectionEnv,
                 });
 
               if (windowsLaunchMode === 'windows_terminal' || windowsLaunchMode === 'console') {
@@ -4253,12 +4256,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               const childProcessEnv = buildSpawnChildProcessEnv({
                 processEnv: sessionChildProcessEnv,
                 extraEnv: extraEnvForChildWithMessage,
-                serverSelectionEnv: {
-                  activeServerId: configuration.activeServerId,
-                  canonicalServerUrl: configuration.serverUrl,
-                  apiServerUrl: configuration.apiServerUrl,
-                  webappUrl: configuration.webappUrl,
-                },
+                serverSelectionEnv: childServerSelectionEnv,
               });
               const spawnOptions = {
                 cwd: resolvedDirectory,

@@ -56,4 +56,34 @@ describe('tmux session resource policy', () => {
     expect(config.tmuxEnv.HAPPIER_TEST_RUNNER_ENV).toBe('retained');
     expect(config.tmuxEnv.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).not.toBe('1');
   });
+
+  it('pins every daemon-owned child key so a long-lived tmux server cannot leak a stale relay selection', async () => {
+    const config = await buildTmuxSpawnConfig({
+      agent: 'claude',
+      directory: '/tmp',
+      extraEnv: {},
+      processEnv: {
+        PATH: '/bin',
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+      },
+      serverSelectionEnv: {
+        activeServerId: 'custom',
+        canonicalServerUrl: 'https://relay.example.test:27443',
+        apiServerUrl: 'https://relay.example.test:27443',
+        webappUrl: 'https://relay.example.test:27443',
+      },
+    });
+
+    expect(config.tmuxEnv).toMatchObject({
+      HAPPIER_ACTIVE_SERVER_ID: 'custom',
+      HAPPIER_SERVER_URL: 'https://relay.example.test:27443',
+      HAPPIER_WEBAPP_URL: 'https://relay.example.test:27443',
+      HAPPIER_PUBLIC_SERVER_URL: '',
+      HAPPIER_LOCAL_SERVER_URL: '',
+      HAPPIER_PUBLIC_RELEASE_CHANNEL: 'dev',
+      HAPPIER_RELEASE_CHANNEL: '',
+      HAPPIER_DAEMON_STARTUP_SOURCE: '',
+    });
+  });
 });
