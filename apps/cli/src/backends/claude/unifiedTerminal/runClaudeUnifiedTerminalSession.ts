@@ -2408,8 +2408,9 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             loadCommittedClaudeJsonlMessageBaseline: opts.loadCommittedClaudeJsonlMessageBaseline,
             transcriptMissingWarningMs: configuration.claudeTranscriptMissingWarningMs,
             subscribeClaudeSessionHooks: activeHookSubscription.subscribe,
+            // Discover identity without settling Pending ahead of the ordered importer.
             classifyDiscoveredSession: ({ messages }) => (
-              confirmPromptAcceptedFromTranscript(messages) ? 'main' : null
+              acceptedPromptTranscriptDiscovery.findMatchingTranscript(messages) ? 'main' : null
             ),
           })
         : undefined;

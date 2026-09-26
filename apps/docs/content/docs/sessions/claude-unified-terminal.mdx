@@ -31,7 +31,9 @@ Under the **Agent SDK**, a steered message is pushed onto the SDK’s streaming 
 
 Choosing **Interrupt** instead calls the SDK’s interrupt before the message is pushed, so the current turn stops and yours starts.
 
-Under the **unified terminal**, a steered message is typed into the live Claude Code composer while the turn is still generating. Claude Code handles it the way it handles anything you type mid-generation: it queues the text and submits it when the turn ends. Once Happier sees Claude’s own queued-messages banner on screen, the pending row switches to **Queued in Claude** — that is terminal evidence that Claude has your text, not a guess.
+Under the **unified terminal**, a steered message is typed into the live Claude Code composer while the turn is still generating. Claude Code queues the text and can consume it during the running turn or after that turn ends. Once Happier sees Claude’s own queued-messages banner on screen, the pending row switches to **Queued in Claude** — that is terminal evidence that Claude has your text, not a guess.
+
+In development source, a queued steer stays pending until Claude’s transcript confirms that it consumed the message. Its submission hook alone does not move it into Happier’s transcript. While Claude still holds it in the queue, the row retains its **Interrupt and run now** action.
 
 Happier will not write into the terminal blindly. Before every write it reads the screen, and it refuses to steer when the running turn was started under a different permission mode — the TUI would silently swallow the mode change, so that message keeps the deferred path and runs as a normal new turn instead.
 

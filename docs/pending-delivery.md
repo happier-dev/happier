@@ -13,6 +13,20 @@ surfaces a runtime issue; it does not make an already accepted prompt undelivere
 or eligible for replay. The arbiter owns this ordering even when the transcript
 evidence arrives while the terminal injection is still completing.
 
+An in-flight Claude unified-terminal steer stays pending while Claude holds it in
+its native queue. `UserPromptSubmit` can fire at enqueue and does not prove that
+Claude has consumed the steer. The arbiter accepts a steer from its exact
+transcript consumption evidence; the existing queued-command matcher correlates
+the native enqueue/remove episode with its main-chain `queued_command` attachment.
+The session scanner observes that evidence after awaiting earlier visible-message
+commits, including known resumes and rows appended while the replay baseline loads.
+There is no separate acceptance-only follower of the resume transcript.
+Hookless discovery identifies the main transcript without settling Pending; its
+newly created transcript enters that same ordered live importer from the first row.
+The queued indicator and exact-row interrupt action remain owned by terminal
+custody until that acceptance. Prompts injected to start a new turn may still use
+their exact submission hook as acceptance evidence.
+
 In development source, identical unresolved Claude terminal attempts remain
 ambiguous: transcript text and a new provider UUID cannot identify a Pending
 row. Already ambiguous evidence and delayed echoes of hook-confirmed prompts

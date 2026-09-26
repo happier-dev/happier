@@ -73,6 +73,24 @@ describe('readClaudeSessionJsonlMessages', () => {
     expect((logger.debug as any).mock.calls.some((call: unknown[]) => String(call[0]).includes('Error processing message'))).toBe(false);
   });
 
+  it.each([undefined, 1_024])('reports byte boundaries for raw rows after multibyte content (tail %s)', async (maxBytes) => {
+    tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-jsonl-offset-'));
+    const sessionFilePath = join(tmpRoot, 'sess.jsonl');
+    const prefix = JSON.stringify({ type: 'assistant', uuid: 'history', message: {}, pad: '🙂'.repeat(1_000) }) + '\n';
+    const queue = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: 'éclair', sessionId: 's1' }) + '\n';
+    const assistant = JSON.stringify({ type: 'assistant', uuid: 'live', message: {} }) + '\n';
+    await writeFile(sessionFilePath, prefix + queue + assistant);
+    const observed: Array<{ value: unknown; source: unknown }> = [];
+    await readClaudeSessionJsonlMessages({
+      sessionFilePath, logLabel: 'TEST', maxBytes,
+      onJsonValue: (value, source) => { observed.push({ value, source }); },
+    });
+    expect(observed.slice(-2)).toEqual([
+      { value: JSON.parse(queue), source: { lineStartOffsetBytes: Buffer.byteLength(prefix) } },
+      { value: JSON.parse(assistant), source: { lineStartOffsetBytes: Buffer.byteLength(prefix + queue) } },
+    ]);
+  });
+
   it('drops Claude-internal state records that are not conversation content', async () => {
     tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-jsonl-'));
     const sessionFilePath = join(tmpRoot, 'sess.jsonl');

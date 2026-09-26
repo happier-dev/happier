@@ -126,8 +126,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
    */
   interruptActiveTurn?: (() => Promise<void>) | undefined;
   /**
-   * Fired once per steered prompt when turn-end evidence arms its provider-acceptance expectation
-   * (the queued prompt's UserPromptSubmit/JSONL row arrives only after the steered turn ends).
+   * Fired once per steered prompt when turn-end evidence arms its provider-acceptance expectation.
+   * This is a wake signal; only the consumed transcript echo proves acceptance for a queued steer.
    */
   onSteerAcceptanceArmed?: ((batch: ClaudeUnifiedPromptBatch<Mode>) => void) | undefined;
   /**
@@ -174,8 +174,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
   // same prompt, but do not retire provider delivery until separately matched provider evidence.
   const terminalCustody = new Array<PendingProviderAcceptance<Mode>>();
   let lastInjectedNotifiedBatch: ClaudeUnifiedPromptBatch<Mode> | null = null;
-  // An in-flight steer's provider acceptance (UserPromptSubmit/JSONL row) arrives only when Claude
-  // submits the queued prompt at TURN END. This state waits for independent lifecycle or screen
+  // UserPromptSubmit can arrive when Claude only queues a steer. Acceptance requires its
+  // consumed transcript echo. This state waits for independent lifecycle or screen
   // evidence; elapsed time may re-check that evidence but never creates an acceptance outcome.
   let steerAcceptanceAwaitingTurnEnd = false;
   let steerTurnEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -293,8 +293,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         permissionBlocked = true;
       } else if (observation.state === 'idle') {
         permissionBlocked = false;
-        // Turn-end evidence: a steered prompt queued by Claude's TUI is submitted now, so its
-        // provider-acceptance expectation can finally be armed.
+        // Turn end wakes queued-steer observation; the consumed transcript echo still owns
+        // acceptance (Claude may also absorb a steer before the running turn ends).
         armSteerAcceptanceAfterTurnEnd();
       }
       return;
@@ -654,8 +654,12 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
     matcher: (batch: ClaudeUnifiedPromptBatch<Mode>) => boolean,
     optsOverride?: Readonly<{
       includeTerminalCustody?: boolean;
+      evidence?: 'prompt_submit' | 'transcript';
     }> | undefined,
   ): Promise<boolean> {
+    const canAccept = (entry: PendingProviderAcceptance<Mode>): boolean => (
+      optsOverride?.evidence !== 'prompt_submit' || entry.acceptance.acceptedAs !== 'in_flight_steer'
+    );
     if (optsOverride?.includeTerminalCustody === true) {
       const matchingBatches = new Set<ClaudeUnifiedPromptBatch<Mode>>();
       for (const entry of terminalCustody) {
@@ -671,6 +675,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
       const [matchingBatch] = matchingBatches;
       const terminalCustodyIndex = terminalCustody.findIndex((entry) => entry.batch === matchingBatch);
       if (terminalCustodyIndex >= 0) {
+        const custody = terminalCustody[terminalCustodyIndex];
+        if (!custody || !canAccept(custody)) return false;
         const [confirmedCustody] = terminalCustody.splice(terminalCustodyIndex, 1);
         if (!confirmedCustody) return false;
         await acceptTerminalCustody(confirmedCustody);
@@ -681,6 +687,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
     if (!pendingAcceptance) {
       const injectingAcceptance = injectingProviderAcceptance;
       if (!injectingAcceptance) return false;
+      if (!canAccept(injectingAcceptance)) return false;
       const injectingBatch = queue[0];
       if (injectingBatch !== injectingAcceptance.batch) return false;
       if (!matcher(injectingBatch)) return false;
@@ -689,6 +696,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
     }
     const next = queue[0];
     if (next !== pendingAcceptance.batch) return false;
+    if (!canAccept(pendingAcceptance)) return false;
     if (!matcher(next)) return false;
     queue.shift();
     await acceptBatch(next, pendingAcceptance.acceptance);
@@ -696,7 +704,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
   }
 
   async function confirmPromptAcceptedByProvider(): Promise<boolean> {
-    return confirmPromptAcceptedByProviderMatching((batch) => !isPendingQueueBatch(batch));
+    return confirmPromptAcceptedByProviderMatching((batch) => !isPendingQueueBatch(batch), { evidence: 'prompt_submit' });
   }
 
   async function observePromptCustodyByTerminal(batch: ClaudeUnifiedPromptBatch<Mode>): Promise<boolean> {
@@ -965,8 +973,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
           return;
         }
         if (acceptance.acceptedAs === 'in_flight_steer') {
-          // Acceptance evidence arrives only at turn end. The fallback wake observes independent
-          // lifecycle/screen evidence; elapsed time alone never manufactures a provider outcome.
+          // The fallback wake observes independent lifecycle/screen evidence;
+          // elapsed time alone never manufactures a provider outcome.
           steerAcceptanceAwaitingTurnEnd = true;
           scheduleSteerTurnEndFallbackWake();
         }
@@ -1130,10 +1138,11 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         publishPendingInputInterruptAndRunLocalId();
       }
     },
-    async confirmPromptAcceptedByProviderIf(matcher) {
+    async confirmPromptAcceptedByProviderIf(matcher, evidence = 'transcript') {
       try {
         return await confirmPromptAcceptedByProviderMatching(matcher, {
           includeTerminalCustody: true,
+          evidence,
         });
       } finally {
         notifyPendingQueuePumpStateChangedIfNeeded();
