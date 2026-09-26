@@ -103,6 +103,12 @@ export async function submitBugReportToService(input: BugReportServiceSubmitInpu
     });
   }
 
+  const issue = {
+    owner: issueTarget.owner,
+    repo: issueTarget.repo,
+    ...(input.existingIssueNumber != null ? { number: input.existingIssueNumber } : {}),
+  };
+
   const submit = await postJson<{
     reportId: string;
     issueNumber: number;
@@ -113,11 +119,7 @@ export async function submitBugReportToService(input: BugReportServiceSubmitInpu
     body: {
       reportId: session.reportId,
       uploadedArtifacts,
-      issue: {
-        owner: issueTarget.owner,
-        repo: issueTarget.repo,
-        number: input.existingIssueNumber,
-      },
+      issue,
     },
   });
 

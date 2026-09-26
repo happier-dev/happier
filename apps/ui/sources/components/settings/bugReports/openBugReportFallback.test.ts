@@ -49,6 +49,32 @@ describe('openBugReportFallbackIssueUrl', () => {
         expect(canOpenUrl).not.toHaveBeenCalled();
     });
 
+
+    it('offers a copy action when opening the fallback URL fails', async () => {
+        const { openBugReportFallbackIssueUrl } = await import('./openBugReportFallback');
+        const copyUrl = vi.fn(async () => true);
+        let buttons: Array<{ text: string; onPress?: () => void }> = [];
+
+        const opened = await openBugReportFallbackIssueUrl(
+            'https://github.com/happier-dev/happier/issues/new?title=report',
+            {
+                openUrl: async () => {
+                    throw new Error('no browser');
+                },
+                copyUrl,
+                showAlert: async (_title, _message, alertButtons) => {
+                    buttons = (alertButtons ?? []) as Array<{ text: string; onPress?: () => void }>;
+                },
+            },
+        );
+
+        expect(opened).toBe(false);
+        expect(buttons.map((button) => button.text)).toContain('Copy');
+        buttons.find((button) => button.text === 'Copy')?.onPress?.();
+        await Promise.resolve();
+        expect(copyUrl).toHaveBeenCalledWith('https://github.com/happier-dev/happier/issues/new?title=report');
+    });
+
     it('rejects non-http(s) URLs', async () => {
         const { openBugReportFallbackIssueUrl } = await import('./openBugReportFallback');
         const canOpenUrl = vi.fn(async () => true);

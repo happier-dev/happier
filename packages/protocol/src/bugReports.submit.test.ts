@@ -660,4 +660,51 @@ describe('submitBugReportToService', () => {
       expect(issue.number).toBe(99);
       expect(issue.labels).toBeUndefined();
     });
+
+  it('omits a null existing issue number from the submit payload', async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.body && typeof init.body === 'string') {
+        requestBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      }
+      if (url.endsWith('/v1/reports/session')) {
+        return mockResponse({
+          ok: true,
+          status: 200,
+          json: { reportId: 'report-1', uploadTargets: [] },
+        });
+      }
+      if (url.endsWith('/v1/reports/submit')) {
+        return mockResponse({
+          ok: true,
+          status: 200,
+          json: {
+            reportId: 'report-1',
+            issueNumber: 1,
+            issueUrl: 'https://github.com/happier-dev/happier/issues/1',
+          },
+        });
+      }
+      return mockResponse({ ok: false, status: 404, text: 'not-found' });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await submitBugReportToService({
+      providerUrl: 'https://reports.happier.dev',
+      timeoutMs: 20_000,
+      form: baseForm,
+      artifacts: [],
+      issueOwner: 'happier-dev',
+      issueRepo: 'happier',
+      clientPrefix: 'test',
+      existingIssueNumber: null as unknown as number | undefined,
+    });
+
+    const submitBody = requestBodies.find((body) => typeof body.reportId === 'string' && 'uploadedArtifacts' in body) ?? {};
+    const issue = (submitBody.issue ?? {}) as Record<string, unknown>;
+    expect(issue).toEqual({ owner: 'happier-dev', repo: 'happier' });
+  });
+
 });
