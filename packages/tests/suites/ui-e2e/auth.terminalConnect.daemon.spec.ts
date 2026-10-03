@@ -355,27 +355,14 @@ test.describe('ui e2e: auth + terminal connect', () => {
       // Depending on whether the restart restores the existing agent process before
       // this send, the follow-up is either delivered or safely remains queued. Both
       // are valid outcomes; the invariant is that the user-visible follow-up is not lost.
-      const pending = page.locator('[data-testid^="pendingMessages.message:"]', { hasText: followup });
-      const pendingButton = page.getByRole('button', { name: 'Pending messages · Queued' });
+      const pending = page.locator('[data-testid^="pendingMessages.message:"]', { hasText: followup })
+        .and(page.getByRole('button', { name: 'Pending messages · Queued', exact: true }));
       const delivered = page.locator('[data-testid^="transcript-message-"]:not([data-testid*=":"])', { hasText: followup });
-      let observedOutcome: 'queued' | 'delivered' | null = null;
+      // Observe either valid visible state in the same retrying assertion. The
+      // queue may drain immediately after observation as the daemon reconnects.
       await expect.poll(async () => {
-        const pendingCount = await pending.count();
-        const pendingButtonCount = await pendingButton.count();
-        const deliveredCount = await delivered.count();
-        if (pendingCount > 0 && pendingButtonCount > 0) {
-          observedOutcome = 'queued';
-          return true;
-        }
-        if (deliveredCount > 0 && pendingCount === 0) {
-          observedOutcome = 'delivered';
-          return true;
-        }
-        return false;
+        return await pending.first().isVisible() || await delivered.first().isVisible();
       }, { timeout: 180_000 }).toBe(true);
-      if (observedOutcome === 'queued') {
-        await expect(pendingButton).toBeVisible({ timeout: 60_000 });
-      }
     } catch (error) {
       thrown = error;
       throw error;

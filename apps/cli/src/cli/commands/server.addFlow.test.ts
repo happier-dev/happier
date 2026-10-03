@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,13 +20,16 @@ const { resolveInstalledDaemonServiceInventoryForCurrentRelayMock } = vi.hoisted
 }));
 
 vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    question: (prompt: string, cb: (answer: string) => void) => {
-      promptQuestions.push(prompt);
-      cb(promptAnswers.shift() ?? '');
-    },
-    close: () => {},
-  }),
+  createInterface: () => {
+    const rl = new EventEmitter();
+    return Object.assign(rl, {
+      question: (prompt: string, cb: (answer: string) => void) => {
+        promptQuestions.push(prompt);
+        cb(promptAnswers.shift() ?? '');
+      },
+      close: () => { rl.emit('close'); },
+    });
+  },
 }));
 
 const spawnHappyCLIMock = vi.fn();

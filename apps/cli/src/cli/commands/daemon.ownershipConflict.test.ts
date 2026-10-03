@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
 
-import type { DaemonRunningInspection } from '@/daemon/controlClient';
+import type { DaemonRunningInspection, DaemonStopResult } from '@/daemon/controlClient';
 import type { DaemonServiceListEntry } from '@/daemon/service/cli';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -35,7 +35,7 @@ const {
 
 const inspectDaemonMock = vi.fn<() => Promise<DaemonRunningInspection>>(async () => ({ status: 'not-running' }));
 const spawnDetachedDaemonStartSyncMock = vi.fn(async () => ({ unref() {} }));
-const stopDaemonMock = vi.fn(async () => undefined);
+const stopDaemonMock = vi.fn<() => Promise<DaemonStopResult>>(async () => ({ status: 'stopped', method: 'graceful' }));
 const waitForDaemonRunningWithinBudgetMock = vi.fn(async () => true);
 const restartDaemonAndWaitMock = vi.fn(async () => true);
 

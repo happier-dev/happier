@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,13 +12,16 @@ let promptAnswers: string[] = [];
 let promptQuestions: string[] = [];
 
 vi.mock('node:readline', () => ({
-  createInterface: () => ({
-    question: (prompt: string, cb: (answer: string) => void) => {
-      promptQuestions.push(prompt);
-      cb(promptAnswers.shift() ?? '');
-    },
-    close: () => {},
-  }),
+  createInterface: () => {
+    const rl = new EventEmitter();
+    return Object.assign(rl, {
+      question: (prompt: string, cb: (answer: string) => void) => {
+        promptQuestions.push(prompt);
+        cb(promptAnswers.shift() ?? '');
+      },
+      close: () => { rl.emit('close'); },
+    });
+  },
 }));
 
 const runTailscaleServeStatusMock = vi.fn<

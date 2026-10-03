@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { stripVTControlCharacters } from 'node:util';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const {
@@ -141,6 +142,8 @@ describe('CLI startup runtime reexec', () => {
   });
 
   it('reports startup failures instead of rejecting silently', async () => {
+    // The local test env enables DEBUG; exercise the normal user-facing output.
+    vi.stubEnv('DEBUG', '');
     const startupError = new Error('startup blew up');
     dispatchCliMock.mockRejectedValue(startupError);
     process.argv = ['node', '/repo/apps/cli/dist/index.mjs', 'install', 'provider', 'codex'];
@@ -150,12 +153,13 @@ describe('CLI startup runtime reexec', () => {
       await import('./index');
 
       await vi.waitFor(() => {
-        expect(output.lines).toContain('Error: startup blew up');
+        expect(output.lines.map(stripVTControlCharacters)).toContain('x startup blew up');
         expect(loggerFatalMock).toHaveBeenCalledWith(startupError);
         expect(process.exitCode).toBe(1);
       });
     } finally {
       output.restore();
+      vi.unstubAllEnvs();
     }
   });
 
