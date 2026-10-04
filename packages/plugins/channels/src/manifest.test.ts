@@ -26,6 +26,7 @@ import {
   MAX_CONVERSATION_DELIVERY_ATTEMPTS,
   MAX_CONVERSATION_DELIVERY_CHUNKS,
   MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
+  SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
 } from '@happier-dev/channels-protocol/v1';
 
 import {
@@ -232,6 +233,16 @@ describe('Channels core manifest', () => {
     }
 
     expect(parsed.manifest.id).toBe(CHANNELS_PLUGIN_ID);
+    expect(parsed.manifest.contributes.actions?.find(
+      (action) => action.id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+    )).toMatchObject({
+      dangerLevel: 'writesLocal',
+      confirmation: {
+        title: expect.any(String),
+        body: expect.any(String),
+        confirmLabel: expect.any(String),
+      },
+    });
   });
 
   it('declares and observes the one Channels-owned provider contribution point', () => {
