@@ -12,6 +12,7 @@ import {
   type PluginRoleContributionV1,
   type RoleArtifactV1,
   type RoleInstructionsOverrideV1,
+  type RolesV1,
   type SessionRoleConfigurationV1,
   readSessionWorkspaceWritesV1,
   type ActionExecutorContext,
@@ -40,7 +41,7 @@ export function createRoleActionExecutor(params: Readonly<{
   readPluginRoles?: () => readonly PluginRoleContributionV1[];
   accountId?: string;
   readRawAccountSettings?: () => Promise<Readonly<Record<string, unknown>>>;
-  mutateAccountSettings?: (mutate: (raw: Readonly<Record<string, unknown>>) => Promise<Record<string, unknown>>, signal?: AbortSignal) => Promise<void>;
+  mutateAccountSettings?: (mutate: (raw: Readonly<Record<string, unknown>>) => Promise<Record<string, unknown> & { rolesV1: RolesV1 }>, signal?: AbortSignal) => Promise<void>;
   readRoleSources?: RoleSourceReader;
   listReportSessions?: (leadSessionId: string, context: import('@happier-dev/protocol').ActionExecutorContext) => Promise<readonly Readonly<{ sessionId: string; ownerAccountId: string }>[]>;
   writeReportSessionRoles?: (sessionId: string, configuration: SessionRoleConfigurationV1, context: import('@happier-dev/protocol').ActionExecutorContext) => Promise<void>;
