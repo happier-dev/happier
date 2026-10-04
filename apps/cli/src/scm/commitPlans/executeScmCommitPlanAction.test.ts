@@ -1,8 +1,8 @@
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultResponseSchema, ScmCommitResolveOutcomeResponseSchema, type ScmCommitPlanAcceptance, type ScmDiffSummaryResultResponse } from '@happier-dev/protocol';
+import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultResponseSchema, ScmCommitResolveOutcomeResponseSchema, type ScmDiffSummaryResultResponse } from '@happier-dev/protocol';
 import { captureScmComparison } from '../comparisons/captureScmComparison';
 import { createScmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { createTestGitScmBackendRegistry, runGit as git } from '../rpc/__tests__/testRpcHarness';
@@ -12,7 +12,7 @@ import { createScmBackendRegistry } from '../registry';
 import { buildCommitPlanAcceptance } from '../../../../ui/sources/components/sessions/files/commits/commitPlanAcceptance';
 
 async function setup(detached = false) {
-  const cwd = mkdtempSync(join(tmpdir(), 'happier-u5-apply-'));
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'happier-u5-apply-')));
   git(cwd, ['init', '-q']); git(cwd, ['config', 'user.name', 'U5 Fixture']); git(cwd, ['config', 'user.email', 'u5@example.test']);
   for (const path of ['a.txt', 'b.txt', 'left.txt']) writeFileSync(join(cwd, path), 'base\n');
   git(cwd, ['add', '.']); git(cwd, ['commit', '-qm', 'base']);
@@ -33,8 +33,9 @@ async function setup(detached = false) {
     }, analysis: { suppliedChangeRefs: captured.comparison.inventory.files.flatMap((file) => file.occurrences.map((change) => change.id)),
       analysedChangeRefs: [], remainingChangeRefs: captured.comparison.inventory.files.flatMap((file) => file.occurrences.map((change) => change.id)) },
   }) });
-  const acceptance: ScmCommitPlanAcceptance = { comparisonId: captured.comparison.id, repositoryRootPath: cwd,
-    expectedHeadOid, expectedRef: detached ? null : git(cwd, ['symbolic-ref', 'HEAD']), groups, leftOutChangeRefs: ref('left.txt') };
+  const acceptance = buildCommitPlanAcceptance({ comparison: captured.comparison,
+    plan: { groups, leftOutChangeRefs: ref('left.txt') }, application: null });
+  if (!acceptance) throw new Error('Captured working comparison did not authorize the fixture commit plan');
   const accept = (expectedRevision = 0, binding = acceptance) => executeScmCommitPlanAction({
     cwd, store, registry, actionId: 'scm.diffSummary.commitPlan.accept', input: { cwd, resultId: saved.resultId, expectedRevision, acceptance: binding },
   });
@@ -44,7 +45,7 @@ async function setup(detached = false) {
 
 describe('accepted commit plan through registered canonical writer', () => {
   it('creates an exact zero-parent first commit from UI acceptance with retained comparison refs', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), 'happier-u5-unborn-'));
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'happier-u5-unborn-')));
     git(cwd, ['init', '-q']); git(cwd, ['config', 'user.name', 'U5 Fixture']); git(cwd, ['config', 'user.email', 'u5@example.test']);
     writeFileSync(join(cwd, 'selected.txt'), 'first selected content\n');
     writeFileSync(join(cwd, 'left.txt'), 'leave pending\n');
