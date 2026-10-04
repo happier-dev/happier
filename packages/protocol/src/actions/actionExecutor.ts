@@ -19,6 +19,7 @@ import { SessionWorkerPublishInputV1Schema, SessionWorkerPublishOutputV1Schema }
 import { MachinesAgentsListInputSchema } from '../capabilities/machineAgentInventory.js';
 import { HomeConnectInputSchema, MachineAddCommandInputSchema, MachinePairingCreateInputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, type MachineAddSshActionId } from './specs/machineConnection.js';
 import { NotificationsNotifyMeInputV1Schema } from '../account/notifications/notifyMeV1.js';
+import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStatusInputSchema } from '../daemon/agentSignIn.js';
 import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
@@ -1750,9 +1751,11 @@ function readDynamicOptionDirectory(
   input: Record<string, unknown>,
   actionId: ActionId | null,
 ): string | undefined {
-  const directory = readNonEmptyString(input.directory);
-  if (directory || actionId === 'session.spawn_new') return directory;
-  return readNonEmptyString(input.path);
+  if (actionId === 'session.spawn_new') {
+    const intent = SessionDirectoryIntentV1Schema.safeParse(input.directory);
+    return intent.success && intent.data.kind === 'path' ? intent.data.path : undefined;
+  }
+  return readNonEmptyString(input.directory) ?? readNonEmptyString(input.path);
 }
 
 async function resolveDynamicActionOptions(params: Readonly<{
@@ -1915,7 +1918,14 @@ async function resolveDynamicActionOptions(params: Readonly<{
       ...(machineId === undefined ? {} : { machineId }),
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
     });
-    return { ok: true, result: normalizeResolvedOptions(result) };
+    const pathOptions = normalizeResolvedOptions(result).flatMap((option) => {
+      const intent = SessionDirectoryIntentV1Schema.safeParse({ kind: 'path', path: option.value });
+      return intent.success ? [{ ...option, value: JSON.stringify(intent.data) }] : [];
+    });
+    return { ok: true, result: [
+      { value: JSON.stringify(SessionDirectoryIntentV1Schema.parse({ kind: 'managed' })), label: 'No folder' },
+      ...pathOptions,
+    ] };
   }
 
   if (optionsSourceId === 'sessions.spawn.machines.available') {

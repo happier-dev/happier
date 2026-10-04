@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor as createRawActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from './actionSpecs.js';
 import { ActionIdSchema } from './actionIds.js';
 import type { MachinesAgentsListInput } from '../capabilities/machineAgentInventory.js';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
+import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import {
   ExecutionRunTransportErrorCodeSchema,
   type ExecutionRunTransportErrorCode,
@@ -628,11 +629,13 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it('routes paths.list_recent to deps.pathsListRecent', async () => {
     const deps = createDeps();
-    const executor = createActionExecutor(deps);
+    const items = [{ path: '/repo', label: 'Repo' }, { label: 'Private workspace' }];
+    const pathsListRecent = vi.fn(async () => ({ items }));
+    const executor = createActionExecutor({ ...deps, pathsListRecent });
 
     const res = await executor.execute('paths.list_recent', { machineId: 'm1', limit: 3 });
-    expect(res.ok).toBe(true);
-    expect(deps.pathsListRecent).toHaveBeenCalledWith({ machineId: 'm1', limit: 3 });
+    expect(res).toEqual({ ok: true, result: { items } });
+    expect(pathsListRecent).toHaveBeenCalledWith({ machineId: 'm1', limit: 3 });
   });
 
   it('routes projects.list to deps.projectsList', async () => {
@@ -1666,7 +1669,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     const sessionSpawnOptionContext = {
       executionTarget: { serverId: 'local', machineId: 'm1' },
-      directory: '/repo',
+      directory: { kind: 'path', path: '/repo' },
       agentTarget: {
         kind: 'agent',
         identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
@@ -1688,7 +1691,10 @@ describe('createActionExecutor (inventory/discovery)', () => {
       ['agents.models.available', 'modelSelection', [{ value: 'claude-opus-4-8', label: 'Claude Opus' }]],
       ['agents.session_modes.available', 'agentModeId', [{ value: 'plan', label: 'Plan' }]],
       ['agents.config_options.available', 'configuration', [{ value: 'reasoning_effort', label: 'Thinking' }]],
-      ['sessions.spawn.paths.recent', 'directory', [{ value: '/repo', label: 'Repo' }]],
+      ['sessions.spawn.paths.recent', 'directory', [
+        { value: '{"kind":"managed"}', label: 'No folder' },
+        { value: '{"kind":"path","path":"/repo"}', label: 'Repo' },
+      ]],
       ['sessions.spawn.machines.available', 'executionTarget.machineId', [{ value: 'm1', label: 'Laptop' }]],
       ['sessions.spawn.servers.available', 'executionTarget.serverId', [{ value: 'local', label: 'Local' }]],
       ['sessions.spawn.profiles.available', 'profileId', [{ value: 'profile-default', label: 'Default profile' }]],
@@ -1751,6 +1757,75 @@ describe('createActionExecutor (inventory/discovery)', () => {
       selection: sessionSpawnOptionContext.mcpSelection,
       limit: 10,
     });
+  });
+
+  it('returns Session spawn directory JSON options without selecting redacted or invalid paths', async () => {
+    const executor = createActionExecutor({
+      ...createDeps(),
+      pathsListRecent: async () => ({ items: [
+        { path: ' /repo ', label: 'Repo' },
+        { label: 'Private workspace' },
+        { path: ' ', label: 'Invalid path' },
+      ] }),
+    });
+    const result = await executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new',
+      fieldPath: 'directory',
+      draftInput: { executionTarget: { serverId: 'local', machineId: 'm1' } },
+    });
+
+    expect(result).toEqual({ ok: true, result: {
+      actionId: 'session.spawn_new',
+      fieldPath: 'directory',
+      optionsSourceId: 'sessions.spawn.paths.recent',
+      options: [
+        { value: '{"kind":"managed"}', label: 'No folder' },
+        { value: '{"kind":"path","path":"/repo"}', label: 'Repo' },
+      ],
+    } });
+    if (!result.ok) throw new Error('Expected directory options');
+    const output = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(result.result);
+    for (const option of output.options) {
+      if (typeof option.value !== 'string') throw new Error('Expected JSON completion text');
+      expect(SessionDirectoryIntentV1Schema.safeParse(JSON.parse(option.value)).success).toBe(true);
+    }
+  });
+
+  it.each([
+    [{ kind: 'path', path: ' /repo ' }, '/repo'],
+    [{ kind: 'managed' }, undefined],
+    ['/retired-flat-directory', undefined],
+  ] as const)('reads Session spawn directory %j for dependent options', async (directory, expectedPath) => {
+    const spawnMcpServersPreview = vi.fn(async () => ({ items: [] }));
+    const executor = createActionExecutor({
+      ...createDeps(),
+      resolveSessionSpawnAgentInventorySelection: () => ({ agentId: 'claude', backendTargetKey: 'backend:claude' }),
+      spawnMcpServersPreview,
+    });
+    await expect(executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new',
+      fieldPath: 'mcpSelection',
+      draftInput: {
+        executionTarget: { serverId: 'local', machineId: 'm1' },
+        directory,
+        path: '/retired-path',
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      },
+    })).resolves.toMatchObject({ ok: true });
+    expect(spawnMcpServersPreview).toHaveBeenCalledWith({
+      agentId: 'claude', backendTargetKey: 'backend:claude', machineId: 'm1',
+      ...(expectedPath === undefined ? {} : { directory: expectedPath }),
+    });
+  });
+
+  it('retains the declared flat directory context for direct MCP preview options', async () => {
+    const spawnMcpServersPreview = vi.fn(async () => ({ items: [] }));
+    const executor = createActionExecutor({ ...createDeps(), spawnMcpServersPreview });
+    await expect(executor.execute('action.options.resolve', {
+      optionsSourceId: 'sessions.spawn.mcp_servers.preview',
+      draftInput: { agentId: 'claude', directory: '/repo' },
+    })).resolves.toMatchObject({ ok: true });
+    expect(spawnMcpServersPreview).toHaveBeenCalledWith({ agentId: 'claude', directory: '/repo' });
   });
 
   it('resolves dependent ergonomic-run options from the canonical draftInput target', async () => {

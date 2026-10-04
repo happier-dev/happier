@@ -39,17 +39,22 @@ function baseSpec(overrides: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe('ActionSpec.cli declaration', () => {
-  it('accepts a friendly path with positionals drawn from the caller shape', () => {
+  it('accepts current friendly spellings and generic-only CLI projections', () => {
     const parsed = ActionSpecSchema.safeParse(baseSpec({
       cli: {
         commands: [
           { path: ['session', 'send'], positionals: ['sessionId', 'message'] },
           { path: ['send'], positionals: ['sessionId', 'message'], visibility: 'alias' },
+          { path: ['session', 'close_others'] },
         ],
-        flagAliases: [{ path: 'message', aliases: ['--prompt'] }],
+        flagAliases: [{ path: 'message', aliases: ['--prompt', '-p'] }],
       },
     }));
     expect(parsed.success).toBe(true);
+    expect(ActionSpecSchema.safeParse(baseSpec({
+      cli: { commands: [], acceptsServerId: true },
+    })).success).toBe(true);
+    expect(ActionSpecSchema.safeParse(getActionSpec('notifications.notify_me')).success).toBe(true);
   });
 
   it('rejects a friendly path on an Action that is not CLI-surfaced', () => {
@@ -63,6 +68,10 @@ describe('ActionSpec.cli declaration', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.success ? [] : parsed.error.issues.map((issue) => issue.message))
       .toContain('cli requires surface.cli');
+    const clientOnly = getActionSpec('connectedServices.identityPrivacy.set');
+    expect(clientOnly.surfaces.cli).toBe(false);
+    expect(clientOnly.cli).toBeUndefined();
+    expect(ActionSpecSchema.safeParse(clientOnly).success).toBe(true);
   });
 
   it('rejects a positional that is not a field of the effective caller schema', () => {
@@ -145,13 +154,23 @@ describe('ActionSpec.cli declaration', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects command segments that are not the safe kebab-case grammar', () => {
+  it('rejects empty paths and unsafe command or alias tokens', () => {
+    for (const segment of ['Session', '--send', '', 'send now', 'send/now', 'send;now']) {
+      expect(ActionSpecSchema.safeParse(baseSpec({
+        cli: { commands: [{ path: [segment] }] },
+      })).success, segment).toBe(false);
+    }
     expect(ActionSpecSchema.safeParse(baseSpec({
-      cli: { commands: [{ path: ['Session', 'send'] }] },
+      cli: { commands: [{ path: [] }] },
     })).success).toBe(false);
-    expect(ActionSpecSchema.safeParse(baseSpec({
-      cli: { commands: [{ path: ['--send'] }] },
-    })).success).toBe(false);
+    for (const alias of ['-P', '-pp', '--camelCase', '--prompt=', '--']) {
+      expect(ActionSpecSchema.safeParse(baseSpec({
+        cli: {
+          commands: [{ path: ['send'] }],
+          flagAliases: [{ path: 'message', aliases: [alias] }],
+        },
+      })).success, alias).toBe(false);
+    }
   });
 
   it('does not publish the friendly CLI projection over Action discovery', () => {

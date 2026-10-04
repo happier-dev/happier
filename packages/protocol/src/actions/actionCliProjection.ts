@@ -14,11 +14,11 @@ import type { ActionId } from './actionIds.js';
  */
 const ActionCliCommandSegmentSchema = z
   .string()
-  .regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/, 'Command segments are lowercase kebab-case');
+  .regex(/^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/, 'Command segments are lowercase kebab-case or snake_case');
 
 const ActionCliFlagNameSchema = z
   .string()
-  .regex(/^--[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/, 'Flags are lowercase kebab-case and start with --');
+  .regex(/^(?:--[a-z][a-z0-9]*(?:-[a-z0-9]+)*|-[a-z])$/, 'Flags are lowercase kebab-case starting with -- or one lowercase short alias');
 
 export const ActionCliCommandBindingSchema = z.object({
   path: z.array(ActionCliCommandSegmentSchema).min(1),
@@ -101,7 +101,8 @@ const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
 }, { message: 'Expected a Zod schema' });
 
 export const ActionCliProjectionSchema = z.object({
-  commands: z.array(ActionCliCommandBindingSchema).min(1),
+  // Generic `actions invoke <id>` may own CLI policy without a friendly path.
+  commands: z.array(ActionCliCommandBindingSchema),
   /** Accept the established CLI-only `--server-id` exact-Home selector. */
   acceptsServerId: z.literal(true).optional(),
   /** Refuse ambient active-Home selection; the caller must name an exact saved Home. */

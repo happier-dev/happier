@@ -807,7 +807,7 @@ export const ActionSpecSchema = z.object({
   bindings: z.object({
     // Tool name the voice client is allowed to expose (surface.voice).
     voiceClientToolName: z.string().min(1).optional(),
-    // Tool name for MCP surface (surface.mcp).
+    // Optional direct MCP tool name; generic action_execute invokes by Action id.
     mcpToolName: z.string().min(1).optional(),
     // Optional generated SDK method-name override. Most public Actions derive
     // their path from the canonical Action id; overrides only resolve a real
@@ -956,13 +956,6 @@ export const ActionSpecSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: 'surface.rpc requires bindings.rpcMethod',
       path: ['bindings', 'rpcMethod'],
-    });
-  }
-  if (value.surfaces.mcp && !value.bindings?.mcpToolName) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'surface.mcp requires bindings.mcpToolName',
-      path: ['bindings', 'mcpToolName'],
     });
   }
   if (value.surfaces.mcp && !value.outputSchema) {
@@ -1842,8 +1835,7 @@ const SessionSpawnNewInputHints = {
     { path: 'creationKey', title: 'Creation key', widget: 'text' },
     { path: 'executionTarget.serverId', title: 'Server id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.servers.available' },
     { path: 'executionTarget.machineId', title: 'Machine id', widget: 'text', required: true, optionsSourceId: 'sessions.spawn.machines.available' },
-    { path: 'directory', title: 'Directory intent', widget: 'json', required: true },
-    { path: 'directory.path', title: 'Directory', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
+    { path: 'directory', title: 'Directory intent', widget: 'json', required: true, optionsSourceId: 'sessions.spawn.paths.recent' },
     { path: 'organizationPlacement', title: 'Organization placement', widget: 'json' },
     { path: 'agentTarget', title: 'Agent target', widget: 'json', required: true, optionsSourceId: 'agents.backends.enabled' },
     { path: 'modelSelection', title: 'Model selection', widget: 'json', optionsSourceId: 'agents.models.available' },
@@ -5485,7 +5477,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     safety: 'safe',
     requiredAuthority: 'account_automation',
     executionPlacement: 'account',
-    placements: ['voice_panel'],
+    placements: [],
     bindings: {
       voiceClientToolName: 'notifyMe',
       mcpToolName: 'notifications_notify_me',
