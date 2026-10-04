@@ -568,7 +568,7 @@ export function registerSessionClientRuntimeHandlers(
             return readSessionWorkspaceWritesV1(metadata, {
                 settingsRoles: Object.fromEntries(sources.map((entry) => [entry.roleId, entry.role])),
                 settingsOverrides: actionsSettingsProvider.getAccountSettings?.()?.rolesV1.overrides,
-            });
+            }) ?? null;
         },
         ...(params.enqueueRegisteredSessionStateFieldMutation ? {
             stageSessionStateMutation: async (mutation) => { await params.enqueueRegisteredSessionStateFieldMutation!(mutation); },

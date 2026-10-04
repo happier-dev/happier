@@ -40,7 +40,7 @@ describe('session role configuration RPC', () => {
         id: 'child', createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null,
       }] : [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }),
       readCurrentReportLead: async () => currentLead,
-      readCallerWorkspaceWrites: async () => readSessionWorkspaceWritesV1(source),
+      readCallerWorkspaceWrites: async () => readSessionWorkspaceWritesV1(source) ?? null,
       stageSessionStateMutation: async (mutation) => {
         expect(mutation.source).toBe('runtime');
         target = applyRegisteredSessionStateFieldMutationToMetadata(target, mutation);
