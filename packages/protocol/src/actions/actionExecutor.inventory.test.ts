@@ -10,6 +10,7 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { ExecutionRunLaunchOriginSchema } from '../execution/runs/startRequest.js';
+import { AgentStartSessionCallerV1Schema, type AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 import {
   ExecutionRunTransportErrorCodeSchema,
   type ExecutionRunTransportErrorCode,
@@ -103,6 +104,14 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 const presentUserActionLaunchOrigin = ExecutionRunLaunchOriginSchema.parse({ kind: 'external', source: 'action' });
+const inventoryAgentStartContext = {
+  caller: AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: 'session_1', starterDepth: 1, turnDepth: 2 }),
+  baseline: {
+    machineId: 'machine-1', directory: '/repo/project',
+    configuration: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+  },
+  ledSubtreeSessionIds: [], roles: {}, workDepthLimit: 4, callerPermissionCeiling: 'default',
+} satisfies AgentStartContextV1;
 
 describe('createActionExecutor (inventory/discovery)', () => {
   it('cancels only the addressed response through the existing cancel-turn RPC Action', async () => {
@@ -118,12 +127,15 @@ describe('createActionExecutor (inventory/discovery)', () => {
     };
     const executor = createActionExecutor(deps);
     const id = ActionIdSchema.parse('execution.run.cancel_turn');
-    const result = await executor.execute(id, { sessionId: 'session-1', ...request }, { surface: 'agent' });
+    const caller = { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session-1' } as const;
+    const result = await executor.execute(id, { sessionId: 'session-1', ...request }, caller);
     expect(result).toEqual({ ok: true, result: output });
     expect(requests).toEqual([{ sessionId: 'session-1', input: request }]);
     expect(getActionSpec(id).bindings?.rpcMethod).toBe('execution.run.cancelTurn.v1');
     await expect(executor.execute(id, { sessionId: 'session-1', runId: 'run-1', turnId: 'turn-1' }))
       .resolves.toMatchObject({ ok: false });
+    await expect(executor.execute(id, { sessionId: 'another-session', ...request }, caller))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(requests).toHaveLength(1);
   });
 
@@ -179,18 +191,21 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it('selects the nearest non-escalating delegate permission when permissionMode is omitted', async () => {
     const deps = createDeps();
+    deps.executionRunStart = vi.fn(async () => ({ runId: 'run-1', callId: 'call-1', sidechainId: 'side-1' }));
     const executor = createActionExecutor(deps);
 
     const res = await executor.execute('subagents.delegate.start', {
       backendTargetKeys: ['agent:claude'],
       instructions: 'Delegate this task.',
-    }, { surface: 'agent', defaultSessionId: 'session_1' });
+    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', agentStartContext: inventoryAgentStartContext });
 
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true, result: {
+      results: [{ key: 'agent:claude', ok: true, result: { runId: 'run-1' } }],
+    } });
     expect(deps.executionRunStart).toHaveBeenCalledWith(
       'session_1',
-      expect.objectContaining({ permissionMode: 'default' }),
-      undefined,
+      expect.objectContaining({ permissionMode: 'default', launchOrigin: { kind: 'session', sessionId: 'session_1' } }),
+      expect.objectContaining({ workDepth: 3 }),
     );
   });
 
@@ -204,7 +219,9 @@ describe('createActionExecutor (inventory/discovery)', () => {
       permissionMode: 'workspace_write',
     }, {
       surface: 'agent',
+      authority: 'account_automation',
       defaultSessionId: 'session_1',
+      agentStartContext: inventoryAgentStartContext,
       callerPermissionMode: 'workspace_write',
       causalPermissionAuthority: {
         kind: 'admittedSessionInputV1',
@@ -214,8 +231,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(res).toMatchObject({
       ok: false,
-      errorCode: 'permission_escalation_denied',
-      details: { requestedMode: 'workspace_write', callerMode: 'default' },
+      errorCode: 'permission_exceeds_ceiling',
+      details: { code: 'permission_exceeds_ceiling' },
     });
     expect(deps.executionRunStart).not.toHaveBeenCalled();
   });
@@ -245,18 +262,19 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const res = await executor.execute('execution.run.start', {
       sessionId: 'session_1',
       intent: 'delegate',
-      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Run this task.',
       permissionMode: 'workspace_write',
       retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
-    }, { surface: 'agent', defaultSessionId: 'session_1' });
+    }, { surface: 'agent', authority: 'account_automation', defaultSessionId: 'session_1', agentStartContext: inventoryAgentStartContext });
 
     expect(res).toEqual(expect.objectContaining({
       ok: false,
-      errorCode: 'permission_escalation_denied',
-      error: 'permission_escalation_denied',
+      errorCode: 'permission_exceeds_ceiling',
+      error: 'permission_exceeds_ceiling',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
     }));
     expect(deps.executionRunStart).not.toHaveBeenCalled();
   });
@@ -348,6 +366,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         runId: 'run_1',
         callId: 'call_1',
         sidechainId: 'side_1',
+        requestedConfiguration: { modelId: '  model_1  ', reasoningEffort: 'high' },
       },
     }));
     const executor = createActionExecutor(deps);
@@ -371,6 +390,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
               runId: 'run_1',
               callId: 'call_1',
               sidechainId: 'side_1',
+              requestedConfiguration: { modelId: '  model_1  ', reasoningEffort: 'high' },
             },
           },
         ],
@@ -423,13 +443,16 @@ describe('createActionExecutor (inventory/discovery)', () => {
     );
   });
 
-  it.each(['returned', 'thrown', 'unknown'] as const)('preserves native launch creation evidence for %s fanout failures', async (failureKind) => {
+  it.each(['returned', 'thrown', 'unknown', 'malformed', 'contradictory'] as const)('preserves native launch creation evidence for %s fanout failures', async (failureKind) => {
     const deps = createDeps();
     deps.reviewEnginesList = vi.fn(async () => ({
       items: [{ value: 'coderabbit', label: 'CodeRabbit' }],
     }));
     const message = 'Unable to resolve a default base branch for CodeRabbit review.';
-    const details = { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } as const;
+    const details = {
+      executionRunStart: { v: failureKind === 'malformed' ? 2 : 1, runCreation: 'noRunCreated' },
+      privateBridgeField: 'must-not-escape',
+    };
     deps.executionRunStart = vi.fn(async () => {
       if (failureKind === 'thrown') {
         throw Object.assign(new Error(message), { code: 'execution_run_not_allowed', details });
@@ -438,7 +461,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
         ok: false,
         code: 'execution_run_not_allowed',
         message,
-        ...(failureKind === 'returned' ? { details } : {}),
+        ...(failureKind === 'unknown' ? {} : { details }),
+        ...(failureKind === 'contradictory' ? { runId: 'partially-created-run' } : {}),
       };
     });
     const executor = createActionExecutor(deps);
@@ -462,7 +486,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
             ok: false,
             errorCode: 'execution_run_not_allowed',
             error: 'Unable to resolve a default base branch for CodeRabbit review.',
-            details: { executionRunStart: { v: 1, runCreation: failureKind === 'unknown' ? 'outcomeUnknown' : 'noRunCreated' } },
+            details: { executionRunStart: { v: 1, runCreation: failureKind === 'returned' || failureKind === 'thrown' ? 'noRunCreated' : 'outcomeUnknown' } },
           },
         ],
       },
@@ -470,8 +494,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     if (!res.ok) throw new Error('Review Action did not dispatch');
     expect(getActionSpec('review.start').completion?.launched(res.result)).toEqual({
       runs: [],
-      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed',
-        runCreation: failureKind === 'unknown' ? 'outcomeUnknown' : 'noRunCreated' }],
+      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed' }],
     });
   });
 
@@ -864,7 +887,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
   ] as const;
 
   it.each(hostStampedServerInventoryCases)(
-    'drops caller-supplied server identity and binds host-stamped identity for %s',
+    'rejects caller-supplied server identity before inventory dispatch for %s',
     async (actionId, dependencyName, actionInput) => {
       const deps = createDeps();
       const executor = createActionExecutor(deps);
@@ -873,11 +896,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
         actionId,
         { ...actionInput, serverId: 'caller-controlled' },
         { serverId: 'host-stamped' },
-      )).resolves.toMatchObject({ ok: true });
-      expect(deps[dependencyName]).toHaveBeenCalledWith({
-        ...actionInput,
-        serverId: 'host-stamped',
-      });
+      )).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(deps[dependencyName]).not.toHaveBeenCalled();
     },
   );
 
@@ -1394,12 +1414,17 @@ describe('createActionExecutor (inventory/discovery)', () => {
       isActionEnabled: (actionId) => actionId !== 'review.start',
     });
 
-    const res = await executor.execute('action.spec.search', { query: '', limit: 50 }, { surface: 'voice' });
-    expect(res.ok).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'subagents.plan.start')).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'review.start')).toBe(false);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'session.mode.set')).toBe(true);
-    expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'workspaces.list_recent')).toBe(false);
+    for (const [actionId, expected] of [
+      ['subagents.plan.start', true],
+      ['review.start', false],
+      ['session.mode.set', true],
+      ['execution.run.cancel_turn', false],
+    ] as const) {
+      const res = await executor.execute('action.spec.search', { query: actionId, limit: 50 }, { surface: 'voice' });
+      expect(res).toMatchObject({ ok: true });
+      if (!res.ok) throw new Error('Action search did not complete');
+      expect(res.result.actionSpecs.some((spec) => spec.id === actionId)).toBe(expected);
+    }
   });
 
   it('discovers current contributed Action definitions through the shared catalog operations', async () => {

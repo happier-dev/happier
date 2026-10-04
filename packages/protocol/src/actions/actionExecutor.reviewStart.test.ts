@@ -403,6 +403,7 @@ describe('createActionExecutor (review.start)', () => {
             key: 'coderabbit',
             ok: false,
             error: 'Unable to resolve a default base branch for CodeRabbit review.',
+            details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } },
           },
         ],
       },
