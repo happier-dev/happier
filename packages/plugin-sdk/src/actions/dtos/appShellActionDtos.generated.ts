@@ -15,28 +15,28 @@ export type AppShellActionInputById = {
     };
     readonly "session.draft.directory.set": {
         ref: {
-            readonly kind: 'session';
-            readonly sessionId: string;
+            kind: 'session';
+            sessionId: string;
         } | {
-            readonly kind: 'newSession';
-            readonly instanceId: string;
+            kind: 'newSession';
+            instanceId: string;
         } | {
-            readonly kind: 'pendingMessage';
-            readonly sessionId: string;
-            readonly localId: string;
+            kind: 'pendingMessage';
+            sessionId: string;
+            localId: string;
         } | {
-            readonly kind: 'participantMessage';
-            readonly sessionId: string;
-            readonly instanceId: string;
+            kind: 'participantMessage';
+            sessionId: string;
+            instanceId: string;
         } | {
-            readonly kind: 'automationAuthoring';
-            readonly sessionId: string;
-            readonly instanceId: string;
+            kind: 'automationAuthoring';
+            sessionId: string;
+            instanceId: string;
         } | {
-            readonly kind: 'workflowAuthoring';
-            readonly draftId: string;
-            readonly blockId: string;
-            readonly instanceId: string;
+            kind: 'workflowAuthoring';
+            draftId: string;
+            blockId: string;
+            instanceId: string;
         };
         directory: {
             kind: 'path';

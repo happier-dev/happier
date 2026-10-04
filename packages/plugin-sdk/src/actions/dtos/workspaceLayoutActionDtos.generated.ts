@@ -17,6 +17,10 @@ export type WorkspaceLayoutActionInputById = {
     readonly "workspace.tabs.close": {
         tabId: string;
     };
+    readonly "workspace.tabs.closed.list": Record<string, never>;
+    readonly "workspace.tabs.reopen": {
+        tabId?: string | undefined;
+    };
     readonly "workspace.tabs.pin": {
         tabId: string;
         pinned: boolean;
@@ -82,6 +86,21 @@ export type WorkspaceLayoutActionResultById = {
         ok: true;
     };
     readonly "workspace.tabs.close": {
+        ok: true;
+    };
+    readonly "workspace.tabs.closed.list": {
+        ok: true;
+        tabs: {
+            id: string;
+            target: {
+                kind: string;
+                params: Record<string, string>;
+            };
+            pinned: boolean;
+            title?: string | undefined;
+        }[];
+    };
+    readonly "workspace.tabs.reopen": {
         ok: true;
     };
     readonly "workspace.tabs.pin": {

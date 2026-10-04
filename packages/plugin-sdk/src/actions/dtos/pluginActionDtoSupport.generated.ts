@@ -3962,8 +3962,8 @@ export type PluginDeclarativeNodeV2 = Readonly<{
         fallback: string;
     };
     action?: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     } | undefined;
     hostAction?: PluginInvocableActionId | undefined;
     effect?: {
@@ -4077,8 +4077,8 @@ export type PluginDeclarativeNodeV2 = Readonly<{
     icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     } | undefined;
     input?: PluginJsonValueV2 | undefined;
 } | {
@@ -4112,8 +4112,8 @@ export type PluginDeclarativeNodeV2 = Readonly<{
         icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         } | undefined;
         input?: PluginJsonValueV2 | undefined;
     } | {
@@ -4156,8 +4156,8 @@ export type PluginDeclarativeNodeV2 = Readonly<{
         icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         } | undefined;
         input?: PluginJsonValueV2 | undefined;
     } | {
@@ -4191,8 +4191,8 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
-                readonly pluginId: string;
-                readonly localId: string;
+                pluginId: string;
+                localId: string;
             } | undefined;
             input?: PluginJsonValueV2 | undefined;
         } | {
@@ -4225,10 +4225,10 @@ export type PluginDeclarativeNodeV2 = Readonly<{
     kind: 'targetedSurface';
     surface: {
         point: {
-            readonly pointId: string;
-            readonly protocol: {
-                readonly id: string;
-                readonly version: number;
+            pointId: string;
+            protocol: {
+                id: string;
+                version: number;
             };
         };
         contributor: {
@@ -4278,8 +4278,8 @@ export type PluginDeclarativeNodeV2 = Readonly<{
             fallback: string;
         };
         action?: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         } | undefined;
         hostAction?: PluginInvocableActionId | undefined;
         effect?: {
@@ -4417,27 +4417,27 @@ export type PluginDeclarativeNodeV2 = Readonly<{
     primaryCommand?: {
         kind: 'action';
         action: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     } | {
         kind: 'openSurface';
         destination: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     } | undefined;
     secondaryCommands?: ({
         kind: 'action';
         action: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     } | {
         kind: 'openSurface';
         destination: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     })[] | undefined;
 };
@@ -4579,8 +4579,8 @@ export type PluginDeclarativeActionNodeV2 = {
         fallback: string;
     };
     action?: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     } | undefined;
     hostAction?: PluginInvocableActionId | undefined;
     effect?: {
@@ -4695,8 +4695,8 @@ export type PluginDeclarativeRowNodeV2 = {
     icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     } | undefined;
     input?: PluginJsonValueV2 | undefined;
 } | {
@@ -4714,10 +4714,10 @@ export type PluginDeclarativeRowNodeV2 = {
 };
 export type PluginDeclarativeTargetedSurfaceReferenceV1 = {
     point: {
-        readonly pointId: string;
-        readonly protocol: {
-            readonly id: string;
-            readonly version: number;
+        pointId: string;
+        protocol: {
+            id: string;
+            version: number;
         };
     };
     contributor: {
@@ -4745,8 +4745,8 @@ export type PluginDeclarativeListNodeV2 = {
         icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         } | undefined;
         input?: PluginJsonValueV2 | undefined;
     } | {
@@ -4780,8 +4780,8 @@ export type PluginDeclarativeListNodeV2 = {
             icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
-                readonly pluginId: string;
-                readonly localId: string;
+                pluginId: string;
+                localId: string;
             } | undefined;
             input?: PluginJsonValueV2 | undefined;
         } | {
@@ -4830,8 +4830,8 @@ export type PluginDeclarativeSectionNodeV2 = {
         icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         } | undefined;
         input?: PluginJsonValueV2 | undefined;
     } | {
@@ -4873,8 +4873,8 @@ export type PluginDeclarativeItemNodeV2 = {
     icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'search' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     } | undefined;
     input?: PluginJsonValueV2 | undefined;
 };
@@ -4895,10 +4895,10 @@ export type PluginDeclarativeTargetedSurfaceNodeV2 = {
     kind: 'targetedSurface';
     surface: {
         point: {
-            readonly pointId: string;
-            readonly protocol: {
-                readonly id: string;
-                readonly version: number;
+            pointId: string;
+            protocol: {
+                id: string;
+                version: number;
             };
         };
         contributor: {
@@ -4950,8 +4950,8 @@ export type PluginDeclarativeActionPanelNodeV2 = {
             fallback: string;
         };
         action?: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         } | undefined;
         hostAction?: PluginInvocableActionId | undefined;
         effect?: {
@@ -5090,41 +5090,41 @@ export type PluginDeclarativeCollectionListNodeV2 = {
     primaryCommand?: {
         kind: 'action';
         action: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     } | {
         kind: 'openSurface';
         destination: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     } | undefined;
     secondaryCommands?: ({
         kind: 'action';
         action: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     } | {
         kind: 'openSurface';
         destination: string | {
-            readonly pluginId: string;
-            readonly localId: string;
+            pluginId: string;
+            localId: string;
         };
     })[] | undefined;
 };
 export type PluginCollectionRowCommandV1 = {
     kind: 'action';
     action: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     };
 } | {
     kind: 'openSurface';
     destination: string | {
-        readonly pluginId: string;
-        readonly localId: string;
+        pluginId: string;
+        localId: string;
     };
 };
 export type PluginCollectionProjectedScalarFieldRefV1 = {
@@ -5144,6 +5144,6 @@ export type PluginLocalizedStringV2 = string | {
     fallback: string;
 };
 export type PluginContributionReference = string | {
-    readonly pluginId: string;
-    readonly localId: string;
+    pluginId: string;
+    localId: string;
 };

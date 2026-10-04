@@ -130,21 +130,21 @@ export type IntentStartActionInputById = {
         permissionMode?: string | undefined;
         profileId?: string | undefined;
         profileSourceCustody?: {
-            readonly kind: 'managed';
-            readonly immutableGenerationId: string;
-            readonly installSource: 'npm' | 'archive' | 'localPath';
+            kind: 'managed';
+            immutableGenerationId: string;
+            installSource: 'npm' | 'archive' | 'localPath';
         } | {
-            readonly kind: 'bundled_first_party';
-            readonly packagedRuntime: {
-                readonly kind: 'cli_version_root';
-                readonly versionRootId: string;
+            kind: 'bundled_first_party';
+            packagedRuntime: {
+                kind: 'cli_version_root';
+                versionRootId: string;
             } | {
-                readonly kind: 'pinned_runner_snapshot';
-                readonly snapshotId: string;
+                kind: 'pinned_runner_snapshot';
+                snapshotId: string;
             };
         } | {
-            readonly kind: 'development';
-            readonly registeredRootId: string;
+            kind: 'development';
+            registeredRootId: string;
         } | undefined;
         secretReferenceOverlay?: {
             v: 1;

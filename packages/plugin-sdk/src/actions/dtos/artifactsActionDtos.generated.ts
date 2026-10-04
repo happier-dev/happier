@@ -177,7 +177,7 @@ export type ArtifactsActionResultById = {
         publicShare: {
             id: string;
             subject: {
-                kind: 'artifact' | 'session';
+                kind: 'session' | 'artifact';
                 id: string;
             };
             expiresAt: number | null;
@@ -193,7 +193,7 @@ export type ArtifactsActionResultById = {
         publicShares: {
             id: string;
             subject: {
-                kind: 'artifact' | 'session';
+                kind: 'session' | 'artifact';
                 id: string;
             };
             expiresAt: number | null;

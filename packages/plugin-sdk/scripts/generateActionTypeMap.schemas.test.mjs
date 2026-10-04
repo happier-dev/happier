@@ -3,6 +3,7 @@ import test from 'node:test';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import ts from 'typescript';
 import { deriveActionDtoSchemas } from './deriveActionDtos.mjs';
 import { prepareActionTypeMap } from './generateActionTypeMap.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
@@ -71,9 +72,24 @@ test('schema edits regenerate family DTOs without any authored DTO input', async
   const schemas = resolve(actions, 'actionSpecs.ts');
   writeFileSync(schemas, `
     import { z } from 'zod';
+    type ProtocolComposableSchema<Input, Output> = { parse(input: Input): Output };
+    type ProjectionValue<Schema, Projection extends 'input' | 'output'> =
+      Schema extends ProtocolComposableSchema<infer Input, infer Output>
+        ? Projection extends 'input' ? Input : Output : never;
+    type ProtocolObjectProjection<Shape, Projection extends 'input' | 'output'> = {
+      -readonly [Key in keyof Shape as undefined extends ProjectionValue<Shape[Key], Projection> ? never : Key]:
+        Exclude<ProjectionValue<Shape[Key], Projection>, undefined>;
+    } & {
+      -readonly [Key in keyof Shape as undefined extends ProjectionValue<Shape[Key], Projection> ? Key : never]?:
+        Exclude<ProjectionValue<Shape[Key], Projection>, undefined>;
+    };
     const Input = z.object({ query: z.string().optional() }).strict();
     const OptionalPluginInput = z.object({ query: z.number() }).strict();
-    const Output = z.object({ count: z.number(), status: z.enum(['ready']) }).strict();
+    const Output = z.object({ count: z.number(), status: z.enum(['ready']),
+      projected: z.custom<ProtocolObjectProjection<{
+        readonly value: ProtocolComposableSchema<string, number>;
+        readonly label: ProtocolComposableSchema<string | undefined, string | undefined>;
+      }, 'output'>>(), authored: z.custom<Readonly<{ kept: string }>>() }).strict();
     const INPUTS = { 'inventory.list': Input } as const;
     const OUTPUTS = { 'inventory.list': Output } as const;
     type CanonicalActionSchemaDefinition<Id, Input, Output, PluginInput> = {
@@ -97,6 +113,27 @@ test('schema edits regenerate family DTOs without any authored DTO input', async
   const initial = await derive();
   assert.match(initial, /count: number/u);
   assert.match(initial, /query\?: string/u);
+  const source = ts.createSourceFile('dto.ts', initial, ts.ScriptTarget.ES2022, true);
+  const resultMap = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'FreshFamilyActionResultById');
+  const resultType = resultMap.type.members[0].type;
+  const projected = resultType.members.find(member => member.name.getText(source) === 'projected').type;
+  assert.equal(ts.isTypeLiteralNode(projected), true, projected.getText(source));
+  assert.deepEqual(projected.members.map(member => ({
+    name: member.name.getText(source),
+    readonly: member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword) ?? false,
+    optional: member.questionToken !== undefined,
+    type: member.type.getText(source),
+  })), [
+    { name: 'value', readonly: false, optional: false, type: 'number' },
+    { name: 'label', readonly: false, optional: true, type: 'string' },
+  ]);
+  const authored = resultType.members.find(member => member.name.getText(source) === 'authored').type;
+  const authoredReadonly = ts.isTypeReferenceNode(authored) && authored.typeName.getText(source) === 'Readonly'
+    || ts.isTypeLiteralNode(authored)
+      && authored.members[0].modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword);
+  assert.equal(authoredReadonly, true,
+    'projection flattening must preserve unrelated authored readonly members');
   writeFileSync(schemas, readFileSync(schemas, 'utf8').replace('count: z.number()', 'count: z.string()').replace("['ready']", "['ready', 'failed']"));
   const refreshed = await derive();
   assert.match(refreshed, /count: string/u);

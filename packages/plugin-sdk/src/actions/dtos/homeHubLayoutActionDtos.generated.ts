@@ -25,6 +25,10 @@ export type HomeHubLayoutActionInputById = {
             sectionId: string;
             frameStyle: 'card' | 'plain' | null;
         } | {
+            kind: 'setup_visibility';
+            stepId: string;
+            hidden: boolean;
+        } | {
             kind: 'restore_setup';
         } | {
             kind: 'reset';
