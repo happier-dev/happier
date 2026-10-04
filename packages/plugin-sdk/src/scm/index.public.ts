@@ -29,6 +29,8 @@ export type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse } from './proj
 export type { ScmCommitBackoutResponse } from './projections.js';
 export type { ScmCommitCreateRequest } from './projections.js';
 export type { ScmCommitCreateResponse } from './projections.js';
+export type { ScmCommitResolveOutcomeRequest, ScmCommitResolveOutcomeResponse } from './projections.js';
+export type { ScmCommitPublication, ScmCommitHookContentChanges } from './projections.js';
 export type { ScmConflictAcceptSideRequest } from './projections.js';
 export type { ScmConflictAcceptSideResponse } from './projections.js';
 export type { ScmConflictEntry } from './projections.js';

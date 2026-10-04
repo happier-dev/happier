@@ -35,6 +35,18 @@ function readScmSchema<TValue = unknown>(name: string): ZodLikeSchema<TValue> {
 }
 
 describe('scm protocol contracts', () => {
+    it('preserves immutable hook diff endpoints and rejects a moving after endpoint', () => {
+        const beforeTreeOid = '1'.repeat(40);
+        const commit = '2'.repeat(40);
+        expect(scmContractModule.ScmDiffCommitRequestSchema.parse({ cwd: '/repo', beforeTreeOid, commit }))
+            .toMatchObject({ beforeTreeOid, commit });
+        expect(scmContractModule.ScmDiffCommitRequestSchema.safeParse({ beforeTreeOid, commit: 'HEAD' }).success).toBe(false);
+        expect(scmContractModule.ScmDiffCommitRequestSchema.parse({ commit: 'HEAD' })).toMatchObject({ commit: 'HEAD' });
+        const files = [{ path: 'hook added\tcafé.txt', changeKind: 'added', unifiedDiff: '+literal hook evidence\n' }];
+        expect(scmContractModule.ScmDiffCommitResponseSchema.parse({ success: true, beforeTreeOid, afterTreeOid: commit, diff: '', files }))
+            .toMatchObject({ beforeTreeOid, afterTreeOid: commit, files });
+    });
+
     it('parses backend describe responses with capability metadata', () => {
         const parsed = ScmBackendDescribeResponseSchema.parse({
             success: true,

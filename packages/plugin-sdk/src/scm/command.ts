@@ -1,5 +1,6 @@
 import {
     readCurrentBackendRuntimeServices,
+    type BackendCommandRunInput,
     type BackendCommandRunResult,
 } from './backend.js';
 
@@ -14,6 +15,7 @@ export type ScmBackendCommandInput = Readonly<{
     args: readonly string[];
     timeoutMs?: number;
     stdin?: string;
+    stdinInteraction?: BackendCommandRunInput['stdinInteraction'];
     maxOutputBytes?: number;
     env?: Readonly<Record<string, string | undefined>>;
     signal?: AbortSignal;
@@ -67,6 +69,7 @@ export function runScmBackendCommand(
         args: input.args,
         timeoutMs: input.timeoutMs,
         stdin: input.stdin,
+        ...(input.stdinInteraction ? { stdinInteraction: input.stdinInteraction } : {}),
         maxOutputBytes: input.maxOutputBytes,
         env: input.env,
         ...(input.signal ? { signal: input.signal } : {}),

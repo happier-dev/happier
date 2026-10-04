@@ -114,10 +114,14 @@ export type ScmOperationErrorCode =
     | 'NOT_REPOSITORY'
     | 'INVALID_PATH'
     | 'INVALID_REQUEST'
+    | 'SCM_SOURCE_CHANGED'
     | 'COMMAND_FAILED'
     | 'CHANGE_APPLY_FAILED'
     | 'COMMIT_REQUIRED'
     | 'COMMIT_HOOK_FAILED'
+    | 'COMMIT_HOOK_CONTENT_CHANGED'
+    | 'COMMIT_HEAD_CHANGED'
+    | 'COMMIT_STAGING_CONFLICT'
     | 'COMMIT_SIGNING_FAILED'
     | 'COMMIT_IDENTITY_REQUIRED'
     | 'COMMIT_EMPTY'
@@ -166,6 +170,9 @@ export type ScmCapabilities = {
     writeCommitUndoLast?: boolean;
     writeCommitAmend?: boolean;
     writeCommitSignOff?: boolean;
+    writeCommitExpectedBase?: boolean;
+    writeCommitSafePlan?: boolean;
+    readCommitResolveOutcome?: boolean;
     writeCommitPathSelection: boolean;
     writeCommitLineSelection: boolean;
     writeBackout: boolean;
@@ -521,8 +528,15 @@ export type ScmDiffFileResponse = {
     errorCode?: ScmOperationErrorCode;
 };
 
-export type ScmDiffCommitRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { commit: string };
-export type ScmDiffCommitResponse = ScmDiffFileResponse;
+export type ScmDiffCommitRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
+    commit: string;
+    beforeTreeOid?: string;
+};
+export type ScmDiffCommitResponse = ScmDiffFileResponse & {
+    beforeTreeOid?: string;
+    afterTreeOid?: string;
+    files?: { path: string; previousPath?: string; changeKind: string; unifiedDiff: string }[];
+};
 export type ScmChangeApplyRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     paths?: ScmSelectedMutationPath[];
     patch?: string;
@@ -553,6 +567,12 @@ export type ScmCommitCreateRequest = ScmShape<Pick<ScmStatusSnapshotRequest, 'cw
     mode?: 'commit' | 'amend';
     signOff?: boolean;
     allowPublishedAmend?: boolean;
+    expectedHeadOid?: string | null;
+    expectedRef?: string | null;
+    expectedCandidateTreeOid?: string;
+    preparedTreeOid?: string;
+    expectedIndexTreeOid?: string;
+    acceptedHookTreeOid?: string;
     scope?:
         | { kind: 'all-pending' }
         | {
@@ -563,10 +583,44 @@ export type ScmCommitCreateRequest = ScmShape<Pick<ScmStatusSnapshotRequest, 'cw
     patches?: { path: ScmSelectedMutationPath; patch: string }[];
 }>;
 
+export type ScmCommitPublication = {
+    state: 'not_published' | 'published' | 'unknown';
+    expectedHeadOid: string | null;
+    expectedRef: string | null;
+    candidateOid?: string;
+    actualMessage?: string;
+    indexReconciliation: 'not_required' | 'pending' | 'reconciled' | 'failed';
+    indexTreeOid?: string;
+    hookName?: string;
+    committedAtMs?: number;
+    signed?: boolean;
+};
+export type ScmCommitHookContentChanges = {
+    beforeTreeOid: string;
+    afterTreeOid: string;
+    changes: { path: ScmSelectedMutationPath; previousPath?: ScmSelectedMutationPath; kind: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'type_changed' }[];
+};
 export type ScmCommitCreateResponse = {
     success: boolean;
     outcome?: ScmOperationOutcome;
+    publication?: ScmCommitPublication;
+    hookContentChanges?: ScmCommitHookContentChanges;
+    stdout?: string;
+    stderr?: string;
     commitSha?: string;
+    error?: string;
+    errorCode?: ScmOperationErrorCode;
+};
+
+export type ScmCommitResolveOutcomeRequest = ScmShape<Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
+    candidateOid: string;
+    expectedHeadOid: string | null;
+    expectedRef: string | null;
+}>;
+export type ScmCommitResolveOutcomeResponse = {
+    success: boolean;
+    publication: ScmCommitPublication;
+    candidateTreeOid?: string;
     error?: string;
     errorCode?: ScmOperationErrorCode;
 };
@@ -1305,6 +1359,7 @@ export type ScmPullRequestRunStackedResponse =
         composeUrl?: string;
         branch?: string | null;
         commitSha?: string | null;
+        commitPublication?: ScmCommitPublication;
         nextAction: ScmFollowupAction;
         events: ScmPullRequestRunStackedProgressEvent[];
     })
@@ -1312,6 +1367,8 @@ export type ScmPullRequestRunStackedResponse =
         [key: string]: unknown;
         success: false;
         outcome?: ScmOperationOutcome;
+        commitSha?: string | null;
+        commitPublication?: ScmCommitPublication;
         error: string;
         errorCode?: ScmOperationErrorCode;
         events: ScmPullRequestRunStackedProgressEvent[];
@@ -1324,10 +1381,14 @@ export const SCM_OPERATION_ERROR_CODES: Readonly<{
     NOT_REPOSITORY: 'NOT_REPOSITORY';
     INVALID_PATH: 'INVALID_PATH';
     INVALID_REQUEST: 'INVALID_REQUEST';
+    SCM_SOURCE_CHANGED: 'SCM_SOURCE_CHANGED';
     COMMAND_FAILED: 'COMMAND_FAILED';
     CHANGE_APPLY_FAILED: 'CHANGE_APPLY_FAILED';
     COMMIT_REQUIRED: 'COMMIT_REQUIRED';
     COMMIT_HOOK_FAILED: 'COMMIT_HOOK_FAILED';
+    COMMIT_HOOK_CONTENT_CHANGED: 'COMMIT_HOOK_CONTENT_CHANGED';
+    COMMIT_HEAD_CHANGED: 'COMMIT_HEAD_CHANGED';
+    COMMIT_STAGING_CONFLICT: 'COMMIT_STAGING_CONFLICT';
     COMMIT_SIGNING_FAILED: 'COMMIT_SIGNING_FAILED';
     COMMIT_IDENTITY_REQUIRED: 'COMMIT_IDENTITY_REQUIRED';
     COMMIT_EMPTY: 'COMMIT_EMPTY';
@@ -1392,6 +1453,7 @@ export const normalizeScmOperationOutcome: (response: Readonly<{
     errorCode?: ScmOperationErrorCode;
     error?: string;
     commitSha?: string;
+    publication?: ScmCommitPublication;
 }>) => ScmOperationOutcome = canonicalNormalizeScmOperationOutcome;
 export const ScmRefreshPolicySchema: {
     parse(value: unknown): ScmRefreshPolicy;
