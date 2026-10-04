@@ -909,12 +909,14 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     await host.sendUserMessage?.({
       idempotencyKey: 'codex-async-question:abc',
       text: '<send_user_message_question_reply>\n[]\n</send_user_message_question_reply>',
+      toolCallId: 'question-1',
     });
 
     expect(send).toHaveBeenCalledWith({
       kind: 'userText',
       text: '<send_user_message_question_reply>\n[]\n</send_user_message_question_reply>',
       idempotencyKey: 'codex-async-question:abc',
+      toolAnswerDelivery: { toolCallId: 'question-1' },
     }, { signal: controller.signal });
   });
 

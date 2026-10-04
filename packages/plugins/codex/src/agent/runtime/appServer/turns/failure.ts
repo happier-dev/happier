@@ -24,10 +24,6 @@ export type CodexAppServerTurnFailureSourceAccountIdentity = Readonly<{
 
 const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
     'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
-const CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS = [
-    'codex ran out of room',
-    'context window',
-] as const;
 const CODEX_APP_SERVER_TURN_FAILURE_MESSAGE = 'Codex app-server turn failed.';
 const CODEX_APP_SERVER_RUNTIME_AUTH_KINDS = new Set([
     'usage_limit',
@@ -213,22 +209,15 @@ function normalizeCodexErrorInfo(value: string | null): string | null {
     return value ? value.replace(/[_\-\s]/g, '').toLowerCase() : null;
 }
 
-function textMatchesCodexContextWindowExhaustedMessage(value: string | null): boolean {
-    const normalized = value?.toLowerCase() ?? '';
-    return CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS.every((marker) => normalized.includes(marker));
-}
-
 function isCodexAppServerContextWindowExhaustedPayload(payload: CodexAppServerErrorPayload): boolean {
-    return normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded'
-        || [payload.message, payload.additionalDetails].some(textMatchesCodexContextWindowExhaustedMessage);
+    return normalizeCodexErrorInfo(payload.codexErrorInfo) === 'contextwindowexceeded';
 }
 
 export function isCodexAppServerContextWindowExhaustedError(error: unknown): boolean {
     if (error instanceof CodexAppServerTurnFailure) {
         return error.isContextWindowExhausted;
     }
-    if (!(error instanceof Error)) return false;
-    return textMatchesCodexContextWindowExhaustedMessage(error.message);
+    return false;
 }
 
 export function isCodexAppServerTemporaryRecoverableTurnFailureError(error: unknown): boolean {
