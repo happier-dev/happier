@@ -47,7 +47,7 @@ describe('secretSettings', () => {
         expect(out.encryptedValue).toBeUndefined();
     });
 
-    it('treats whitespace-only plaintext values as empty and falls back to encrypted data', () => {
+    it('preserves whitespace-only plaintext secret bytes instead of falling back to encrypted data', () => {
         const key = new Uint8Array(32).fill(7);
         const sealed = sealSecretsDeep({ secret: { _isSecretValue: true, value: 'sk-test' } }, key) as any;
 
@@ -60,7 +60,7 @@ describe('secretSettings', () => {
                 },
                 key,
             ),
-        ).toBe('sk-test');
+        ).toBe('   ');
     });
 
     it('returns null for encrypted secrets when no key is available', () => {
