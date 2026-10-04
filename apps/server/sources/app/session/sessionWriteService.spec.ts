@@ -65,6 +65,18 @@ type SessionWriteTxMock = {
     sessionFollowEdge: {
         findMany: MockFunction;
     };
+    teamMembership: {
+        findMany: MockFunction;
+    };
+    sessionTeamGrant: {
+        findMany: MockFunction;
+    };
+    sessionGroupGrant: {
+        findMany: MockFunction;
+    };
+    sessionReportsTo: {
+        findUnique: MockFunction;
+    };
 };
 
 let currentTx: SessionWriteTxMock;
@@ -401,6 +413,21 @@ describe("sessionWriteService", () => {
             },
             sessionFollowEdge: {
                 findMany: vi.fn().mockResolvedValue([]),
+            },
+            // These fixtures have no collective grants or Reports-to parent.
+            // Keep the real access census and projection invalidators running
+            // against the same empty database relations as the Session rows.
+            teamMembership: {
+                findMany: vi.fn().mockResolvedValue([]),
+            },
+            sessionTeamGrant: {
+                findMany: vi.fn().mockResolvedValue([]),
+            },
+            sessionGroupGrant: {
+                findMany: vi.fn().mockResolvedValue([]),
+            },
+            sessionReportsTo: {
+                findUnique: vi.fn().mockResolvedValue(null),
             },
         };
     });

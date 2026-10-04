@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol";
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import {
     isRestrictedAuthTokenDeniedForRoute,
@@ -55,6 +56,7 @@ export function createAuthenticatedTestApp(
                     credentialId,
                     authority: "account_automation",
                     expiresAt: null,
+                    grant: API_TOKEN_FULL_GRANT_V1,
                 };
             }
         }

@@ -20,6 +20,10 @@ export const serverWorkspacePackageSourcesPlugin = createWorkspacePackageSources
         packageSourceRoot: resolve(repoRoot, 'packages', 'cli-common', 'src'),
     },
     {
+        packageName: '@happier-dev/release-runtime',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'release-runtime', 'src'),
+    },
+    {
         packageName: '@happier-dev/protocol',
         packageSourceRoot: resolve(repoRoot, 'packages', 'protocol', 'src'),
     },

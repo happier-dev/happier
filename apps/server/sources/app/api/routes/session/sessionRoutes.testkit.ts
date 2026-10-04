@@ -135,6 +135,8 @@ const sessionDbMocks = createDbMocks({
 } as const);
 
 const txDbMocks = createDbMocks({
+    automationRun: ["groupBy"],
+    sessionReportsTo: ["findMany"],
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
     teamMembership: ["findMany"],
@@ -556,6 +558,10 @@ export function resetSessionRouteMocks(): void {
     listQueuedExecutionRunPendingTargetsForSessions.mockResolvedValue([]);
     dbQueryRaw.mockReset();
     dbQueryRaw.mockResolvedValue([]);
+    // List/detail projections read these persisted relations even when a
+    // fixture has neither pending review runs nor Reports-to edges.
+    txDb.automationRun.groupBy.mockResolvedValue([]);
+    txDb.sessionReportsTo.findMany.mockResolvedValue([]);
     txDb.teamMembership.findMany.mockResolvedValue([]);
     txDb.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     txDb.identityProviderInstance.findMany.mockResolvedValue([]);
@@ -589,6 +595,10 @@ export function resetSessionRouteMocks(): void {
         return ids.map((id: string) => ({
             id,
             ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW,
+            firstName: null,
+            lastName: null,
+            username: null,
+            avatar: null,
         }));
     });
     emitEphemeral.mockReset();

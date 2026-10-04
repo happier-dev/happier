@@ -17,6 +17,7 @@ it('emits declarations that remain valid for an external NodeNext consumer', asy
   try {
     const result = spawnSync(process.execPath, [
       typeScriptCliPath,
+      join(repositoryRoot, 'packages/protocol/src/auth/tr46.d.ts'),
       fixturePath,
       '--declaration',
       '--emitDeclarationOnly',
