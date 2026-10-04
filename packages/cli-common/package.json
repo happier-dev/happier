@@ -183,6 +183,16 @@
       "import": "./dist/path/index.js",
       "default": "./dist/path/index.js"
     },
+    "./scm/gitTemporaryIndex": {
+      "types": "./dist/scm/gitTemporaryIndex.d.ts",
+      "import": "./dist/scm/gitTemporaryIndex.js",
+      "default": "./dist/scm/gitTemporaryIndex.js"
+    },
+    "./scm/gitComparisonOutput": {
+      "types": "./dist/scm/gitComparisonOutput.d.ts",
+      "import": "./dist/scm/gitComparisonOutput.js",
+      "default": "./dist/scm/gitComparisonOutput.js"
+    },
     "./agents/managedJavaScriptRuntime": {
       "types": "./dist/agents/managedJavaScriptRuntime.d.ts",
       "import": "./dist/agents/managedJavaScriptRuntime.js",

@@ -1,4 +1,5 @@
 import type {
+  BackendRuntimeHandlers,
   ScmBackendDescribeRequest,
   ScmBackendDescribeResponse,
   ScmBackendCapabilities,
@@ -24,6 +25,8 @@ import type {
   ScmCommitUndoLastResponse,
   ScmCommitCreateRequest,
   ScmCommitCreateResponse,
+  ScmCommitResolveOutcomeRequest,
+  ScmCommitResolveOutcomeResponse,
   ScmConflictAcceptSideRequest,
   ScmConflictMarkResolvedRequest,
   ScmDiffCommitRequest,
@@ -223,6 +226,8 @@ export interface ScmBackend {
     request: ScmCommitCreateRequest;
   }): Promise<ScmCommitCreateResponse>;
   commitUndoLast?(input: { context: ScmBackendContext; request: ScmCommitUndoLastRequest }): Promise<ScmCommitUndoLastResponse>;
+  commitResolveOutcome?(input: { context: ScmBackendContext; request: ScmCommitResolveOutcomeRequest }): Promise<ScmCommitResolveOutcomeResponse>;
+  commitCaptureTarget?: NonNullable<BackendRuntimeHandlers['commit']>['captureTarget'];
   commitBackout(input: {
     context: ScmBackendContext;
     request: ScmCommitBackoutRequest;

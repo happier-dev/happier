@@ -3,6 +3,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import path from 'node:path';
 
 import {
+  type BackendCommandRunInput,
   resolveBackendCommandMaxOutputBytes as resolveScmBackendCommandMaxOutputBytes,
   runBackendCommand as runScmBackendCommand } from '@happier-dev/plugin-sdk/scm/backend';
 import {
@@ -46,6 +47,7 @@ export function runScmCommand(input: {
   args: string[];
   timeoutMs?: number;
   stdin?: string;
+  stdinInteraction?: BackendCommandRunInput['stdinInteraction'];
   maxOutputBytes?: number;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
@@ -58,6 +60,7 @@ export function runScmCommand(input: {
     args: input.args,
     timeoutMs: input.timeoutMs,
     stdin: input.stdin,
+    stdinInteraction: input.stdinInteraction,
     maxOutputBytes: resolveScmMaxOutputBytes(input.maxOutputBytes),
     env: {
       ...(input.env ?? {}),

@@ -1,4 +1,4 @@
-import type { WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+import type { BackendRuntimeHandlers, WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
@@ -19,10 +19,10 @@ import type {
     ScmChangeDiscardResponse,
     ScmCommitBackoutRequest,
     ScmCommitBackoutResponse,
-    ScmCommitUndoLastRequest,
-    ScmCommitUndoLastResponse,
     ScmCommitCreateRequest,
     ScmCommitCreateResponse,
+    ScmCommitResolveOutcomeRequest,
+    ScmCommitResolveOutcomeResponse,
     ScmDiffCommitRequest,
     ScmDiffCommitResponse,
     ScmDiffFileRequest,
@@ -90,7 +90,7 @@ import type {
     WorkspaceCheckoutKind,
     WorkspaceLocationScm,
 } from '@happier-dev/protocol';
-import type { ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
+import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
 
 import type { ScmWorkspaceIntegrationCheckoutMaterializationRequest } from './workspace/checkoutMaterialization';
 import type {
@@ -119,6 +119,8 @@ export type ScmRepoDetection = {
     rootPath: string | null;
     mode: ScmRepoMode | null;
 };
+
+export type ScmCommitTargetCaptureResponse = Awaited<ReturnType<NonNullable<NonNullable<BackendRuntimeHandlers['commit']>['captureTarget']>>>;
 
 export type ScmBackendContext = {
     cwd: string;
@@ -289,6 +291,8 @@ export interface ScmBackend {
         request: ScmCommitCreateRequest;
     }): Promise<ScmCommitCreateResponse>;
     commitUndoLast?(input: { context: ScmBackendContext; request: ScmCommitUndoLastRequest }): Promise<ScmCommitUndoLastResponse>;
+    commitResolveOutcome?(input: { context: ScmBackendContext; request: ScmCommitResolveOutcomeRequest }): Promise<ScmCommitResolveOutcomeResponse>;
+    commitCaptureTarget?: NonNullable<BackendRuntimeHandlers['commit']>['captureTarget'];
     commitBackout(input: {
         context: ScmBackendContext;
         request: ScmCommitBackoutRequest;

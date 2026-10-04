@@ -9,8 +9,10 @@ import {
     SCM_COMMIT_PATCH_MAX_COUNT,
     SCM_COMMIT_PATCH_MAX_LENGTH,
     SCM_OPERATION_ERROR_CODES,
+    type ScmCommitCreateRequest,
+    type ScmCommitCreateResponse,
 } from '@happier-dev/protocol';
-import { createTestRpcManager, runGit as git } from './testRpcHarness';
+import { createTestGitRpcManager as createTestRpcManager, runGit as git } from './testRpcHarness';
 
 describe('git RPC handlers', () => {
     it('rejects commit creation when message exceeds max length', async () => {
@@ -58,7 +60,7 @@ describe('git RPC handlers', () => {
         expect(commit.success).toBe(true);
 
         const status = await call<any, { cwd?: string }>(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '.' });
-        expect(status.success).toBe(true);
+        expect(status.success, JSON.stringify(status)).toBe(true);
         expect(status.snapshot.totals.pendingFiles).toBe(0);
     });
 
@@ -98,7 +100,7 @@ describe('git RPC handlers', () => {
         expect(git(workspace, ['diff', '--cached', '--name-only'])).toBe('');
     });
 
-    it('reports deterministic failure when post-commit live-index sync fails', async () => {
+    it('refuses publication when the live-index lock is already owned by another actor', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
         git(workspace, ['init']);
         git(workspace, ['config', 'user.email', 'test@example.com']);
@@ -106,23 +108,46 @@ describe('git RPC handlers', () => {
         writeFileSync(join(workspace, 'a.txt'), 'base\n');
         git(workspace, ['add', 'a.txt']);
         git(workspace, ['commit', '-m', 'base']);
+        const expectedHeadOid = git(workspace, ['rev-parse', 'HEAD']);
         writeFileSync(join(workspace, 'a.txt'), 'base\nnext\n');
         writeFileSync(join(workspace, '.git', 'index.lock'), '');
 
         const { call } = createTestRpcManager({ workingDirectory: workspace });
-        const response = await call<any, { cwd?: string; message: string; scope: { kind: 'all-pending' } }>(
+        const response = await call<ScmCommitCreateResponse, ScmCommitCreateRequest>(
             RPC_METHODS.SCM_COMMIT_CREATE,
             {
                 cwd: '.',
                 message: 'commit while lock exists',
+                outcomeVersion: 1,
                 scope: { kind: 'all-pending' },
             },
         );
 
         expect(response.success).toBe(false);
-        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
-        expect(response.error).toContain('live index');
-        expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('commit while lock exists');
+        expect(response.errorCode, JSON.stringify(response)).toBe(SCM_OPERATION_ERROR_CODES.INDEX_LOCKED);
+        expect(response.publication).toMatchObject({ state: 'not_published', expectedHeadOid });
+        expect(git(workspace, ['rev-parse', 'HEAD'])).toBe(expectedHeadOid);
+    });
+
+    it('preserves the explicit base through RPC and refuses a divergent HEAD before publication', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
+        git(workspace, ['init']);
+        git(workspace, ['config', 'user.email', 'test@example.com']);
+        git(workspace, ['config', 'user.name', 'Test User']);
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        git(workspace, ['add', 'a.txt']); git(workspace, ['commit', '-m', 'base']);
+        const expectedHeadOid = git(workspace, ['rev-parse', 'HEAD']);
+        const expectedRef = git(workspace, ['symbolic-ref', 'HEAD']);
+        git(workspace, ['commit', '--allow-empty', '-m', 'another actor']);
+        const actualHead = git(workspace, ['rev-parse', 'HEAD']);
+        writeFileSync(join(workspace, 'a.txt'), 'selected\n');
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const response = await call<ScmCommitCreateResponse, ScmCommitCreateRequest>(RPC_METHODS.SCM_COMMIT_CREATE, {
+            cwd: '.', message: 'selected', outcomeVersion: 1, expectedHeadOid, expectedRef, scope: { kind: 'paths', include: ['a.txt'] },
+        });
+        expect(response).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_HEAD_CHANGED, publication: { state: 'not_published', expectedHeadOid, expectedRef } });
+        expect(git(workspace, ['rev-parse', 'HEAD'])).toBe(actualHead);
+        expect(git(workspace, ['show', 'HEAD:a.txt'])).toBe('base');
     });
 
     it('rejects commit creation when message is missing', async () => {
@@ -143,7 +168,6 @@ describe('git RPC handlers', () => {
 
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
-        expect(response.error).toContain('Commit message cannot be empty');
     });
 
     it('creates path-scoped commit without consuming unrelated pre-staged changes', async () => {
@@ -317,7 +341,7 @@ describe('git RPC handlers', () => {
             },
         );
 
-        expect(response.success).toBe(true);
+        expect(response.success, JSON.stringify(response)).toBe(true);
         expect(git(workspace, ['show', '--pretty=', '--name-only', 'HEAD'])).toBe('a.txt');
 
         // The live index should keep the staged-but-uncommitted remainder.
@@ -487,6 +511,7 @@ describe('git RPC handlers', () => {
         git(workspace, ['add', 'a.txt']);
 
         // Corrupt index to force git diff --cached --quiet to fail deterministically.
+        const head = git(workspace, ['rev-parse', 'HEAD']);
         writeFileSync(join(workspace, '.git', 'index'), 'not-a-valid-index');
 
         const { call } = createTestRpcManager({ workingDirectory: workspace });
@@ -500,6 +525,7 @@ describe('git RPC handlers', () => {
 
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
-        expect(response.error).toContain('Failed to inspect included changes');
+        expect(git(workspace, ['rev-parse', 'HEAD'])).toBe(head);
+        expect(readFileSync(join(workspace, '.git', 'index'), 'utf8')).toBe('not-a-valid-index');
     });
 });

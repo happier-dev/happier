@@ -5,6 +5,7 @@ import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
+import type { BackendCommandRunInput } from '@happier-dev/plugin-sdk/scm/backend';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
@@ -52,7 +53,7 @@ type ChildStdinLike = {
     end: () => void;
 };
 
-function writeChildStdin(childStdin: ChildStdinLike | null | undefined, stdin: string | undefined): void {
+function writeChildStdin(childStdin: ChildStdinLike | null | undefined, stdin: string | undefined, close = true): void {
     if (!childStdin) return;
     childStdin.once?.('error', () => {
         // Best-effort: stdin can be closed if command exits early.
@@ -67,7 +68,7 @@ function writeChildStdin(childStdin: ChildStdinLike | null | undefined, stdin: s
         return;
     }
 
-    if (childStdin.destroyed || childStdin.writable === false) return;
+    if (!close || childStdin.destroyed || childStdin.writable === false) return;
     try {
         childStdin.end();
     } catch {
@@ -112,6 +113,7 @@ export function runScmCommand(input: {
     args: string[];
     timeoutMs?: number;
     stdin?: string;
+    stdinInteraction?: BackendCommandRunInput['stdinInteraction'];
     maxOutputBytes?: number;
     env?: Record<string, string | undefined>;
     signal?: AbortSignal;
@@ -154,6 +156,10 @@ export function runScmCommand(input: {
         let abortTerminationSettled = false;
         let closedResult: ScmExecResult | null = null;
         let outputBytes = 0;
+        let interactionStarted = false;
+        let interactionResponded = false;
+        let interactionError = '';
+        let pendingStdoutLine = '';
         const timeoutMs = input.timeoutMs ?? 15_000;
         const maxOutputBytes = resolveScmMaxOutputBytes(input.maxOutputBytes);
 
@@ -173,6 +179,7 @@ export function runScmCommand(input: {
         const abort = () => {
             if (aborted || resolved) return;
             aborted = true;
+            if (input.stdinInteraction) writeChildStdin(child.stdin, undefined);
             void killProcessTree(child).then(
                 () => {
                     abortTerminationSettled = true;
@@ -199,7 +206,8 @@ export function runScmCommand(input: {
             if (remaining <= 0) {
                 outputLimitExceeded = true;
                 stderr += `\nSCM command output limit exceeded (${maxOutputBytes} bytes)`;
-                child.kill('SIGKILL');
+                if (input.stdinInteraction) abort();
+                else child.kill('SIGKILL');
                 return;
             }
 
@@ -213,7 +221,8 @@ export function runScmCommand(input: {
                 outputBytes = maxOutputBytes;
                 outputLimitExceeded = true;
                 stderr += `\nSCM command output limit exceeded (${maxOutputBytes} bytes)`;
-                child.kill('SIGKILL');
+                if (input.stdinInteraction) abort();
+                else child.kill('SIGKILL');
                 return;
             }
 
@@ -227,11 +236,41 @@ export function runScmCommand(input: {
 
         const timer = setTimeout(() => {
             timedOut = true;
-            child.kill('SIGKILL');
+            if (input.stdinInteraction) abort();
+            else child.kill('SIGKILL');
         }, timeoutMs);
 
+        const observeInteraction = (chunk: Buffer) => {
+            const interaction = input.stdinInteraction;
+            if (!interaction || interactionStarted || resolved || aborted || timedOut || outputLimitExceeded) return;
+            pendingStdoutLine += chunk.toString();
+            let newline: number;
+            while ((newline = pendingStdoutLine.indexOf('\n')) >= 0) {
+                const line = pendingStdoutLine.slice(0, newline).replace(/\r$/, '');
+                pendingStdoutLine = pendingStdoutLine.slice(newline + 1);
+                if (line !== interaction.readyLine) continue;
+                interactionStarted = true;
+                void Promise.resolve().then(() => {
+                    if (resolved || closedResult || aborted || timedOut || outputLimitExceeded) return;
+                    return interaction.respond();
+                }).then((response) => {
+                    if (response === undefined || resolved || closedResult || aborted || timedOut || outputLimitExceeded) return;
+                    interactionResponded = true;
+                    writeChildStdin(child.stdin, response);
+                }, (error: unknown) => {
+                    if (resolved || closedResult || aborted || timedOut || outputLimitExceeded) return;
+                    interactionError = error instanceof Error ? error.message : String(error);
+                    // EOF lets the command abort its prepared transaction and release native locks.
+                    writeChildStdin(child.stdin, undefined);
+                });
+                break;
+            }
+        };
+
         child.stdout.on('data', (chunk) => {
-            appendOutput('stdout', Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            appendOutput('stdout', buffer);
+            observeInteraction(buffer);
         });
 
         child.stderr.on('data', (chunk) => {
@@ -254,10 +293,13 @@ export function runScmCommand(input: {
             clearTimeout(timer);
             const code = typeof exitCode === 'number' ? exitCode : -1;
             closedResult = {
-                success: code === 0 && !timedOut && !outputLimitExceeded && !aborted,
+                success: code === 0 && !timedOut && !outputLimitExceeded && !aborted
+                    && !interactionError && (!input.stdinInteraction || interactionResponded),
                 stdout,
-                stderr: aborted && !stderr ? 'SCM command was aborted' : stderr,
-                exitCode: code,
+                stderr: interactionError ? [stderr, interactionError].filter(Boolean).join('\n')
+                    : aborted && !stderr ? 'SCM command was aborted' : stderr,
+                // Cancellation can race a successful publication; callers must resolve the outcome.
+                exitCode: input.stdinInteraction && aborted ? -1 : code,
                 timedOut,
                 outputLimitExceeded,
             };
@@ -266,7 +308,7 @@ export function runScmCommand(input: {
 
         input.signal?.addEventListener('abort', abort, { once: true });
         if (input.signal?.aborted) abort();
-        writeChildStdin(child.stdin, input.stdin);
+        writeChildStdin(child.stdin, input.stdin, !input.stdinInteraction);
     });
 }
 

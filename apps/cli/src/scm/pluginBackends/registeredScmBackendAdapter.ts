@@ -115,6 +115,7 @@ function createScmBackendRuntimeServices(
                 args: [...input.args],
                 timeoutMs: input.timeoutMs,
                 stdin: input.stdin,
+                stdinInteraction: input.stdinInteraction,
                 maxOutputBytes: input.maxOutputBytes,
                 env: input.env,
                 signal: input.signal,
@@ -288,6 +289,10 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
     const preferredMode = input.executableDefinition.repoModes[0] ?? '.git';
     const runtimeServices = createScmBackendRuntimeServices(input.executableDefinition);
     const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? null;
+    const captureTarget = input.registration.handlers.commit?.captureTarget;
+    const commitCaptureTarget: ScmBackend['commitCaptureTarget'] = captureTarget
+        ? ({ context }) => useHandler(runtimeServices, hostingProviderRuntimeServices, captureTarget, { context })
+        : undefined;
 
     function getCapabilities(inputOptions: Readonly<{
         mode: Parameters<ScmBackend['getCapabilities']>[0]['mode'];
@@ -394,6 +399,19 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
         },
         async commitCreate({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.commit?.create, { context, request });
+        },
+        ...(commitCaptureTarget ? { commitCaptureTarget } : {}),
+        async commitResolveOutcome({ context, request }) {
+            const handler = input.registration.handlers.commit?.resolveOutcome;
+            if (!handler) return { success: false, errorCode: 'FEATURE_UNSUPPORTED', publication: {
+                state: 'unknown', candidateOid: request.candidateOid, expectedHeadOid: request.expectedHeadOid,
+                expectedRef: request.expectedRef, indexReconciliation: 'pending',
+            } };
+            const result = await useHandler(runtimeServices, hostingProviderRuntimeServices, handler, { context, request });
+            return 'publication' in result ? result : { ...result, publication: {
+                state: 'unknown', candidateOid: request.candidateOid, expectedHeadOid: request.expectedHeadOid,
+                expectedRef: request.expectedRef, indexReconciliation: 'pending',
+            } };
         },
         async commitBackout({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.commit?.backout, { context, request });

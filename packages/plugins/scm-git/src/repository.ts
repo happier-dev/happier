@@ -14,6 +14,7 @@ import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
 import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
 import { realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { readGitBranchOperationState } from './operations/branchOperationState.js';
 import { parseGitStatusPorcelainV2Z } from './statusParser.js';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser.js';
@@ -29,6 +30,21 @@ function resolveMainWorktreePathFromCheckoutIdentity(
 }
 
 const NOT_A_REPOSITORY: ScmRepoDetection = { isRepo: false, rootPath: null, mode: null };
+
+export type GitExecutionFeatures = Readonly<{ hookRun: boolean; stagedIntentMerge: boolean }>;
+
+/** One executable-version observation per backend occurrence, shared by its commit callers. */
+export function createGitExecutionFeatureDetector(): () => Promise<GitExecutionFeatures> {
+    let pending: Promise<GitExecutionFeatures> | undefined;
+    return () => pending ??= (async () => {
+        const result = await runScmCommand({ bin: 'git', cwd: tmpdir(), args: ['--version'] });
+        const version = result.success ? /^git version (\d+)\.(\d+)(?:\.|\s|$)/.exec(result.stdout.trim()) : null;
+        if (!version) throw detectionUnavailable(result.stderr || 'Could not determine the Git executable version');
+        const major = Number(version[1]);
+        const minor = Number(version[2]);
+        return { hookRun: major > 2 || (major === 2 && minor >= 36), stagedIntentMerge: major > 2 || (major === 2 && minor >= 40) };
+    })();
+}
 
 /**
  * `git` produced no answer at all — the binary is missing, the spawn failed, the probe was cut

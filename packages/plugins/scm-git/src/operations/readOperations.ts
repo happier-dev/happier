@@ -8,6 +8,7 @@ import type {
   ScmLogListResponse,
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import { parseGitComparisonOutput } from '@happier-dev/cli-common/scm/gitComparisonOutput';
 import type { ScmBackendContext } from '../types.js';
 import { normalizeCommitRef, normalizeRepoRootRelativePath, runScmCommand } from '../runtime.js';
 
@@ -150,6 +151,35 @@ export async function gitDiffCommit(input: {
     request: ScmDiffCommitRequest;
 }): Promise<ScmDiffCommitResponse> {
     const { context, request } = input;
+    if (request.beforeTreeOid !== undefined) {
+        const trees = [request.beforeTreeOid, request.commit];
+        if (trees.some((tree) => !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tree))) {
+            return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Tree comparison requires immutable tree OIDs' };
+        }
+        const types = await Promise.all(trees.map((tree) => runScmCommand({ bin: 'git', cwd: context.cwd,
+            args: ['cat-file', '-t', tree], timeoutMs: 15_000 })));
+        for (const type of types) {
+            if (!type.success || type.stdout.trim() !== 'tree') {
+                return { success: false,
+                    errorCode: type.timedOut || type.outputLimitExceeded ? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED : SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                    error: type.stderr || 'Recorded tree comparison endpoint is unavailable or is not a tree' };
+            }
+        }
+        const result = await runScmCommand({ bin: 'git', cwd: context.cwd,
+            args: ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--raw', '--no-abbrev', '-z',
+                '--patch', '--binary', '--full-index', request.beforeTreeOid, request.commit, '--'], timeoutMs: 15_000 });
+        if (!result.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            error: result.stderr || 'Failed to load recorded tree comparison' };
+        const parsed = parseGitComparisonOutput(result.stdout);
+        if (parsed.error || parsed.sections.length !== parsed.files.length) {
+            return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: parsed.error || 'Git comparison file evidence could not be paired with its inventory' };
+        }
+        return { success: true, beforeTreeOid: request.beforeTreeOid, afterTreeOid: request.commit,
+            diff: parsed.sections.join(''), files: parsed.files.map((file, index) => ({ path: file.path,
+                ...(file.previousPath ? { previousPath: file.previousPath } : {}), changeKind: file.changeKind,
+                unifiedDiff: parsed.sections[index]! })) };
+    }
     const commitRef = normalizeCommitRef(request.commit);
     if (!commitRef.ok) {
         return {
