@@ -144,22 +144,7 @@ export function createClaudeNativeAgentSdkContext(
           await services.sessionHooks.publishProviderTranscript(request);
         },
       },
-      transcripts: {
-        async followSource(input) {
-          if (!services.transcripts.followSource) {
-            throw new Error('Claude terminal requires ordered source transcript following');
-          }
-          return await services.transcripts.followSource(input);
-        },
-        fileFollow: {
-          async follow(input) {
-            return await services.transcripts.fileFollow.follow(input);
-          },
-        },
-        async publishSessionEvent(event) {
-          return await services.transcripts.publishSessionEvent(event);
-        },
-      },
+      transcripts: services.transcripts,
       accountUsage: {
         async resolveSourceContext(input, options) {
           const sourceContext = await services.accountUsage.resolveSourceContext(input, options);

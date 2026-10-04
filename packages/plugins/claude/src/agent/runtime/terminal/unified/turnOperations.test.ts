@@ -331,10 +331,13 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('settles a native steer when the provider accepts that exact prompt', async () => {
+  it('settles a native steer once from exact transcript consumption, not a submit hook', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
+    const transcripts = createManualTranscriptFollowFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    vi.mocked(ctx.agentRuntime.transcripts.fileFollow.follow)
+      .mockImplementation(transcripts.service.fileFollow.follow);
     const operations = createClaudeUnifiedTerminalProviderOperations({
       ctx,
       directory: '/tmp/claude-project',
@@ -355,12 +358,22 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext);
+    const observed: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => observed.push(event));
 
     try {
       await session.send({
         inputIds: ['input-1'],
         input: { text: 'start' },
         delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
+      });
+      const hookRequest = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0];
+      if (!hookRequest?.onSessionHook) throw new Error('session hook server was not started');
+      await hookRequest.onSessionHook('claude-provider-session-1', {
+        hook_event_name: 'SessionStart',
+        session_id: 'claude-provider-session-1',
+        source: 'startup',
+        transcript_path: '/tmp/claude-provider-session-1.jsonl',
       });
       await operations.observeTerminalLifecycle({
         agentId: 'claude',
@@ -386,9 +399,56 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         observedAtMs: 200,
         source: 'hook',
       });
+      expect(steerSettled).toBe(false);
+
+      const enqueuedAt = new Date(Date.now() + 1_000).toISOString();
+      const enqueue = {
+        type: 'queue-operation', operation: 'enqueue', sessionId: 'claude-provider-session-1',
+        content: 'steer now', timestamp: enqueuedAt,
+      } as const;
+      const remove = {
+        type: 'queue-operation', operation: 'remove', sessionId: 'claude-provider-session-1',
+        content: 'steer now', timestamp: new Date(Date.parse(enqueuedAt) + 1_000).toISOString(),
+      } as const;
+      await transcripts.emitRow(enqueue);
+      await transcripts.emitRow(remove);
+      expect(steerSettled).toBe(false);
+      const consumption = {
+        type: 'attachment', uuid: 'native-steer-consumed-1', parentUuid: 'native-steer-parent-1',
+        isSidechain: false, sessionId: 'claude-provider-session-1', timestamp: enqueuedAt,
+        attachment: {
+          type: 'queued_command', prompt: 'steer now', commandMode: 'prompt',
+          origin: { kind: 'human' }, timestamp: enqueuedAt,
+        },
+      } as const;
+      await transcripts.emitRow(consumption);
+      await transcripts.emitRow(consumption);
+      expect(steerSettled).toBe(false);
+
+      // Raw file following is not custody. The host delivers these rows through this
+      // public source observer only after prior transcript output has durable custody.
+      const observeSourceTranscript = session.observeSourceTranscript;
+      if (!observeSourceTranscript) throw new Error('native source transcript observer was not bound');
+      await observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'steer-enqueue-1', row: enqueue,
+      });
+      await observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'steer-remove-1', row: remove,
+      });
+      expect(steerSettled).toBe(false);
+      await observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'native-steer-consumed-1', row: consumption,
+      });
+      await observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'native-steer-consumed-1', row: consumption,
+      });
 
       await vi.waitFor(() => expect(steerSettled).toBe(true), { timeout: 250 });
       await expect(steer).resolves.toEqual({ status: 'admitted' });
+      expect(observed.filter((event) => event.kind === 'input-accepted'
+        && event.inputIds.includes('steer-1'))).toEqual([
+        expect.objectContaining({ inputIds: ['steer-1'], delivery: { kind: 'steer', turnId: 'host-turn-1' } }),
+      ]);
     } finally {
       await session.dispose();
     }
@@ -802,7 +862,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       expect(countArg(launchArgs, '--allow-dangerously-skip-permissions')).toBe(1);
       expect(hasSplitFlagValue(launchArgs, '--permission-mode', 'bypassPermissions')).toBe(true);
       expect(countArg(launchArgs, '--settings')).toBe(1);
-      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).toEqual({
+      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).toMatchObject({
         skipDangerousModePermissionPrompt: true,
       });
     } finally {
@@ -892,8 +952,10 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
       const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
         .mock.calls[0]?.[0]?.launch?.args as string[];
-      expect(launchArgs).toEqual(expect.arrayContaining(['--settings', '{"ultracode":true}']));
       expect(launchArgs.filter((arg) => arg === '--settings')).toHaveLength(1);
+      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).toMatchObject({
+        ultracode: true,
+      });
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -998,7 +1060,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       }
     });
 
-    it('keeps the launch unchanged when the host ships no statusline forwarder asset (fail-open)', async () => {
+    it('omits the statusline overlay when the host ships no forwarder asset (fail-open)', async () => {
       const terminalHost = createTerminalHostFixture();
       const events = createEventsFixture();
       const sessionHooks = createStatuslineSessionHooksFixture({ statuslineForwarderScript: null });
@@ -1019,7 +1081,8 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
         const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
           .mock.calls[0]?.[0]?.launch?.args as string[];
-        expect(launchArgs).not.toContain('--settings');
+        expect(countArg(launchArgs, '--settings')).toBe(1);
+        expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('statusLine');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -1046,7 +1109,8 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
         const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
           .mock.calls[0]?.[0]?.launch?.args as string[];
-        expect(launchArgs).not.toContain('--settings');
+        expect(countArg(launchArgs, '--settings')).toBe(1);
+        expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('statusLine');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -1421,7 +1485,8 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
 
       const launchArgs = (terminalHost.service.createOrAttachHost as ReturnType<typeof vi.fn>)
         .mock.calls[0]?.[0]?.launch?.args as string[];
-      expect(launchArgs).not.toContain('--settings');
+      expect(countArg(launchArgs, '--settings')).toBe(1);
+      expect(JSON.parse(launchArgs[launchArgs.indexOf('--settings') + 1]!)).not.toHaveProperty('ultracode');
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -2900,10 +2965,10 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const transcripts = createManualTranscriptFollowFixture();
-    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
-      transcripts: transcripts.service,
-    });
-    const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    vi.mocked(ctx.agentRuntime.transcripts.fileFollow.follow)
+      .mockImplementation(transcripts.service.fileFollow.follow);
+    const nativeRuntime = createClaudeUnifiedTerminalTurnOperations({
       ctx,
       directory: '/tmp/claude-project',
       happierSessionId: 'happy-session-native-queued-command',
@@ -2914,18 +2979,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         providerSessionId: 'claude-provider-session-1',
         transcriptPath: '/tmp/claude-provider-session-1.jsonl',
       },
-    }));
+    });
+    const envelope = expectRuntimeEnvelope(nativeRuntime);
     const runtime = envelope.operations;
-    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
-      observeTerminalLifecycle(observation: unknown): Promise<void>;
-      setOnPromptAcceptedByProvider(
-        handler: (info: Readonly<{
-          localIds?: readonly string[];
-          userMessageSeq: number | null;
-          userMessageSeqs?: readonly number[];
-        }>) => void,
-      ): void;
-    }>;
     const accepted: Array<{
       localIds?: readonly string[];
       userMessageSeq: number | null;
@@ -2964,20 +3020,22 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       });
 
       const enqueuedAt = new Date(Date.now() + 1_000).toISOString();
-      await transcripts.emitRow({
+      const enqueue = {
         type: 'queue-operation',
         operation: 'enqueue',
         sessionId: 'claude-provider-session-1',
         content: 'be more concise',
         timestamp: enqueuedAt,
-      });
-      await transcripts.emitRow({
+      } as const;
+      const remove = {
         type: 'queue-operation',
         operation: 'remove',
         sessionId: 'claude-provider-session-1',
         content: 'be more concise',
         timestamp: new Date(Date.parse(enqueuedAt) + 1_000).toISOString(),
-      });
+      } as const;
+      await transcripts.emitRow(enqueue);
+      await transcripts.emitRow(remove);
       expect(accepted).toEqual([]);
 
       const consumption = {
@@ -2997,6 +3055,23 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       } as const;
       await transcripts.emitRow(consumption);
       await transcripts.emitRow(consumption);
+      expect(accepted).toEqual([]);
+
+      // The host releases native acceptance through its ordered source observer,
+      // not the independent file-follow used to derive provider work state.
+      await nativeRuntime.observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'pending-enqueue-31', row: enqueue,
+      });
+      await nativeRuntime.observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'pending-remove-31', row: remove,
+      });
+      expect(accepted).toEqual([]);
+      await nativeRuntime.observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'queued-command-consumed-31', row: consumption,
+      });
+      await nativeRuntime.observeSourceTranscript({
+        providerSessionId: 'claude-provider-session-1', sourceId: 'queued-command-consumed-31', row: consumption,
+      });
 
       await vi.waitFor(() => {
         expect(accepted).toEqual([{

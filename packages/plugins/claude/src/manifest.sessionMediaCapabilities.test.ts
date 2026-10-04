@@ -34,6 +34,8 @@ describe('Claude plugin AgentRuntime capabilities', () => {
       delivery: ['newTurn', 'steer', 'followUp'],
       cancel: true,
       configuration: true,
+      startupInstructions: { versions: [1], revisionChanges: 'resume' },
+      usageReporting: true,
       workspaceWrites: 'deny',
       goals: {
         active: {
