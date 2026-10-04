@@ -313,6 +313,9 @@ jobs:
       - name: Load the prepared Iroh native runtime
         if: ${{ matrix.package == 'cli' }}
         run: yarn workspace @happier-dev/iroh-native verify:native --package-root "$GITHUB_WORKSPACE/apps/cli/node_modules/@happier-dev/iroh-native"
+      - name: Prepare compiled plugin contract inputs through the workspace build owner
+        if: ${{ matrix.package == 'plugins' }}
+        run: ./apps/stack/bin/hstack-exec -- node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/plugins-channels @happier-dev/plugins-elevenlabs
       - name: Run affected package unit suite
         env:
           GATE_PACKAGE: ${{ matrix.package }}
