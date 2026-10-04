@@ -142,6 +142,105 @@ describe('bounded JSONL session scanner', () => {
       .toMatchObject({ tailOffsetBytes: null });
   });
 
+  it('refuses an oversize unterminated tail across small read chunks', async () => {
+    const scanner = await import('./index.js');
+    const root = await mkdtemp(join(tmpdir(), 'happier-file-store-oversize-tail-'));
+    tempDirs.add(root);
+    const filePath = join(root, 'transcript.jsonl');
+    const first = jsonlLine({ id: 1 });
+    const oversizeLineBytes = 8 * 1024 * 1024;
+    const content = first + '{"text":"' + 'x'.repeat(oversizeLineBytes);
+    await writeFile(filePath, content);
+
+    const page = await scanner.readJsonlFileBackwardPage({
+      filePath,
+      endOffsetBytes: null,
+      maxBytes: 8192,
+      maxItems: 1,
+      chunkBytes: 8192,
+    });
+
+    expect(page).toMatchObject({
+      items: [],
+      tailOffsetBytes: null,
+      nextEndOffsetBytes: Buffer.byteLength(content) - oversizeLineBytes,
+      reachedStart: false,
+    });
+  });
+
+  it.each([false, true])('paginates complete oversize records across read chunks with trailing newline=%s', async (trailingNewline) => {
+    const scanner = await import('./index.js');
+    const root = await mkdtemp(join(tmpdir(), 'happier-file-store-oversize-pages-'));
+    tempDirs.add(root);
+    const filePath = join(root, 'transcript.jsonl');
+    const values = Array.from({ length: 3 }, (_, id) => ({ id, text: '€'.repeat(2500) }));
+    const lines = values.map(jsonlLine);
+    const content = lines.join('').slice(0, trailingNewline ? undefined : -1);
+    await writeFile(filePath, content);
+
+    let endOffsetBytes: number | null = null;
+    for (let index = values.length - 1; index >= 0; index -= 1) {
+      const page = await scanner.readJsonlFileBackwardPage({
+        filePath,
+        endOffsetBytes,
+        maxBytes: 1024,
+        maxOversizeLineBytes: 8192,
+        maxItems: 1,
+        chunkBytes: 1024,
+      });
+      const startOffsetBytes = Buffer.byteLength(lines.slice(0, index).join(''));
+      expect(page.items).toEqual([{
+        value: values[index],
+        startOffsetBytes,
+        endOffsetBytes: startOffsetBytes + Buffer.byteLength(lines[index]!) - 1,
+      }]);
+      expect(page).toMatchObject({
+        tailOffsetBytes: endOffsetBytes ?? Buffer.byteLength(content),
+        nextEndOffsetBytes: startOffsetBytes,
+        reachedStart: index === 0,
+      });
+      endOffsetBytes = page.nextEndOffsetBytes;
+    }
+  });
+
+  it.each([false, true])('preserves requested byte anchors for short filesystem reads with carry=%s', async (withCarry) => {
+    const scanner = await import('./index.js');
+    const record = Buffer.from(JSON.stringify({ id: 2 }));
+    const source = Buffer.alloc(2048, 0x20);
+    source[0] = 0x0a;
+    source.set(withCarry ? record : Buffer.concat([Buffer.from('\n'), record]), 1024);
+
+    const page = await scanner.readJsonlFileBackwardPage({
+      filePath: 'short-read.jsonl',
+      endOffsetBytes: null,
+      maxBytes: 2048,
+      maxItems: 1,
+      chunkBytes: 1024,
+      // The filesystem boundary allows reads shorter than the requested span.
+      fileSystem: {
+        async stat() {
+          return { size: source.length, mtimeMs: 0 };
+        },
+        async read(_filePath, position, length) {
+          const returnedLength = position === 1024 ? record.length + (withCarry ? 0 : 1) : 1;
+          return source.subarray(position, position + Math.min(length, returnedLength));
+        },
+      },
+    });
+
+    const startOffsetBytes = withCarry ? 1024 : 1025;
+    expect(page).toMatchObject({
+      items: [{
+        value: { id: 2 },
+        startOffsetBytes,
+        endOffsetBytes: withCarry ? 1024 + record.length : source.length,
+      }],
+      nextEndOffsetBytes: startOffsetBytes,
+      tailOffsetBytes: source.length,
+      reachedStart: false,
+    });
+  });
+
   it('accepts a fixed-width mutable title slot before the session header', async () => {
     const scanner = await loadScanner();
     const root = await mkdtemp(join(tmpdir(), 'happier-file-store-title-slot-'));
