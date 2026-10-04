@@ -198,6 +198,16 @@ describe('repository checkpoint primitives', () => {
         }]);
     });
 
+    it('retains the session initial alias outside turn cleanup', async () => {
+        const scopeId = 'session-pinned';
+        const refs = buildRepositoryCheckpointRefs({ scopeId });
+        const initialRef = `refs/happier/checkpoints/${refs.encodedScope}/session-initial`;
+        const deletedRefs: string[] = [];
+        await pruneRepositoryCheckpointRefs({ scopeId, refs: [{ ref: initialRef, committedAtMs: 0 }],
+            nowMs: Date.now(), maxAgeMs: 1, deleteRef: async (ref) => { deletedRefs.push(ref); } });
+        expect(deletedRefs).toEqual([]);
+    });
+
     it('applies cleanup receipts to dependent diff-summary cache entries before returning', async () => {
         const nowMs = Date.UTC(2026, 4, 4);
         const scopeId = 'session-cleanup';

@@ -1185,6 +1185,16 @@ describe('getExecutionRun', () => {
         readRawSessionHistoryRows.mockReset();
     });
 
+    it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough', comparisonId: 'comparison-1' } }])
+    ('keeps exact output/input observation under the caller lifecycle: %j', async (wait) => {
+        callSessionRpc.mockResolvedValueOnce({ run: createRun({ runId: 'run-1', status: 'running', startedAtMs: 1 }) });
+        const controller = new AbortController();
+        await expect(getExecutionRun({ token: 'token', sessionId: 'sess-1', mode: 'plain', ctx: null,
+            request: { runId: 'run-1', ...wait }, signal: controller.signal,
+        })).resolves.toMatchObject({ ok: true, data: { run: { runId: 'run-1', status: 'running' } } });
+        expect(callSessionRpc.mock.calls[0]?.[0]).toMatchObject({ timeoutMs: null, signal: controller.signal });
+    });
+
     it('returns an invalid response error when a successful rpc get payload does not match the contract', async () => {
         callSessionRpc.mockResolvedValueOnce({
             run: { runId: 'missing-required-fields' },

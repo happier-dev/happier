@@ -42,6 +42,7 @@ function createUnusedExecutionRunBridge(): ExecutionRunHostBridgeContract {
     waitForTerminal: async () => unusedBridgeMethod(),
     waitForRunStateChange: async () => unusedBridgeMethod(),
     waitForInputTurn: async () => unusedBridgeMethod(),
+    waitForOutput: async () => unusedBridgeMethod(),
     getPublic: () => null,
     listPublic: () => [],
     listPublicForRequest: () => [],

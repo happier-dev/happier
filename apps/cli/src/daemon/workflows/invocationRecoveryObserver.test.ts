@@ -11,6 +11,47 @@ const progress: WorkflowProgressEnvelopeV1 = {
 };
 
 describe('exact Workflow recovery observation', () => {
+  it.each(['writing', 'complete', 'failed', 'admission_unknown'] as const)('reattaches %s narration without waiting for the retained process to terminate', async (scenario) => {
+    const state = scenario === 'admission_unknown' ? 'writing' : scenario;
+    const descriptor = { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' };
+    const contract = freezeActionCompletionContractV1(getActionSpec('review.start').completion!);
+    const narration = { runId: 'native-run', comparisonId: 'comparison-1', mode: 'continued_review', state: 'collecting' };
+    const output = { success: true, sourceKey: 'comparison-1', metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison-1' },
+      comparison: { id: 'comparison-1', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: { before: 'a', after: 'b' },
+        inventory: { state: 'complete', files: [], reasons: [] } }, requestedOutputs: ['walkthrough'],
+      outputs: { walkthrough: { state, ...(state === 'complete' ? { value: { title: 'Changes', intro: '', stops: [], otherChangeRefs: [] } } : {}) } },
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+    };
+    const snapshot = { run: { runId: 'native-run', callId: 'call', sidechainId: 'side', intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'default', retentionPolicy: 'resumable',
+      runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 1,
+      ...(scenario === 'admission_unknown' ? { error: { code: 'execution_run_send_outcome_unknown' } } : {}) },
+      structuredMeta: { kind: 'scm_diff_summary.v1', payload: output } };
+    let outputWaits = 0;
+    const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      actionExecutor: { execute: async () => { throw new Error('No effect during recovery'); } },
+      nativeActionRuns: { get: async () => snapshot, stop: async () => { throw new Error('No stop'); },
+        wait: async (_runId, _signal, selected) => { expect(selected).toEqual(descriptor); outputWaits++;
+          return { ...snapshot, structuredMeta: { ...snapshot.structuredMeta,
+            payload: { ...output, outputs: { walkthrough: { state: 'failed' } } } } }; },
+      },
+    });
+    const result = await observe({ progress: { ...progress, blockKind: 'action', execution: {
+      kind: 'action', actionId: 'review.start', actionRequestId: 'request', localInputId: 'request', input: {},
+      output: { intent: 'review', sessionId: 's1', results: [{ key: 'codex', ok: true, result: { runId: 'native-run' } }], narration },
+      awaitedRuns: [{ key: 'codex', runId: 'native-run', observation: descriptor }],
+    } }, frozenActionContract: { inputSchema: {}, outputSchema: contract.terminalOutputSchema, completion: contract },
+    terminalParent: false, cancellationRequested: false });
+    if (scenario === 'admission_unknown') {
+      expect(result).toMatchObject({ kind: 'outcome_uncertain' });
+      expect(outputWaits).toBe(0);
+    } else if (state === 'writing') {
+      expect(result.kind).toBe('unresolved');
+      if (result.kind !== 'unresolved' || !result.waitForCompletion) throw new Error('Expected output observation');
+      await result.waitForCompletion();
+      expect(outputWaits).toBe(1);
+    } else expect(result).toMatchObject({ kind: 'completed', result: { narration: { outcome: 'completed', runId: 'native-run' } } });
+  });
   it('preserves an observed cancelled Session terminal without requesting cancellation again', async () => {
     const cancelSession = vi.fn(async () => ({ kind: 'turn_cancel_requested' as const }));
     const observe = createWorkflowInvocationRecoveryObserver({
@@ -49,7 +90,7 @@ describe('exact Workflow recovery observation', () => {
       nativeActionRuns: { get: async (runId) => { reads++; return { run: {
         runId, callId: 'call', sidechainId: 'side', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         permissionMode: 'default', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response', status, startedAtMs: 1,
-      }, latestToolResult: { output: { findings: [], reviewedFingerprint: 'fingerprint', commentIds: ['comment'], materialization: { kind: 'complete' } } } }; },
+      }, latestToolResult: { findings: [], reviewedFingerprint: 'fingerprint', commentIds: ['comment'], materialization: { kind: 'complete' } } }; },
       stop: async () => { throw new Error('Observation-only stop'); },
       wait: async () => { throw new Error('Observation-only wait'); } },
     });

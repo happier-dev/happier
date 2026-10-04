@@ -18,6 +18,10 @@ import type { Message } from '@happier-dev/session-core';
 
 import { createRepositoryCheckpointPromptLifecycle } from './repositoryCheckpointPromptLifecycle';
 import { createWorktreeAttributionRegistry } from './worktreeAttributionRegistry';
+import * as scmRuntime from '@/scm/runtime';
+import { readRepositoryCheckpointInitialEvidence } from '@/scm/checkpoints/sessionEvidence';
+import { encodeRepositoryCheckpointScope } from '@/scm/checkpoints/refs';
+import { recoverRepositoryCheckpointEvidence } from '@/scm/checkpoints/recoverRepositoryCheckpointEvidence';
 
 /**
  * Only the SCM/process boundary is controlled: the real Git checkpoint adapter still runs, but the
@@ -95,9 +99,111 @@ function readCheckpointMeta(messages: readonly ACPMessageData[]): Record<string,
 }
 
 describe('createRepositoryCheckpointPromptLifecycle', () => {
+    it('does not invent a session initial baseline when a resumed session has no retained local evidence', async () => {
+        const repoRoot = await createGitRepo();
+        const { session } = createMessageCapturingSession('old-session-with-pruned-checkpoints');
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
+            provider: 'codex', protocol: 'codex', sessionIsNew: false });
+        try {
+            await writeFile(join(repoRoot, 'tracked.txt'), 'already changed before resume\n');
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'resumed', prompt: 'continue' });
+            expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${session.sessionId}:${repoRoot}` })).toMatchObject({
+                state: 'unavailable', recoverable: true,
+            });
+        } finally { await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true }); }
+    });
+    it('does not inherit initial-session newness after the current session transport is swapped', async () => {
+        const repoRoot = await createGitRepo(); let sessionId = 'fresh-original-session';
+        const { session } = createMessageCapturingSession(sessionId);
+        Object.defineProperty(session, 'sessionId', { get: () => sessionId });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot,
+            provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        try {
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            sessionId = 'older-swapped-session';
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'swapped', prompt: 'continue old session' });
+            expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${sessionId}:${repoRoot}` })).toMatchObject({ state: 'unavailable', recoverable: true });
+        } finally { await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true }); }
+    });
+    it('pins the first pre-dispatch snapshot across turns and resumed lifecycles', async () => {
+        const repoRoot = await createGitRepo();
+        const { session } = createMessageCapturingSession('session-initial');
+        const initialRef = `${buildRepositoryCheckpointRefs({ scopeId: `${session.sessionId}:${repoRoot}` }).encodedScope}`;
+        const ref = `refs/happier/checkpoints/${initialRef}/session-initial`;
+        let lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        try {
+            await writeFile(join(repoRoot, 'tracked.txt'), 'pre-existing dirt\n');
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            const baseline = await runGit(repoRoot, ['rev-parse', '--verify', ref]);
+            expect(await runGit(repoRoot, ['show', `${baseline}:tracked.txt`])).toBe('pre-existing dirt');
+            await writeFile(join(repoRoot, 'tracked.txt'), 'agent change\n');
+            await lifecycle.onSessionEnd?.();
+            lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex' });
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'resumed', prompt: 'continue' });
+            expect(await runGit(repoRoot, ['rev-parse', '--verify', ref])).toBe(baseline);
+        } finally {
+            await lifecycle.onSessionEnd?.();
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+    it('recovers an older initial receipt from complete canonical transcript pages but never a later receipt', async () => {
+        const repoRoot = await createGitRepo(); const { session, messages } = createMessageCapturingSession('legacy-initial');
+        const scopeId = `${session.sessionId}:${repoRoot}`;
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        try {
+            await writeFile(join(repoRoot, 'tracked.txt'), 'legacy initial dirt\n');
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'legacy-turn', sequence: 2 });
+            await writeFile(join(repoRoot, 'tracked.txt'), 'legacy agent change\n');
+            await lifecycle.onTurnFinal?.({ messageId: 'first', turnId: 'legacy-turn', status: 'completed', sequence: 3 });
+            const toolCall = messages.find((message) => message.type === 'tool-call');
+            if (!toolCall) throw new Error('Missing canonical tool message');
+            const clearInitial = async () => {
+                await runGit(repoRoot, ['update-ref', '-d', `refs/happier/checkpoints/${encodeRepositoryCheckpointScope(scopeId)}/session-initial`]);
+                await rm(join(repoRoot, '.git', 'happier', 'checkpoint-evidence', encodeRepositoryCheckpointScope(scopeId)), { recursive: true, force: true });
+            };
+            await clearInitial();
+            const read = (firstPromptId: string) => async ({ afterSeq }: { afterSeq?: number }) => afterSeq === 1
+                ? { messages: [{ seq: 4, createdAt: 4, content: { role: 'agent', content: { type: 'acp', provider: 'codex', data: toolCall } } }], hasMore: false, nextAfterSeq: null }
+                : { messages: [{ seq: 1, createdAt: 1, localId: firstPromptId, content: { role: 'user', content: { type: 'text', text: 'edit' } } }], hasMore: true, nextAfterSeq: 1 };
+            await recoverRepositoryCheckpointEvidence({ cwd: repoRoot, scopeId, sessionId: session.sessionId, readTranscriptPage: read('earlier-unrepresented-prompt') });
+            expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId })).toBeNull();
+            await recoverRepositoryCheckpointEvidence({ cwd: repoRoot, scopeId, sessionId: session.sessionId, readTranscriptPage: read('first') });
+            const initial = await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId });
+            expect(initial?.state).toBe('available');
+            if (initial?.state !== 'available') throw new Error('Missing recovered initial receipt');
+            expect(await runGit(repoRoot, ['show', `${initial.commitSha}:tracked.txt`])).toBe('legacy initial dirt');
+        } finally { await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true }); }
+    });
+
     afterEach(() => {
+        vi.restoreAllMocks();
         checkpointBoundaryHooks.beforeFinalCapture = null;
         checkpointBoundaryHooks.beforeDiff = null;
+    });
+
+    it('keeps a failed first capture unavailable after a successful later dispatch', async () => {
+        const repoRoot = await createGitRepo();
+        const { session } = createMessageCapturingSession('initial-failed');
+        const realCommand = scmRuntime.runScmCommand;
+        let failNextStage = true;
+        vi.spyOn(scmRuntime, 'runScmCommand').mockImplementation(async (input) => {
+            if (failNextStage && input.args[0] === 'add') {
+                failNextStage = false;
+                return { success: false, stdout: '', stderr: 'First checkpoint object write failed', exitCode: 1 };
+            }
+            return await realCommand(input);
+        });
+        const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', protocol: 'codex', sessionIsNew: true });
+        try {
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'first', prompt: 'edit' });
+            await writeFile(join(repoRoot, 'tracked.txt'), 'agent ran after failed capture\n');
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'later', prompt: 'continue' });
+            expect(await readRepositoryCheckpointInitialEvidence({ cwd: repoRoot, scopeId: `${session.sessionId}:${repoRoot}` })).toEqual({
+                state: 'unavailable', reason: 'First checkpoint object write failed',
+            });
+            expect(await runGit(repoRoot, ['show', `${buildRepositoryCheckpointRefs({ scopeId: `${session.sessionId}:${repoRoot}`, messageId: 'later' }).messageStart?.ref}:tracked.txt`])).toBe('agent ran after failed capture');
+        } finally { await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true }); }
     });
 
     it.each([false, true])('orders tool and checkpoint-only turns by runtime chronology despite delayed publication (checkpoint first: %s)', async (checkpointFirst) => {

@@ -1,4 +1,4 @@
-import { buildBackendTargetKeyV2, createActionExecutor, readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2, createActionExecutor, readBackendTargetRefV2, ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateInputSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import type {
@@ -8,7 +8,10 @@ import type {
   PluginActionResultById,
   PluginInvocableActionId,
 } from '@happier-dev/plugin-sdk/actions';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createLocalScmRepositoryFixture } from '@/scm/contracts/scmBackendContractFixtures';
 
 const {
   callMachineRpc,
@@ -40,6 +43,19 @@ import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtim
 import { createCliActionDeps } from './createCliActionDeps';
 
 const executionMaterialization = createPluginActionCallerMaterializationFixture('acme.execution');
+
+describe('detached exact Run output observation transport', () => {
+  it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' } }])
+  ('keeps exact get observation under caller lifecycle: %j', async (wait) => {
+    callMachineRpc.mockResolvedValueOnce({ run: { runId: 'run-1' } });
+    const credentials = { token: 'token', encryption: null };
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const controller = new AbortController();
+    await deps.executionRunGet(null, { runId: 'run-1', ...wait }, { targetMachineId: 'machine-1', signal: controller.signal });
+    expect(callMachineRpc.mock.lastCall?.[0]).toMatchObject({ method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+      timeoutMs: null, signal: controller.signal });
+  });
+});
 
 type ExecutionRunActionId = Extract<PluginInvocableActionId,
   | 'execution.run.list'
@@ -130,6 +146,10 @@ function createExecutionRunActionsService() {
 }
 
 describe('createCliActionDeps execution-run plugin bindings', () => {
+  const directories: string[] = [];
+  afterEach(async () => {
+    await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  });
   it('does not send an admitted write ceiling through a public machine request', async () => {
     const credentials = { token: 'token', encryption: null };
     const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
@@ -312,6 +332,9 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   });
 
   it('routes SCM diff-summary through the supplied canonical Action boundary without a direct run transport', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-summary-deps-' });
+    directories.push(fixture.rootPath);
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'captured through session Action\n');
     const credentials = {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -319,20 +342,11 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, path: '/workspace' },
+      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
       accountEncryptionCurrentness: { mode: 'plain' },
       mode: 'plain',
       ctx: null,
     });
-    const output = {
-      success: true as const,
-      summaryMarkdown: '## Summary',
-      sourceKey: 'workingTree:/workspace',
-      metadata: {
-        source: { kind: 'workingTree' as const },
-        sourceKey: 'workingTree:/workspace',
-      },
-    };
     const executeCanonicalAction = vi.fn(async (actionId: string, _input: unknown) => {
       if (actionId === 'execution.run.start') {
         return {
@@ -341,35 +355,6 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
             runId: 'run-1',
             callId: 'call-1',
             sidechainId: 'sidechain-1',
-            wait: {
-              ok: true as const,
-              status: 'succeeded' as const,
-              result: {
-                run: {
-                  runId: 'run-1',
-                  callId: 'call-1',
-                  sidechainId: 'sidechain-1',
-                  intent: 'scm_diff_summary' as const,
-                  backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' },
-                  permissionMode: 'read_only',
-                  retentionPolicy: 'ephemeral' as const,
-                  runClass: 'bounded' as const,
-                  ioMode: 'request_response' as const,
-                  status: 'succeeded' as const,
-                  startedAtMs: 1,
-                  finishedAtMs: 2,
-                },
-              },
-            },
-          },
-        };
-      }
-      if (actionId === 'execution.run.get') {
-        return {
-          ok: true as const,
-          result: {
-            run: { runId: 'run-1', status: 'succeeded' as const },
-            latestToolResult: output,
           },
         };
       }
@@ -386,28 +371,157 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     await expect(deps.scmActionExecute?.({
       actionId: 'scm.diffSummary.generate',
       input: {
-        cwd: '/workspace',
+        cwd: fixture.rootPath,
         source: { kind: 'workingTree' },
         modelSelector: {
           backendTargetKey: buildBackendTargetKeyV2({
             kind: 'backend',
             backendId: 'codex',
-            sourceKind: 'built_in',
+            sourceKind: 'configured',
+            configuredBackendId: 'fixture-model',
           }),
         },
       },
       context: { defaultSessionId: 'session-1' },
       executeCanonicalAction,
-    })).resolves.toEqual(output);
+    })).resolves.toMatchObject({ success: true, runId: 'run-1',
+      comparison: { inventory: { state: 'complete', files: [expect.objectContaining({ path: fixture.trackedPath })] } },
+      outputs: { summary: { state: 'pending' } },
+    });
     expect(executeCanonicalAction).toHaveBeenNthCalledWith(1, 'execution.run.start', expect.objectContaining({
-      waitForCompletion: true,
+      waitForCompletion: false,
+      intentInput: expect.objectContaining({ sessionId: 'session-1', comparisonId: expect.any(String) }),
     }));
     expect(executeCanonicalAction.mock.calls[0]?.[1]).not.toHaveProperty('sessionId');
-    expect(executeCanonicalAction).toHaveBeenNthCalledWith(2, 'execution.run.get', {
-      runId: 'run-1',
-      includeStructured: true,
-    });
+    expect(executeCanonicalAction).toHaveBeenCalledTimes(1);
     expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('forwards exact-machine generation with the selected session and strict public comparison input', async () => {
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    callMachineRpc.mockImplementation(async ({ request }) => {
+      const input = ScmDiffSummaryGenerateInputSchema.parse(request);
+      expect(input.sessionId).toBe('session-1');
+      return { success: false, errorCode: 'MODEL_UNAVAILABLE', error: 'Unavailable test model', sourceKey: 'workingTree:/workspace' };
+    });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    await expect(deps.scmActionExecute?.({
+      actionId: 'scm.diffSummary.generate',
+      input: { cwd: '/workspace', source: { kind: 'workingTree' } },
+      context: { defaultSessionId: 'session-1', externalActionTarget: { kind: 'machine', machineId: 'machine-1' } },
+      executeCanonicalAction: async () => { throw new Error('Remote invocation must be admitted on the owning machine'); },
+    })).resolves.toMatchObject({ success: false, errorCode: 'MODEL_UNAVAILABLE' });
+  });
+
+  it('captures selected-session inventory without model admission', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-capture-deps-' });
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
+      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
+      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    const executeCanonicalAction = vi.fn(async () => { throw new Error('Capture must not admit an analysis run'); });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    try {
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Inventory before prose\n');
+      await expect(deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture',
+        input: { cwd: fixture.rootPath, source: { kind: 'workingTree' } },
+        context: { defaultSessionId: 'session-1' }, executeCanonicalAction,
+      })).resolves.toMatchObject({ success: true, comparison: { inventory: { state: 'complete',
+        files: [expect.objectContaining({ path: fixture.trackedPath })],
+      } } });
+      expect(executeCanonicalAction).not.toHaveBeenCalled();
+    } finally { await rm(fixture.rootPath, { recursive: true, force: true }); }
+  });
+
+  it('reads pinned comparison evidence without recapturing later pending files', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-pinned-capture-deps-' });
+    directories.push(fixture.rootPath);
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
+      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
+      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const executeCanonicalAction = vi.fn(async () => { throw new Error('Pinned reads must not admit another action'); });
+    const execute = (input: unknown) => deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture', input,
+      context: { defaultSessionId: 'session-1' }, executeCanonicalAction });
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Captured first version\n');
+    const captured = ScmComparisonCaptureOutputSchema.parse(await execute({ cwd: fixture.rootPath, source: { kind: 'workingTree' } }));
+    if (!captured.success) throw new Error('Fixture comparison capture failed');
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Different later version\n');
+    const request = ScmComparisonCaptureInputSchema.parse({ cwd: fixture.rootPath,
+      source: { kind: 'workingTree' }, comparisonId: captured.comparison.id });
+    await expect(execute(request)).resolves.toMatchObject({ success: true, comparison: captured.comparison });
+    await expect(execute({ ...request, source: { kind: 'commit', commit: 'HEAD' } })).resolves.toMatchObject({
+      success: false, errorCode: 'DIFF_UNAVAILABLE',
+    });
+    expect(executeCanonicalAction).not.toHaveBeenCalled();
+  });
+
+  it('reads PR evidence through the canonical constrained source Action from page one', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-pr-source-deps-' });
+    directories.push(fixture.rootPath);
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
+      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
+      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    // The contributed plugin process is the system boundary; canonical Action
+    // admission, source-input shaping, and evidence capture stay real.
+    const invokeContributedAction = vi.fn(async (request: Readonly<{ input?: unknown }>) => {
+      const continuation = request.input && typeof request.input === 'object' && 'continuation' in request.input
+        ? request.input.continuation : undefined;
+      return { ok: true as const, result: { kind: 'changedFiles', omittedRowCount: 0, projectionTruncated: false,
+        ...(!continuation ? { continuation: 'source-page-two', incomplete: 'pagination' } : {}),
+        rows: [{ path: continuation ? 'second.ts' : 'first.ts', status: 'modified', diffAvailable: true,
+          evidence: { state: 'available', patch: '@@ -1 +1 @@\n-before\n+after\n' } }],
+        comparison: { baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40),
+          locator: { providerId: 'fixture', repository: 'owner/repo', number: 1 },
+          totalFileCount: 2, enumeratedFileCount: continuation ? 2 : 1, freshness: 'current',
+          inventory: continuation ? 'complete' : 'incomplete', content: continuation ? 'complete' : 'incomplete',
+          reasons: continuation ? [] : ['pages_pending'] },
+      } };
+    });
+    const canonical = createActionExecutor({ invokeContributedAction } as unknown as ActionExecutorDeps);
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    await expect(deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture',
+      input: { cwd: fixture.rootPath, source: { kind: 'pullRequest', locator: {
+        providerId: 'fixture', repository: 'owner/repo', number: 1,
+        sourceAction: { action: { pluginId: 'acme.source', localId: 'changed-files' },
+          input: { instance: { selected: 'account-one' }, routingToken: 'source-token', limit: 7,
+            comparison: false, continuation: 'client-midpage' } },
+      } } }, context: { defaultSessionId: 'session-1' },
+      executeCanonicalAction: (actionId, input, options) => canonical.execute(actionId, input, { surface: 'api', ...options }),
+    })).resolves.toMatchObject({ success: true, comparison: { endpoints: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+      inventory: { state: 'complete', files: [expect.objectContaining({ path: 'first.ts' }), expect.objectContaining({ path: 'second.ts' })] },
+    } });
+    expect(invokeContributedAction).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      action: { pluginId: 'acme.source', localId: 'changed-files' },
+      input: { instance: { selected: 'account-one' }, routingToken: 'source-token', limit: 7, comparison: true },
+      requiredDangerLevel: 'safe',
+    }));
+    expect(invokeContributedAction).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      action: { pluginId: 'acme.source', localId: 'changed-files' },
+      input: { instance: { selected: 'account-one' }, routingToken: 'source-token', limit: 7, comparison: true,
+        continuation: 'source-page-two' }, requiredDangerLevel: 'safe',
+    }));
+  });
+
+  it('refuses selected-session evidence outside the machine filesystem policy before capture or admission', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-summary-permission-' });
+    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
+      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
+      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    const executeCanonicalAction = vi.fn(async () => ({ ok: true as const, result: { runId: 'denied-run', callId: 'call', sidechainId: 'sidechain' } }));
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+      scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [join(fixture.rootPath, 'other-workspace')] },
+    });
+    try {
+      await expect(deps.scmActionExecute?.({ actionId: 'scm.diffSummary.generate',
+        input: { cwd: fixture.rootPath, source: { kind: 'workingTree' }, modelSelector: { backendTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }) } },
+        context: { defaultSessionId: 'session-1' }, executeCanonicalAction,
+      })).resolves.toMatchObject({ ok: false, errorCode: 'scm_action_path_denied' });
+      expect(executeCanonicalAction).not.toHaveBeenCalled();
+    } finally { await rm(fixture.rootPath, { recursive: true, force: true }); }
   });
 
   const sessionRun = {

@@ -121,4 +121,53 @@ describe('registerWorkspaceAnchorHandlers', () => {
       confidence: 0.2,
     });
   });
+
+  it('never treats an unbound diff side as current file evidence and verifies range interiors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-workspace-anchors-'));
+    tempDirs.push(root);
+    writeFileSync(join(root, 'a.ts'), 'first();\nchanged();\nlast();');
+    writeFileSync(join(root, 'empty.ts'), '');
+    const { handlers, registrar } = createRegistrar();
+    registerWorkspaceAnchorHandlers(registrar, { defaultDirectory: root, accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    const response = await handlers.get(RPC_METHODS.WORKSPACE_ANCHORS_RESOLVE)?.({
+      workspacePath: root,
+      comments: [
+        ...(['before', 'after'] as const).map((side) => ({ id: side, filePath: 'a.ts', source: 'diff', anchor: { kind: 'line', filePath: 'a.ts', line: 1, side, lineHash: computeLineContentHashV1('first();') } })),
+        { id: 'interior', filePath: 'a.ts', source: 'file', anchor: { kind: 'range', filePath: 'a.ts', startLine: 1, endLine: 3, startLineHash: computeLineContentHashV1('first();'), endLineHash: computeLineContentHashV1('last();'), selectedTextHash: computeLineContentHashV1('first();\noriginal();\nlast();') } },
+        { id: 'path', filePath: 'a.ts', source: 'file', anchor: { kind: 'line', filePath: 'other.ts', line: 1 } },
+        { id: 'ordinal', filePath: 'a.ts', source: 'file', anchor: { kind: 'fileLine', startLine: 1 } },
+        { id: 'alias', filePath: 'a.ts', source: 'file', anchor: { kind: 'line', filePath: './a.ts', line: 1 } },
+        { id: 'empty', filePath: 'empty.ts', source: 'file', anchor: { kind: 'fileLine', startLine: 1, lineHash: computeLineContentHashV1('') } },
+        { id: 'missing', filePath: 'missing.ts', source: 'file', anchor: { kind: 'fileLine', startLine: 1 } },
+      ],
+    }) as WorkspaceAnchorsResolveResponseV1;
+    expect(response.success).toBe(true);
+    if (!response.success) return;
+    expect(response.resolutions.map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: 'before', status: 'unsupported' }, { id: 'after', status: 'unsupported' },
+      { id: 'interior', status: 'stale' }, { id: 'path', status: 'unsupported' },
+      { id: 'ordinal', status: 'context' },
+      { id: 'alias', status: 'context' },
+      { id: 'empty', status: 'missing' }, { id: 'missing', status: 'missing' },
+    ]);
+    expect(response.resolutions.filter((resolution) => resolution.id !== 'ordinal' && resolution.id !== 'alias').every((resolution) => !resolution.resolvedAnchor)).toBe(true);
+  });
+
+  it('disambiguates moved ranges by their complete selected text and reports stale line content', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-workspace-anchors-'));
+    tempDirs.push(root);
+    writeFileSync(join(root, 'a.ts'), 'start\nwrong\nend\nstart\nselected\nend');
+    const { handlers, registrar } = createRegistrar();
+    registerWorkspaceAnchorHandlers(registrar, { defaultDirectory: root, accessPolicy: { kind: 'restrictedRoots', roots: [root] } });
+    const response = await handlers.get(RPC_METHODS.WORKSPACE_ANCHORS_RESOLVE)?.({ workspacePath: root, comments: [
+      { id: 'range', filePath: 'a.ts', source: 'file', anchor: { kind: 'range', filePath: 'a.ts', startLine: 99, endLine: 101, startLineHash: computeLineContentHashV1('start'), endLineHash: computeLineContentHashV1('end'), selectedTextHash: computeLineContentHashV1('start\nselected\nend') } },
+      { id: 'stale', filePath: 'a.ts', source: 'file', anchor: { kind: 'line', filePath: 'a.ts', line: 2, lineHash: computeLineContentHashV1('original') } },
+    ] }) as WorkspaceAnchorsResolveResponseV1;
+    expect(response.success).toBe(true);
+    if (!response.success) return;
+    expect(response.resolutions).toMatchObject([
+      { id: 'range', status: 'hash', resolvedAnchor: { startLine: 4, endLine: 6, selectedTextHash: computeLineContentHashV1('start\nselected\nend') } },
+      { id: 'stale', status: 'stale' },
+    ]);
+  });
 });

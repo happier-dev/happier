@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -66,5 +66,26 @@ describe('gitCheckpointAdapter runtime services', () => {
             success: true,
             checkpointRef,
         }));
+    });
+
+    it('retains complete readable checkpoint diffs beyond process output limits', async () => {
+        const repoRoot = mkdtempSync(join(tmpdir(), 'happier-checkpoint-large-diff-'));
+        try {
+        execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+        const context = { cwd: repoRoot, projectKey: repoRoot, detection: { isRepo: true, rootPath: repoRoot, mode: '.git' as const } };
+        const refs = buildRepositoryCheckpointRefs({ scopeId: `large:${repoRoot}`, messageId: 'message', turnId: 'turn' });
+        if (!refs.messageStart || !refs.turnFinal) throw new Error('Missing refs');
+        writeFileSync(join(repoRoot, 'large.txt'), 'before\n');
+        expect((await gitCheckpointAdapter.capture({ context, checkpointRef: refs.messageStart })).success).toBe(true);
+        const content = Array.from({ length: 70000 }, (_, index) => `${index}: ${'content'.repeat(10)}\n`).join('');
+        writeFileSync(join(repoRoot, 'large.txt'), content);
+        expect((await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal })).success).toBe(true);
+        const result = await gitCheckpointAdapter.diff({ context, baseRef: refs.messageStart, finalRef: refs.turnFinal,
+            baseRefSource: 'message_start', attributionScope: 'unknown' });
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error(result.error);
+        expect(result.files[0]?.unifiedDiff).toContain('+69999:');
+        expect(result.files[0]?.unifiedDiff?.length).toBeGreaterThan(4 * 1024 * 1024);
+        } finally { rmSync(repoRoot, { recursive: true, force: true }); }
     });
 });

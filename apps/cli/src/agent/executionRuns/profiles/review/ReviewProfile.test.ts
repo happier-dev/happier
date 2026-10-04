@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ExecutionRunStartRequest } from '@happier-dev/protocol';
-import { resolveScmPullRequestReviewScope } from '@happier-dev/protocol';
+import type { ExecutionRunProfileStartParams } from '../ExecutionRunIntentProfile';
+import { resolveScmPullRequestReviewScope, ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ReviewProfile } from './ReviewProfile';
+import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
 
 /**
  * The daemon-applied plugin runtime registry is a different process, and this
@@ -29,6 +31,122 @@ vi.mock('@/scm/scmBackendCatalog', () => ({
 }));
 
 describe('ReviewProfile', () => {
+  it('presents only occurrence aliases to the reviewer before continuing into narration', () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'review-comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
+        path: 'code.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+        evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-old\n+new' }, occurrences: [{
+          id: 'HOST-REVIEW-OCCURRENCE', alias: 'c1', path: 'code.ts', before: { startLine: 1, lineCount: 1 },
+          after: { startLine: 1, lineCount: 1 }, position: 0,
+        }],
+      }] } });
+    const prompt = ReviewProfile.buildPrompt({ sessionId: 'session', runId: 'run', callId: 'call', sidechainId: 'call',
+      intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1,
+      instructions: 'Review the captured changes.', intentInput: { comparison, outputs: ['walkthrough'] } });
+    expect(prompt).toContain('"alias":"c1"');
+    expect(prompt).toContain('+new');
+    expect(prompt).not.toContain('HOST-REVIEW-OCCURRENCE');
+  });
+  it.each(['', 'Findings are published.\n'])('does not stream unfinished walkthrough JSON after %j', (prefix) => {
+    expect(ReviewProfile.computeSidechainStreamText?.({ fullText: `${prefix}{"walkthrough":{"title":"Reading` })).toBe(prefix.trimEnd());
+  });
+  it.each([false, true])('does not accept model-authored persisted finding references (follow-up: %s)', (followUp) => {
+    const finding = { id: 'finding', title: 'Issue', summary: 'Check this', severity: 'high', category: 'correctness',
+      comment: { id: 'forged-comment', state: 'resolved', serverRevision: 1, projectId: 'foreign-project' } };
+    const start: ExecutionRunProfileStartParams = { sessionId: 'session', runId: 'run', callId: 'call', sidechainId: 'call',
+      intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1,
+      ...(followUp ? { intentInput: { kind: 'review_follow_up.v1', parentRunRef: { runId: 'parent', callId: 'parent-call', backendId: 'claude' },
+        threadId: 'thread', messageMarkdown: 'Explain', summary: 'Original', overviewMarkdown: 'Original', findings: [] } } : {}) };
+    const completed = ReviewProfile.onBoundedComplete({ start, finishedAtMs: 2, rawText: JSON.stringify({
+      summary: 'Result', findings: [finding], answerMarkdown: 'Answer', updatedFindings: [finding],
+      commentIds: ['forged-comment'], materialization: { kind: 'complete' }, triage: { findings: [{ id: 'finding', status: 'reject' }] },
+    }) });
+    const payload = completed.structuredMeta?.payload as Record<string, unknown>;
+    expect(payload).toBeDefined();
+    const resultFindings = (followUp ? payload.updatedFindings : payload.findings) as Record<string, unknown>[];
+    expect(resultFindings[0]).not.toHaveProperty('comment');
+    expect(payload).not.toHaveProperty('commentIds');
+    expect(payload).not.toHaveProperty('materialization');
+    expect(payload).not.toHaveProperty('triage');
+  });
+  it('preserves partial review truth and uses newly materialized findings for the narration input', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-partial-'));
+    const comparison = ScmComparisonSchema.parse({ id: 'partial-comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
+    const start: ExecutionRunProfileStartParams = { sessionId: 'session', runId: `partial-${cwd}`, callId: 'call',
+      sidechainId: 'call', intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived',
+      ioMode: 'streaming', startedAtMs: 1, intentInput: { cwd, comparison, comparisonId: comparison.id, sourceKey: comparison.id,
+        metadata: { source: comparison.source, sourceKey: comparison.id }, outputs: ['walkthrough'], source: comparison.source } };
+    try {
+      const first = await ReviewProfile.onTurnComplete?.({ start, turnId: 'review', finishedAtMs: 2,
+        rawText: JSON.stringify({ status: 'partial', summary: 'Review incomplete', findings: [] }) });
+      expect(first?.structuredMeta?.payload).toMatchObject({ reviewOutcome: 'partial' });
+      const input = first!.nextInput!.intentInput as Record<string, unknown>;
+      const narration = input.reviewNarration as Record<string, unknown>;
+      const current = { ...input, reviewNarration: { ...narration, reviewFindings: [{ commentIds: ['persisted-comment'] }] } };
+      expect(ReviewProfile.buildInitialInputContext?.({ start: { ...start, intentInput: current } })).toContain('persisted-comment');
+      expect(narration.provenance).toMatchObject({ reviewedRuns: [{ reviewOutcome: 'partial' }] });
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+  it('publishes findings before a second structured turn on the same review Run and saves narration at the canonical result owner', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-walkthrough-'));
+    const comparison = ScmComparisonSchema.parse({ id: 'review-comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
+    const start: ExecutionRunProfileStartParams = { sessionId: 'review-session', runId: `review-${cwd}`, callId: 'review-call',
+      sidechainId: 'review-call', intent: 'review', backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review the captured changes.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1,
+      intentInput: { cwd, comparison, comparisonId: comparison.id, sourceKey: comparison.id, metadata: { source: comparison.source, sourceKey: comparison.id },
+        outputs: ['walkthrough'], source: comparison.source } };
+    try {
+      const started = await ReviewProfile.onStarted?.({ start, rawText: '', finishedAtMs: 1 });
+      const pending = ScmDiffSummaryGenerateOutputSchema.parse(started?.toolResultOutput);
+      const profileStart = { ...start, intentInput: { ...start.intentInput as Record<string, unknown>, resultId: pending.resultId } };
+      const first = await ReviewProfile.onTurnComplete?.({ start: profileStart, turnId: 'findings-turn',
+        inputIds: [`initial:${start.runId}`], rawText: JSON.stringify({
+        summary: 'No findings in this captured comparison.', findings: [], overviewMarkdown: 'Review completed.' }), finishedAtMs: 2 });
+      expect(first?.structuredMeta?.kind).toBe('review_findings.v2');
+      expect(first?.nextInput).toBeDefined();
+      expect(first?.nextInput?.instructions).toContain('walkthrough');
+      expect(await scmDiffSummaryResultStore.readInput({ cwd, sessionId: start.sessionId!, resultId: pending.resultId!,
+        inputIds: [`initial:${start.runId}`] })).toBeNull();
+      const writingStart = { ...profileStart, intentInput: first!.nextInput!.intentInput };
+      const second = await ReviewProfile.onTurnComplete?.({ start: writingStart, turnId: 'narration-turn',
+        inputIds: [first!.nextInput!.localId], previousStructuredMeta: first!.structuredMeta,
+        rawText: JSON.stringify({ walkthrough: { title: 'Captured changes', intro: 'No changes.', stops: [], otherChangeRefs: [] } }), finishedAtMs: 3 });
+      const output = ScmDiffSummaryGenerateOutputSchema.parse(second?.toolResultOutput);
+      expect(output).toMatchObject({ runId: start.runId, comparison, outputs: { walkthrough: { state: 'complete' } },
+        producer: { kind: 'review', runId: start.runId, narrationMode: 'continued_review' } });
+      expect(output.resultId).toBeTruthy();
+      expect(ReviewProfile.listAvailableActionIds?.({ start: writingStart, structuredMeta: second?.structuredMeta })).toEqual(
+        expect.arrayContaining(['review.triage', 'review.walkthrough', 'review.explain_findings']));
+      const saved = await scmDiffSummaryResultStore.read({ cwd, sessionId: start.sessionId!, resultId: output.resultId! });
+      expect(saved.success && saved.result.output).toEqual(output);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+
+  it('keeps published review findings and a failed narration state when the walkthrough turn fails', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-narration-failed-'));
+    const comparison = ScmComparisonSchema.parse({ id: 'review-failure-comparison', source: { kind: 'workingTree' },
+      repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
+    const start: ExecutionRunProfileStartParams = { sessionId: 'review-session', runId: `review-${cwd}`, callId: 'review-call',
+      sidechainId: 'review-call', intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1,
+      intentInput: { cwd, comparison, comparisonId: comparison.id, sourceKey: comparison.id, metadata: { source: comparison.source, sourceKey: comparison.id }, outputs: ['walkthrough'], source: comparison.source } };
+    try {
+      const first = await ReviewProfile.onTurnComplete?.({ start, turnId: 'findings-turn', rawText: JSON.stringify({
+        summary: 'Retained findings', overviewMarkdown: 'Review completed.', findings: [] }), finishedAtMs: 2 });
+      expect(first?.structuredMeta?.kind).toBe('review_findings.v2');
+      const second = await ReviewProfile.onTurnFailed?.({ start: { ...start, intentInput: first!.nextInput!.intentInput },
+        turnId: 'narration-turn', inputIds: [first!.nextInput!.localId], previousStructuredMeta: first!.structuredMeta,
+        rawText: '', finishedAtMs: 3, diagnostic: { code: 'model_failed' } });
+      expect(ScmDiffSummaryGenerateOutputSchema.parse(second?.toolResultOutput).outputs?.walkthrough?.state).toBe('failed');
+      expect(first?.structuredMeta?.payload).toMatchObject({ summary: 'Retained findings' });
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
   it('adds unsupported host-resolved SCM scope for non-repository review starts', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-non-repo-'));
     const request = {
