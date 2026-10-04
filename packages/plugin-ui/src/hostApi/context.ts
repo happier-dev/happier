@@ -135,7 +135,7 @@ export function PluginHostApiProviderInternal({
   );
   return createElement(PluginHostApiContext.Provider, { value },
     createElement(HappierUiAnimationActivityProviderInternal, {
-      active: value.surfaceActive && presentationActive,
+      active: value.surfaceActive === true && presentationActive,
     }, children),
   );
 }

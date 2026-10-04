@@ -23,7 +23,12 @@ import {
   createPluginUiResourceStore,
   type PluginUiResourceClient,
 } from '../advanced/index.js';
-import { PluginHostApiProviderInternal } from './context.js';
+import {
+  PluginHostApiProviderInternal,
+  usePluginHostApiResourceActive,
+  usePluginSurfaceActivity,
+} from './context.js';
+import { useHappierUiAnimationActivityInternal } from '../environment/context.js';
 import { createSurfaceContext } from '../surfaceFixture.testSupport.js';
 
 const resourceRef = { pluginId: 'acme.preview', localId: 'review-summary' } as const;
@@ -127,6 +132,35 @@ function deferred<T>() {
 }
 
 describe('plugin host API hooks', () => {
+  it('keeps motion inactive without a surface activity fact while Resource work remains live', () => {
+    const seen: Array<Readonly<{
+      animationActive: boolean;
+      resourceActive: boolean;
+      surfaceActive: boolean;
+    }>> = [];
+    function Probe() {
+      seen.push({
+        animationActive: useHappierUiAnimationActivityInternal(),
+        resourceActive: usePluginHostApiResourceActive(),
+        surfaceActive: usePluginSurfaceActivity().active,
+      });
+      return null;
+    }
+
+    act(() => {
+      createRenderer(
+        <PluginHostApiProviderInternal hostApi={createHostApiStub().api}>
+          <Probe />
+        </PluginHostApiProviderInternal>,
+      );
+    });
+    expect(seen.at(-1)).toEqual({
+      animationActive: false,
+      resourceActive: true,
+      surfaceActive: false,
+    });
+  });
+
   it('exposes only the host-injected ephemeral shared scope and has no artifact-local fallback', () => {
     const scope: PluginUiEphemeralSharedScope = {
       acquire: vi.fn(() => null),
