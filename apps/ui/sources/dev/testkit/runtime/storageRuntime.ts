@@ -9,6 +9,9 @@ import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listi
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { StorageState } from '@/sync/store/types';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
+import { readSessionMessagesSnapshot } from '@/sync/store/sessionMessagesSnapshot';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 const { isDeepStrictEqual } = getVitestNodeBuiltin<{
@@ -175,6 +178,7 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         sessionTranscriptLoadIssues: {},
         authoringMemory: authoringMemoryDefaults,
         ...state,
+        profile: state.profile ?? defaultProfile,
         localSettings: state.localSettings ?? localSettingsDefaults,
     } as StorageState;
 }
@@ -271,6 +275,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         useAutomations: () => [],
         useWorkflowRunRows: () => [],
         useSessionMessages: () => ({ messages: [], isLoaded: true } as const),
+        readSessionMessagesSnapshot,
         useSessionMessagesReducerState: () => sessionMessagesReducerState,
         useSessionMessagesById: () => sessionMessagesById,
         useMessagesByRefs: () => messagesByRefs,
@@ -385,11 +390,20 @@ export function createStorageModuleStub<TOverrides extends object>(
     const finalStorage = isStorageStoreLike(storageOverride)
         ? adaptStorageStoreLike(storageOverride)
         : moduleWithCurrentSecretBindings.storage;
+    // The real hook closes over storageStore.getStorage, not this fixture's facade.
+    // Read the injected store here, delegating all owner-layout and machine policy to production.
+    const sessionMachineReader = Object.prototype.hasOwnProperty.call(overrides, 'useSessionMachineId')
+        ? {}
+        : { useSessionMachineId: (sessionId: string) => finalStorage((state) => {
+            const session = state.sessions[sessionId];
+            return session ? resolveSessionMachineId(readSessionOwnerMetadataView(session)) : null;
+        }) };
     if (finalStorage !== moduleWithCurrentSecretBindings.storage) {
         return {
             ...moduleWithCurrentSecretBindings,
             storage: finalStorage,
             getStorage: () => finalStorage,
+            ...sessionMachineReader,
             ...(!Object.prototype.hasOwnProperty.call(overrides, 'useAuthoringMemoryField') ? {
                 useAuthoringMemoryField: ((name: keyof typeof authoringMemoryDefaults) =>
                     (finalStorage.getState().authoringMemory ?? authoringMemoryDefaults)[name]) as StorageModule['useAuthoringMemoryField'],
@@ -399,6 +413,7 @@ export function createStorageModuleStub<TOverrides extends object>(
     return {
         ...moduleWithCurrentSecretBindings,
         getStorage: () => finalStorage,
+        ...sessionMachineReader,
     };
 }
 
