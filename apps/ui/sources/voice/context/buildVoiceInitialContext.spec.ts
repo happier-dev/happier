@@ -85,6 +85,8 @@ describe('buildVoiceInitialContext', () => {
       concurrentSessionListCacheByServerId: {},
     }));
     useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
+    useVoiceTargetStore.getState().setLastFocusedSessionAddress(null);
   });
 
   it('resolves current-UI-only, targetless, missing, and scoped session startup outcomes canonically', () => {
@@ -115,7 +117,7 @@ describe('buildVoiceInitialContext', () => {
     });
   });
 
-  it('respects other-session policy when the session is not tracked', () => {
+  it('respects other-session policy without current-target or Include-in-Voice evidence', () => {
     const out = buildVoiceInitialContext('s1');
 
     expect(out).toContain('THIS IS AN ACTIVE SESSION:');
@@ -128,8 +130,8 @@ describe('buildVoiceInitialContext', () => {
     expect(out).not.toContain('Recent context');
   });
 
-  it('includes summary and recent messages when the session is tracked', () => {
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
+  it('includes summary and recent messages for the qualified current target', () => {
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' });
 
     const out = buildVoiceInitialContext('s1');
 
@@ -138,6 +140,76 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('## Recent Messages');
     expect(out).toContain('Recent messages in');
     expect(out).toContain('Recent context');
+  });
+
+  it('does not let a retained live-context cache elevate initial disclosure', () => {
+    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
+
+    const out = buildVoiceInitialContext('s1');
+
+    expect(out).not.toContain('Summary visible only for tracked sessions');
+    expect(out).not.toContain('Recent context');
+  });
+
+  it('includes a background session through its synchronized Include-in-Voice projection', () => {
+    const session: Session = {
+      ...createSession('Followed session summary'),
+      viewer: {
+        readState: { state: 'not_started' },
+        relevance: { relevant: true, reasons: ['followed_by_me'] },
+        attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+        follow: { follows: true, notificationLevel: 'none', includeInVoice: true },
+        notification: { level: 'none', source: 'preference' },
+      },
+    };
+    storage.setState((state) => ({ ...state, sessions: { ...state.sessions, s1: session } }));
+
+    const out = buildVoiceInitialContext('s1');
+
+    expect(out).toContain('Followed session summary');
+    expect(out).toContain('Recent context');
+  });
+
+  it('does not borrow current-target authority from the same session id on another Home', () => {
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: 'other-home', sessionId: 's1' });
+
+    const out = buildVoiceInitialContext('s1');
+
+    expect(out).not.toContain('Summary visible only for tracked sessions');
+    expect(out).not.toContain('Recent context');
+  });
+
+  it('keeps content opt-outs effective for an explicitly selected current target', () => {
+    storage.setState((state) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        voice: {
+          ...state.settings.voice,
+          privacy: {
+            ...state.settings.voice.privacy,
+            shareSessionSummary: false,
+            shareRecentMessages: false,
+          },
+        },
+      },
+    }));
+
+    const out = buildVoiceInitialContext('s1', {
+      targetSessionAddress: { serverId: getActiveServerSnapshot().serverId, sessionId: 's1' },
+    });
+
+    expect(out).not.toContain('Summary visible only for tracked sessions');
+    expect(out).not.toContain('Recent context');
+  });
+
+  it('keeps a missing explicit target from authorizing fallback-session disclosure', () => {
+    const out = buildVoiceInitialContext('s1', {
+      targetSessionAddress: { serverId: getActiveServerSnapshot().serverId, sessionId: 'missing_target' },
+    });
+
+    expect(out).not.toContain('Summary visible only for tracked sessions');
+    expect(out).not.toContain('Recent context');
   });
 
   it('prefers visible lookup session metadata over stale raw session metadata in the prompt', () => {
@@ -181,7 +253,7 @@ describe('buildVoiceInitialContext', () => {
         ],
       },
     }));
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' });
 
     const out = buildVoiceInitialContext('s1');
 
@@ -189,7 +261,7 @@ describe('buildVoiceInitialContext', () => {
     expect(out).not.toContain('Raw session summary');
   });
 
-  it('treats an explicit target session as tracked during initial bootstrap', () => {
+  it('qualifies an explicit target session during initial bootstrap without a live-context cache', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -214,8 +286,6 @@ describe('buildVoiceInitialContext', () => {
       sessionListIndexByServerId: {},
       concurrentSessionListCacheByServerId: {},
     }));
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
-
     const out = buildVoiceInitialContext('hidden_voice', {
       targetSessionAddress: { serverId: getActiveServerSnapshot().serverId, sessionId: 's1' },
     });
@@ -379,7 +449,7 @@ describe('buildVoiceInitialContext', () => {
       },
       sessionMessages: { s1: { messages: [] } },
     }));
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' });
 
     const out = buildVoiceInitialContext('s1');
 
@@ -685,7 +755,7 @@ describe('buildVoiceInitialContext', () => {
         },
       },
     }));
-    useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([{ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' }]);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress({ serverId: getActiveServerSnapshot().serverId, sessionId: 's1' });
 
     const out = buildVoiceInitialContext('s1');
 
