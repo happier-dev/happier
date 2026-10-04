@@ -1,81 +1,70 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { machineRpcWithServerScope } from './serverScopedMachineRpc';
 import { resetScopedMachineTransportCacheForTests } from './serverScopedRpcPool';
+import { serverScopedRpcSocketPool } from './serverScopedRpcSocketPool';
 
-type MachineRpcSpy = (machineId: string, method: string, params: unknown, options?: {
-    timeoutMs?: number;
-    signal?: AbortSignal;
-}) => Promise<unknown>;
+const HOME_URL = 'https://signal-home.example.test';
+const TOKEN = `hdr.${btoa(JSON.stringify({ sub: 'signal-account' }))}.sig`;
+const ioSpy = vi.hoisted(() => vi.fn());
+const runtimeFetchSpy = vi.hoisted(() => vi.fn());
 
-const machineRpcSpy = vi.hoisted(() => vi.fn<MachineRpcSpy>());
-const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
-const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
-const machineRpcWithPeerMediationRouteSpy = vi.hoisted(() => vi.fn());
+// Only credential persistence and the HTTP/Socket.IO network edges are replaced.
+// Scope selection, transport acquisition, encryption mode and cancellation stay real.
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
+    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+    return await createTokenStorageModuleMock({
+        importOriginal,
+        subscribeHomeCredentialMutations: actual.subscribeHomeCredentialMutations,
+        tokenStorage: {
+            getCredentialsForServerUrl: async (serverUrl: string) => (
+                serverUrl === HOME_URL ? { token: TOKEN } : null
+            ),
+        },
+    });
+});
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
-    createEphemeralServerSocketClient: (...args: unknown[]) => createEphemeralSocketSpy(...args),
-}));
-
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        machineRPC: (...args: Parameters<MachineRpcSpy>) => machineRpcSpy(...args),
-    },
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
-}));
-
-vi.mock('@/sync/domains/machines/peer/mediation/rpc/client', () => ({
-    machineRpcWithPeerMediationRoute: (...args: unknown[]) => machineRpcWithPeerMediationRouteSpy(...args),
+vi.mock('socket.io-client', () => ({ io: (...args: unknown[]) => ioSpy(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({
+    runtimeFetch: (...args: unknown[]) => runtimeFetchSpy(...args),
 }));
 
 describe('machineRpcWithServerScope signal', () => {
-    beforeEach(() => {
-        machineRpcWithPeerMediationRouteSpy.mockImplementation(async (params: {
-            serverId?: string | null;
-            machineId: string;
-            method: string;
-            payload: unknown;
-            timeoutMs?: number;
-            serverFallback: (input: {
-                serverId?: string | null;
-                machineId: string;
-                method: string;
-                payload: unknown;
-                timeoutMs?: number;
-                reasonCode: string;
-            }) => Promise<unknown>;
-        }) => await params.serverFallback({
-            serverId: params.serverId,
-            machineId: params.machineId,
-            method: params.method,
-            payload: params.payload,
-            timeoutMs: params.timeoutMs,
-            reasonCode: 'server_required',
-        }));
-        getActiveServerSnapshotSpy.mockReturnValue({
-            serverId: 'server-a',
-            serverUrl: 'https://server-a.example.test',
-            kind: 'custom',
-            generation: 1,
-        });
+    let boundary: ReturnType<typeof createSocketIoBoundaryStub>;
+    let serverId: string;
+    const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+
+    beforeEach(async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `signal_${crypto.randomUUID()}`;
+        const profile = await upsertServerProfile({ serverUrl: HOME_URL, name: 'Signal Home' });
+        serverId = profile.id;
+        boundary = createSocketIoBoundaryStub();
+        ioSpy.mockReturnValue(boundary.socket);
+        runtimeFetchSpy.mockImplementation(async () => new Response(JSON.stringify({
+            machine: { id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     });
 
-    afterEach(() => {
-        machineRpcSpy.mockReset();
-        createEphemeralSocketSpy.mockReset();
-        getActiveServerSnapshotSpy.mockReset();
-        machineRpcWithPeerMediationRouteSpy.mockReset();
+    afterEach(async () => {
+        await serverScopedRpcSocketPool.stopAll();
+        serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
+        ioSpy.mockReset();
+        runtimeFetchSpy.mockReset();
+        if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
     });
 
     it('rejects with an abort error when the signal fires during an in-flight attempt', async () => {
-        machineRpcSpy.mockImplementation(() => new Promise(() => {}));
+        boundary.socket.emitWithAck.mockImplementation(() => new Promise(() => {}));
         const controller = new AbortController();
-
-        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
         const rpcPromise = machineRpcWithServerScope({
+            serverId,
             machineId: 'machine-1',
             method: 'method-test',
             payload: { value: 1 },
@@ -83,46 +72,49 @@ describe('machineRpcWithServerScope signal', () => {
         });
         const captured = rpcPromise.catch((error: unknown) => error);
 
-        await vi.waitFor(() => expect(machineRpcSpy).toHaveBeenCalledTimes(1));
-        expect(machineRpcSpy.mock.calls[0]?.[3]).toEqual(expect.objectContaining({
-            signal: controller.signal,
-        }));
-
+        await vi.waitFor(() => expect(boundary.socket.emitWithAck).toHaveBeenCalledWith(
+            SOCKET_RPC_EVENTS.CALL,
+            expect.objectContaining({ method: 'machine-1:method-test', params: { value: 1 } }),
+        ));
+        const request = boundary.socket.emitWithAck.mock.calls.find(([event]) => event === SOCKET_RPC_EVENTS.CALL)?.[1];
+        if (!request || typeof request !== 'object' || !('requestId' in request) || typeof request.requestId !== 'string') {
+            throw new Error('The cancellable network request must have a request id');
+        }
         controller.abort();
 
         const error = await captured;
-        expect((error as { name?: string })?.name).toBe('AbortError');
-        expect((error as { code?: string })?.code).toBe('MACHINE_RPC_ABORTED');
+        expect(error).toMatchObject({ name: 'AbortError', code: 'MACHINE_RPC_ABORTED' });
+        expect(readRpcRequestDisposition(error)).toBe('outcomeUnknown');
+        expect(boundary.socket.emit).toHaveBeenCalledWith(
+            SOCKET_RPC_EVENTS.CANCEL,
+            { requestId: request.requestId },
+        );
     });
 
     it('rejects immediately when the signal is already aborted', async () => {
-        machineRpcSpy.mockResolvedValue({ ok: true });
         const controller = new AbortController();
         controller.abort();
-
-        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
-        const outcome = machineRpcWithServerScope({
+        const error = await machineRpcWithServerScope({
+            serverId,
             machineId: 'machine-1',
             method: 'method-test',
             payload: { value: 1 },
             signal: controller.signal,
-        }).catch((error: unknown) => error);
-        await expect(outcome).resolves.toMatchObject({ code: 'MACHINE_RPC_ABORTED' });
-        const { readRpcRequestDisposition } = await import('@happier-dev/sync-client');
-        expect(readRpcRequestDisposition(await outcome)).toBe('notSent');
-        expect(machineRpcSpy).not.toHaveBeenCalled();
+        }).catch((failure: unknown) => failure);
+
+        expect(error).toMatchObject({ name: 'AbortError', code: 'MACHINE_RPC_ABORTED' });
+        expect(readRpcRequestDisposition(error)).toBe('notSent');
+        expect(boundary.socket.emitWithAck).not.toHaveBeenCalled();
+        expect(runtimeFetchSpy).not.toHaveBeenCalled();
     });
 
     it('resolves normally when no signal is provided', async () => {
-        machineRpcSpy.mockResolvedValue({ ok: true });
-
-        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
-        await expect(
-            machineRpcWithServerScope({
-                machineId: 'machine-1',
-                method: 'method-test',
-                payload: { value: 1 },
-            }),
-        ).resolves.toEqual({ ok: true });
+        boundary.socket.emitWithAck.mockResolvedValue({ ok: true, result: { ok: true } });
+        await expect(machineRpcWithServerScope({
+            serverId,
+            machineId: 'machine-1',
+            method: 'method-test',
+            payload: { value: 1 },
+        })).resolves.toEqual({ ok: true });
     });
 });
