@@ -85,7 +85,7 @@ function harness(options: Readonly<{
     dataEncryptionKey: ownerKeyEnvelope, callerDataEncryptionKey: callerKeyEnvelope, visibleTeamId: null, recipients: [] },
     acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...crypto,
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId }, acceptedSnapshot: {
-        definition, authoredDefinition: definition, workDepth: 0, metadata: null, frozenChildren: {},
+        definition, authoredDefinition: definition, startedBy: 'user', workDepth: 0, metadata: null, frozenChildren: {},
         materializedLeaves: options.materializedLeaves ?? [{ sourceKey: '$root', blockId: leaf.id,
           kind: leaf.kind === 'wait' ? 'wait' : 'step', selection: definition.defaults ?? {},
           authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' } }],

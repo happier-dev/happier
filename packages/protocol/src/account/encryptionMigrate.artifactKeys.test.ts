@@ -12,7 +12,7 @@ describe('Artifact encryption transition directive', () => {
       const item = { artifactId: '11111111-1111-4111-8111-111111111111',
         expectedHeaderVersion: 1, expectedBodyVersion: 1, header: 'header', body: 'body',
         expectedDataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], revisions: [] };
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], blobs: [], revisions: [] };
       expect(AccountEncryptionMigrateArtifactsDirectiveSchema.safeParse({ action: 'migrate', items: [item] }).success).toBe(true);
       const incomplete: Partial<typeof item> = { ...item };
       delete incomplete[field];
@@ -27,7 +27,7 @@ describe('Artifact encryption transition directive', () => {
       recipientContentPublicKeyFingerprint: 'content-public-key-sha256:' + 'a'.repeat(64) };
     const item = { artifactId: '11111111-1111-4111-8111-111111111111',
       expectedHeaderVersion: 1, expectedBodyVersion: 1, header: 'header', body: 'body',
-      expectedDataEncryptionKey: envelope, dataEncryptionKey: envelope, recipientKeyEnvelopes: [recipient], revisions: [] };
+      expectedDataEncryptionKey: envelope, dataEncryptionKey: envelope, recipientKeyEnvelopes: [recipient], blobs: [], revisions: [] };
     const result = AccountEncryptionMigrateArtifactsDirectiveSchema.parse({ action: 'migrate', items: [item] });
     expect(result).toEqual({ action: 'migrate', items: [item] });
     expect(AccountEncryptionMigrateArtifactsDirectiveSchema.safeParse({ action: 'migrate', items: [{ ...item,
@@ -41,7 +41,7 @@ describe('Artifact encryption transition directive', () => {
     const item = { artifactId: '11111111-1111-4111-8111-111111111111',
       expectedHeaderVersion: 1, expectedBodyVersion: 3, header: 'header', body: 'body',
       expectedDataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], revisions: [revision] };
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], blobs: [], revisions: [revision] };
     expect(AccountEncryptionMigrateArtifactsDirectiveSchema.parse({ action: 'migrate', items: [item] }))
       .toEqual({ action: 'migrate', items: [item] });
     for (const revisions of [[revision, revision], [{ ...revision, overwriteHistory: true }]]) {
@@ -55,7 +55,7 @@ describe('Artifact encryption transition directive', () => {
     const item = { artifactId: '11111111-1111-4111-8111-111111111111',
       expectedHeaderVersion: 1, expectedBodyVersion: 3, header: 'header', body: 'body',
       expectedDataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [],
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], blobs: [],
       revisions: [{ bodyVersion: 2, expectedBody: body, body }] };
     expect(AccountEncryptionMigrateArtifactsDirectiveSchema.safeParse({ action: 'migrate', items: [item] }).success).toBe(true);
   });
