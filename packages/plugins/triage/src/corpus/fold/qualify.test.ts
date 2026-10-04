@@ -1,4 +1,5 @@
 import type { TriageSourceObservationV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageGetResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -35,6 +36,24 @@ const presentObservation: TriageSourceObservationV1 = {
 };
 
 describe('qualifySourceObservation', () => {
+    it('does not persist the get-only PR comparison routing companion in the corpus', () => {
+        const read = TriageGetResultV1Schema.parse({
+            ...presentObservation,
+            comparisonSource: {
+                kind: 'pullRequest',
+                locator: {
+                    providerId: 'github', repository: 'acme/repository', number: 17,
+                    baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40),
+                    sourceAction: {
+                        action: { pluginId: 'happier.scm-github', localId: 'changed-files' },
+                        input: { configuredConnection: 'connection-a', comparison: true },
+                    },
+                },
+            },
+        });
+        expect(qualify(read)).toEqual(qualify(presentObservation));
+    });
+
     it('stamps the source, instance and host clock and discards the local ref', () => {
         const result = qualify(presentObservation);
 
