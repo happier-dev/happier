@@ -4,6 +4,7 @@ import {
     defineProtocolObject,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
+import { ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import {
@@ -14,7 +15,10 @@ import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
 import {
     TriageScanContinuationV1Schema,
     TriageScanObservationsV1ProtocolSchema,
-    TriageSourceObservationV1Schema,
+    TriageSourceAbsentObservationV1ProtocolSchema,
+    TriageSourceMergedObservationV1ProtocolSchema,
+    TriageSourcePresentObservationV1Fields,
+    TriageSourceUnresolvedObservationV1ProtocolSchema,
     TriageSourceScanEvidenceV1Schema,
 } from './observations.js';
 
@@ -103,8 +107,18 @@ export type TriageGetInputV1 = ReturnType<typeof TriageGetInputV1Schema.parse>;
 
 /**
  * `get` is the only operation that may conclude absence, so its result is the
- * complete four-arm observation union rather than a second envelope
- * (`CONTRACT.md` §2.2, §4).
+ * complete four-arm observation union. A present read may also return a
+ * transient comparison source for this exact invocation. It is not part of
+ * the durable observation: source configuration and executable routing remain
+ * current read inputs, rather than duplicated in the corpus snapshot.
  */
-export const TriageGetResultV1Schema = TriageSourceObservationV1Schema;
+export const TriageGetResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        ...TriageSourcePresentObservationV1Fields,
+        comparisonSource: ScmComparisonSourceSchema.optional(),
+    }, { policy: 'closed' }),
+    TriageSourceAbsentObservationV1ProtocolSchema,
+    TriageSourceMergedObservationV1ProtocolSchema,
+    TriageSourceUnresolvedObservationV1ProtocolSchema,
+]);
 export type TriageGetResultV1 = ReturnType<typeof TriageGetResultV1Schema.parse>;

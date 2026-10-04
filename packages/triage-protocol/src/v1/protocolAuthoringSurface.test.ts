@@ -13,6 +13,7 @@ const ALLOWED_SDK_SUBPATHS = [
     '@happier-dev/plugin-sdk/webhooks',
     '@happier-dev/plugin-sdk/sessions',
     '@happier-dev/plugin-sdk/automations',
+    '@happier-dev/plugin-sdk/scm',
 ] as const;
 
 const RETIRED_AUTHORING_SPELLINGS = [

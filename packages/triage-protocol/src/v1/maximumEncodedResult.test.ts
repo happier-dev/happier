@@ -294,4 +294,10 @@ describe('maximum encoded value derivation', () => {
         expect(() => buildMaximalSchemaValue(TriageScanResultV1Schema, 'scan result'))
             .toThrow();
     });
+
+    it('keeps transient comparison input under the Action envelope while snapshots remain finite', () => {
+        expect(() => buildMaximalSchemaValue(TriageGetResultV1Schema.jsonSchema, 'get result'))
+            .toThrow(/unbounded/u);
+        expect(derivedMaxima.presentObservation).toBe(12_887);
+    });
 });

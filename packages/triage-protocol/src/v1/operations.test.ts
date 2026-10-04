@@ -133,6 +133,34 @@ describe('Triage get input', () => {
 });
 
 describe('Triage get result', () => {
+    it('round-trips a transient source-owned comparison without putting it in the snapshot', () => {
+        const comparisonSource = {
+            kind: 'pullRequest',
+            locator: {
+                providerId: 'github',
+                repository: 'octo-org/example-app',
+                number: 17,
+                baseOid: '1111111111111111111111111111111111111111',
+                headOid: '2222222222222222222222222222222222222222',
+                sourceAction: {
+                    action: {
+                        pluginId: 'happier.scm.forge.github',
+                        localId: 'triage/list-github-changed-files',
+                    },
+                    input: { v: 1, instance, localRef: present.localRef, routingToken: 'octo-org/example-app', limit: 100, comparison: true },
+                },
+            },
+        };
+        const parsed = TriageGetResultV1Schema.parse({ ...present, comparisonSource });
+        expect(parsed).toEqual({ ...present, comparisonSource });
+        expect(parsed).not.toHaveProperty('snapshot.comparisonSource');
+        expect(TriageGetResultV1Schema.safeParse({
+            ...present,
+            comparisonSource: { ...comparisonSource, locator: { ...comparisonSource.locator, credential: 'forbidden' } },
+        }).success).toBe(false);
+        expect(TriageGetResultV1Schema.safeParse({ kind: 'absent', localRef: present.localRef, comparisonSource }).success).toBe(false);
+    });
+
     it('is exactly the complete four-arm observation union', () => {
         expect(TriageGetResultV1Schema.safeParse(present).success).toBe(true);
         expect(TriageGetResultV1Schema.safeParse({

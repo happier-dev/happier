@@ -303,6 +303,12 @@ export const TriageSourceUnresolvedObservationV1ProtocolSchema = defineProtocolO
     failure: TriageSourceFailureV1Schema,
 }, { policy: 'closed' });
 
+/** @internal Relative-only absence fields, shared with the transient get result. */
+export const TriageSourceAbsentObservationV1ProtocolSchema = defineProtocolObject({
+    kind: defineProtocolLiteral('absent'),
+    localRef: TriageSourceEntryLocalRefV1Schema,
+}, { policy: 'closed' });
+
 /**
  * The complete four-arm authoritative observation union.
  *
@@ -315,10 +321,7 @@ export const TriageSourceUnresolvedObservationV1ProtocolSchema = defineProtocolO
  */
 export const TriageSourceObservationV1Schema = defineProtocolUnion([
     TriageSourcePresentObservationV1ProtocolSchema,
-    defineProtocolObject({
-        kind: defineProtocolLiteral('absent'),
-        localRef: TriageSourceEntryLocalRefV1Schema,
-    }, { policy: 'closed' }),
+    TriageSourceAbsentObservationV1ProtocolSchema,
     TriageSourceMergedObservationV1ProtocolSchema,
     TriageSourceUnresolvedObservationV1ProtocolSchema,
 ]);
