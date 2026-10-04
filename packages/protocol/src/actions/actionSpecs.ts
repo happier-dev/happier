@@ -341,9 +341,9 @@ import {
 import {
   ExecutionRunTurnStreamCancelResponseSchema,
   ExecutionRunTurnStreamReadResponseSchema,
-  ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../execution/runs/streaming.js';
+import { ExecutionRunTurnStreamReadRequestSchema } from '../execution/runs/runPrimitives.js';
 import {
   ActionDiscoveryDefinitionSummaryV1Schema,
   ActionDiscoveryDefinitionV1Schema,
