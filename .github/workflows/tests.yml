@@ -329,6 +329,7 @@ jobs:
           name: gate-cli-unit-bundled-plugin-publication-failures
           path: apps/cli/.project/tmp/bundled-plugin-publication/failures.json
           if-no-files-found: ignore
+          include-hidden-files: true
 
   gate-build-artifacts:
     name: Gate — build artifacts and staged import smoke
@@ -385,6 +386,7 @@ jobs:
           name: gate-artifact-build-bundled-plugin-publication-failures
           path: apps/cli/.project/tmp/bundled-plugin-publication/failures.json
           if-no-files-found: ignore
+          include-hidden-files: true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gate-build-artifacts
