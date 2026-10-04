@@ -14,6 +14,7 @@ import type { WorkflowDefinitionV1, WorkflowIngressContextV1 } from '../../workf
 import type { WorkflowActionExecuteArgs } from './types.js';
 import type { z } from 'zod';
 import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
+import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/artifactSharingV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';
@@ -24,7 +25,7 @@ export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
 }>;
 export type WorkflowDefinitionArtifactOperations = Readonly<{
   read: (artifactId: string, options?: Readonly<{ signal?: AbortSignal }>) => Promise<Readonly<{
-    artifactId: string; header: Readonly<Record<string, unknown>>; body: string | null; revision: WorkflowArtifactRevisionV1;
+    artifactId: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null; revision: WorkflowArtifactRevisionV1;
     ownerAccountId: string; access: ArtifactCallerAccessV1;
   }> | null>;
   list: (options: Readonly<{ limit?: number; cursor?: string; signal?: AbortSignal }>) => Promise<Readonly<{
@@ -99,7 +100,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       artifactId: artifact.artifactId,
       headerVersion: artifact.revision.headerVersion,
       bodyVersion: artifact.revision.bodyVersion,
-    }, parsedHeader.data) || artifact.body === null) {
+    }, parsedHeader.data) || typeof artifact.body !== 'string') {
       throw Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
     }
     let candidate: unknown;

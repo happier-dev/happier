@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
+import { ArtifactBlobReferenceV1Schema } from '../../artifacts/artifactBinaryV1.js';
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
@@ -162,12 +163,16 @@ describe('shared workflow definition create', () => {
     await expect(actions.create({ definitionId, definition, metadata: { title: 'Review' } })).rejects.toBe(failure);
   });
 
-  it('rejects semantically invalid stored definitions before returning private content', async () => {
+  it.each(['semantically invalid definition', 'blob reference'])('rejects a stored %s before returning private Workflow content', async (kind) => {
     const invalidDefinition = { ...definition, finalOutput: { kind: 'result', producer: { blockId: 'missing', scope: { kind: 'current' } }, path: [] } };
+    const body = kind === 'blob reference' ? ArtifactBlobReferenceV1Schema.parse({
+      blobId: '22222222-2222-4222-8222-222222222222', mime: 'application/json',
+      sizeBytes: 0, sha256: '0'.repeat(64),
+    }) : JSON.stringify({ kind: 'workflow-definition.v1', definition: invalidDefinition });
     const store: WorkflowDefinitionArtifactOperations = {
       read: async () => ({ artifactId: definitionId, ownerAccountId: 'owner', access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 },
         header: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } },
-        body: JSON.stringify({ kind: 'workflow-definition.v1', definition: invalidDefinition }) }),
+        body }),
       create: async () => undefined,
       list: async () => ({ items: [] }),
       update: async () => ({ ok: false, errorCode: 'not_found', error: 'not_found' }),
