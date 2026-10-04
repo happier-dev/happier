@@ -37,7 +37,9 @@ export async function gitCommitUndoLast(input: {
     const { context, request } = input;
     const refuse = (errorCode: ScmOperationErrorCode, error: string, needsInput = false): ScmCommitUndoLastResponse => ({
         success: false, errorCode, error,
-        outcome: { v: 1, kind: needsInput ? 'needs_input' : 'failed', errorCode, message: error, nextActions: [{ kind: 'refresh' }] },
+        outcome: needsInput
+            ? { v: 1, kind: 'needs_input', errorCode, message: error, nextActions: [{ kind: 'refresh' }] }
+            : { v: 1, kind: 'failed', errorCode, message: error, nextActions: [{ kind: 'refresh' }] },
     });
     if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(request.expectedHeadOid)) {
         return refuse(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, 'Undo requires the observed HEAD object ID');
