@@ -1,7 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
   "entry": [
-    "vitest.config.ts",
     "apps/*/app.config.{js,ts}",
     "apps/*/babel.config.{js,cjs,mjs,ts}",
     "apps/*/metro.config.{js,cjs,mjs,ts}",
@@ -34,21 +33,6 @@
     "packages/tests/playwright-report/**",
     "packages/tests/test-results/**"
   ],
-  "ignoreDependencies": [
-    "@elevenlabs/__mocks__",
-    "@expo/__mocks__",
-    "@happier-dev/__mocks__",
-    "@huggingface/__mocks__",
-    "@pierre/__mocks__",
-    "@playwright/__mocks__",
-    "@react-native-async-storage/__mocks__",
-    "@react-navigation/__mocks__",
-    "@sentry/__mocks__",
-    "@shopify/__mocks__",
-    "@socket.io/__mocks__",
-    "@xterm/__mocks__",
-    "node:sqlite"
-  ],
   "duplicates": {
     "ignoreImports": true,
     "ignore": [
@@ -70,8 +54,5 @@
   },
   "audit": {
     "gate": "new-only"
-  },
-  "rules": {
-    "feature-flags": "off"
   }
 }
