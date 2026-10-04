@@ -202,6 +202,8 @@ _.env.pipeline.production.local
 /packages/plugin-sdk/src/**/*.d.ts.map
 # TypeScript declarations emitted into the protocol source tree are build output.
 /packages/protocol/src/**/*.d.ts
+# Authored types for the JavaScript-only IDNA dependency are source, not output.
+!/packages/protocol/src/auth/tr46.d.ts
 # SDK test-lane owned author roots. The public author build materializes plugin
 # dependencies into whatever root it builds, and `examples/**` must stay free of
 # them so cross-package source tests resolve the workspace SDK.
