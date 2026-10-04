@@ -5,6 +5,7 @@ import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { selectWidgetPlacementsBySurface } from '@/sync/domains/plugins/ui/widgetContract';
 import { t } from '@/text';
+import { resolveSessionScmReviewComparisonLabel } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 /**
  * Who a Session widget says it comes from.
@@ -46,6 +47,7 @@ export function resolveBoardWidgetProvenance(
     projection: PluginUiProjectionModel | null | undefined,
 ): BoardWidgetProvenance {
     if (source.kind === 'declarative') return provenance(t('sessionBoard.item.provenance.note'));
+    if (source.kind === 'walkthrough') return provenance(resolveSessionScmReviewComparisonLabel({ kind: source.comparison }));
     if (source.kind !== 'installedSurface') {
         return provenance(t('sessionBoard.item.provenance.interactiveView'));
     }

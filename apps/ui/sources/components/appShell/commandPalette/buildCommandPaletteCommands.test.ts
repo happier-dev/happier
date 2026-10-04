@@ -180,6 +180,33 @@ function buildCommandsWithPluginActions(input: Readonly<{
 }
 
 describe('buildCommandPaletteCommands', () => {
+  it('opens session and pending walkthroughs in the active Session Home without starting analysis', async () => {
+    const push = vi.fn();
+    const execute = vi.fn();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {}, isDev: false, activeSessionId: 'session-walk', activeSessionServerId: 'server-walk',
+      features: { executionRunsEnabled: true, voiceEnabled: false },
+      nav: { push, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute }, alert: async () => {},
+    });
+    const session = commands.find((command) => command.id === 'walkthrough:session');
+    const pending = commands.find((command) => command.id === 'walkthrough:workingTree');
+    expect(session).toBeDefined();
+    expect(pending).toBeDefined();
+    await session?.action();
+    await pending?.action();
+    expect(push.mock.calls.map(([href]) => new URL(href, 'https://happier.test').searchParams.get('comparison'))).toEqual(['session', 'workingTree']);
+    for (const [href] of push.mock.calls) {
+      const url = new URL(href, 'https://happier.test');
+      expect(url.pathname).toContain('session-walk');
+      expect(url.searchParams.get('serverId')).toBe('server-walk');
+      expect(url.searchParams.get('details')).toBe('scmReview');
+      expect(url.searchParams.get('view')).toBe('walkthrough');
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('offers phone pairing without navigating away from the current page', async () => {
     const openHomePairingModal = vi.fn();
     const push = vi.fn();

@@ -58,6 +58,17 @@ export function buildBoardWidgetAddContent(input: Readonly<{
         }))
         : [];
     const make: WidgetAddEntry[] = [];
+    if (intents.includes('walkthrough')) {
+        make.push({
+            id: 'walkthrough',
+            title: t('walkthrough.eyebrow'),
+            subtitle: t('walkthrough.none.reason'),
+            icon: 'path',
+            closesOnPick: true,
+            added: input.snapshot ? [...input.snapshot.itemsById.values()].some((item) => item.state.kind === 'ready' && item.state.item.source.kind === 'walkthrough') : false,
+            onPick: () => { void run({ kind: 'add', intent: 'walkthrough' }); },
+        });
+    }
     if (intents.includes('note')) {
         make.push({
             id: 'note',

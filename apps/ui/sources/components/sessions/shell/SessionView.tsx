@@ -1,4 +1,6 @@
 import { readRuntimeDescriptorV1FromMetadata, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol';
+import { createScmDiffSummaryResultOperations } from '@/sync/ops/scmDiffSummary/results';
+import { applySavedScmDiffSummaryResult, getScmDiffSummaryState } from '@/sync/ops/scmDiffSummary/generate';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { SessionModelDiscoveryDetail, type SessionModelDiscoveryContext } from '@/components/sessions/modelPicker/SessionModelDiscoveryDetail';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
@@ -8565,6 +8567,46 @@ function SessionViewLoadedContent({
                         const composerSubmissionSnapshot = readSessionComposerSubmissionSnapshot(composerTextBeforeSend);
                         const composerAttachmentsForSubmit = semanticDraftSnapshot.values['structuredInput.composerAttachments'] ?? [];
                         const hasComposerAttachments = composerAttachmentsForSubmit.length > 0;
+                        const scmDiscussion = recipientState.scmDiffSummaryDiscussion;
+                        if (scmDiscussion) {
+                            // A pending seeded conversation has no Run recipient yet. Its first
+                            // message belongs to saved-result admission and can never fall through
+                            // to the parent Agent, including slash-command text.
+                            if (!trimmedText) return;
+                            if (hasComposerAttachments || composerSubmissionSnapshot.references.length > 0
+                                || getAttachmentDraftsSnapshot().length > 0 || hasIncludedReviewCommentDrafts) {
+                                Modal.alert(t('common.error'), t('session.participants.unsupportedAttachmentsOrReviewComments'));
+                                return;
+                            }
+                            const operations = createScmDiffSummaryResultOperations({
+                                sessionId, serverId: sessionRouteServerId,
+                                accountId: outboundAccountLifetime.scope.accountId,
+                                shouldContinue: () => outboundAccountLifetime.isCurrent(),
+                                composerDraft: { scope: outboundAccountLifetime.scope },
+                            });
+                            setIsComposerSending(true);
+                            try {
+                                const response = await operations.discuss({ ...scmDiscussion, message: messageToSend });
+                                if (!outboundAccountLifetime.isCurrent()) return;
+                                if (!response.success) {
+                                    Modal.alert(t('common.error'), response.error);
+                                    return;
+                                }
+                                const scopeKey = serverAccountScopeKeySuffix(outboundAccountLifetime.scope);
+                                for (const entry of Object.values(getScmDiffSummaryState().entriesByKey)) {
+                                    if (entry.scopeKey === scopeKey && entry.sessionId === sessionId
+                                        && (entry.latestOutput?.resultId ?? entry.finalSummary?.output.resultId) === response.result.resultId) {
+                                        applySavedScmDiffSummaryResult(entry.key, response.result);
+                                    }
+                                }
+                                clearSemanticDraftValuesAfterOutboundHandoff(semanticDraftSnapshot);
+                                trackMessageSent();
+                                requestMountedTranscriptFollow();
+                            } finally {
+                                setIsComposerSending(false);
+                            }
+                            return;
+                        }
                         const shouldUseComposerSubmissionCoordinator = (
                             composerSubmissionSnapshot.text.trim().length > 0
                             || composerSubmissionSnapshot.references.length > 0
@@ -8651,11 +8693,12 @@ function SessionViewLoadedContent({
                         // `execution.run.send` route had no attachment or metadata channel of its
                         // own. Agent-team recipients stay parent-runtime participant metadata rather
                         // than independent runtime targets and keep their existing refusal.
-                        const participantAcceptsAttachments = participantRecipient?.kind === 'execution_run';
+                        const participantAcceptsContext = participantRecipient?.kind === 'execution_run';
 
                         if (
                             participantRecipient
-                            && (shouldSendReviewComments || (hasAttachments && !participantAcceptsAttachments))
+                            && (shouldSendReviewComments || hasAttachments)
+                            && !participantAcceptsContext
                         ) {
                             Modal.alert(t('common.error'), t('session.participants.unsupportedAttachmentsOrReviewComments'));
                             return;
@@ -8668,7 +8711,7 @@ function SessionViewLoadedContent({
                         // Recomputing it per branch is how the attachment branch silently kept
                         // addressing the parent Session's Agent.
                         const executionRunRecipient =
-                            outboundBase.kind === 'plain' && participantRecipient?.kind === 'execution_run'
+                            participantRecipient?.kind === 'execution_run'
                                 ? participantRecipient
                                 : null;
 
@@ -9315,9 +9358,11 @@ function SessionViewLoadedContent({
                                 // main Session; only the destination differs. `executionRunRecipient`
                                 // is resolved once for this send so the attachment and plain paths
                                 // cannot disagree about the destination.
-                                if (outboundBase.kind === 'plain' && participantRecipient) {
+                                if (participantRecipient) {
                                     const routed = resolveParticipantRoutedSend({
                                         text: outbound.text,
+                                        displayText: outbound.displayText,
+                                        metaOverrides: outbound.metaOverrides,
                                         recipient: participantRecipient,
                                         ...(executionRunRecipient
                                             ? {
@@ -9461,6 +9506,10 @@ function SessionViewLoadedContent({
                         presentBlockedSessionComposerSubmission(sessionAdmissionResult);
                     };
 
+                    if (recipientState.scmDiffSummaryDiscussion) {
+                        await sendComposerText(composerMessage, composerMessage, sendOptions);
+                        return;
+                    }
                     const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
                     const resolved = resolveSessionComposerSend({
                         input: composerMessage,

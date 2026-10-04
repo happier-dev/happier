@@ -48,6 +48,7 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
     /** Last-known while the machine is away: the snapshot's own time ("as of 10:42"). */
     asOf?: number | null;
     onReviewChanges?: () => void;
+    onWalkThrough?: () => void;
     testID: string;
 }>) {
     const { theme } = useUnistyles();
@@ -114,7 +115,8 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
             meta={props.asOf ? <SurfaceAsOfLabel at={props.asOf} testID={`${props.testID}.asOf`} /> : null}
             menu={props.menu}
             body={body}
-            footer={canReview ? { kind: 'open', label: t('widgetGlances.reviewChanges'), onPress: props.onReviewChanges! } : null}
+            footer={canReview ? { kind: 'open', label: t('widgetGlances.reviewChanges'), onPress: props.onReviewChanges!,
+                ...(props.onWalkThrough ? { secondary: { label: t('turnChanges.card.walkThrough'), onPress: props.onWalkThrough } } : {}) } : null}
         />
     );
 });
@@ -145,6 +147,9 @@ export function ChangesGlance(props: Readonly<{
     const review = React.useCallback(() => {
         openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' });
     }, [openDetailsTab]);
+    const walkThrough = React.useCallback(() => {
+        openDetailsTab(createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' }, view: 'walkthrough' }), { intent: 'pinned' });
+    }, [openDetailsTab]);
     const away = machine.reachability === 'unreachable';
     return (
         <ChangesGlanceView
@@ -153,7 +158,7 @@ export function ChangesGlance(props: Readonly<{
             frameStyle={props.frameStyle}
             menu={props.menu}
             asOf={away && snapshot ? snapshot.fetchedAt : null}
-            {...(props.measurementOnly ? {} : { onReviewChanges: review })}
+            {...(props.measurementOnly ? {} : { onReviewChanges: review, onWalkThrough: walkThrough })}
         />
     );
 }

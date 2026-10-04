@@ -98,6 +98,8 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'agent-setup'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes', 'other'])).toBe(false);
                 // Only the exact fixture specimens: other dev screens read the signed-in account.
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'logs'])).toBe(false);
             });
@@ -106,6 +108,7 @@ describe('isPublicRouteForUnauthenticated', () => {
         withDevBuild(false, () => {
             withDebugRouteEnv(undefined, () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'agent-setup'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(false);
             });
@@ -115,6 +118,7 @@ describe('isPublicRouteForUnauthenticated', () => {
             withDebugRouteEnv('1', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'changes'])).toBe(true);
             });
         });
     });

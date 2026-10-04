@@ -16,6 +16,8 @@ export const SessionSurfaceItemV1Schema = z.object({
     z.object({ mode: z.literal('fixed'), size: HeightSizeSchema }).strict(),
   ]),
   source: z.discriminatedUnion('kind', [
+    // Development host projection: no saved prose, marks, result id or executable authority.
+    z.object({ kind: z.literal('walkthrough'), comparison: z.enum(['session', 'workingTree']) }).strict(),
     z.object({ kind: z.literal('declarative'), document: SessionSurfaceDeclarativeDocumentV1Schema }).strict(),
     z.object({
       kind: z.literal('hostedHtml'),

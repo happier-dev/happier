@@ -6,6 +6,7 @@ import {
     StrictJsonValueSchema,
     type PendingRequestedActionV1,
     type ParticipantRecipientV1,
+    type SessionDraftRecipientValueV1,
 } from '@happier-dev/protocol';
 
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
@@ -40,6 +41,7 @@ export function useSessionRecipientState(params: Readonly<{
     clearPersistedManualRecipient: () => void;
     executionRunRequestedAction: PendingRequestedActionV1;
     setExecutionRunRequestedAction: (next: PendingRequestedActionV1) => void;
+    scmDiffSummaryDiscussion: Extract<NonNullable<SessionDraftRecipientValueV1>, { mode: 'scm_diff_summary' }>['target'] | null;
 }> {
     const scope = params.accountLifetime?.isCurrent() === true
         ? params.accountLifetime.scope
@@ -67,6 +69,12 @@ export function useSessionRecipientState(params: Readonly<{
         readRoutingSignature,
         readRoutingSignature,
     );
+    const persistedRouting = React.useMemo(() => {
+        if (routingSignature === 'disabled') return null;
+        const parsed = SessionDraftRecipientValueV1Schema.safeParse(JSON.parse(routingSignature)[0]);
+        return parsed.success ? parsed.data : null;
+    }, [routingSignature]);
+    const scmDiffSummaryDiscussion = persistedRouting?.mode === 'scm_diff_summary' ? persistedRouting.target : null;
     const [manualRecipient, setManualRecipientState] = React.useState<ParticipantRecipientV1 | null>(null);
     const [didManualOverride, setDidManualOverride] = React.useState(false);
     const [executionRunRequestedAction, setExecutionRunRequestedAction] = React.useState<PendingRequestedActionV1>(
@@ -106,6 +114,7 @@ export function useSessionRecipientState(params: Readonly<{
 
         if (
             recipient !== null
+            && recipient.kind !== 'execution_run'
             && !isParticipantRecipientAvailable({ targets: params.targets, recipient })
         ) {
             applyHydratedRecipient(null, false);
@@ -115,23 +124,26 @@ export function useSessionRecipientState(params: Readonly<{
         applyHydratedRecipient(recipient, true);
     }, [applyHydratedRecipient, params.targets, persistedSessionId, persistenceEnabled, routingSignature, scope, scopeIsCurrent]);
 
-    // If the manually selected recipient disappears (run completes/team removed), clear it and
-    // allow auto-recipient to apply again.
+    // Team selection follows the roster. A Run's missing local roster entry cannot
+    // authorize routing its message to the parent Agent; Pending decides Run availability.
     React.useEffect(() => {
         if (!manualRecipient) return;
+        if (manualRecipient.kind === 'execution_run') return;
         if (isParticipantRecipientAvailable({ targets: params.targets, recipient: manualRecipient })) return;
         setManualRecipientState(null);
         setDidManualOverride(false);
     }, [manualRecipient, params.targets]);
 
     const effectiveRecipient = React.useMemo(() => {
+        if (persistedRouting?.mode === 'scm_diff_summary') return persistedRouting.recipient;
+        if (persistedRouting?.recipient?.kind === 'execution_run') return persistedRouting.recipient;
         if (manualRecipient) return manualRecipient;
         if (didManualOverride) return null;
         const auto = params.autoRecipient;
         if (!auto) return null;
         if (!isParticipantRecipientAvailable({ targets: params.targets, recipient: auto })) return null;
         return auto;
-    }, [didManualOverride, manualRecipient, params.autoRecipient, params.targets]);
+    }, [didManualOverride, manualRecipient, params.autoRecipient, params.targets, persistedRouting]);
 
     const setManualRecipient = React.useCallback((next: ParticipantRecipientV1 | null) => {
         setDidManualOverride(true);
@@ -174,7 +186,8 @@ export function useSessionRecipientState(params: Readonly<{
 
     return {
         recipient: effectiveRecipient,
-        didManualOverride,
+        didManualOverride: scmDiffSummaryDiscussion !== null || didManualOverride,
+        scmDiffSummaryDiscussion,
         setManualRecipient,
         clearPersistedManualRecipient,
         executionRunRequestedAction,

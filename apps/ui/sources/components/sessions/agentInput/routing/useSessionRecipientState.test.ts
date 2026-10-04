@@ -12,9 +12,10 @@ import {
     resetSessionDraftValueCachesForTests,
     writeSessionDraftValue,
 } from '@/dev/testkit/sessionDraftRepositoryTestkit';
-import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { getSessionDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { useSessionRecipientState } from './useSessionRecipientState';
+import { createScmDiffSummaryResultOperations } from '@/sync/ops/scmDiffSummary/results';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -86,6 +87,87 @@ describe('useSessionRecipientState', () => {
     afterEach(() => {
         resetSessionDraftValueCachesForTests();
         mmkvStore.clear();
+    });
+
+    it('retains a pending seeded walkthrough without falling through to the automatic recipient', async () => {
+        const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'other-run' };
+        const pending = { cwd: '/repo', resultId: 'saved', expectedRevision: 4, startNew: true };
+        writeExistingSessionDraft({ scope: getActiveScope(), sessionId: 'session-a',
+            patch: { text: 'My question', routing: { recipient: { mode: 'scm_diff_summary', recipient: null, target: pending } } },
+            materializationIntent: 'userEdit' });
+        const hook = await renderHook(() => useSessionRecipientState({
+            targets: [target(auto)], autoRecipient: auto, accountLifetime: activeAccountLifetime,
+            draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+        }), { flushOptions: { cycles: 2, turns: 2 } });
+        expect(hook.getCurrent().recipient).toBeNull();
+        expect(hook.getCurrent()).toMatchObject({ didManualOverride: true, scmDiffSummaryDiscussion: pending });
+        await act(async () => {
+            hook.getCurrent().setManualRecipient(null);
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+        expect(hook.getCurrent()).toMatchObject({ recipient: null, scmDiffSummaryDiscussion: null });
+        expect(getSessionDraftSnapshot(getActiveScope(), { kind: 'session', sessionId: 'session-a' })?.document.composer.text.value).toBe('My question');
+        await hook.unmount();
+    });
+
+    it('retains the accepted execution Run before its participant roster arrives', async () => {
+        writeExistingSessionDraft({ scope: getActiveScope(), sessionId: 'session-a',
+            patch: { routing: { recipient: { mode: 'manual', recipient: { kind: 'execution_run', runId: 'accepted-run' } } } },
+            materializationIntent: 'userEdit' });
+        const hook = await renderHook(() => useSessionRecipientState({ targets: [], autoRecipient: null,
+            accountLifetime: activeAccountLifetime, draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+        }), { flushOptions: { cycles: 2, turns: 2 } });
+        expect(hook.getCurrent().recipient).toEqual({ kind: 'execution_run', runId: 'accepted-run' });
+        await hook.unmount();
+    });
+
+    it('settles a seeded first message onto its accepted Run and preserves drafts on a revision conflict', async () => {
+        const targetInput = { cwd: '/repo', resultId: 'saved', expectedRevision: 4, startNew: true };
+        const routing = { mode: 'scm_diff_summary', recipient: null, target: targetInput };
+        writeExistingSessionDraft({ scope: getActiveScope(), sessionId: 'session-a',
+            patch: { text: 'My question', routing: { recipient: routing } }, materializationIntent: 'userEdit' });
+        let admitted = false;
+        let identifyAcceptedRun = false;
+        let changeRecipientWhileAdmitting = false;
+        const sent: unknown[] = [];
+        const ops = createScmDiffSummaryResultOperations({ sessionId: 'session-a', shouldContinue: () => true,
+            composerDraft: { scope: getActiveScope() },
+            rpc: async (_method, input) => {
+                sent.push(input);
+                if (!admitted) return { success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: 5 };
+                if (changeRecipientWhileAdmitting) writeExistingSessionDraft({ scope: getActiveScope(), sessionId: 'session-a',
+                    patch: { text: 'Newer draft', routing: { recipient: { mode: 'manual', recipient: null } } }, materializationIntent: 'userEdit' });
+                return { success: true, ...(identifyAcceptedRun ? { runId: 'accepted-run' } : {}), result: { resultId: 'saved', revision: 5, canUndo: false,
+                    output: { success: true, resultId: 'saved', revision: 5, runId: 'accepted-run', sourceKey: 'comparison',
+                        metadata: { sourceKey: 'comparison', source: { kind: 'workingTree' } },
+                        comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+                        requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'pending' } },
+                        analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } } };
+            } });
+        expect(await ops.discuss({ ...targetInput, message: 'My question' })).toMatchObject({ success: false, errorCode: 'revision_conflict' });
+        let document = getSessionDraftSnapshot(getActiveScope(), { kind: 'session', sessionId: 'session-a' })!.document;
+        expect(document.composer.text.value).toBe('My question');
+        expect(document.target.kind === 'session' && document.target.routing.recipient.value).toEqual(routing);
+        admitted = true;
+        expect(await ops.discuss({ ...targetInput, message: 'My question' })).toMatchObject({ success: false, errorCode: 'admission_unknown' });
+        document = getSessionDraftSnapshot(getActiveScope(), { kind: 'session', sessionId: 'session-a' })!.document;
+        expect(document.target.kind === 'session' && document.target.routing.recipient.value).toEqual(routing);
+        expect(document.composer.text.value).toBe('My question');
+        identifyAcceptedRun = true;
+        expect(await ops.discuss({ ...targetInput, message: 'My question' })).toMatchObject({ success: true, runId: 'accepted-run' });
+        document = getSessionDraftSnapshot(getActiveScope(), { kind: 'session', sessionId: 'session-a' })!.document;
+        expect(document.target.kind === 'session' && document.target.routing.recipient.value).toEqual({ mode: 'manual', recipient: { kind: 'execution_run', runId: 'accepted-run' } });
+        expect(document.composer.text.value).toBe('My question');
+        expect(sent).toEqual(Array.from({ length: 3 }, () => ({ ...targetInput, message: 'My question' })));
+        writeExistingSessionDraft({ scope: getActiveScope(), sessionId: 'session-a',
+            patch: { routing: { recipient: routing } }, materializationIntent: 'userEdit' });
+        changeRecipientWhileAdmitting = true;
+        expect(await ops.discuss({ ...targetInput, message: 'My question' })).toMatchObject({ success: true });
+        document = getSessionDraftSnapshot(getActiveScope(), { kind: 'session', sessionId: 'session-a' })!.document;
+        expect(document.target.kind === 'session' && document.target.routing.recipient.value).toEqual({ mode: 'manual', recipient: null });
+        expect(document.composer.text.value).toBe('Newer draft');
+        expect(await ops.discuss({ ...targetInput, message: 'My question' })).toMatchObject({ success: false, errorCode: 'discussion_unavailable' });
+        expect(sent).toHaveLength(4);
     });
 
     it('defaults execution-run delivery to steer_if_supported and allows overriding', async () => {

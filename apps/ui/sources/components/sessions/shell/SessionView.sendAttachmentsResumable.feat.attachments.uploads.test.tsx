@@ -20,6 +20,10 @@ import {
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { SessionPending } from '@/sync/store/domains/pending';
 
+type StorageModule = typeof import('@/sync/domains/state/storage');
+let originalStorageModule: StorageModule | undefined;
+let originalStorageModulePromise: Promise<StorageModule> | undefined;
+
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
 vi.mock('@/components/sessions/companion/presentation/SessionCompanionPresentationBridge', () => ({
     SessionCompanionPresentationBridge: () => null,
@@ -547,10 +551,11 @@ installSessionShellCommonModuleMocks({
             },
         }).module;
     },
-    storage: async () => {
+    storage: async (importOriginal) => {
         const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
         const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-        return createStorageModuleStub({
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        const fixture = createStorageModuleStub({
             storage: createStorageStoreMock({
                     sessions: { s1: sessionState.session },
                     sessionPending: canonicalSessionPendingState,
@@ -576,6 +581,7 @@ installSessionShellCommonModuleMocks({
                     },
                     sessionListIndexByServerId: {},
                     settings: settingsDefaults,
+                    profile: profileDefaults,
                     deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
             }),
             useSession: () => sessionState.session,
@@ -620,6 +626,19 @@ installSessionShellCommonModuleMocks({
             useLocalSettingMutable: () => [null, localSettingWriter],
             useSettingMutable: () => [null, settingWriter],
         });
+        // Original storage hooks reach syncSettings, which imports this mocked
+        // module. Publish the fixture first rather than await that cycle here.
+        originalStorageModulePromise = importOriginal<StorageModule>().then((actual) => {
+            originalStorageModule = actual;
+            return actual;
+        });
+        return {
+            ...fixture,
+            readSessionMessagesSnapshot: (...args: Parameters<StorageModule['readSessionMessagesSnapshot']>) => {
+                if (!originalStorageModule) throw new Error('Original transcript snapshot reader was not initialized');
+                return originalStorageModule.readSessionMessagesSnapshot(...args);
+            },
+        };
     },
 });
 
@@ -756,6 +775,8 @@ const {
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
 const { SessionView } = await import('./SessionView');
+if (!originalStorageModulePromise) throw new Error('Storage fixture was not initialized');
+await originalStorageModulePromise;
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 await prepareSessionDraftPersistenceStorage();
 
@@ -3600,8 +3621,19 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('sends review comments and attachments with both structured metadata envelopes', async () => {
+    it.each([false, true])('sends review comments and attachments with both metadata envelopes (execution run: %s)', async (executionRun) => {
+        // The real shell only admits a session whose cached Home matches its route.
+        const previousServerId = sessionState.session.serverId;
+        sessionState.session.serverId = 'server-1';
         featureEnabledState.reviewComments = true;
+        chooseSubmitModeState.mode = 'agent_queue';
+        if (executionRun) {
+            sessionSubagentSourceMessagesState.current = [createRunningSubAgentRunMessage('run-review')];
+            writeSessionDraftValue(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient', {
+                kind: 'execution_run', runId: 'run-review',
+            });
+            writeSessionDraftValue(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunRequestedAction', { v: 1, kind: 'enqueue' });
+        }
         reviewCommentDraftsState.current = [{
             id: 'draft-1',
             filePath: 'src/a.ts',
@@ -3622,6 +3654,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             createdAt: 1,
         }];
         sendMessageSpy.mockClear();
+        enqueuePendingMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
         uploadSpy.mockClear();
         modalAlertSpy.mockClear();
@@ -3632,7 +3665,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(<AppPaneProvider>
-                        <SessionView id="s1" />
+                        <SessionView id="s1" routeServerId="server-1" />
                     </AppPaneProvider>)).tree;
 
             pendingFireAndForget.length = 0;
@@ -3655,8 +3688,17 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(pendingFireAndForget.length).toBe(1);
             await pendingFireAndForget[0];
 
-            expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
+            const writer = executionRun ? enqueuePendingMessageSpy : sendMessageSpy;
+            expect(writer).toHaveBeenCalledTimes(1);
+            if (executionRun) {
+                expect(sendMessageSpy).not.toHaveBeenCalled();
+                expect(resumeSessionSpy).not.toHaveBeenCalled();
+                expect(writer.mock.calls[0]?.[4]).toMatchObject({
+                    recipient: { kind: 'execution_run', runId: 'run-review' },
+                    requestedAction: { v: 1, kind: 'enqueue' },
+                });
+            }
+            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = writer.mock.calls[0] ?? [];
             expect(sentSessionId).toBe('s1');
             expect(String(sentText)).toContain('Review comments:');
             expect(String(sentText)).toContain('[attachments]');
@@ -3683,11 +3725,86 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
             expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('server-1:m1:/tmp', 'draft-1');
         } finally {
+            sessionState.session.serverId = previousServerId;
             featureEnabledState.reviewComments = false;
             reviewCommentDraftsState.current = [];
+            sessionSubagentSourceMessagesState.current = [];
             act(() => {
                 tree?.unmount();
             });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('admits a pending seeded walkthrough through saved-result discussion without sending to the Session agent', async () => {
+        // Real credential-resolution and draft owners; only credential custody and
+        // the machine RPC transport are external boundaries in this composed case.
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const scmTransport = await import('@/sync/ops/sessionScm');
+        const { getSessionDraftSnapshot, writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const home = await upsertServerProfile({ name: 'Seeded walkthrough test', serverUrl: 'https://seeded-walkthrough.example.test' });
+        const scope = { serverId: home.id, accountId: 'account-1' };
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: `header.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.signature`,
+        });
+        const transport = vi.spyOn(scmTransport, 'runSessionScmRpc');
+        const conflictResponse = { success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: 5 };
+        const discussionResponse = { success: true, runId: 'seeded-run', result: { resultId: 'saved', revision: 5, canUndo: false,
+            output: { success: true, resultId: 'saved', revision: 5, runId: 'seeded-run', sourceKey: 'comparison',
+                metadata: { sourceKey: 'comparison', source: { kind: 'workingTree' } },
+                comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: '/tmp' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+                requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'pending' } },
+                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } } };
+        transport.mockResolvedValueOnce(conflictResponse);
+        transport.mockResolvedValueOnce(discussionResponse);
+        const previousServerId = sessionState.session.serverId;
+        sessionState.session.serverId = home.id;
+        featureEnabledState.reviewComments = false;
+        const target = { cwd: '/tmp', resultId: 'saved', expectedRevision: 4, startNew: true };
+        writeExistingSessionDraft({ scope, sessionId: 's1', patch: { text: '/compact explain this stop',
+            routing: { recipient: { mode: 'scm_diff_summary', recipient: null, target } } }, materializationIntent: 'userEdit' });
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider><SessionView id="s1" routeServerId={home.id} /></AppPaneProvider>)).tree;
+            const mounted = tree;
+            if (!mounted) throw new Error('SessionView did not mount');
+            await vi.waitFor(() => {
+                const input = findTestInstanceByTypeWithProps(mounted, 'AgentInput', {});
+                expect(input?.props.extraActionChips?.some((chip: { controlId?: string; collapsedOptionsPopover?: { selectedOptionId?: string } }) => (
+                    chip.controlId === 'recipient' && chip.collapsedOptionsPopover?.selectedOptionId === 'pending-scm-discussion'
+                ))).toBe(true);
+            });
+            // This older shell harness intentionally substitutes useDraft's local
+            // text projection. Enter through its real mounted input after binding.
+            await act(async () => invokeTestInstanceHandler(findTestInstanceByTypeWithProps(mounted, 'AgentInput', {}),
+                'onChangeText', '/compact explain this stop', 'AgentInput'));
+            pendingFireAndForget.length = 0;
+            resolveSessionComposerSendMock.mockClear();
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                const input = findTestInstanceByTypeWithProps(mounted, 'AgentInput', {});
+                await act(async () => {
+                    invokeTestInstanceHandler(input, 'onSend', undefined, 'AgentInput');
+                    await pendingFireAndForget.at(-1);
+                });
+                const document = getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 's1' })?.document;
+                expect(document?.composer.text.value).toBe(attempt === 0 ? '/compact explain this stop' : '');
+                expect(document?.target.kind === 'session' && document.target.routing.recipient.value).toEqual(attempt === 0
+                    ? { mode: 'scm_diff_summary', recipient: null, target }
+                    : { mode: 'manual', recipient: { kind: 'execution_run', runId: 'seeded-run' } });
+            }
+            expect(transport).toHaveBeenCalledTimes(2);
+            expect(transport.mock.calls[0]?.[2]).toEqual({ ...target, message: '/compact explain this stop' });
+            expect(resolveSessionComposerSendMock).not.toHaveBeenCalled();
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+            expect(resumeSessionSpy).not.toHaveBeenCalled();
+        } finally {
+            act(() => tree?.unmount());
+            transport.mockRestore();
+            credentials.mockRestore();
+            sessionState.session.serverId = previousServerId;
+            clearSessionDraftValuesForSession(scope, 's1');
             pendingFireAndForget.length = 0;
         }
     });

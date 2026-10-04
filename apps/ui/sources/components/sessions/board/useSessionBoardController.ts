@@ -81,7 +81,7 @@ import {
  * What this Board can add. `fromPlugins` is an availability fact only: the Add popover lists the
  * installed widgets itself and creates one through `item.addInstalled`.
  */
-export type SessionBoardAddIntent = 'note' | 'interactiveView' | 'fromPlugins' | 'askAgent';
+export type SessionBoardAddIntent = 'note' | 'walkthrough' | 'interactiveView' | 'fromPlugins' | 'askAgent';
 
 export type SessionBoardCommand =
     | Readonly<{ kind: 'add'; intent: Exclude<SessionBoardAddIntent, 'fromPlugins'> }>
@@ -698,7 +698,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
     const callerHostedHtmlAvailable = input.callerHostedHtmlAvailable === true;
     const addIntents = React.useMemo((): readonly SessionBoardAddIntent[] => {
         const intents: SessionBoardAddIntent[] = [];
-        if (mutationsBlockedReason === null) intents.push('note');
+        if (mutationsBlockedReason === null) intents.push('note', 'walkthrough');
         if (mutationsBlockedReason === null && callerHostedHtmlAvailable) intents.push('interactiveView');
         // **From plugins…** appears only when this Session's exact projection
         // actually admits a `widget`.
@@ -975,6 +975,26 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 return;
 
             case 'add': {
+                if (command.intent === 'walkthrough') {
+                    await submit(command, (p) => p.upsertItem({
+                        sessionId: current.sessionId,
+                        itemId: randomUUID(),
+                        expectedItemRevision: null,
+                        item: {
+                            v: 1,
+                            title: t('walkthrough.eyebrow'),
+                            frame: 'card',
+                            height: { mode: 'auto', fallback: 'compact' },
+                            source: { kind: 'walkthrough', comparison: 'session' },
+                        },
+                        placement: {
+                            tabId: view.synthetic ? SESSION_BOARD_OVERVIEW_VIEW_ID : view.id,
+                            tabTitle: viewTitle(view),
+                            width: SESSION_BOARD_DEFAULT_ITEM_WIDTH_V1,
+                        },
+                    }));
+                    return;
+                }
                 if (command.intent === 'askAgent') {
                     current.onAskAgent?.();
                     return;

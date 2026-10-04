@@ -72,7 +72,7 @@ export type SessionBoardMountMode =
 export function sessionBoardSourceRequiresExclusiveMount(
     sourceKind: SessionSurfaceItemV1['source']['kind'],
 ): boolean {
-    return sourceKind !== 'declarative';
+    return sourceKind === 'installedSurface' || sourceKind === 'hostedHtml';
 }
 
 export function resolveSessionBoardMountMode(input: Readonly<{

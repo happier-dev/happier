@@ -11,8 +11,6 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { useLayoutMaxWidthStyle } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
-import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
-import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { buildMessageRouteId, resolveMessageRouteIdForDisplay } from "@happier-dev/session-core/messages";
 import { readUnsupportedContentMeta, type UnsupportedContentKind } from "@happier-dev/session-core/messages";
 import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
@@ -100,6 +98,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
 import { SessionMessageAccountByline } from './SessionMessageAccountByline';
 import type { ToolViewDisplaySettings } from '@/components/tools/shell/views/toolViewDisplaySettings';
+import { TranscriptTurnChangesCard } from '@/components/sessions/files/turnChanges/TranscriptTurnChangesCard';
+import { deriveToolMessageDisplay } from '@/components/sessions/transcript/toolCalls/deriveToolMessageDisplay';
 
 const TRANSCRIPT_SELECTION_CHECKBOX_ANCHOR_TOP = 0;
 // The jump-landing ring inherits the radius of the element it paints, so each
@@ -1972,17 +1972,13 @@ function ToolCallBlock(props: {
 	    onJumpToAnchor: handleJumpToAnchor,
 	    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
 	  });
-  const toolForSession = resolveInactiveSessionToolCallFailure({
+  const hasStructuredNode = structuredNode != null;
+  const { turnChanges, shouldRenderToolChrome } = React.useMemo(() => deriveToolMessageDisplay({
     tool: props.message.tool,
+    hasStructuredNode,
+    toolViewTimelineChromeMode,
     permissionDisabledReason: props.interaction.permissionDisabledReason,
-  });
-  const statusKind = resolveToolStatusIndicatorKind(toolForSession);
-  const shouldForceToolChromeForStatus = statusKind === 'error' || statusKind === 'permission_blocked';
-  const shouldRenderToolChrome = !(
-    toolViewTimelineChromeMode === 'activity_feed' &&
-    structuredNode != null &&
-    !shouldForceToolChromeForStatus
-  );
+  }), [props.message.tool, hasStructuredNode, toolViewTimelineChromeMode, props.interaction.permissionDisabledReason]);
   const toolRouteMessageId = resolveMessageRouteIdForDisplay({
         message: props.message,
         messagesById,
@@ -2023,6 +2019,15 @@ function ToolCallBlock(props: {
   const containerContent = (
     <>
       {structuredNode}
+      {turnChanges ? (
+        <TranscriptTurnChangesCard
+          sessionId={props.sessionId}
+          serverId={props.toolChromeCommon.serverId ?? null}
+          turnId={turnChanges.turnId}
+          files={turnChanges.files}
+          onOpenFile={props.interaction.canOpenFiles === true ? handleOpenToolSessionMediaPath : null}
+        />
+      ) : null}
       {!shouldRenderToolChrome && toolPinAction ? (
         <RowActionRevealSlot
           revealed={shouldShowTranscriptRowPinAction({

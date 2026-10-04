@@ -51,6 +51,14 @@ const BOARD = projectSessionBoard({
 const ids = (entries: ReadonlyArray<{ id: string }>) => entries.map((entry) => entry.id);
 
 describe('buildBoardWidgetAddContent', () => {
+    it('adds a live walkthrough through the Board controller rather than saving preview counts', () => {
+        const run = vi.fn();
+        const content = buildBoardWidgetAddContent({ intents: ['walkthrough'], candidates: [], snapshot: BOARD, run, openPlugins: vi.fn() });
+        const entry = content.sections.flatMap((section) => section.entries).find((entry) => entry.id === 'walkthrough');
+        expect(entry).toBeDefined();
+        entry!.onPick();
+        expect(run).toHaveBeenCalledWith({ kind: 'add', intent: 'walkthrough' });
+    });
     it('offers only the sources this Board has a producer for', () => {
         const content = buildBoardWidgetAddContent({
             intents: ['note', 'askAgent'],

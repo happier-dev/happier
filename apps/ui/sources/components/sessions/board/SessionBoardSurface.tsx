@@ -162,6 +162,7 @@ export type { SessionBoardAddIntent } from './useSessionBoardController';
 
 export type SessionBoardSurfaceProps = Readonly<{
     sessionId: string;
+    serverId?: string | null;
     session?: Session;
     controller: SessionBoardController;
     host: SessionBoardMountHost;
@@ -872,6 +873,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
             <SessionWidgetHost
                 expanded={expanded}
                 sessionId={props.sessionId}
+                serverId={props.serverId}
                 {...(props.session ? { session: props.session } : {})}
                 item={projected}
                 host={props.host}

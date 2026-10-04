@@ -31,12 +31,14 @@ import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     resolveSessionBoardMountMode,
+    sessionBoardSourceRequiresExclusiveMount,
     type SessionBoardExecutableCurrentness,
     type SessionBoardItemProjection,
     type SessionBoardMountHost,
 } from '@/sync/domains/session/board';
 
 import { SessionBoardDeclarativeContent } from './SessionBoardDeclarativeContent';
+import { SessionWalkthroughWidgetContent } from './SessionWalkthroughWidgetContent';
 import { InstalledWidgetSurface } from '@/components/widgets/InstalledWidgetSurface';
 import { resolveBoardWidgetProvenance } from '@/components/widgets/boardWidgetProvenance';
 import {
@@ -93,6 +95,7 @@ export type SessionWidgetDensity =
 
 export type SessionWidgetHostProps = Readonly<{
     sessionId: string;
+    serverId?: string | null;
     /** Exact Session projection captured by the route/shell owner. */
     session?: Session;
     item: SessionBoardItemProjection;
@@ -726,7 +729,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
 
     const executablePaused = presentation.kind === 'content'
         && state.kind === 'ready'
-        && state.item.source.kind !== 'declarative'
+        && sessionBoardSourceRequiresExclusiveMount(state.item.source.kind)
         && props.executableCurrentness !== 'current';
     const executablePausedReason = props.executableCurrentness === 'offline'
         ? t('sessionBoard.board.offline')
@@ -771,6 +774,9 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 importantForAccessibility="no-hide-descendants"
             />
         )
+        : state.kind === 'ready' && state.item.source.kind === 'walkthrough'
+            ? <SessionWalkthroughWidgetContent sessionId={props.sessionId} serverId={props.serverId ?? null}
+                comparisonKind={state.item.source.comparison} interactive={presentation.kind === 'content'} testID={`${testID}-walkthrough`} />
         : state.kind === 'ready' && state.item.source.kind === 'declarative'
             ? (
                 <SessionBoardDeclarativeContent
@@ -1042,6 +1048,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
 function sessionWidgetMark(state: SessionBoardItemProjection['state']): IconName {
     if (state.kind !== 'ready') return 'squares-four';
     switch (state.item.source.kind) {
+        case 'walkthrough': return 'path';
         case 'declarative': return 'note';
         case 'hostedHtml': return 'squares-four';
         case 'installedSurface': return 'puzzle-piece';

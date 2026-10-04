@@ -27,6 +27,8 @@ import {
 } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import type { PluginContributedActionController } from '@/components/plugins/actions/pluginContributedActionController';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { resolveSessionScmReviewComparisonLabel } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -311,6 +313,21 @@ export function buildCommandPaletteCommands(
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));
 
   if (features.executionRunsEnabled) {
+    if (activeSessionId && activeSessionServerId) {
+      for (const kind of ['session', 'workingTree'] as const) {
+        const comparison = { kind };
+        cmds.push({
+          id: `walkthrough:${kind}`,
+          title: `${t('turnChanges.card.walkThrough')} · ${resolveSessionScmReviewComparisonLabel(comparison)}`,
+          icon: 'path',
+          category: t('widgetGlances.changesTitle'),
+          action: () => nav.push(buildSessionDetailsHref({
+            sessionId: activeSessionId, serverId: activeSessionServerId,
+            details: { kind: 'scmReview', comparison, view: 'walkthrough' },
+          })),
+        });
+      }
+    }
     const startReview = byId.get('review.start');
     const startPlan = byId.get('subagents.plan.start');
     const startDelegate = byId.get('subagents.delegate.start');

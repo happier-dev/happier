@@ -37,9 +37,12 @@ const buildRunTarget = (runId: string): SessionParticipantTarget => ({
     } satisfies ParticipantRecipientV1,
 });
 
+// Resolve the real UI dependency graph during collection, outside individual
+// behavior-test budgets on cold distributed execution hosts.
+const { createRecipientActionChip } = await import('./createRecipientActionChip');
+
 describe('createRecipientActionChip', () => {
     it('returns undefined when read-only', async () => {
-        const { createRecipientActionChip } = await import('./createRecipientActionChip');
 
         const chip = createRecipientActionChip({
             isReadOnly: true,
@@ -52,7 +55,6 @@ describe('createRecipientActionChip', () => {
     });
 
     it('returns undefined when there are no participant targets', async () => {
-        const { createRecipientActionChip } = await import('./createRecipientActionChip');
 
         const chip = createRecipientActionChip({
             isReadOnly: false,
@@ -64,8 +66,30 @@ describe('createRecipientActionChip', () => {
         expect(chip).toBeUndefined();
     });
 
+    it('keeps pending discussion visible without a Run and lets the user explicitly choose the Session agent', async () => {
+        const onRecipientChange = vi.fn();
+        const chip = createRecipientActionChip({ isReadOnly: false, participantTargets: [], recipient: null,
+            pendingLabel: 'Walkthrough', onRecipientChange });
+        expect(chip?.collapsedOptionsPopover?.selectedOptionId).toBe('pending-scm-discussion');
+        const section = chip?.collapsedOptionsPopover?.rootStep?.sections[0];
+        if (section?.kind !== 'static') throw new Error('Expected recipient options');
+        expect(section.options.find((option) => option.id === 'pending-scm-discussion')?.onSelect).toBeUndefined();
+        section.options.find((option) => option.id === 'lead')?.onSelect?.();
+        expect(onRecipientChange).toHaveBeenCalledWith(null);
+    });
+
+    it('keeps an accepted Run visible and switchable before the participant roster arrives', () => {
+        const onRecipientChange = vi.fn();
+        const chip = createRecipientActionChip({ isReadOnly: false, participantTargets: [],
+            recipient: { kind: 'execution_run', runId: 'accepted-run' }, onRecipientChange });
+        expect(chip).toBeDefined();
+        const section = chip?.collapsedOptionsPopover?.rootStep?.sections[0];
+        if (section?.kind !== 'static') throw new Error('Expected recipient options');
+        section.options.find((option) => option.id === 'lead')?.onSelect?.();
+        expect(onRecipientChange).toHaveBeenCalledWith(null);
+    });
+
     it("publishes a 'list' presentation collapsedOptionsPopover with a rootStep section (no flat options)", async () => {
-        const { createRecipientActionChip } = await import('./createRecipientActionChip');
 
         const chip = createRecipientActionChip({
             isReadOnly: false,
@@ -92,7 +116,6 @@ describe('createRecipientActionChip', () => {
     });
 
     it('exposes per-option onSelect callbacks that dispatch the resolved recipient (lead → null) so the action-menu overlay route fires the mutation', async () => {
-        const { createRecipientActionChip } = await import('./createRecipientActionChip');
 
         const onRecipientChange = vi.fn();
         const targets = [buildMemberTarget('alpha'), buildRunTarget('A1')];
@@ -127,7 +150,6 @@ describe('createRecipientActionChip', () => {
     });
 
     it('descriptor-level onSelect is a documented close-only no-op (does NOT mutate recipient state)', async () => {
-        const { createRecipientActionChip } = await import('./createRecipientActionChip');
 
         const onRecipientChange = vi.fn();
         const targets = [buildMemberTarget('alpha'), buildRunTarget('A1')];
@@ -148,7 +170,6 @@ describe('createRecipientActionChip', () => {
     });
 
     it("reports the lead option as the selected option id when no recipient is set", async () => {
-        const { createRecipientActionChip } = await import('./createRecipientActionChip');
 
         const chip = createRecipientActionChip({
             isReadOnly: false,

@@ -7,6 +7,12 @@ describe('Session surface items', () => {
   it('accepts an explicitly saved blank native note', () => {
     expect(SessionSurfaceItemV1Schema.parse(note)).toEqual(note);
   });
+  it('persists only the walkthrough comparison selector, never frozen progress or result authority', () => {
+    const item = { ...note, source: { kind: 'walkthrough', comparison: 'session' } };
+    expect(SessionSurfaceItemV1Schema.parse(item)).toEqual(item);
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...item, source: { ...item.source, reviewedCount: 2 } }).success).toBe(false);
+    expect(SessionSurfaceItemV1Schema.safeParse({ ...item, source: { kind: 'walkthrough', comparison: 'latest' } }).success).toBe(false);
+  });
   it('accepts canonical host Action requests as data without plugin or caller authority', () => {
     const root = { kind: 'action', hostAction: 'session.message.send', label: 'Send', input: { text: 'Hello' } };
     const item = { ...note, source: { kind: 'declarative', document: { version: 1, root } } };

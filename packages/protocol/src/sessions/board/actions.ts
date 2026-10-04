@@ -56,7 +56,7 @@ const SessionBoardActionSessionIdSchema = z.string().trim().min(1).optional();
 
 /** Mirrors the closed `SessionSurfaceItemV1` source union; a new arm must be classified here too. */
 const SessionSurfaceItemSourceKindV1Schema: z.ZodType<SessionSurfaceItemV1['source']['kind']> =
-  z.enum(['declarative', 'hostedHtml', 'installedSurface']);
+  z.enum(['declarative', 'hostedHtml', 'installedSurface', 'walkthrough']);
 
 export const SessionBoardGetInputV1Schema = z.object({
   sessionId: SessionBoardActionSessionIdSchema,

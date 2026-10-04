@@ -76,7 +76,7 @@ export function createSessionBoardSourceAvailabilityResolver(
     }>,
 ): SessionBoardSourceAvailabilityResolver {
     return (source, context) => {
-        if (source.kind === 'declarative') return AVAILABLE;
+        if (source.kind === 'declarative' || source.kind === 'walkthrough') return AVAILABLE;
         if (source.kind === 'hostedHtml') {
             return options?.hostedHtmlRendererAvailable === true ? AVAILABLE : NO_HTML_RENDERER;
         }

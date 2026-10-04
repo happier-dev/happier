@@ -1,6 +1,6 @@
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
-import type { ProbedResourceSnapshot } from '@happier-dev/protocol';
+import { ProviderModelDescriptorV1Schema, type ProbedResourceSnapshot } from '@happier-dev/protocol';
 
 import { createPersistentProbedResourceCache } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 
@@ -45,6 +45,12 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
         const modelRecord = rawModel as Record<string, unknown>;
         if (typeof modelRecord.id !== 'string' || typeof modelRecord.name !== 'string') return [];
         const modelOptions = normalizeModelOptions(modelRecord.modelOptions);
+        const descriptor = ProviderModelDescriptorV1Schema.safeParse({
+            id: modelRecord.id,
+            name: modelRecord.name,
+            capabilities: modelRecord.capabilities,
+        });
+        if (!descriptor.success) return [];
         return [{
             id: modelRecord.id,
             name: modelRecord.name,
@@ -54,6 +60,11 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
                 ? { extendedContextModelId: modelRecord.extendedContextModelId.trim() }
                 : {}),
             ...(modelOptions ? { modelOptions } : {}),
+            // Retained catalogs may contain synthetic rows; missing persisted evidence stays unknown until a new probe.
+            capabilities: {
+                ...descriptor.data.capabilities,
+                structuredOutput: descriptor.data.capabilities?.structuredOutput ?? 'unknown',
+            },
         }];
     });
     const supportsFreeform = Boolean(supportsFreeformRaw);

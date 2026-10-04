@@ -72,5 +72,9 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // machine RPC), so its side by side pairs run from a clean dev browser. Dev builds only.
     if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'agent-setup' && normalized.length === 2) return true;
 
+    // Changes draws captured fixture bytes with inert actions, not account or machine data.
+    // Only its exact dev/debug specimen is public so clean-browser visual QA can reach it.
+    if (isDevRouteEnabled() && first === 'dev' && normalized[1] === 'changes' && normalized.length === 2) return true;
+
     return false;
 }

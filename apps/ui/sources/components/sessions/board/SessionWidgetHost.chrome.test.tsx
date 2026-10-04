@@ -137,6 +137,13 @@ function elementHasTestId(
 }
 
 describe('SessionWidgetHost chrome', () => {
+    it('renders the live walkthrough source rather than reporting it as an unavailable renderer', async () => {
+        const screen = await renderCard({
+            item: noteItem({ title: 'Walkthrough', source: { kind: 'walkthrough', comparison: 'session' } }),
+            serverId: 'home-1',
+        });
+        expect(screen.findByTestId('widget-walkthrough')).toBeTruthy();
+    });
     beforeEach(() => {
         standardCleanup();
         workletsHarness.defer = false;

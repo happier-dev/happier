@@ -690,7 +690,7 @@ describe('useSessionBoardController', () => {
 
         // Note is native and Ask Agent has a host handler; hosted HTML and installed
         // widget authoring have no producer, so they are absent rather than inert.
-        expect(hook.getCurrent().addIntents).toEqual(['note', 'askAgent']);
+        expect(hook.getCurrent().addIntents).toEqual(['note', 'walkthrough', 'askAgent']);
     });
 
     it('offers Interactive view when the caller-hosted HTML producer is available', async () => {
@@ -702,12 +702,23 @@ describe('useSessionBoardController', () => {
             callerHostedHtmlAvailable: true,
         }));
 
-        expect(hook.getCurrent().addIntents).toEqual(['note', 'interactiveView']);
+        expect(hook.getCurrent().addIntents).toEqual(['note', 'walkthrough', 'interactiveView']);
         await hook.getCurrent().run({ kind: 'add', intent: 'interactiveView' });
         await hook.rerender();
         expect(hook.getCurrent().hostedHtmlDraft).toMatchObject({
             placement: { tabId: 'overview' },
         });
+    });
+    it('creates a live walkthrough and its first placement in the ordinary atomic Board mutation', async () => {
+        const actions = recordingActions();
+        const hook = await mountController({ snapshot: readySnapshot(), actions: actions.port });
+        await hook.getCurrent().run({ kind: 'add', intent: 'walkthrough' });
+        expect(actions.calls).toHaveLength(1);
+        expect(actions.calls[0]).toMatchObject({ kind: 'upsert', input: {
+            sessionId: 'session-1', expectedItemRevision: null,
+            item: { source: { kind: 'walkthrough', comparison: 'session' }, height: { mode: 'auto', fallback: 'compact' } },
+            placement: { tabId: 'overview' },
+        } });
     });
 
     it('omits every add source when the viewer cannot edit', async () => {

@@ -60,7 +60,8 @@ export type WidgetFrameBody =
  * refresh — why they are not current, with Retry.
  */
 export type WidgetFrameFooter =
-    | Readonly<{ kind: 'open'; label: string; onPress: () => void }>
+    | Readonly<{ kind: 'open'; label: string; onPress: () => void;
+        secondary?: Readonly<{ label: string; onPress: () => void }> }>
     | Readonly<{ kind: 'refreshFailed'; reason: string; onRetry?: () => void | Promise<unknown> }>;
 
 export type WidgetFrameProps = Readonly<{
@@ -128,13 +129,14 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             : props.mark;
 
     const footerNode = footer?.kind === 'open' ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }}>
         <HappierPressable
             testID={`${props.testID}.open`}
             accessibilityRole="link"
             accessibilityLabel={footer.label}
             onPress={footer.onPress}
             style={(state) => [
-                styles.footer,
+                styles.footer, { flexGrow: 1 },
                 { paddingHorizontal: inset, minHeight: props.frameStyle === 'plain' ? undefined : FOOTER_MIN_TARGET_PX },
                 state.pressed ? styles.footerPressed : null,
                 focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
@@ -143,6 +145,21 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             <Text style={styles.footerLabel} numberOfLines={1}>{footer.label}</Text>
             <Icon name="caret-right" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
         </HappierPressable>
+        {footer.secondary ? (
+            <HappierPressable
+                testID={`${props.testID}.secondary-open`}
+                accessibilityRole="link"
+                accessibilityLabel={footer.secondary.label}
+                onPress={footer.secondary.onPress}
+                style={(state) => [styles.footer,
+                    { paddingHorizontal: inset, minHeight: FOOTER_MIN_TARGET_PX },
+                    state.pressed ? styles.footerPressed : null,
+                    focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+            >
+                <Text style={styles.footerLabel}>{footer.secondary.label}</Text>
+            </HappierPressable>
+        ) : null}
+        </View>
     ) : footer?.kind === 'refreshFailed' ? (
         <View style={styles.footerFill}>
             <SurfaceFreshnessLine

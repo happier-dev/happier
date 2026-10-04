@@ -66,6 +66,13 @@ describe('resolveSessionBoardPrimaryMountHost', () => {
     });
 });
 describe('resolveSessionBoardMountMode', () => {
+    it('keeps the host walkthrough projection readable without executable plugin custody', () => {
+        const state: SessionBoardItemState = { kind: 'ready', item: {
+            v: 1, title: 'Walkthrough', frame: 'card', height: { mode: 'auto', fallback: 'compact' },
+            source: { kind: 'walkthrough', comparison: 'session' },
+        } };
+        expect(resolveSessionBoardMountMode({ host: 'sidebar', primaryHost: null, state })).toBe('executable');
+    });
     it('renders declarative content live in every visible placement', () => {
         const state = readyState('declarative');
         expect(resolveSessionBoardMountMode({ host: 'sidebar', primaryHost: 'details', state })).toBe('executable');
