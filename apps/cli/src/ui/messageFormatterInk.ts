@@ -1,4 +1,5 @@
 import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk'
+import { formatTextWithOptionsForTerminal } from '@/utils/optionsParser'
 import type { MessageBuffer } from './ink/messageBuffer'
 import { logger } from './logger'
 
@@ -69,11 +70,31 @@ export function formatClaudeMessageForInk(
             const assistantMsg = message as SDKAssistantMessage
             if (assistantMsg.message && assistantMsg.message.content) {
                 messageBuffer.addMessage('🤖 Assistant:', 'assistant')
-                
+
+                // Options can be split across adjacent SDK text blocks (the model
+                // streams one logical message as several contiguous text
+                // fragments). Assemble each contiguous run of text blocks into one
+                // string and format it ONCE so a trailing <options> block that
+                // spans the block boundary is still recognised. Flush the run on
+                // any non-text block or at the end of the content array.
+                let textRun = ''
+                let hasTextRun = false
+                const flushTextRun = (): void => {
+                    if (hasTextRun) {
+                        messageBuffer.addMessage(formatTextWithOptionsForTerminal(textRun), 'assistant')
+                        textRun = ''
+                        hasTextRun = false
+                    }
+                }
+
                 for (const block of assistantMsg.message.content) {
                     if (block.type === 'text') {
-                        messageBuffer.addMessage(block.text || '', 'assistant')
+                        // Join with '' since SDK text blocks are already contiguous
+                        // fragments of the raw stream.
+                        textRun += block.text || ''
+                        hasTextRun = true
                     } else if (block.type === 'tool_use') {
+                        flushTextRun()
                         messageBuffer.addMessage(`🔧 Tool: ${block.name}`, 'tool')
                         if (block.input) {
                             const inputStr = JSON.stringify(block.input, null, 2)
@@ -84,8 +105,11 @@ export function formatClaudeMessageForInk(
                                 messageBuffer.addMessage(`Input: ${inputStr}`, 'tool')
                             }
                         }
+                    } else {
+                        flushTextRun()
                     }
                 }
+                flushTextRun()
             }
             break
         }
@@ -95,7 +119,7 @@ export function formatClaudeMessageForInk(
             if (resultMsg.subtype === 'success') {
                 if ('result' in resultMsg && resultMsg.result) {
                     messageBuffer.addMessage('✨ Summary:', 'result')
-                    messageBuffer.addMessage(resultMsg.result || '', 'result')
+                    messageBuffer.addMessage(formatTextWithOptionsForTerminal(resultMsg.result || ''), 'result')
                 }
                 
                 if (resultMsg.usage) {
