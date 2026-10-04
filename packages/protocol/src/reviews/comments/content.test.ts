@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import {
   createReviewCommentLinkedIssueIdV1,
   type ReviewCommentEventV1,
@@ -512,6 +513,8 @@ describe('Review Comment event-sensitive binding', () => {
         clientMutationId: 'mutation-1',
       },
     });
+    expect(JSON.parse(createCanonicalJsonSigningInput(requestBinding)))
+      .toEqual(requestBinding);
     const sensitive = sealReviewCommentEventSensitiveEnvelopeV1({
       payload: { v: 1, requestBinding, details: source.event },
       mode: 'e2ee',

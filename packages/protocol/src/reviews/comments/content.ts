@@ -760,8 +760,8 @@ export function buildReviewCommentEventRequestBindingV1(params: Readonly<{
   return ReviewCommentEventRequestBindingV1Schema.parse({
     v: 1,
     accountId: params.accountId,
-    projectId: params.projectId,
-    workspace: params.workspace,
+    ...(params.projectId === undefined ? {} : { projectId: params.projectId }),
+    ...(params.workspace === undefined ? {} : { workspace: params.workspace }),
     actionId,
     eventKind: actionEventKind[actionId],
     actor: params.actor,
