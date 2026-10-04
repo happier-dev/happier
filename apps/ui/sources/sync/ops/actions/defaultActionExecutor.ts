@@ -2176,6 +2176,9 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       if (!serverId) return await ordinary().prepare(actionId, input, context);
       const account = await captureLazyActionAccountContext(serverId, context?.signal);
       try {
+        if (context?.expectedAccountId !== undefined && account.accountId !== context.expectedAccountId) {
+          throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+        }
         const settings = await account.readSettings();
         account.assertCurrent();
         context?.signal?.throwIfAborted();

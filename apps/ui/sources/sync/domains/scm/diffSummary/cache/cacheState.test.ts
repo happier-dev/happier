@@ -123,6 +123,6 @@ describe('UI SCM diff-summary cache state', () => {
         });
 
         expect(pruned.prunedEntries).toBe(0);
-        expect(getScmDiffSummaryCacheEntry(pruned.state, keyInput)?.summaryMarkdown).toBe('Rewritten checkpoint.');
+        expect(getScmDiffSummaryCacheEntry(pruned.state, keyInput)).toMatchObject({ summaryMarkdown: 'Rewritten checkpoint.' });
     });
 });

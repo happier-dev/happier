@@ -6,7 +6,13 @@ import type {
     ScmDiffSummaryGenerationState,
     ScmDiffSummaryCostMetadata,
     ScmDiffSummaryTruncation,
+    ScmComparison,
+    ScmDiffSummaryOutputs,
+    ScmDiffSummaryOutputKind,
+    ScmDiffSummaryAnalysisCoverage,
+    ScmDiffSummaryResult,
 } from '@happier-dev/protocol';
+import { buildScmComparisonSourceKey } from '@happier-dev/protocol/scm';
 
 export const SCM_DIFF_SUMMARY_GENERATE_ACTION_ID = 'scm.diffSummary.generate' as const;
 
@@ -21,7 +27,7 @@ export type ScmDiffSummaryRequestKeyInput = Readonly<{
 }>;
 
 export type ScmDiffSummaryPayload = Readonly<{
-    summaryMarkdown: string;
+    summaryMarkdown: string | null;
     output: ScmDiffSummaryGenerateSuccess;
     truncation: ScmDiffSummaryTruncation | null;
     generationState: ScmDiffSummaryGenerationState | null;
@@ -34,6 +40,8 @@ export type ScmDiffSummaryPayload = Readonly<{
 export type ScmDiffSummaryEntry = Readonly<{
     key: string;
     sessionId: string;
+    scopeKey?: string;
+    savedResult?: ScmDiffSummaryResult;
     input: ScmDiffSummaryGenerateInput;
     status: ScmDiffSummaryRequestStatus;
     actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
@@ -47,6 +55,7 @@ export type ScmDiffSummaryEntry = Readonly<{
     latestRun: ExecutionRunPublicState | null;
     finalSummary: ScmDiffSummaryPayload | null;
     lastKnownSummary: ScmDiffSummaryPayload | null;
+    latestOutput: ScmDiffSummaryGenerateOutput | null;
     error: Readonly<{ message: string; code?: string }> | null;
     retryAttempt: number;
 }>;
@@ -60,11 +69,13 @@ export type ScmDiffSummaryEvent =
         type: 'request_started';
         key: string;
         sessionId: string;
+        scopeKey?: string;
         actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
         input: ScmDiffSummaryGenerateInput;
-        runId: string;
-        callId: string;
-        sidechainId: string;
+        runId: string | null;
+        callId?: string;
+        sidechainId?: string;
+        structuredOutput?: ScmDiffSummaryGenerateOutput;
         requestedAtMs: number;
         intent: Exclude<ScmDiffSummaryOperationIntent, 'copy'>;
     }>
@@ -80,6 +91,7 @@ export type ScmDiffSummaryEvent =
         type: 'request_failed';
         key: string;
         sessionId: string;
+        scopeKey?: string;
         actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
         input: ScmDiffSummaryGenerateInput;
         error: string;
@@ -97,12 +109,19 @@ export type ScmDiffSummaryEvent =
         observedAtMs: number;
     }>
     | Readonly<{
+        type: 'saved_result';
+        key: string;
+        result: ScmDiffSummaryResult;
+        observedAtMs: number;
+    }>
+    | Readonly<{
         type: 'copy_requested';
         key: string;
         requestedAtMs: number;
     }>;
 
 export type ScmDiffSummaryViewModel = Readonly<{
+    requestKey: string;
     status: ScmDiffSummaryRequestStatus;
     actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
     executionRunId: string | null;
@@ -123,6 +142,14 @@ export type ScmDiffSummaryViewModel = Readonly<{
     canRetry: boolean;
     retryAttempt: number;
     latestRun: ExecutionRunPublicState | null;
+    comparison: ScmComparison | null;
+    requestedOutputs: readonly ScmDiffSummaryOutputKind[];
+    outputs: ScmDiffSummaryOutputs | null;
+    analysis: ScmDiffSummaryAnalysisCoverage | null;
+    resultId: string | null;
+    revision: number | null;
+    producer: ScmDiffSummaryGenerateOutput['producer'] | null;
+    savedResult: ScmDiffSummaryResult | null;
 }>;
 
 const EMPTY_STATE: ScmDiffSummaryState = Object.freeze({ entriesByKey: Object.freeze({}) });
@@ -133,10 +160,7 @@ export function createInitialScmDiffSummaryState(): ScmDiffSummaryState {
 
 export function buildScmDiffSummaryRequestKey(input: ScmDiffSummaryRequestKeyInput): string {
     const sessionId = input.sessionId.trim();
-    const sourceKind = input.input.source.kind;
-    const turnId = input.input.turnId?.trim() ?? '';
-    const checkpointReceiptId = input.input.checkpointReceiptId?.trim() ?? '';
-    const turnEvidenceMode = input.input.turnEvidenceMode?.trim() ?? '';
+    const sourceKey = input.input.comparisonId ?? buildScmComparisonSourceKey(input.input);
     const cwd = input.input.cwd.trim();
     const schemaVersion = typeof input.summarySchemaVersion === 'number'
         ? String(input.summarySchemaVersion)
@@ -144,34 +168,39 @@ export function buildScmDiffSummaryRequestKey(input: ScmDiffSummaryRequestKeyInp
     const selectorCatalogId = input.resolvedSelector?.catalogId.trim() ?? '';
     return [
         sessionId,
-        sourceKind,
-        turnId,
-        checkpointReceiptId,
-        turnEvidenceMode,
+        sourceKey,
         cwd,
         `schema:${schemaVersion}`,
         `selector:${selectorCatalogId}`,
+        `model:${JSON.stringify([input.input.modelSelector?.profileId ?? null, input.input.modelSelector?.modelId ?? null, input.input.modelSelector?.backendTargetKey ?? null])}`,
+        `outputs:${[...new Set(input.input.outputs ?? ['summary'])].sort().join(',')}`,
     ].join('|');
 }
 
 function readPayload(output: ScmDiffSummaryGenerateOutput | null | undefined): ScmDiffSummaryPayload | null {
     if (!output || output.success !== true) return null;
+    if (!output.summaryMarkdown && !Object.values(output.outputs ?? {}).some((progress) => progress?.value !== undefined)) return null;
+    const summary = output.outputs?.summary?.value;
     return {
-        summaryMarkdown: output.summaryMarkdown,
+        summaryMarkdown: summary?.summaryMarkdown ?? output.summaryMarkdown ?? null,
         output,
         truncation: output.truncation ?? null,
         generationState: output.generationState ?? null,
         cost: output.cost ?? null,
-        risks: output.risks ?? [],
-        testImpact: output.testImpact ?? null,
-        suggestedPrBody: output.suggestedPrBody ?? null,
+        risks: summary?.risks ?? output.risks ?? [],
+        testImpact: summary?.testImpact ?? output.testImpact ?? null,
+        suggestedPrBody: summary?.suggestedPrBody ?? output.suggestedPrBody ?? null,
     };
 }
 
-function statusFromRun(run: ExecutionRunPublicState): ScmDiffSummaryRequestStatus {
-    if (run.status === 'succeeded') return 'succeeded';
-    if (run.status === 'failed' || run.status === 'cancelled') return 'failed';
-    return 'running';
+function statusFromOutput(output: ScmDiffSummaryGenerateOutput | null, input: ScmDiffSummaryGenerateInput): ScmDiffSummaryRequestStatus {
+    if (output?.success === false) return 'failed';
+    if (!output) return 'running';
+    if (!output.outputs) return output.success && output.summaryMarkdown && (input.outputs ?? ['summary']).every((kind) => kind === 'summary') ? 'succeeded' : 'running';
+    const requested: readonly ScmDiffSummaryOutputKind[] = input.outputs ?? ['summary'];
+    const states = requested.map((kind) => output.outputs?.[kind]?.state);
+    if (states.some((status) => status === 'failed' || status === 'cancelled')) return 'failed';
+    return states.every((status) => status === 'complete' || status === 'partial') ? 'succeeded' : 'running';
 }
 
 function writeEntry(state: ScmDiffSummaryState, entry: ScmDiffSummaryEntry): ScmDiffSummaryState {
@@ -190,20 +219,22 @@ function makeStartedEntry(
     return {
         key: event.key,
         sessionId: event.sessionId,
+        scopeKey: event.scopeKey,
         input: event.input,
-        status: 'starting',
+        status: event.structuredOutput ? statusFromOutput(event.structuredOutput, event.input) : 'starting',
         actionId: event.actionId,
         executionRunId: event.runId,
-        callId: event.callId,
-        sidechainId: event.sidechainId,
-        pendingIntent: event.intent,
+        callId: event.callId ?? null,
+        sidechainId: event.sidechainId ?? null,
+        pendingIntent: event.structuredOutput && statusFromOutput(event.structuredOutput, event.input) !== 'running' ? null : event.intent,
         requestedAtMs: event.requestedAtMs,
         observedAtMs: null,
         streamingMarkdown: null,
         latestRun: null,
-        finalSummary: null,
+        finalSummary: readPayload(event.structuredOutput),
         lastKnownSummary: previous?.finalSummary ?? previous?.lastKnownSummary ?? null,
-        error: null,
+        latestOutput: event.structuredOutput ?? null,
+        error: event.structuredOutput?.success === false ? { message: event.structuredOutput.error, code: event.structuredOutput.errorCode } : null,
         retryAttempt: event.intent === 'regenerate' ? previous?.retryAttempt ?? 0 : 0,
     };
 }
@@ -219,6 +250,8 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
         const entry: ScmDiffSummaryEntry = {
             key: event.key,
             sessionId: event.sessionId,
+            scopeKey: event.scopeKey ?? previous?.scopeKey,
+            savedResult: previous?.savedResult,
             input: event.input,
             status: 'failed',
             actionId: event.actionId,
@@ -232,6 +265,7 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
             latestRun: previous?.latestRun ?? null,
             finalSummary: null,
             lastKnownSummary: previous?.finalSummary ?? previous?.lastKnownSummary ?? null,
+            latestOutput: previous?.latestOutput ?? null,
             error: {
                 message: event.error,
                 ...(event.errorCode ? { code: event.errorCode } : {}),
@@ -248,9 +282,9 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
             key: event.key,
             sessionId: event.sessionId,
             input: event.input,
-            status: 'succeeded',
+            status: statusFromOutput(event.output, event.input),
             actionId: event.actionId,
-            executionRunId: null,
+            executionRunId: event.output.runId ?? null,
             callId: null,
             sidechainId: null,
             pendingIntent: null,
@@ -260,6 +294,7 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
             latestRun: null,
             finalSummary: payload,
             lastKnownSummary: payload,
+            latestOutput: event.output,
             error: null,
             retryAttempt: previous?.retryAttempt ?? 0,
         };
@@ -276,22 +311,51 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
     }
 
     if (!previous) return state;
+    if (event.type === 'saved_result') {
+        const current = previous.latestOutput ?? previous.finalSummary?.output;
+        if (current?.resultId !== event.result.resultId
+            || (current.revision ?? -1) > event.result.revision
+            || current.comparison?.id !== event.result.output.comparison?.id) return state;
+        const output = { ...event.result.output, resultId: event.result.resultId, revision: event.result.revision };
+        const payload = readPayload(output);
+        const nextRunId = output.runId ?? previous.executionRunId;
+        return writeEntry(state, {
+            ...previous,
+            savedResult: event.result,
+            latestOutput: output,
+            status: statusFromOutput(output, previous.input),
+            finalSummary: payload,
+            lastKnownSummary: payload ?? previous.lastKnownSummary,
+            executionRunId: nextRunId,
+            latestRun: previous.latestRun?.runId === nextRunId ? previous.latestRun : null,
+            observedAtMs: event.observedAtMs,
+            error: output.success ? null : { message: output.error, code: output.errorCode },
+        });
+    }
+    if (previous.executionRunId && previous.executionRunId !== event.run.runId) return state;
 
-    const structuredPayload = readPayload(event.structuredOutput);
+    const currentRevision = previous.latestOutput?.revision ?? -1;
+    const incoming = event.structuredOutput;
+    const foreignResult = incoming?.resultId && previous.latestOutput?.resultId && incoming.resultId !== previous.latestOutput.resultId;
+    const olderRevision = incoming?.resultId === previous.latestOutput?.resultId && (incoming?.revision ?? -1) < currentRevision;
+    const accepted = foreignResult || olderRevision ? null : incoming;
+    const output = accepted ?? previous.latestOutput;
+    const structuredPayload = readPayload(accepted);
+    const outputStatus = statusFromOutput(output, previous.input);
     const runFailure =
-        event.structuredOutput?.success === false
+        accepted?.success === false
             ? {
-                message: event.structuredOutput.error,
-                code: event.structuredOutput.errorCode,
+                message: accepted.error,
+                code: accepted.errorCode,
             }
-            : event.run.status === 'failed'
+            : outputStatus !== 'succeeded' && (event.run.status === 'failed' || event.run.status === 'cancelled')
                 ? {
                     message: event.run.error?.message ?? 'Summary generation failed',
                     ...(event.run.error?.code ? { code: event.run.error.code } : {}),
                 }
                 : null;
-    const nextStatus = structuredPayload ? 'succeeded' : runFailure ? 'failed' : statusFromRun(event.run);
-    const nextSummary = structuredPayload ?? null;
+    const nextStatus = runFailure ? 'failed' : outputStatus;
+    const nextSummary = structuredPayload ?? previous.finalSummary;
 
     return writeEntry(state, {
         ...previous,
@@ -303,6 +367,7 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
         observedAtMs: event.observedAtMs,
         streamingMarkdown: typeof event.progressMarkdown === 'string' ? event.progressMarkdown : previous.streamingMarkdown,
         latestRun: event.run,
+        latestOutput: output,
         finalSummary: nextSummary,
         lastKnownSummary: nextSummary ?? previous.finalSummary ?? previous.lastKnownSummary,
         error: runFailure,
@@ -313,11 +378,28 @@ export function selectScmDiffSummaryEntry(state: ScmDiffSummaryState, key: strin
     return state.entriesByKey[key] ?? null;
 }
 
+function retainOutputValue<T extends Readonly<{ value?: unknown }>>(current: T | undefined, previous: T | undefined): T | undefined {
+    return current && current.value === undefined && previous?.value !== undefined
+        ? { ...current, value: previous.value }
+        : current;
+}
+
 export function selectScmDiffSummaryViewModel(state: ScmDiffSummaryState, key: string): ScmDiffSummaryViewModel {
     const entry = selectScmDiffSummaryEntry(state, key);
     const summary = entry?.finalSummary ?? entry?.lastKnownSummary ?? null;
+    const output = entry?.latestOutput ?? null;
+    const previousOutputs = output?.comparison?.id && summary && output.comparison.id === summary.output.comparison?.id
+        ? summary.output.outputs : undefined;
+    const outputs = output?.outputs && previousOutputs ? {
+        ...output.outputs,
+        summary: retainOutputValue(output.outputs.summary, previousOutputs.summary),
+        walkthrough: retainOutputValue(output.outputs.walkthrough, previousOutputs.walkthrough),
+        commitPlan: retainOutputValue(output.outputs.commitPlan, previousOutputs.commitPlan),
+    } : output?.outputs ?? summary?.output.outputs ?? null;
+    const requestedOutputs: readonly ScmDiffSummaryOutputKind[] = entry?.input.outputs ?? output?.requestedOutputs ?? ['summary'];
     const isShowingLastKnownSummary = Boolean(entry && !entry.finalSummary && entry.lastKnownSummary);
     return {
+        requestKey: key,
         status: entry?.status ?? 'idle',
         actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
         executionRunId: entry?.executionRunId ?? null,
@@ -327,7 +409,7 @@ export function selectScmDiffSummaryViewModel(state: ScmDiffSummaryState, key: s
         streamingMarkdown: entry?.streamingMarkdown ?? null,
         summaryMarkdown: summary?.summaryMarkdown ?? null,
         isShowingLastKnownSummary,
-        isPartial: summary?.generationState === 'partial' || Boolean(summary?.truncation),
+        isPartial: summary?.generationState === 'partial' || Boolean(summary?.truncation) || requestedOutputs.some((kind) => output?.outputs?.[kind]?.state === 'partial' || summary?.output.outputs?.[kind]?.state === 'partial'),
         truncation: summary?.truncation ?? null,
         generationState: summary?.generationState ?? null,
         cost: summary?.cost ?? null,
@@ -338,5 +420,13 @@ export function selectScmDiffSummaryViewModel(state: ScmDiffSummaryState, key: s
         canRetry: Boolean(entry && (entry.status === 'failed' || entry.status === 'succeeded')),
         retryAttempt: entry?.retryAttempt ?? 0,
         latestRun: entry?.latestRun ?? null,
+        comparison: output?.comparison ?? summary?.output.comparison ?? null,
+        requestedOutputs,
+        outputs,
+        analysis: output?.analysis ?? summary?.output.analysis ?? null,
+        resultId: output?.resultId ?? summary?.output.resultId ?? null,
+        revision: output?.revision ?? summary?.output.revision ?? null,
+        producer: output?.producer ?? summary?.output.producer ?? null,
+        savedResult: entry?.savedResult ?? null,
     };
 }

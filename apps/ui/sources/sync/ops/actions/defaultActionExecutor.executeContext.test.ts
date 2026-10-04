@@ -168,6 +168,17 @@ describe('withDefaultActionExecuteContext', () => {
 
     afterEach(() => standardCleanup());
 
+    it('refuses preparation for another captured Account before creating an approval or machine effect', async () => {
+        const serverId = await addHome();
+        const { createDefaultActionExecutor } = await loadExecutor();
+        expect(await createDefaultActionExecutor().prepare('scm.diffSummary.result.clear', { results: [] }, {
+            serverId, expectedAccountId: 'replacement-account', surface: 'ui', authority: 'present_user',
+            externalActionTarget: { kind: 'machine', machineId: 'machine-scm' },
+        })).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'action_account_scope_changed' } });
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+        expect(rpc.machine).not.toHaveBeenCalled();
+    });
+
     it('executes approved undo on the selected machine with the exact observed HEAD', async () => {
         const serverId = await addHome();
         const { createDefaultActionExecutor } = await loadExecutor();

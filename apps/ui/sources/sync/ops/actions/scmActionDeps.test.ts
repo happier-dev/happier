@@ -22,6 +22,36 @@ beforeEach(() => {
 });
 
 describe('SCM Action target binding', () => {
+    it('routes machine inventory without inventing a repository and rejects a Session inventory request', async () => {
+        const inventory = { success: true, results: [], count: 0, bytes: 0,
+            sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 1 } };
+        rpc.mockResolvedValue(inventory);
+        expect(await createUiScmAction()({ actionId: 'scm.diffSummary.result.list', input: {},
+            context: { serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' } }, executeCanonicalAction,
+        })).toEqual(inventory);
+        expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine', payload: {}, method: 'scm.diffSummary.result.list' }));
+        expect(await createUiScmAction()({ actionId: 'scm.diffSummary.result.list', input: {},
+            context: { defaultSessionId: 'session' }, executeCanonicalAction,
+        })).toMatchObject({ ok: false, errorCode: 'machine_not_selected' });
+    });
+    it('does not attach a Git reconciliation outcome to an unconfirmed result edit', async () => {
+        rpc.mockRejectedValue(new Error('Disconnected'));
+        const response = await createUiScmAction()({ actionId: 'scm.diffSummary.result.edit',
+            input: { cwd: '/repo', resultId: 'saved', expectedRevision: 1, edit: { kind: 'renameWalkthrough', title: 'Draft' } },
+            context: { externalActionTarget: { kind: 'machine', machineId: 'machine' } }, executeCanonicalAction,
+        });
+        expect(response).toMatchObject({ success: false, errorCode: 'COMMAND_OUTCOME_UNKNOWN' });
+        expect(response).not.toHaveProperty('outcome');
+    });
+    it('sends strict saved-result requests without Git mutation envelope fields', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, scmGitRepoPreferredBackend: 'sapling' } });
+        rpc.mockResolvedValue({ success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: 2 });
+        const input = { cwd: '/repo', resultId: 'saved', expectedRevision: 1, edit: { kind: 'renameWalkthrough', title: 'Draft' } };
+        expect(await createUiScmAction()({ actionId: 'scm.diffSummary.result.edit', input,
+            context: { serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' } }, executeCanonicalAction,
+        })).toEqual({ success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: 2 });
+        expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ payload: input }));
+    });
     it('refuses machine undo without an explicit repository instead of using daemon cwd', async () => {
         expect(await createUiScmAction()({ actionId: 'scm.commit.undoLast', input: { expectedHeadOid },
             context: { serverId: 'home-other', runtimeAccountId: 'account-other', externalActionTarget: { kind: 'machine', machineId: 'machine-other' } }, executeCanonicalAction,

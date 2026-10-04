@@ -70,6 +70,7 @@ function executionRunSessionRpc<R, A>(params: Readonly<{
     scope?: ServerAccountScope;
     method: string;
     payload: A;
+    signal?: AbortSignal;
 }>): Promise<R> {
     return params.scope
         ? sessionRpcWithServerAccountScope<R, A>({ ...params, scope: params.scope })
@@ -338,7 +339,7 @@ export async function sessionExecutionRunList(
 export async function sessionExecutionRunGet(
     sessionId: string,
     request: ExecutionRunGetRequest,
-    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope }>,
+    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
 ): Promise<SessionExecutionRunGetResult> {
     try {
         const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
@@ -349,6 +350,7 @@ export async function sessionExecutionRunGet(
             scope: opts?.scope,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
             payload: request,
+            ...(opts?.signal ? { signal: opts.signal } : {}),
         });
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;
@@ -393,16 +395,17 @@ export async function sessionExecutionRunWait(
 export async function sessionExecutionRunAction(
     sessionId: string,
     request: ExecutionRunActionRequest,
-    opts?: Readonly<{ serverId?: string | null }>,
+    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope }>,
 ): Promise<SessionExecutionRunActionResult> {
     try {
-        const serverId = resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
+        const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
         if (!serverId) return createExecutionRunHomeUnavailableResult();
         const sessionMessageResult = ensureExecutionRunUserMessageAllowed(sessionId);
         if (sessionMessageResult) return sessionMessageResult;
-        const response = await sessionRpcWithServerScope<ExecutionRunActionResponse, ExecutionRunActionRequest>({
+        const response = await executionRunSessionRpc<ExecutionRunActionResponse, ExecutionRunActionRequest>({
             sessionId,
             serverId,
+            scope: opts?.scope,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
             payload: request,
         });

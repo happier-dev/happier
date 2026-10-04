@@ -1,591 +1,243 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ExecutionRunPublicState, ScmComparison, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateOutput, ScmDiffSummaryGenerateSuccess, TurnChangeSet } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
+import { createScmDiffSummaryOperations, getScmDiffSummaryOperationState, type ScmDiffSummaryGenerateRpc } from './generate';
 
-import type { ExecutionRunPublicState, ScmDiffSummaryGenerateInput, TurnChangeSet } from '@happier-dev/protocol';
+// Execution-run RPCs are network boundaries; keep all domain and envelope logic real.
+vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+    sessionExecutionRunGet: vi.fn(),
+}));
 
-import {
-    createScmDiffSummaryOperations,
-    getScmDiffSummaryOperationState,
-} from './generate';
-
+const input = { cwd: '/repo', source: { kind: 'turnCheckpoint' }, turnId: 'turn_1', checkpointReceiptId: 'receipt_1' } satisfies ScmDiffSummaryGenerateInput;
+const backendTarget = { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } as const;
 const turnChangeSet = {
-    sessionId: 'session_1',
-    turnId: 'turn_1',
-    seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 },
-    status: 'completed',
-    files: [
-        {
-            filePath: 'src/a.ts',
-            changeKind: 'modified',
-            source: 'scm_checkpoint',
-            confidence: 'exact',
-            provider: 'checkpoint',
-            unifiedDiff: '@@ changed',
-        },
-    ],
-    provider: 'checkpoint',
-    derivedAt: 100,
+    sessionId: 'session_1', turnId: 'turn_1', seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 }, status: 'completed',
+    files: [{ filePath: 'src/a.ts', changeKind: 'modified', source: 'scm_checkpoint', confidence: 'exact', provider: 'checkpoint', unifiedDiff: 'fabricated client bytes' }],
+    provider: 'checkpoint', derivedAt: 100,
+    repositoryCheckpoint: { version: 1, scopeId: 'scope-1', baseRefSource: 'turn_start', contentConfidence: 'exact', attributionScope: 'shared_worktree',
+        receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }] },
 } satisfies TurnChangeSet;
-
-const input = {
-    cwd: '/repo',
-    source: { kind: 'turnCheckpoint' },
-    turnId: 'turn_1',
-    checkpointReceiptId: 'receipt_1',
-} satisfies ScmDiffSummaryGenerateInput;
-
-function succeededRun(): ExecutionRunPublicState {
-    return {
-        runId: 'run_1',
-        callId: 'call_1',
-        sidechainId: 'sidechain_1',
-        intent: 'scm_diff_summary',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
-        ioMode: 'streaming',
-        status: 'succeeded',
-        startedAtMs: 100,
-        finishedAtMs: 200,
-    };
-}
+const comparison = {
+    id: 'comparison_1', source: input.source, repository: { rootPath: '/repo' }, endpoints: { before: 'before', after: 'after' },
+    inventory: { state: 'complete', files: [], reasons: [] },
+} satisfies ScmComparison;
+const pending = {
+    success: true, sourceKey: comparison.id, metadata: { source: input.source, sourceKey: comparison.id }, comparison,
+    requestedOutputs: ['summary'], outputs: { summary: { state: 'pending' } },
+    analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] }, runId: 'run_1', resultId: 'result_1', revision: 0,
+} satisfies ScmDiffSummaryGenerateSuccess;
+const complete = { ...pending, outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Host summary', risks: ['No tests were run.'] } } } } satisfies ScmDiffSummaryGenerateSuccess;
+const run = {
+    runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1', intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 100,
+} satisfies ExecutionRunPublicState;
+const params = { sessionId: 'session_1', backendTarget, input, turnChangeSet };
+const finalCheckpointParams = { ...params,
+    input: { ...input, checkpointReceiptId: 'checkpoint.finalized' },
+    turnChangeSet: { ...turnChangeSet, repositoryCheckpoint: { ...turnChangeSet.repositoryCheckpoint,
+        startRef: 'refs/happier/checkpoints/start', finalRef: 'refs/happier/checkpoints/final',
+        receipts: [{ id: 'checkpoint.finalized', phase: 'turn-final', ref: 'refs/happier/checkpoints/final' }],
+    } },
+    settings: { 'scm.diffSummary.prefetch': true },
+} satisfies Parameters<ReturnType<typeof createScmDiffSummaryOperations>['prefetch']>[0];
 
 describe('SCM diff summary operations', () => {
-    it('starts an explicit user-action execution run for scm.diffSummary.generate', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: start,
-            getExecutionRun: vi.fn(),
-            nowMs: () => 100,
+    it('rejects an explicitly unsupported stored choice without silently admitting the caller default', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        const result = await ops.generateFromUserAction({ ...params,
+            settings: { 'scm.diffSummary.modelProfileOverride': 'unsupported-profile' },
+            catalogProfiles: [{ catalogId: 'unsupported-profile', title: 'Unavailable model', structuredOutput: 'unsupported' }],
         });
-
-        const result = await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet,
-        });
-
-        expect(result.ok).toBe(true);
-        expect(start).toHaveBeenCalledWith('session_1', {
-            kind: 'scm_diff_summary.v1',
-            intent: 'scm_diff_summary',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            permissionMode: 'read_only',
-            retentionPolicy: 'ephemeral',
-            runClass: 'bounded',
-            ioMode: 'streaming',
-            intentInput: {
-                ...input,
-                summarySchemaVersion: 1,
-                resolvedSelector: { catalogId: 'agent:happier.agent.claude/claude' },
-                turnChangeSet,
-            },
-        });
-        expect(getScmDiffSummaryOperationState(ops.getState(), 'summary-key')).toMatchObject({
-            status: 'starting',
-            executionRunId: 'run_1',
-            pendingIntent: 'generate',
-        });
+        expect(result).toMatchObject({ ok: false, errorCode: 'model_structured_output_unsupported' });
+        expect(generate).not.toHaveBeenCalled();
+    });
+    it('consumes the shared picker preference as a canonical model selector rather than a raw backend key', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        await ops.generateFromUserAction({ ...params, settings: { 'scm.diffSummary.modelProfileOverride':
+            'model:{"backendTargetKey":"agent:happier.agent.codex/codex","modelId":"catalog-model"}' } });
+        expect(generate.mock.calls[0]?.[1]?.modelSelector).toMatchObject({ backendTargetKey: 'agent:happier.agent.codex/codex', modelId: 'catalog-model' });
+    });
+    it('reopens a machine-saved result in its exact Account without admitting a model', () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        const scope = { serverId: 'home', accountId: 'account' };
+        const result = { resultId: 'result_1', revision: 3, canUndo: true, output: { ...complete, revision: 3 } };
+        const key = ops.loadSavedResult({ sessionId: 'session_1', scope, result });
+        expect(key).not.toBeNull();
+        expect(getScmDiffSummaryOperationState(ops.getState(), key!)).toMatchObject({ resultId: 'result_1', revision: 3, savedResult: result });
+        expect(generate).not.toHaveBeenCalled();
+        const otherScope = { serverId: 'home', accountId: 'other-account' };
+        const otherKey = ops.loadSavedResult({ sessionId: 'session_1', scope: otherScope, result });
+        ops.deleteSavedResults(scope, ['result_1']);
+        expect(ops.getState().entriesByKey[key!]).toBeUndefined();
+        expect(ops.getState().entriesByKey[otherKey!]).toBeDefined();
+        ops.retireScope(scope);
+        expect(Object.keys(ops.getState().entriesByKey)).toEqual([otherKey]);
+    });
+    it('does not publish a late admission after its captured Account has retired', async () => {
+        let current = true;
+        let resolve!: (output: ScmDiffSummaryGenerateOutput) => void;
+        const ops = createScmDiffSummaryOperations({ generateSummary: () => new Promise((done) => { resolve = done; }) });
+        const admission = ops.generateFromUserAction({ ...params, shouldContinue: () => current });
+        current = false;
+        resolve(pending);
+        expect(await admission).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
+        expect(ops.getState()).toEqual({ entriesByKey: {} });
+    });
+    it('captures Files evidence independently of disabled narration without admitting a model run', async () => {
+        const capture = vi.fn(async () => ({ success: true as const, comparison, metadata: pending.metadata }));
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ captureComparison: capture, generateSummary: generate });
+        const result = await ops.captureComparison({ sessionId: 'session_1', input, serverId: ' server_1 ' });
+        expect(result).toEqual({ success: true, comparison, metadata: pending.metadata });
+        expect(capture).toHaveBeenCalledWith('session_1', { ...input, sessionId: 'session_1' }, { serverId: 'server_1' });
+        expect(generate).not.toHaveBeenCalled();
+        expect(ops.getState()).toEqual({ entriesByKey: {} });
+    });
+    it('withdraws late captured evidence when its Account or Session lifetime retires', async () => {
+        let current = true;
+        let release!: () => void;
+        const waiting = new Promise<void>((resolve) => { release = resolve; });
+        const capture = vi.fn(async () => { await waiting; return { success: true as const, comparison, metadata: pending.metadata }; });
+        const ops = createScmDiffSummaryOperations({ captureComparison: capture });
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const controller = new AbortController();
+        const request = { sessionId: 'session_1', input, scope, signal: controller.signal, shouldContinue: () => current };
+        const result = ops.captureComparison(request);
+        current = false;
+        controller.abort();
+        release();
+        await expect(result).resolves.toMatchObject({ success: false, errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
+        expect(capture).toHaveBeenCalledWith('session_1', { ...input, sessionId: 'session_1' }, { scope, signal: controller.signal });
+        capture.mockClear();
+        await expect(ops.captureComparison(request)).resolves.toMatchObject({ success: false, errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
+        expect(capture).not.toHaveBeenCalled();
+    });
+    it('calls the authenticated generate Action and exposes inventory before prose without forwarding client evidence', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate, nowMs: () => 100 });
+        const result = await ops.generateFromUserAction({ ...params, key: 'summary-key', serverId: ' server_1 ' });
+        expect(generate).toHaveBeenCalledWith('session_1', {
+            ...input, sessionId: 'session_1', modelSelector: { backendTargetKey: buildBackendTargetKeyV2(backendTarget) },
+        }, { serverId: 'server_1' });
+        expect(result).toMatchObject({ ok: true, runId: 'run_1', viewModel: {
+            status: 'running', executionRunId: 'run_1', comparison, outputs: pending.outputs, resultId: 'result_1', summaryMarkdown: null,
+        } });
     });
 
-    it('does not echo raw modelSelector fields into the resolved cache selector', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: start,
-            getExecutionRun: vi.fn(),
-            nowMs: () => 100,
-        });
-
-        await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input: {
-                ...input,
-                modelSelector: { profileId: 'raw-user-profile' },
-            },
-            turnChangeSet,
-        });
-
-        expect(start).toHaveBeenCalledWith(
-            'session_1',
-            expect.objectContaining({
-                intentInput: expect.objectContaining({
-                    resolvedSelector: { catalogId: 'agent:happier.agent.claude/claude' },
-                }),
-            }),
-        );
+    it('preserves caller model selection and includes it in analysis identity', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        const first = await ops.generateFromUserAction({ ...params, input: { ...input, modelSelector: { profileId: 'chosen', modelId: 'model_a' } } });
+        const second = await ops.generateFromUserAction({ ...params, input: { ...input, modelSelector: { profileId: 'chosen', modelId: 'model_b' } } });
+        expect(first.key).not.toBe(second.key);
+        expect(generate.mock.calls[0]?.[1]).toMatchObject({ modelSelector: { profileId: 'chosen', modelId: 'model_a', backendTargetKey: buildBackendTargetKeyV2(backendTarget) } });
     });
 
-    it('refreshes execution-run structured output into the view model', async () => {
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nChanged src/a.ts.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                    risks: ['No tests were run.'],
-                    testImpact: 'Run UI tests.',
-                    suggestedPrBody: 'Changed src/a.ts.',
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' })),
-            getExecutionRun: get,
-            nowMs: () => 100,
-        });
-        await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet,
-        });
-
-        await ops.refreshRun({ key: 'summary-key', sessionId: 'session_1', runId: 'run_1' });
-
+    it('decodes retained run publication through the protocol envelope without waiting for run termination', async () => {
+        const get = vi.fn(async () => ({ run, structuredMeta: { kind: 'scm_diff_summary.v1', payload: complete } }));
+        const ops = createScmDiffSummaryOperations({ generateSummary: async () => pending, getExecutionRun: get });
+        const admitted = await ops.generateFromUserAction(params);
+        const refreshed = await ops.refreshRun({ key: admitted.key, sessionId: 'session_1', runId: 'run_1' });
         expect(get).toHaveBeenCalledWith('session_1', { runId: 'run_1', includeStructured: true });
-        expect(getScmDiffSummaryOperationState(ops.getState(), 'summary-key')).toMatchObject({
-            status: 'succeeded',
-            summaryMarkdown: '## Summary\n\nChanged src/a.ts.',
-            risks: ['No tests were run.'],
-            testImpact: 'Run UI tests.',
-            suggestedPrBody: 'Changed src/a.ts.',
-        });
+        expect(refreshed.viewModel).toMatchObject({ status: 'succeeded', summaryMarkdown: 'Host summary', risks: ['No tests were run.'], latestRun: { status: 'running' } });
     });
 
-    it('reuses cached checkpoint summaries without starting another execution run', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nCached from run.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: start,
-            getExecutionRun: get,
-            nowMs: () => 100,
-        });
+    it('retains authenticated comparison evidence when model admission fails', async () => {
+        const failure = { ...pending, success: false, error: 'Model unavailable', errorCode: 'MODEL_UNAVAILABLE', outputs: { summary: { state: 'failed' } } } satisfies ScmDiffSummaryGenerateOutput;
+        const ops = createScmDiffSummaryOperations({ generateSummary: async () => failure });
+        expect(await ops.generateFromUserAction(params)).toMatchObject({ ok: false, errorCode: 'MODEL_UNAVAILABLE', viewModel: { status: 'failed', comparison, outputs: failure.outputs } });
+    });
 
-        const first = await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: {
-                ...turnChangeSet,
-                repositoryCheckpoint: {
-                    version: 1,
-                    scopeId: 'scope-1',
-                    baseRefSource: 'turn_start',
-                    contentConfidence: 'exact',
-                    attributionScope: 'shared_worktree',
-                    receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
-                },
-            },
-            settings: { 'scm.diffSummary.enabled': true },
-            catalogProfiles: [{ catalogId: 'profile:fast-summary', title: 'Fast summary' }],
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
+    it('rejects malformed structured publication without discarding the captured inventory', async () => {
+        const get = vi.fn(async () => ({ run, structuredMeta: { kind: 'scm_diff_summary.v1', payload: { ...complete, comparison: { ...comparison, id: 'wrong' } } } }));
+        const ops = createScmDiffSummaryOperations({ generateSummary: async () => pending, getExecutionRun: get });
+        const admitted = await ops.generateFromUserAction(params);
+        await ops.refreshRun({ key: admitted.key, sessionId: 'session_1', runId: 'run_1' });
+        expect(getScmDiffSummaryOperationState(ops.getState(), admitted.key)).toMatchObject({ status: 'running', comparison, summaryMarkdown: null });
+    });
+
+    it('asks the host again before reusing completed evidence and never returns summary as walkthrough', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate, getExecutionRun: async () => ({ run, structuredMeta: { kind: 'scm_diff_summary.v1', payload: complete } }) });
+        const first = await ops.generateFromUserAction(params);
+        await ops.generateFromUserAction({ ...params, key: 'pending-again' });
+        expect(generate).toHaveBeenCalledTimes(2);
         await ops.refreshRun({ key: first.key, sessionId: 'session_1', runId: 'run_1' });
-
-        const second = await ops.generateFromUserAction({
-            key: 'summary-key-2',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: {
-                ...turnChangeSet,
-                repositoryCheckpoint: {
-                    version: 1,
-                    scopeId: 'scope-1',
-                    baseRefSource: 'turn_start',
-                    contentConfidence: 'exact',
-                    attributionScope: 'shared_worktree',
-                    receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
-                },
-            },
-            settings: { 'scm.diffSummary.enabled': true },
-            catalogProfiles: [{ catalogId: 'profile:fast-summary', title: 'Fast summary' }],
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-
-        expect(second.ok).toBe(true);
-        expect(start).toHaveBeenCalledTimes(1);
-        expect(second.viewModel).toMatchObject({
-            status: 'succeeded',
-            summaryMarkdown: '## Summary\n\nCached from run.',
-        });
+        const nextComparison = { ...comparison, id: 'comparison_2', endpoints: { before: 'before', after: 'new_after' } };
+        generate.mockResolvedValueOnce({ ...pending, comparison: nextComparison, sourceKey: nextComparison.id, metadata: { ...pending.metadata, sourceKey: nextComparison.id } });
+        const refreshed = await ops.generateFromUserAction({ ...params, key: 'cached' });
+        expect(refreshed.viewModel).toMatchObject({ status: 'running', comparison: nextComparison, summaryMarkdown: null });
+        expect(generate).toHaveBeenCalledTimes(3);
+        await ops.generateFromUserAction({ ...params, input: { ...input, outputs: ['walkthrough'] } });
+        expect(generate).toHaveBeenCalledTimes(4);
     });
 
-    it('keeps durable checkpoint summaries separated when cleanup receipt ids repeat across checkpoint refs', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nCached from run.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: start,
-            getExecutionRun: get,
-            nowMs: () => 100,
-        });
-        const withCheckpointRef = (ref: string) => ({
-            ...turnChangeSet,
-            repositoryCheckpoint: {
-                version: 1,
-                scopeId: 'scope-1',
-                baseRefSource: 'turn_start',
-                contentConfidence: 'exact',
-                attributionScope: 'shared_worktree',
-                receipts: [{ id: 'checkpoint.diff_computed', ref }],
-            },
-        }) satisfies TurnChangeSet;
-
-        const first = await ops.generateFromUserAction({
-            key: 'summary-key-a',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: withCheckpointRef('refs/happier/checkpoints/turn-a'),
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-        await ops.refreshRun({ key: first.key, sessionId: 'session_1', runId: 'run_1' });
-
-        await ops.generateFromUserAction({
-            key: 'summary-key-b',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: withCheckpointRef('refs/happier/checkpoints/turn-b'),
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-
-        expect(start).toHaveBeenCalledTimes(2);
+    it('keeps checkpoint refs and selectors separated and regenerates with canonical bypass policy', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => complete);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        await ops.generateFromUserAction({ ...params, resolvedSelector: { catalogId: 'profile:first' } });
+        await ops.generateFromUserAction({ ...params, turnChangeSet: { ...turnChangeSet, repositoryCheckpoint: { ...turnChangeSet.repositoryCheckpoint, receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/2' }] } }, resolvedSelector: { catalogId: 'profile:first' } });
+        await ops.generateFromUserAction({ ...params, resolvedSelector: { catalogId: 'profile:second' } });
+        await ops.generateFromUserAction({ ...params, intent: 'regenerate', resolvedSelector: { catalogId: 'profile:first' } });
+        expect(generate).toHaveBeenCalledTimes(4);
+        expect(generate.mock.calls[3]?.[1]).toMatchObject({ cachePolicy: { mode: 'bypass' } });
     });
 
-    it('passes durable cache bypass policy for explicit regenerate requests', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nCached from run.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: start,
-            getExecutionRun: get,
-            nowMs: () => 100,
-        });
-        const checkpointTurnChangeSet = {
-            ...turnChangeSet,
-            repositoryCheckpoint: {
-                version: 1,
-                scopeId: 'scope-1',
-                baseRefSource: 'turn_start',
-                contentConfidence: 'exact',
-                attributionScope: 'shared_worktree',
-                receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
-            },
-        } satisfies TurnChangeSet;
-
-        const first = await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-        await ops.refreshRun({ key: first.key, sessionId: 'session_1', runId: 'run_1' });
-
-        await ops.generateFromUserAction({
-            key: 'summary-key-regenerate',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            intent: 'regenerate',
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-
-        expect(start).toHaveBeenCalledTimes(2);
-        const startCalls = start.mock.calls as unknown as Array<readonly [
-            string,
-            Readonly<{ intentInput?: Readonly<Record<string, unknown>> }>,
-        ]>;
-        const secondRequest = startCalls[1]?.[1];
-        expect(secondRequest?.intentInput).toMatchObject({
-            cachePolicy: { mode: 'bypass' },
-        });
+    it('prunes checkpoint projections through the existing cleanup owner', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => complete);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        await ops.generateFromUserAction(params);
+        expect(ops.applyCheckpointCleanupReceipt({ id: 'checkpoint.cleanup_pruned', refs: ['refs/happier/checkpoints/1'], prunedCount: 1 })).toEqual({ prunedEntries: 1 });
+        await ops.generateFromUserAction(params);
+        expect(generate).toHaveBeenCalledTimes(2);
+        await ops.generateFromUserAction({ ...params, turnChangeSet: { ...turnChangeSet, repositoryCheckpoint: { ...turnChangeSet.repositoryCheckpoint, receipts: [{ id: 'checkpoint.cleanup_pruned', refs: ['refs/happier/checkpoints/1'], prunedCount: 1 }] } } });
+        expect(generate).toHaveBeenCalledTimes(3);
     });
 
-    it('does not reuse last-known checkpoint summaries across resolved selectors', async () => {
-        let runSequence = 0;
-        const start = vi.fn(async () => {
-            runSequence += 1;
-            return { runId: `run_${runSequence}`, callId: `call_${runSequence}`, sidechainId: `sidechain_${runSequence}` };
-        });
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nFast profile summary.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({ startExecutionRun: start, getExecutionRun: get, nowMs: () => 100 });
-        const checkpointTurnChangeSet = {
-            ...turnChangeSet,
-            repositoryCheckpoint: {
-                version: 1,
-                scopeId: 'scope-1',
-                baseRefSource: 'turn_start',
-                contentConfidence: 'exact',
-                attributionScope: 'shared_worktree',
-                receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
-            },
-        } satisfies TurnChangeSet;
-
-        const first = await ops.generateFromUserAction({
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-        await ops.refreshRun({ key: first.key, sessionId: 'session_1', runId: 'run_1' });
-
-        const second = await ops.generateFromUserAction({
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            resolvedSelector: { catalogId: 'profile:thorough-summary' },
-        });
-
-        expect(start).toHaveBeenCalledTimes(2);
-        expect(second.key).not.toBe(first.key);
-        expect(second.viewModel).toMatchObject({
-            status: 'starting',
-            summaryMarkdown: null,
-            isShowingLastKnownSummary: false,
-        });
+    it('respects disabled generation and opt-in durable-checkpoint-only prefetch', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        expect(await ops.generateFromUserAction({ ...params, settings: { 'scm.diffSummary.enabled': false } })).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_DISABLED' });
+        expect(await ops.prefetch(params)).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_PREFETCH_DISABLED' });
+        expect(await ops.prefetch({ ...params, input: { cwd: '/repo', source: { kind: 'workingTree' } }, settings: { 'scm.diffSummary.prefetch': true } })).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_PREFETCH_SOURCE_UNSUPPORTED' });
+        expect(generate).not.toHaveBeenCalled();
+        expect((await ops.prefetch(finalCheckpointParams)).ok).toBe(true);
     });
 
-    it('prunes UI operation cache when production turn-change cleanup receipts are delivered', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nPrunable summary.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({ startExecutionRun: start, getExecutionRun: get, nowMs: () => 100 });
-        const checkpointTurnChangeSet = {
-            ...turnChangeSet,
-            repositoryCheckpoint: {
-                version: 1,
-                scopeId: 'scope-1',
-                baseRefSource: 'turn_start',
-                contentConfidence: 'exact',
-                attributionScope: 'shared_worktree',
-                receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
-            },
-        } satisfies TurnChangeSet;
-
-        const first = await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-        await ops.refreshRun({ key: first.key, sessionId: 'session_1', runId: 'run_1' });
-
-        await ops.generateFromUserAction({
-            key: 'summary-key-after-cleanup',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: {
-                ...checkpointTurnChangeSet,
-                repositoryCheckpoint: {
-                    ...checkpointTurnChangeSet.repositoryCheckpoint,
-                    receipts: [{
-                        id: 'checkpoint.cleanup_pruned',
-                        refs: ['refs/happier/checkpoints/1'],
-                        prunedCount: 1,
-                    }],
-                },
-            },
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-
-        expect(start).toHaveBeenCalledTimes(2);
+    it('admits a durable completed checkpoint only once across concurrent delivery and replay, with Account-scoped identity', async () => {
+        let resolve!: (output: ScmDiffSummaryGenerateOutput) => void;
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(() => new Promise((done) => { resolve = done; }));
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        const scoped = { ...finalCheckpointParams, scope: { serverId: 'home', accountId: 'account_a' } };
+        const first = ops.prefetch(scoped);
+        const concurrent = ops.prefetch(scoped);
+        expect(generate).toHaveBeenCalledTimes(1);
+        resolve(pending);
+        const admitted = await first;
+        expect(await concurrent).toEqual(admitted);
+        expect(await ops.prefetch(scoped)).toMatchObject({ ok: true, key: admitted.key, runId: 'run_1' });
+        expect(generate).toHaveBeenCalledTimes(1);
+        const otherAccount = ops.prefetch({ ...scoped, scope: { serverId: 'home', accountId: 'account_b' } });
+        expect(generate).toHaveBeenCalledTimes(2);
+        resolve(pending);
+        await otherAccount;
     });
 
-    it('respects disabled and prefetch settings before starting generation', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const ops = createScmDiffSummaryOperations({
-            startExecutionRun: start,
-            getExecutionRun: vi.fn(),
-            nowMs: () => 100,
-        });
-
-        const disabled = await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet,
-            settings: { 'scm.diffSummary.enabled': false },
-        });
-        const skippedPrefetch = await ops.prefetch({
-            key: 'summary-prefetch',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet,
-            settings: { 'scm.diffSummary.enabled': true, 'scm.diffSummary.prefetch': false },
-        });
-
-        expect(disabled).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_DISABLED' });
-        expect(skippedPrefetch).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_PREFETCH_DISABLED' });
-        expect(start).not.toHaveBeenCalled();
-    });
-
-    it('applies checkpoint cleanup receipts to the UI operation cache', async () => {
-        const start = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1' }));
-        const get = vi.fn(async () => ({
-            run: succeededRun(),
-            structuredMeta: {
-                kind: 'scm_diff_summary.v1',
-                payload: {
-                    success: true,
-                    summaryMarkdown: '## Summary\n\nPrunable summary.',
-                    sourceKey: 'turn:turn_1:receipt_1',
-                    checkpointReceiptId: 'receipt_1',
-                    metadata: {
-                        source: { kind: 'turnCheckpoint' },
-                        sourceKey: 'turn:turn_1:receipt_1',
-                        turnId: 'turn_1',
-                        checkpointReceiptId: 'receipt_1',
-                    },
-                },
-            },
-        }));
-        const ops = createScmDiffSummaryOperations({ startExecutionRun: start, getExecutionRun: get, nowMs: () => 100 });
-        const checkpointTurnChangeSet = {
-            ...turnChangeSet,
-            repositoryCheckpoint: {
-                version: 1,
-                scopeId: 'scope-1',
-                baseRefSource: 'turn_start',
-                contentConfidence: 'exact',
-                attributionScope: 'shared_worktree',
-                receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
-            },
-        } satisfies TurnChangeSet;
-
-        const first = await ops.generateFromUserAction({
-            key: 'summary-key',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-        await ops.refreshRun({ key: first.key, sessionId: 'session_1', runId: 'run_1' });
-
-        expect(ops.applyCheckpointCleanupReceipt({
-            id: 'checkpoint.cleanup_pruned',
-            refs: ['refs/happier/checkpoints/1'],
-            prunedCount: 1,
-        })).toEqual({ prunedEntries: 1 });
-
-        await ops.generateFromUserAction({
-            key: 'summary-key-2',
-            sessionId: 'session_1',
-            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            input,
-            turnChangeSet: checkpointTurnChangeSet,
-            resolvedSelector: { catalogId: 'profile:fast-summary' },
-        });
-
-        expect(start).toHaveBeenCalledTimes(2);
+    it('never prefetches interrupted turns, provider-only evidence, or arbitrary checkpoint receipts', async () => {
+        const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
+        const ops = createScmDiffSummaryOperations({ generateSummary: generate });
+        const invalid = [
+            { ...finalCheckpointParams, turnChangeSet: { ...finalCheckpointParams.turnChangeSet, status: 'interrupted' as const } },
+            { ...finalCheckpointParams, turnChangeSet: { ...turnChangeSet, repositoryCheckpoint: undefined } },
+            { ...params, settings: finalCheckpointParams.settings },
+            { ...finalCheckpointParams, turnChangeSet: { ...finalCheckpointParams.turnChangeSet, repositoryCheckpoint: {
+                ...finalCheckpointParams.turnChangeSet.repositoryCheckpoint, receipts: [{ id: 'checkpoint.captured' as const, phase: 'turn-start' as const, ref: 'refs/happier/checkpoints/start' }],
+            } } },
+        ];
+        for (const candidate of invalid) expect(await ops.prefetch(candidate)).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_PREFETCH_SOURCE_UNSUPPORTED' });
+        expect(generate).not.toHaveBeenCalled();
     });
 });
