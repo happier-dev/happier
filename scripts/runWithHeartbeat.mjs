@@ -78,6 +78,12 @@ interval.unref();
 
 child.on('close', (code, signal) => {
     clearInterval(interval);
+    const diagnosticPrefix = process.env.GITHUB_ACTIONS === 'true' ? '::error::' : '';
+    if (signal) {
+        process.stderr.write(`${diagnosticPrefix}[${label}] command terminated with signal ${signal}\n`);
+    } else if (code !== 0) {
+        process.stderr.write(`${diagnosticPrefix}[${label}] command exited with status ${code ?? 1}\n`);
+    }
     exitWithCommandResult({ status: code, signal });
 });
 child.on('error', (err) => {
