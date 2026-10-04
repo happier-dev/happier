@@ -9,6 +9,7 @@ import {
   SessionServerStartIngressRequestV1Schema,
   SessionSpawnNewInputV2Schema,
   type SessionServerStartHandlerV1,
+  type SessionServerStartSpawnDraftV1,
 } from './sessionServerStartV1.js';
 import {
   SessionServerStartSpawnDraftV1Schema as publicSessionServerStartSpawnDraftV1Schema,
@@ -16,12 +17,12 @@ import {
 
 const draft = {
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-  directory: '/workspace',
+  directory: { kind: 'path', path: '/workspace' },
   agentTarget: {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
   },
-} as const;
+} as const satisfies SessionServerStartSpawnDraftV1;
 
 describe('SessionServerStartSpawnDraftV1Schema', () => {
   it('re-exports the exact browser-safe Session spawn draft projection', () => {
