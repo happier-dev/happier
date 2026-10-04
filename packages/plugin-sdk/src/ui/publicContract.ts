@@ -2,6 +2,7 @@ import type { PluginUiToneV1 as DtoPluginUiToneV1, PluginUiAttachmentToneV1 as D
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 import type { JsonValue } from '../identity.js';
+import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type {
     StoredImageRefV1 as ProtocolStoredImageRefV1,
     PluginUiReadStoredImageResultV1 as ProtocolPluginUiReadStoredImageResultV1,
@@ -331,10 +332,17 @@ export type PluginUiSelectActionInputTargetedRequestV1 = {
     draft?: PluginUiJsonObjectV1;
 };
 
-export type PluginUiSelectActionInputHostRequestV1 = {
-    hostAction: { action: 'session.spawn_new'; projection: 'serverStartDraft' };
-    draft?: PluginUiJsonObjectV1;
-};
+export type PluginUiSelectActionInputHostRequestV1 =
+    | {
+        hostAction: { action: 'session.spawn_new'; projection: 'serverStartDraft' };
+        draft?: PluginUiJsonObjectV1;
+    }
+    | {
+        hostAction: { action: 'review.start'; projection: 'executionRunLaunch' };
+        sessionId: string;
+        serverId?: string;
+        draft: { engineIds: string[]; instructions: string };
+    };
 
 /**
  * What the host writes into its own New Session screen before opening it.
@@ -436,10 +444,17 @@ export type PluginUiSelectActionInputTargetedSubmittedV1 = {
     };
 };
 
-/** Exact result arms: targeted submitted, no-invoke Session draft, or cancellation. */
+/** Exact result arms: targeted submitted, host-owned no-invoke inputs, or cancellation. */
 export type PluginUiSelectActionInputResultV1 =
     | PluginUiSelectActionInputTargetedSubmittedV1
     | { kind: 'serverStartDraft'; draft: PluginUiSessionServerStartDraftV1 }
+    | {
+        kind: 'executionRunLaunch';
+        input: Pick<
+            PluginActionInputById['execution.run.start'],
+            'secretReferenceOverlay' | 'teamCredentialModel' | 'teamCredentialSessionBindingConsent'
+        >;
+    }
     | { kind: 'cancelled' };
 
 /** Mount-scoped, non-durable input completion exposed only when the host installs it. */

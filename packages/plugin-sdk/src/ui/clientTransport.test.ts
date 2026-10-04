@@ -1335,6 +1335,51 @@ describe('plugin UI domain client transport adapter', () => {
         expect('action' in selected).toBe(false);
     });
 
+    it('returns review credential selection without creating an executable Action', async () => {
+        const selectedInput = {
+            secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'personal-secret' } } },
+        };
+        const request = {
+            hostAction: { action: 'review.start' as const, projection: 'executionRunLaunch' as const },
+            sessionId: 'session-1',
+            serverId: 'server-1',
+            draft: { engineIds: ['reviewer'], instructions: 'Review this change' },
+        };
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({
+            authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            identity,
+            transport: {
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') {
+                        receive?.({ wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0', methods: ['selectActionInput'], surface });
+                    }
+                    if (message.kind === 'request' && message.method === 'selectActionInput') {
+                        queueMicrotask(() => receive?.({
+                            wireVersion: 1,
+                            kind: 'result',
+                            identity,
+                            requestId: message.requestId,
+                            method: message.method,
+                            result: { kind: 'executionRunLaunch', input: selectedInput },
+                        }));
+                    }
+                },
+                subscribe(listener) {
+                    receive = listener;
+                    return { dispose: () => { receive = undefined; } };
+                },
+            },
+        });
+        const selected = await api.selectActionInput(request);
+        expect(selected).toEqual({ kind: 'executionRunLaunch', input: selectedInput });
+        expect(sent.filter((message) => message.kind === 'request'))
+            .toEqual([expect.objectContaining({ method: 'selectActionInput', payload: request })]);
+        expect('action' in selected).toBe(false);
+    });
+
     it('emits a host ActionSpec through the Protocol mounted-action request grammar', async () => {
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         let receive: ((message: unknown) => void) | undefined;

@@ -10,6 +10,47 @@ export type SessionLifecycleActionInputById = {
         sessionTitle?: string | undefined;
         serverId?: string | undefined;
         approvedNewDirectoryCreation?: boolean | undefined;
+        destination?: {
+            kind: 'scmReview';
+            comparison: {
+                readonly kind: 'turnCheckpoint';
+                readonly sessionId?: string;
+                readonly turnId?: string;
+                readonly checkpointReceiptId?: string;
+                readonly evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
+            } | {
+                readonly kind: 'session';
+                readonly sessionId: string;
+            } | {
+                readonly kind: 'workingTree';
+            } | {
+                readonly kind: 'branch';
+                readonly head: string;
+                readonly base: string;
+            } | {
+                readonly kind: 'commit';
+                readonly commit: string;
+                readonly parent?: string;
+            } | {
+                readonly kind: 'pullRequest';
+                readonly locator: {
+                    readonly providerId: string;
+                    readonly repository: string;
+                    readonly number: number;
+                    readonly baseOid?: string;
+                    readonly headOid?: string;
+                    readonly sourceAction?: {
+                        readonly action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        readonly input?: JsonValue;
+                    };
+                };
+            };
+            view: 'walkthrough' | 'files';
+            comparisonId?: string | undefined;
+        } | undefined;
     };
     readonly "session.fork": {
         [x: string]: unknown;
