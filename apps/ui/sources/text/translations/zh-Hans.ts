@@ -42,6 +42,13 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -842,6 +849,13 @@ export const zhHans = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.zhHans,
     sessionConversation: sessionConversationSurfaceTranslations.zhHans,
     ...changedFileEvidenceTranslations['zh-Hans'],
+    ...turnChangesTranslations['zh-Hans'],
+    ...scmComparisonTranslations['zh-Hans'],
+    ...walkthroughTranslations['zh-Hans'],
+    ...walkthroughStartTranslations['zh-Hans'],
+    ...reviewWalkthroughTranslations['zh-Hans'],
+    ...commitProposalTranslations['zh-Hans'],
+    ...walkthroughSettingsTranslations['zh-Hans'],
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations['zh-Hans'],
     pluginSurfaces: {
         state: {

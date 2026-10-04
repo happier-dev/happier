@@ -42,6 +42,13 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -834,6 +841,13 @@ export const ca = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.ca,
     sessionConversation: sessionConversationSurfaceTranslations.ca,
     ...changedFileEvidenceTranslations.ca,
+    ...turnChangesTranslations.ca,
+    ...scmComparisonTranslations.ca,
+    ...walkthroughTranslations.ca,
+    ...walkthroughSettingsTranslations.ca,
+    ...walkthroughStartTranslations.ca,
+    ...reviewWalkthroughTranslations.ca,
+    ...commitProposalTranslations.ca,
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.ca,
     pluginSurfaces: {
         state: {

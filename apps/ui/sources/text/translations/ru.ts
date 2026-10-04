@@ -42,6 +42,13 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -859,6 +866,13 @@ export const ru = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.ru,
     sessionConversation: sessionConversationSurfaceTranslations.ru,
     ...changedFileEvidenceTranslations.ru,
+    ...turnChangesTranslations.ru,
+    ...scmComparisonTranslations.ru,
+    ...walkthroughTranslations.ru,
+    ...walkthroughSettingsTranslations.ru,
+    ...walkthroughStartTranslations.ru,
+    ...reviewWalkthroughTranslations.ru,
+    ...commitProposalTranslations.ru,
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.ru,
     pluginSurfaces: {
         state: {

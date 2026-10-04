@@ -190,6 +190,7 @@ import Refresh04Icon from '@hugeicons/core-free-icons/Refresh04Icon';
 import RepeatIcon from '@hugeicons/core-free-icons/RepeatIcon';
 import Resize01Icon from '@hugeicons/core-free-icons/Resize01Icon';
 import Rocket01Icon from '@hugeicons/core-free-icons/Rocket01Icon';
+import Route01Icon from '@hugeicons/core-free-icons/Route01Icon';
 import Scissor01Icon from '@hugeicons/core-free-icons/Scissor01Icon';
 import Search01Icon from '@hugeicons/core-free-icons/Search01Icon';
 import SecurityCheckIcon from '@hugeicons/core-free-icons/SecurityCheckIcon';
@@ -408,6 +409,7 @@ export const HUGE_ICON_REGISTRY = {
     'paper-plane': Sent02Icon,
     'paper-plane-tilt': SentIcon,
     'paperclip': Attachment02Icon,
+    'path': Route01Icon,
     'pause-circle': PauseCircleIcon,
     'paw-print': FootprintsIcon,
     'pencil': PencilIcon,

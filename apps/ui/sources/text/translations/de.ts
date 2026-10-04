@@ -60,6 +60,13 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
 import { pluginWebhookAdministrationTranslations } from './pluginWebhookAdministrationTranslations';
@@ -691,6 +698,13 @@ export const de: TranslationStructure = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.de,
     sessionConversation: sessionConversationSurfaceTranslations.de,
     ...changedFileEvidenceTranslations.de,
+    ...turnChangesTranslations.de,
+    ...scmComparisonTranslations.de,
+    ...walkthroughTranslations.de,
+    ...walkthroughSettingsTranslations.de,
+    ...walkthroughStartTranslations.de,
+    ...reviewWalkthroughTranslations.de,
+    ...commitProposalTranslations.de,
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.de,
     pluginSurfaces: {
         state: {

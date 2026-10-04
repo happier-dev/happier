@@ -42,6 +42,13 @@ import { sessionGitBranchesTranslations } from './sessionGitBranchesTranslations
 import { sessionGitPullRequestTranslations } from './sessionGitPullRequestTranslations';
 import { sessionConversationSurfaceTranslations } from './sessionConversationSurfaceTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -827,6 +834,13 @@ export const ja = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.ja,
     sessionConversation: sessionConversationSurfaceTranslations.ja,
     ...changedFileEvidenceTranslations.ja,
+    ...turnChangesTranslations.ja,
+    ...scmComparisonTranslations.ja,
+    ...walkthroughTranslations.ja,
+    ...walkthroughSettingsTranslations.ja,
+    ...walkthroughStartTranslations.ja,
+    ...reviewWalkthroughTranslations.ja,
+    ...commitProposalTranslations.ja,
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.ja,
     pluginSurfaces: {
         state: {

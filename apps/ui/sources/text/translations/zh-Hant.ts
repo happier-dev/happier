@@ -42,6 +42,13 @@ import { sessionConversationSurfaceTranslations } from './sessionConversationSur
 import { sessionDraftTranslations } from './sessionDraftTranslations';
 import { sessionDirectoryRecoveryTranslations } from './sessionDirectoryRecoveryTranslations';
 import { changedFileEvidenceTranslations } from './changedFileEvidenceTranslations';
+import { turnChangesTranslations } from './turnChangesTranslations';
+import { scmComparisonTranslations } from './scmComparisonTranslations';
+import { walkthroughTranslations } from './walkthroughTranslations';
+import { walkthroughStartTranslations } from './walkthroughStartTranslations';
+import { reviewWalkthroughTranslations } from './reviewWalkthroughTranslations';
+import { commitProposalTranslations } from './commitProposalTranslations';
+import { walkthroughSettingsTranslations } from './walkthroughSettingsTranslations';
 import { voiceReadinessTranslations } from './voiceReadinessTranslations';
 import { voiceDiagnosticsTranslations } from './voiceDiagnosticsTranslations';
 import { voiceProviderPrivacyTranslations } from './voiceProviderPrivacyTranslations';
@@ -927,6 +934,13 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     sessionGitPullRequest: sessionGitPullRequestTranslations.zhHant,
     sessionConversation: sessionConversationSurfaceTranslations.zhHant,
     ...changedFileEvidenceTranslations['zh-Hant'],
+    ...turnChangesTranslations['zh-Hant'],
+    ...scmComparisonTranslations['zh-Hant'],
+    ...walkthroughTranslations['zh-Hant'],
+    ...walkthroughStartTranslations['zh-Hant'],
+    ...reviewWalkthroughTranslations['zh-Hant'],
+    ...commitProposalTranslations['zh-Hant'],
+    ...walkthroughSettingsTranslations['zh-Hant'],
     sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations['zh-Hant'],
   ui: {
     resizableDockedPane: {
