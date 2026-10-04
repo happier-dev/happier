@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
 import * as management from './management.js';
 import {
@@ -365,11 +365,19 @@ describe('Channels target-persisting binding management', () => {
   it('never reports association absence after an unavailable or corrupt binding read', async () => {
     const corrupt = createCollection([bindingRow(automationTarget, 5, { allowedPrincipalIds: [] })]);
     await expect(management.readConversationBindingForInvocation({ automationId: 'automation-1' }, context(corrupt, vi.fn())))
-      .rejects.toMatchObject({ code: 'channels_binding_update_corrupt' });
+      .rejects.toMatchObject({ code: 'channels_binding_management_row_invalid' });
+    // The host Account Collection reports unavailable E2EE material as this
+    // typed failure, never as an empty query page or a corrupt Channels row.
+    const keyUnavailable = new PluginError({
+      code: 'plugin_account_storage_unavailable',
+      message: 'Account encryption material is unavailable',
+    });
     const unavailable = createCollection([]);
-    unavailable.query = async () => { throw new Error('Account Data unavailable'); };
+    unavailable.query = async () => { throw keyUnavailable; };
     await expect(management.readConversationBindingForInvocation({ automationId: 'automation-1' }, context(unavailable, vi.fn())))
-      .rejects.toThrow('Account Data unavailable');
+      .rejects.toBe(keyUnavailable);
+    expect(corrupt.batches).toEqual([]);
+    expect(unavailable.batches).toEqual([]);
   });
   it.each<JsonValue>([
     { kind: 'list', sessionId: 'session-outside-scope' },

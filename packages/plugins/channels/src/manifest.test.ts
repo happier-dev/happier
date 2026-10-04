@@ -27,6 +27,8 @@ import {
   MAX_CONVERSATION_DELIVERY_CHUNKS,
   MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
   SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+  SessionPullRequestBindingInputV1Schema,
+  SessionPullRequestBindingResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 
 import {
@@ -564,6 +566,24 @@ describe('Channels core manifest', () => {
           title: 'Create conversation connection?',
           body: 'This saves the connection and its current transport configuration to this Happier Account.',
           confirmLabel: 'Create connection',
+        },
+        hostAccess: ['account-storage'],
+      },
+      {
+        id: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+        title: 'Manage session pull request binding',
+        description: 'Attaches native SCM PR links and scoped triggers through conversation bindings.',
+        inputSchema: SessionPullRequestBindingInputV1Schema.jsonSchema,
+        resultSchema: SessionPullRequestBindingResultV1Schema.jsonSchema,
+        scopes: ['global'],
+        surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
+        placementBindings: ['commandPalette'],
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        confirmation: {
+          title: 'Manage session pull request binding?',
+          body: 'This can attach a pull request to the selected session or change its scoped conversation trigger bindings.',
+          confirmLabel: 'Continue',
         },
         hostAccess: ['account-storage'],
       },
