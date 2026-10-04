@@ -9,6 +9,7 @@ import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
+import { ExecutionRunLaunchOriginSchema } from '../execution/runs/startRequest.js';
 import {
   ExecutionRunTransportErrorCodeSchema,
   type ExecutionRunTransportErrorCode,
@@ -100,6 +101,8 @@ const canonicalSessionSpawnInput = {
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
   },
 } as const;
+
+const presentUserActionLaunchOrigin = ExecutionRunLaunchOriginSchema.parse({ kind: 'external', source: 'action' });
 
 describe('createActionExecutor (inventory/discovery)', () => {
   it('cancels only the addressed response through the existing cancel-turn RPC Action', async () => {
@@ -275,11 +278,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
         intent: 'delegate',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         permissionMode: 'workspace_write',
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'agent:claude',
         }),
       }),
-      undefined,
+      {},
     );
   });
 
@@ -315,22 +319,25 @@ describe('createActionExecutor (inventory/discovery)', () => {
       'session_1',
       expect.objectContaining({
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        launchOrigin: presentUserActionLaunchOrigin,
         connectedServices: expect.objectContaining({
           bindingsByServiceId: expect.objectContaining({
             'happier.agent.codex/openai-codex': expect.objectContaining({ profileId: 'profile_1' }),
           }),
         }),
       }),
-      undefined,
+      {},
     );
     const claudeCall = (deps.executionRunStart as ReturnType<typeof vi.fn>).mock.calls
       .find((call) => (call[1] as { backendTarget?: { agentId?: string } }).backendTarget?.agentId === 'claude');
     expect(claudeCall?.[1]).toMatchObject({
+      launchOrigin: presentUserActionLaunchOrigin,
       connectedServices: {
         ...blanketSelection,
         v: 2,
       },
     });
+    expect(claudeCall?.[2]).toEqual({});
   });
 
   it('treats successful execution-run service envelopes as successful fanout results', async () => {
@@ -394,11 +401,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
       expect.objectContaining({
         intent: 'plan',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'backend:codex',
         }),
       }),
-      undefined,
+      {},
     );
     expect(deps.executionRunStart).toHaveBeenNthCalledWith(
       2,
@@ -406,11 +414,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
       expect.objectContaining({
         intent: 'plan',
         backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'backend:review-bot:configured:review-bot',
         }),
       }),
-      undefined,
+      {},
     );
   });
 
@@ -747,11 +756,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
         retentionPolicy: 'ephemeral',
         runClass: 'long_lived',
         ioMode: 'streaming',
+        launchOrigin: presentUserActionLaunchOrigin,
         intentInput: expect.objectContaining({
           backendTargetKey: 'agent:codex',
         }),
       }),
-      undefined,
+      {},
     );
   });
 
@@ -1327,6 +1337,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_1',
+      context: { surface: 'ui', authority: 'present_user' },
       answers: [{
         question: 'Where should this run?',
         values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
@@ -1348,6 +1359,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_legacy',
+      context: { surface: 'ui', authority: 'present_user' },
       answers: [{ question: 'What next?', values: ['Proceed'] }],
     });
   });
@@ -1367,11 +1379,12 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_1',
+      context: { surface: 'ui', authority: 'present_user' },
       decision: 'request_changes',
       reason: 'Revise the plan before exiting plan mode.',
       answers: [],
-      updatedPermissions: undefined,
     });
+    expect(vi.mocked(deps.sessionUserActionAnswer!).mock.calls[0]?.[0]).not.toHaveProperty('updatedPermissions');
   });
 
   it('searches enabled action specs through action.spec.search', async () => {
