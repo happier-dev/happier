@@ -119,6 +119,25 @@ describe('createActionExecutor (session control)', () => {
     })).resolves.toMatchObject({ ok: true });
     expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', tabId: 'tab-2' }));
   });
+  it('opens an exact SCM comparison through semantic Session navigation and refuses headless success', async () => {
+    const destination = { kind: 'scmReview', comparison: { kind: 'pullRequest', locator: {
+      providerId: 'hosting-source', repository: 'owner/repo', number: 17,
+      } }, view: 'walkthrough', comparisonId: 'a'.repeat(64) } as const;
+    const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
+    const executor = createExecutor({ sessionOpen, workspaceAction: async () => ({ ok: true }) });
+    await expect(executor.execute('session.open', { sessionId: 's1', serverId: 'home-1', destination }, {
+      surface: 'ui', serverId: 'home-1',
+    })).resolves.toMatchObject({ ok: true });
+    expect(sessionOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', serverId: 'home-1', destination }));
+    sessionOpen.mockClear();
+    await expect(createExecutor({ sessionOpen }).execute('session.open', { sessionId: 's1', serverId: 'home-1', destination }, { surface: 'ui' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    expect(sessionOpen).not.toHaveBeenCalled();
+    await expect(executor.execute('session.open', { sessionId: 's1', serverId: 'home-1', destination: {
+      ...destination, comparison: { kind: 'session', sessionId: 'another-session' },
+    } }, { surface: 'ui', serverId: 'home-1' })).resolves.toMatchObject({ ok: false, error: 'comparison_session_mismatch' });
+    expect(sessionOpen).not.toHaveBeenCalled();
+  });
   it('discovers and invokes the mounted command palette through its current host owner', async () => {
     const commands = [{ id: 'account', title: 'Account' }];
     const uiCommandPaletteAction = async (request: Readonly<{ actionId: string; input: unknown }>) => (

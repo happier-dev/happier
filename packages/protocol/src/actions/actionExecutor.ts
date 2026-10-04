@@ -1,4 +1,5 @@
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
+import type { PublicActionInputById } from './actionSpecs.js';
 import { WaitActionInputV1Schema } from './specs/wait.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
@@ -164,6 +165,7 @@ import {
 } from '../teams/credentials/resourceV1.js';
 import type { SessionRollbackTarget } from '../sessions/rollback.js';
 import type { ReviewStartInput } from '../reviews/reviewStart.js';
+import { ReviewWalkthroughInputSchema, ReviewWalkthroughRequestSchema, ReviewExplainFindingsInputSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../reviews/reviewNarration.js';
 import {
   ReviewCommentActionIdV1Schema,
   ReviewCommentListActionRequestV1Schema,
@@ -1987,12 +1989,21 @@ async function resolveDynamicActionOptions(params: Readonly<{
   return { ok: false, errorCode: 'options_source_not_supported', error: 'options_source_not_supported' };
 }
 
+function readReviewRunActionPayload(value: unknown): unknown {
+  const transport = readRecord(value);
+  const native = transport.ok === true && transport.data !== undefined ? transport.data : value;
+  const host = readRecord(native);
+  return host.ok === true && host.result !== undefined ? host.result : native;
+}
+
+
 type FanoutResultItem = Readonly<{
   key: string;
   ok: boolean;
   result?: unknown;
   errorCode?: string;
   error?: string;
+  details?: ReturnType<typeof withExecutionRunStartFailureDetails>;
 }>;
 
 function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
@@ -2006,7 +2017,11 @@ function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
   return result;
 }
 
-function readFanoutStartError(result: unknown): { errorCode?: string; error: string } {
+function readFanoutStartError(result: unknown): {
+  errorCode?: string;
+  error: string;
+  details: ReturnType<typeof withExecutionRunStartFailureDetails>;
+} {
   const record = readRecord(result);
   const errorCode =
     typeof record.errorCode === 'string'
@@ -2023,6 +2038,7 @@ function readFanoutStartError(result: unknown): { errorCode?: string; error: str
   return {
     error,
     ...(errorCode ? { errorCode } : {}),
+    details: withExecutionRunStartFailureDetails(record.details, readExecutionRunStartRunCreation(record.details)),
   };
 }
 
@@ -2055,11 +2071,12 @@ async function fanoutStarts(params: Readonly<{
             key,
             ok: false,
             ...readFanoutStartError(result),
+            details: withExecutionRunStartFailureDetails(undefined, 'outcomeUnknown'),
           };
         }
         return { key, ok: true, result };
       } catch (error) {
-        return { key, ok: false, error: error instanceof Error ? error.message : 'execution_run_failed' };
+        return { key, ok: false, ...readFanoutStartError(error) };
       }
     }),
   );
@@ -4679,13 +4696,40 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           input: parsed.data,
           context: ctx,
-          executeCanonicalAction: async (nestedActionId, nestedInput) => await execute(
+          executeCanonicalAction: async (nestedActionId, nestedInput, options) => await execute(
             nestedActionId,
             nestedInput,
-            ctx,
+            options?.requiredContributedActionDangerLevel
+              ? { ...ctx, requiredContributedActionDangerLevel: options.requiredContributedActionDangerLevel }
+              : ctx,
           ),
         });
         return completeActionResult(result);
+      }
+
+      if (actionId === 'review.walkthrough' || actionId === 'review.explain_findings') {
+        const input = actionId === 'review.walkthrough'
+          ? ReviewWalkthroughInputSchema.parse(parsed.data)
+          : ReviewExplainFindingsInputSchema.parse(parsed.data);
+        const sessionId = resolveSessionIdFromInput(input, ctx);
+        if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+        const { sessionId: _sessionId, runId, reviewRunIds, ...request } = input;
+        const nestedInput = actionId === 'review.walkthrough'
+          ? ReviewWalkthroughRequestSchema.parse({ ...request, reviewRunIds: reviewRunIds ?? [runId] })
+          : ReviewExplainFindingsRequestSchema.parse({ ...request, reviewRunIds: reviewRunIds ?? [runId] });
+        // Reuse the existing Run Action admission/authority transport in every surface.
+        const response = await execute('execution.run.action', { sessionId, runId, actionId, input: nestedInput }, ctx);
+        if (!response.ok) return response;
+        const payload = readReviewRunActionPayload(response.result);
+        const host = readRecord(payload);
+        if (host.ok === false) return { ok: false,
+          errorCode: typeof host.errorCode === 'string' ? host.errorCode : 'review_action_failed',
+          error: typeof host.error === 'string' ? host.error : 'review_action_failed' };
+        if (actionId === 'review.walkthrough') return { ok: true, result: payload };
+        const refinement = ReviewExplainFindingsRefinementSchema.safeParse(payload);
+        if (!refinement.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+        // Targeting was verified by the host; revision admission remains with U3.
+        return execute(refinement.data.refinement.actionId, refinement.data.refinement.input, { ...ctx, defaultSessionId: sessionId });
       }
 
       if (actionId === 'review.start') {
@@ -5283,6 +5327,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             input: data.input,
             context: ctx,
             ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
+            ...(ctx.requiredContributedActionDangerLevel ? { requiredDangerLevel: ctx.requiredContributedActionDangerLevel } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
         }
@@ -5615,6 +5660,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             runId: data.runId,
             includeStructured: data.includeStructured === true,
             ...(data.waitForInputId ? { waitForInputId: data.waitForInputId } : {}),
+            ...(data.waitForOutput ? { waitForOutput: data.waitForOutput } : {}),
           }, capability.opts);
           return completeExecutionRunServiceActionResult(actionId, res);
         }
@@ -5976,15 +6022,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (actionId === 'session.open') {
           // A headless Session-open owner can resume Sessions, but cannot target a client tab.
-          if (typeof data.tabId === 'string' && !deps.workspaceAction) {
+          if ((typeof data.tabId === 'string' || data.destination !== undefined) && !deps.workspaceAction) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
           }
           const resolution = await resolveActionSessionAddress(deps, data, ctx);
           if (resolution.kind !== 'unique') return projectSessionReferenceFailure(resolution);
           const { serverId, sessionId } = resolution.address;
+          const destination = (parsed.data as PublicActionInputById['session.open']).destination;
+          if (destination && 'sessionId' in destination.comparison && destination.comparison.sessionId
+            && destination.comparison.sessionId !== sessionId) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_session_mismatch' };
+          }
           const res = await deps.sessionOpen({
             sessionId,
             serverId,
+            ...(destination ? { destination } : {}),
             ...(typeof data.tabId === 'string' ? { tabId: data.tabId } : {}),
             ...(typeof data.approvedNewDirectoryCreation === 'boolean'
               ? { approvedNewDirectoryCreation: data.approvedNewDirectoryCreation } : {}),
