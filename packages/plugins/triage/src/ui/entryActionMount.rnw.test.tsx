@@ -2,6 +2,12 @@
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import type {
+    PluginUiSessionServerStartDraftV1,
+    PluginUiTargetedContributionContributorV1,
+    PluginUiTargetedContributionOperationV1,
+    PluginUiTargetedContributionTargetV1,
+} from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -92,6 +98,18 @@ const SECOND_ENTRY_REF = Object.freeze({
     entryId: '18',
 });
 
+const TARGET_IDENTITY = Object.freeze({
+    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+    occurrenceId: 'target-occurrence-1',
+    sourceCustody: { kind: 'managed', immutableGenerationId: 'target-generation-1', installSource: 'npm' },
+} as const) satisfies PluginUiTargetedContributionTargetV1;
+const SOURCE_CONTRIBUTOR = Object.freeze({
+    pluginId: SOURCE.pluginId,
+    contributionId: SOURCE.localId,
+    occurrenceId: 'source-occurrence-1',
+    sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'npm' },
+} as const) satisfies PluginUiTargetedContributionContributorV1;
+
 const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
     point: {
         pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -100,14 +118,10 @@ const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
             version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
         },
     },
-    contributor: {
-        pluginId: SOURCE.pluginId,
-        contributionId: SOURCE.localId,
-        immutableGenerationId: 'generation-1',
-    },
+    contributor: SOURCE_CONTRIBUTOR,
     role: 'prepareReviewWorkspace',
     action: { pluginId: SOURCE.pluginId, localId: 'prepare-review-workspace' },
-});
+}) satisfies PluginUiTargetedContributionOperationV1;
 
 /**
  * The source's own declared descriptor, as this mount's targeted snapshot
@@ -158,9 +172,9 @@ function projectRow(overrides: Readonly<Record<string, unknown>> = {}) {
 /** What the host settles once the reader has picked an Agent and a directory. */
 const SETTLED_DRAFT = Object.freeze({
     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
-    directory: '/workspaces/example',
+    directory: { kind: 'path', path: '/workspaces/example' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.claude', localId: 'claude' } },
-});
+} as const) satisfies PluginUiSessionServerStartDraftV1;
 
 function configuredInstance(): TriageConfiguredSourceInstanceV1 {
     return TriageConfiguredSourceInstanceV1Schema.parse({
@@ -236,11 +250,7 @@ function createHarness(options: Readonly<{
     let startResultIndex = 0;
 
     const admitted = [{
-        contributor: {
-            pluginId: SOURCE.pluginId,
-            contributionId: SOURCE.localId,
-            immutableGenerationId: 'generation-1',
-        },
+        contributor: SOURCE_CONTRIBUTOR,
         protocol: {
             id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
             version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -393,10 +403,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture({
                 targetedContributions: {
-                    target: {
-                        pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-                        immutableGenerationId: 'target-generation-1',
-                    },
+                    target: TARGET_IDENTITY,
                     points: [{
                         pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
                         protocols: [{
@@ -405,11 +412,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                                 version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
                             },
                             contributions: [{
-                                contributor: {
-                                    pluginId: SOURCE.pluginId,
-                                    contributionId: SOURCE.localId,
-                                    immutableGenerationId: 'generation-1',
-                                },
+                                contributor: SOURCE_CONTRIBUTOR,
                                 protocol: {
                                     id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
                                     version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -438,11 +441,15 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                             input: request.draft ?? {},
                             selection: {
                                 target: {
-                                    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-                                    immutableGenerationId: 'target-generation-1',
+                                    pluginId: TARGET_IDENTITY.pluginId,
+                                    sourceCustody: TARGET_IDENTITY.sourceCustody,
                                 },
                                 point: operation.point,
-                                contributor: operation.contributor,
+                                contributor: {
+                                    pluginId: operation.contributor.pluginId,
+                                    contributionId: operation.contributor.contributionId,
+                                    sourceCustody: operation.contributor.sourceCustody,
+                                },
                             },
                             connectedAccount: {
                                 kind: 'selected',
@@ -1252,7 +1259,11 @@ describe('the entry action controls on the mounted detail header', () => {
             },
             prepareReviewWorkspaceSelection: {
                 selection: {
-                    contributor: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor,
+                    contributor: {
+                        pluginId: SOURCE_CONTRIBUTOR.pluginId,
+                        contributionId: SOURCE_CONTRIBUTOR.contributionId,
+                        sourceCustody: SOURCE_CONTRIBUTOR.sourceCustody,
+                    },
                     point: PREPARE_REVIEW_WORKSPACE_OPERATION.point,
                 },
                 credentialRef: configuredInstance().binding.account,
@@ -1302,7 +1313,11 @@ describe('the entry action controls on the mounted detail header', () => {
             },
             prepareReviewWorkspaceSelection: {
                 selection: {
-                    contributor: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor,
+                    contributor: {
+                        pluginId: SOURCE_CONTRIBUTOR.pluginId,
+                        contributionId: SOURCE_CONTRIBUTOR.contributionId,
+                        sourceCustody: SOURCE_CONTRIBUTOR.sourceCustody,
+                    },
                     point: PREPARE_REVIEW_WORKSPACE_OPERATION.point,
                 },
                 credentialRef: configuredInstance().binding.account,

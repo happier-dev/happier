@@ -21,6 +21,10 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
     packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src'),
   },
   {
+    packageName: '@happier-dev/agents',
+    packageSourceRoot: resolve(repoRoot, 'packages/agents/src'),
+  },
+  {
     packageName: '@happier-dev/triage-protocol',
     packageSourceRoot: resolve(repoRoot, 'packages/triage-protocol/src'),
   },
