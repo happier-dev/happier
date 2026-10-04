@@ -48,7 +48,7 @@ const scheduleExecutionRecipe = {
         kind: "newSession" as const,
         spawn: {
             executionTarget: { serverId: "server-1", machineId: "machine-1" },
-            directory: "/tmp/daily-sweep",
+            directory: { kind: "path", path: "/tmp/daily-sweep" },
             agentTarget: {
                 kind: "agent" as const,
                 identity: { pluginId: "happier.agent.codex", localId: "codex" },
