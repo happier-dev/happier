@@ -89,7 +89,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
   captureApprovalReplayPlacement?: true;
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
-  return async ({ action, input: actionInput, context, approvalExecutionOrigin, signal }) => {
+  return async ({ action, input: actionInput, context, approvalExecutionOrigin, requiredDangerLevel, signal }) => {
     const invocationSignal = signal ?? context.signal ?? new AbortController().signal;
     invocationSignal.throwIfAborted();
     const surface = input.fixedInvocationSurface ?? readSurface(context.surface);
@@ -111,6 +111,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         runtimeRegistry: lease.registry,
         actionId: buildQualifiedPluginContributionKey(action),
         input: actionInput,
+        ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
         ...(input.captureApprovalReplayPlacement ? { captureApprovalReplayPlacement: true } : {}),
         ...(input.requestCurrentIntent
           ? {

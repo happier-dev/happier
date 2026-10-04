@@ -78,8 +78,22 @@ export function registerWorkspaceAnchorHandlers(
 
       const resolutions: WorkspaceAnchorResolutionV1[] = [];
       for (const comment of parsed.data.comments) {
-        const file = await readWorkspaceFile(comment.filePath);
         const originalAnchor = comment.anchor;
+        const anchor = normalizeWorkspaceAnchor({ filePath: comment.filePath, anchor: originalAnchor });
+        // V1 has no comparison endpoints. A snapshot is a navigation hint, not
+        // evidence that either historical diff side is the current working file.
+        const sameFile = relative(resolve(workspace.resolvedPath, anchor.filePath), resolve(workspace.resolvedPath, comment.filePath)) === '';
+        if (comment.source === 'diff' || anchor.side || !sameFile || originalAnchor.kind === 'diffLine') {
+          resolutions.push({
+            id: comment.id, filePath: comment.filePath, originalAnchor,
+            status: 'unsupported', confidence: 0,
+            reason: comment.source === 'diff' || anchor.side || originalAnchor.kind === 'diffLine'
+              ? 'Diff anchors require captured comparison-side evidence; V1 workspace resolution only reads the current file'
+              : 'Anchor file path does not match the requested file',
+          });
+          continue;
+        }
+        const file = await readWorkspaceFile(comment.filePath);
         if (!file.ok) {
           resolutions.push({
             id: comment.id,
@@ -96,10 +110,7 @@ export function registerWorkspaceAnchorHandlers(
           id: comment.id,
           filePath: comment.filePath,
           originalAnchor,
-          anchor: normalizeWorkspaceAnchor({
-            filePath: comment.filePath,
-            anchor: originalAnchor,
-          }),
+          anchor,
           lines: file.lines,
           hashes: file.hashes,
         }));
@@ -149,6 +160,7 @@ async function readAuthorizedWorkspaceFile(params: Readonly<{
 }
 
 function splitTextLines(content: string): readonly string[] {
+  if (content.length === 0) return [];
   const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (normalized.endsWith('\n')) {
     return normalized.slice(0, -1).split('\n');
@@ -227,8 +239,8 @@ function resolveLineAnchor(params: Readonly<{
       };
       return buildResolution({
         ...params,
-        status: 'exact',
-        confidence: 1,
+        status: params.anchor.lineHash ? 'exact' : 'context',
+        confidence: params.anchor.lineHash ? 1 : 0.5,
         resolvedAnchor,
         startLine: params.anchor.line,
         endLine: params.anchor.line,
@@ -272,7 +284,7 @@ function resolveLineAnchor(params: Readonly<{
     id: params.id,
     filePath: params.filePath,
     originalAnchor: params.originalAnchor,
-    status: 'missing',
+    status: zeroIndex >= 0 && zeroIndex < params.lines.length ? 'stale' : 'missing',
     confidence: 0,
     reason: 'Line anchor could not be resolved',
   };
@@ -288,10 +300,12 @@ function resolveRangeAnchor(params: Readonly<{
 }>): WorkspaceAnchorResolutionV1 {
   const startIndex = params.anchor.startLine - 1;
   const endIndex = params.anchor.endLine - 1;
+  const selectedTextMatches = (start: number, end: number) => !params.anchor.selectedTextHash
+    || computeLineContentHashV1(params.lines.slice(start, end + 1).join('\n')) === params.anchor.selectedTextHash;
   if (startIndex >= 0 && endIndex < params.lines.length && startIndex <= endIndex) {
     const startMatches = !params.anchor.startLineHash || params.hashes[startIndex] === params.anchor.startLineHash;
     const endMatches = !params.anchor.endLineHash || params.hashes[endIndex] === params.anchor.endLineHash;
-    if (startMatches && endMatches) {
+    if (startMatches && endMatches && selectedTextMatches(startIndex, endIndex)) {
       const resolvedAnchor = {
         kind: 'range' as const,
         filePath: params.filePath,
@@ -300,11 +314,12 @@ function resolveRangeAnchor(params: Readonly<{
         side: params.anchor.side,
         startLineHash: params.hashes[startIndex],
         endLineHash: params.hashes[endIndex],
+        selectedTextHash: params.anchor.selectedTextHash,
       };
       return buildResolution({
         ...params,
-        status: 'exact',
-        confidence: 1,
+        status: params.anchor.selectedTextHash ? 'exact' : 'context',
+        confidence: params.anchor.selectedTextHash ? 1 : 0.5,
         resolvedAnchor,
         startLine: params.anchor.startLine,
         endLine: params.anchor.endLine,
@@ -314,10 +329,12 @@ function resolveRangeAnchor(params: Readonly<{
 
   if (params.anchor.startLineHash && params.anchor.endLineHash) {
     const startMatches = findHashMatches(params.hashes, params.anchor.startLineHash);
-    const endMatches = findHashMatches(params.hashes, params.anchor.endLineHash);
-    if (startMatches.length === 1 && endMatches.length === 1 && startMatches[0] <= endMatches[0]) {
-      const startLine = startMatches[0] + 1;
-      const endLine = endMatches[0] + 1;
+    const width = params.anchor.endLine - params.anchor.startLine;
+    const matches = startMatches.filter((start) => params.hashes[start + width] === params.anchor.endLineHash
+      && selectedTextMatches(start, start + width));
+    if (matches.length === 1) {
+      const startLine = matches[0] + 1;
+      const endLine = startLine + width;
       const resolvedAnchor = {
         kind: 'range' as const,
         filePath: params.filePath,
@@ -326,6 +343,7 @@ function resolveRangeAnchor(params: Readonly<{
         side: params.anchor.side,
         startLineHash: params.anchor.startLineHash,
         endLineHash: params.anchor.endLineHash,
+        selectedTextHash: params.anchor.selectedTextHash,
       };
       return buildResolution({
         ...params,
@@ -336,7 +354,7 @@ function resolveRangeAnchor(params: Readonly<{
         endLine,
       });
     }
-    if (startMatches.length > 1 || endMatches.length > 1) {
+    if (matches.length > 1) {
       return {
         id: params.id,
         filePath: params.filePath,
@@ -352,7 +370,7 @@ function resolveRangeAnchor(params: Readonly<{
     id: params.id,
     filePath: params.filePath,
     originalAnchor: params.originalAnchor,
-    status: 'missing',
+    status: startIndex >= 0 && endIndex < params.lines.length ? 'stale' : 'missing',
     confidence: 0,
     reason: 'Range anchor could not be resolved',
   };
@@ -371,7 +389,7 @@ function buildResolution(params: Readonly<{
   filePath: string;
   originalAnchor: WorkspaceAnchorV1;
   resolvedAnchor: WorkspaceAnchorV1;
-  status: 'exact' | 'hash';
+  status: 'exact' | 'hash' | 'context';
   confidence: number;
   lines: readonly string[];
   startLine: number;

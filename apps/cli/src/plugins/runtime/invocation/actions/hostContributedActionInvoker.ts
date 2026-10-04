@@ -21,7 +21,7 @@ export function createHostContributedActionInvoker(params: Readonly<{
     revalidatePluginActionCallerMaterialization: RevalidatePluginActionCallerMaterialization;
     revalidatePluginActionCallerOccurrence: RevalidatePluginActionCallerOccurrence;
 }>): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
-    return async ({ action, input, context, signal }) => {
+    return async ({ action, input, context, requiredDangerLevel, signal }) => {
         const caller = context.actionCaller;
         if (
             caller?.kind !== 'plugin'
@@ -71,6 +71,7 @@ export function createHostContributedActionInvoker(params: Readonly<{
         }
         const result = await params.invokeContributedAction({
             action,
+            ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
             ...(parsedInput === undefined ? { input: undefined } : { input: parsedInput.data }),
             surface: 'plugin',
             initiatingActionCaller: caller,

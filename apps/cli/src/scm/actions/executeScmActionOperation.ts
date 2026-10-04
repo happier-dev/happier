@@ -2,6 +2,15 @@ import {
     getActionSpec,
     SCM_OPERATION_ERROR_CODES,
     ScmOperationErrorCodeSchema,
+    ScmDiffSummaryErrorCodeSchema,
+    ScmDiffSummaryResultClearInputSchema,
+    type ScmDiffSummaryResultClearResponse,
+    type ScmComparisonCaptureInput,
+    type ScmActionExecute,
+    type ActionExecutorContext,
+    type ScmComparison,
+    type ScmReviewedMarkInput,
+    type ScmReviewedMarkResponse,
     type ScmActionId,
     type ScmHostingRepositoryDescribePublishTargetsRequest,
     type ScmHostingRepositoryDescribePublishTargetsResponse,
@@ -45,6 +54,13 @@ import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
 import { createNonRepositoryScmSnapshotResponse, notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
+import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import type { ReadRepositoryCheckpointTranscriptPage } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';
+import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
+import { executeScmDiffSummaryResultAction } from './executeScmDiffSummaryResultAction';
+import { summarizeScmDiffSummarySevenDayCost } from './scmDiffSummarySevenDayCost';
+import { executeScmCommitPlanAction } from '../commitPlans/executeScmCommitPlanAction';
+import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import {
     runScmHostingRepositoryDescribePublishTargetsRoute,
     runScmHostingRepositoryPublishRoute,
@@ -71,11 +87,19 @@ export type ExecuteScmActionOperationParams = Readonly<{
     registry?: ScmBackendRegistry;
     runMutation?: RunMutation;
     executeDiffSummary?: ExecuteScmDiffSummaryAction;
+    readComparisonTranscriptPage?: ReadRepositoryCheckpointTranscriptPage;
+    readPullRequestComparisonPage?: ReadPullRequestComparisonPage;
+    sessionId?: string;
+    executeCanonicalAction?: Parameters<ScmActionExecute>[0]['executeCanonicalAction'];
+    /** Exact host-stamped caller context, never parsed from SCM Action input. */
+    actionContext?: ActionExecutorContext;
+    executeReviewedMarks?: (comparison: ScmComparison, request: ScmReviewedMarkInput, reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
+    clearReviewedMarks?: (comparison: ScmComparison) => Promise<ScmReviewedMarkResponse>;
     /** Released RPC readers have a closed outer error-code vocabulary. */
     rpcCompatibility?: true;
 }>;
 
-function runLocalScmAction(params: ExecuteScmActionOperationParams & Readonly<{
+async function runLocalScmAction(params: ExecuteScmActionOperationParams & Readonly<{
     actionId: LocalScmActionId;
 }>): Promise<unknown> {
     const routeBase = {
@@ -87,6 +111,137 @@ function runLocalScmAction(params: ExecuteScmActionOperationParams & Readonly<{
     const runMutation: RunMutation = params.runMutation ?? (async (operation) => await operation());
 
     switch (params.actionId) {
+        case 'scm.diffSummary.result.list': {
+            const accessPolicy = params.accessPolicy ?? resolveFilesystemAccessPolicy();
+            try {
+                const inventory = await scmDiffSummaryResultStore.list();
+                const results = inventory.results.filter(item => resolveCwd(item.cwd, params.workingDirectory, accessPolicy).ok);
+                const untilMs = Date.now();
+                const { readRetainedExecutionRunRecords } = await import('@/daemon/executionRunRegistry');
+                const records = await readRetainedExecutionRunRecords().catch(() => null);
+                // Permission-filter costs too: unrelated workspace usage is not this caller's data.
+                const allowedRecords = records?.filter(record => {
+                    const cwd = record.state.launch?.cwd;
+                    return cwd && resolveCwd(cwd, params.workingDirectory, accessPolicy).ok;
+                });
+                return { success: true, results, count: results.length, bytes: results.reduce((sum, item) => sum + item.bytes, 0),
+                    sevenDayCost: summarizeScmDiffSummarySevenDayCost(allowedRecords?.map(record => record.state) ?? [], untilMs) };
+            } catch (error) {
+                return { success: false, errorCode: 'result_unavailable', error: error instanceof Error ? error.message : 'Saved results are unavailable' };
+            }
+        }
+        case 'scm.diffSummary.result.clear': {
+            const input = ScmDiffSummaryResultClearInputSchema.parse(params.input);
+            const deleted: Extract<ScmDiffSummaryResultClearResponse, { success: true }>['deleted'] = [];
+            const failures: Extract<ScmDiffSummaryResultClearResponse, { success: true }>['failures'] = [];
+            for (const item of input.results) {
+                if (params.signal?.aborted) {
+                    failures.push({ resultId: item.resultId, success: false, errorCode: 'result_unavailable', error: 'Clear was cancelled before deleting this saved result.' });
+                    continue;
+                }
+                const authorized = resolveCwd(item.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+                if (!authorized.ok) { failures.push({ resultId: item.resultId, success: false, errorCode: 'result_unavailable', error: authorized.error }); continue; }
+                try {
+                    const saved = await scmDiffSummaryResultStore.read({ cwd: authorized.cwd, resultId: item.resultId,
+                        ...(item.sessionId ? { sessionId: item.sessionId } : {}) });
+                    if (!saved.success) { failures.push({ ...saved, resultId: item.resultId }); continue; }
+                    if (saved.result.output.comparison?.id !== item.comparisonId) {
+                        failures.push({ resultId: item.resultId, success: false, errorCode: 'invalid_edit', error: 'The listed comparison does not identify this saved result.' }); continue;
+                    }
+                    const response = await executeScmDiffSummaryResultAction({ actionId: 'scm.diffSummary.result.delete',
+                        input: { cwd: authorized.cwd, resultId: item.resultId, expectedRevision: item.expectedRevision }, cwd: authorized.cwd,
+                        ...(item.sessionId ? { sessionId: item.sessionId } : {}), ...(params.signal ? { signal: params.signal } : {}),
+                        ...(params.clearReviewedMarks ? { clearReviewedMarks: params.clearReviewedMarks } : {}) });
+                    if (!response.success) failures.push({ ...response, resultId: item.resultId });
+                    else if ('resultId' in response) deleted.push(response);
+                } catch (error) { failures.push({ resultId: item.resultId, success: false, errorCode: 'result_unavailable', error: error instanceof Error ? error.message : 'Saved result could not be deleted' }); }
+            }
+            return { success: true, deleted, failures };
+        }
+        case 'scm.diffSummary.commitPlan.accept':
+        case 'scm.diffSummary.commitPlan.stop':
+        case 'scm.diffSummary.commitPlan.includeHookChanges':
+        case 'scm.diffSummary.commitPlan.cancel':
+        case 'scm.diffSummary.commitPlan.recover': {
+            const request = params.input as { cwd: string; resultId: string };
+            const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+            if (!authorized.ok) return { success: false, errorCode: 'result_unavailable', error: authorized.error };
+            return executeScmCommitPlanAction({ actionId: params.actionId, input: params.input, cwd: authorized.cwd,
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                ...(params.registry ? { registry: params.registry } : {}),
+                ...(params.accessPolicy ? { accessPolicy: params.accessPolicy } : {}),
+                ...(params.signal ? { signal: params.signal } : {}),
+            });
+        }
+        case 'scm.commit.resolveOutcome': {
+            const request = params.input as scm.ScmCommitResolveOutcomeRequest;
+            const response = await runScmRoute({ request, ...routeBase,
+                onNonRepository: () => ({ ...notRepositoryResponse<scm.ScmCommitResolveOutcomeResponse>(),
+                    publication: { state: 'unknown' as const, candidateOid: request.candidateOid, expectedHeadOid: request.expectedHeadOid,
+                        expectedRef: request.expectedRef, indexReconciliation: 'pending' as const } }),
+                runWithBackend: ({ context, selection }) => selection.backend.commitResolveOutcome
+                    ? selection.backend.commitResolveOutcome({ context, request })
+                    : Promise.resolve({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                        publication: { state: 'unknown' as const, candidateOid: request.candidateOid, expectedHeadOid: request.expectedHeadOid,
+                            expectedRef: request.expectedRef, indexReconciliation: 'pending' as const },
+                        error: 'This backend cannot resolve commit publication.' }),
+            });
+            return { ...response, publication: response.publication ?? { state: 'unknown', candidateOid: request.candidateOid,
+                expectedHeadOid: request.expectedHeadOid, expectedRef: request.expectedRef, indexReconciliation: 'pending' } };
+        }
+        case 'scm.diffSummary.reviewed.mark':
+        case 'scm.diffSummary.reviewed.unmark': {
+            const request = params.input as ScmReviewedMarkInput;
+            const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+            if (!authorized.ok) return { success: false, errorCode: 'result_unavailable', error: authorized.error };
+            const saved = await scmDiffSummaryResultStore.read({ cwd: authorized.cwd, resultId: request.resultId,
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}) });
+            if (!saved.success) return saved;
+            if (!saved.result.output.comparison || !params.executeReviewedMarks) return { success: false, errorCode: 'reviewed_marks_unavailable', error: 'Authenticated personal reviewed marks are unavailable' };
+            return params.executeReviewedMarks(saved.result.output.comparison, request, params.actionId === 'scm.diffSummary.reviewed.mark');
+        }
+        case 'scm.diffSummary.result.read':
+        case 'scm.diffSummary.result.edit':
+        case 'scm.diffSummary.result.undo':
+        case 'scm.diffSummary.result.delete':
+        case 'scm.diffSummary.refine':
+        case 'scm.diffSummary.addOutputs':
+        case 'scm.diffSummary.discuss': {
+            const request = params.input as { cwd: string; resultId: string };
+            const authorized = resolveCwd(request.cwd, params.workingDirectory, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+            if (!authorized.ok) return { success: false, errorCode: 'result_unavailable', error: authorized.error };
+            try {
+                return await executeScmDiffSummaryResultAction({ actionId: params.actionId, input: params.input, cwd: authorized.cwd,
+                    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                    ...(params.executeCanonicalAction ? { executeCanonicalAction: params.executeCanonicalAction } : {}),
+                    ...(params.actionContext ? { actionContext: params.actionContext } : {}),
+                    ...(params.signal ? { signal: params.signal } : {}),
+                    ...(params.clearReviewedMarks ? { clearReviewedMarks: params.clearReviewedMarks } : {}),
+                });
+            } catch (error) {
+                return { success: false, errorCode: 'result_unavailable', error: error instanceof Error ? error.message : 'Saved result is unavailable' };
+            }
+        }
+        case 'scm.diffSummary.capture': {
+            const request = params.input as ScmComparisonCaptureInput;
+            const authorized = resolveCwd(params.workingDirectory, request.cwd, params.accessPolicy ?? resolveFilesystemAccessPolicy());
+            if (!authorized.ok) return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: authorized.error };
+            try {
+                const captured = request.comparisonId
+                    ? await readCapturedScmComparison({ ...request, comparisonId: request.comparisonId, cwd: authorized.cwd })
+                    : await captureScmComparison({ ...request, cwd: authorized.cwd,
+                    ...(params.registry ? { registry: params.registry } : {}),
+                    ...(params.readComparisonTranscriptPage ? { readTranscriptPage: params.readComparisonTranscriptPage } : {}),
+                    ...(params.readPullRequestComparisonPage ? { readPullRequestComparisonPage: params.readPullRequestComparisonPage } : {}),
+                });
+                return { success: true, comparison: captured.comparison, metadata: captured.metadata };
+            } catch (error) {
+                const code = error && typeof error === 'object' && 'code' in error
+                    ? ScmDiffSummaryErrorCodeSchema.safeParse(error.code) : null;
+                return { success: false, errorCode: code?.success ? code.data : 'DIFF_UNAVAILABLE',
+                    error: error instanceof Error ? error.message : 'Comparison evidence is unavailable' };
+            }
+        }
         case 'scm.backend.describe': {
             const request = params.input as scm.ScmBackendDescribeRequest;
             return runScmRoute<scm.ScmBackendDescribeRequest, scm.ScmBackendDescribeResponse>({
@@ -725,7 +880,7 @@ export async function executeScmActionOperation(
         ? result : spec.outputSchema.parse(result);
     if (settled && typeof settled === 'object' && !Array.isArray(settled)) {
         const response = settled as Record<string, unknown>;
-        if (params.actionId !== 'scm.diffSummary.generate' && spec.sideEffectClass !== 'read' && typeof response.success === 'boolean') {
+        if (!params.actionId.startsWith('scm.diffSummary.') && spec.sideEffectClass !== 'read' && typeof response.success === 'boolean') {
             const code = ScmOperationErrorCodeSchema.safeParse(response.errorCode);
             settled = { ...response, outcome: normalizeScmOperationOutcome({
                 success: response.success,
@@ -736,7 +891,7 @@ export async function executeScmActionOperation(
             }) };
         }
     }
-    return params.rpcCompatibility
+    return params.rpcCompatibility && !params.actionId.startsWith('scm.diffSummary.')
         ? projectScmLegacyRpcResponse({ actionId: params.actionId, request, response: settled })
         : settled;
 }

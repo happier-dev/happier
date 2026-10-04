@@ -25,7 +25,7 @@ import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStoreProvider } from '../executionRunPermissionResponseTarget';
 import type { ExecutionRunPermissionRequestStore } from '../executionRunPermissionResponseTarget';
 import type { AgentStateResponseTargetDispatch } from '@/agent/permissions/agentStateRequestStore';
-import type { ExecutionRunProfileContributionCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
+import { resolveExecutionRunIntentProfile, resolveExecutionRunIntentProfileFromCatalog, type ExecutionRunProfileContributionCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
 import { isExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
 import { settleExecutionRunController } from '../settleExecutionRunController';
@@ -36,6 +36,9 @@ import {
 } from '@happier-dev/protocol';
 import { projectExecutionRunWorkflowInputAcceptance, type ExecutionRunWorkflowObservationSink } from '../executionRunWorkflowObservation';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
+import { publishExecutionRunTurn } from '../publishExecutionRunTurn';
+import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 
 function buildObservedTurnResult(
   contract: ExecutionRunResultContractV1 | undefined,
@@ -52,6 +55,7 @@ function buildObservedTurnResult(
 
 export async function sendBackendLongLivedRun(args: Readonly<{
   runId: string;
+  reviewComments?: ReviewRunCommentService;
   params: Readonly<{
     message: string;
     resume?: boolean;
@@ -330,11 +334,15 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   let providerSendInvoked = false;
   const sendPromise = Promise.resolve().then(async () => {
     const resultPrompt = buildExecutionRunResultContractPrompt(args.params.resultContract);
+    const profile = args.profileCatalog ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog,
+      run.intent, run.profileId, run.profileSourceCustody) : resolveExecutionRunIntentProfile(run.intent);
+    const initialContext = ctrl2.turnCount === 1 ? profile.buildInitialInputContext?.({ start: run, structuredMeta: run.structuredMeta }) : '';
+    const text = [initialContext, args.params.message, resultPrompt].filter(Boolean).join('\n\n');
     providerSendInvoked = true;
     return await ctrl2.backend.deliverInput(
       ctrl2.runtimeId!,
       {
-        text: resultPrompt ? `${args.params.message}\n\n${resultPrompt}` : args.params.message,
+        text,
         ...(args.params.structuredInput
           ? { structuredInput: normalizeStrictJsonValue(args.params.structuredInput) }
           : {}),
@@ -352,6 +360,16 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   });
 
   const runCompletionLoop = async (): Promise<void> => {
+    const admitNextInput = async ({ instructions, localId }: Readonly<{ instructions: string; localId: string }>) => {
+      const result = await sendBackendLongLivedRun({ ...args,
+        params: { message: instructions, localInputId: localId,
+          ...(args.params.causalPermissionAuthority ? { causalPermissionAuthority: args.params.causalPermissionAuthority } : {}) },
+      });
+      return result.ok ? { status: 'accepted' as const } : {
+        status: result.errorCode === 'execution_run_send_outcome_unknown' ? 'outcomeUnknown' as const : 'rejected' as const,
+        code: result.errorCode, message: result.error,
+      };
+    };
     try {
       if (ctrl2.backend.waitForTurnCompletion) {
         let completionError: unknown;
@@ -403,12 +421,38 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         clearWorkflowObservation();
         publishInputTurns();
       }
+      const structuredPublished = await publishExecutionRunTurn({
+        runId: args.runId, turnId, rawText, finishedAtMs: args.getNowMs(), controller: ctrl2,
+        controllers: args.controllers, runs: args.runs, profileCatalog: args.profileCatalog,
+        sendAcp: args.sendAcp, parentProvider: args.parentProvider,
+        reviewComments: args.reviewComments,
+        onPublicStateUpdated: args.onPublicStateUpdated, admitNextInput,
+      });
       const streamed =
         run.ioMode === 'streaming' && Boolean(ctrl2.streamWriter) && ctrl2.sidechainStreamBuffer.trim().length > 0;
-      if (!streamed && rawText.length > 0) {
+      if (!structuredPublished && !streamed && rawText.length > 0) {
         await args.sendAcp(args.parentProvider, { type: 'message', message: rawText, sidechainId: run.sidechainId });
       }
     } catch (e: any) {
+      const failedTurn = readRuntimeTurnFailureAlreadySurfacedEvent(e);
+      if (failedTurn?.diagnostic.code === 'agent_context_window_exceeded' && ctrl2.turnEpoch === thisEpoch) {
+        ctrl2.turnInFlight = false;
+        if (localInputId && ctrl2.currentInputTurn) {
+          ctrl2.lastInputTurn = { ...ctrl2.currentInputTurn, state: 'failed' };
+          ctrl2.currentInputPermissionRequestStore?.releaseResponseTarget();
+          ctrl2.currentInputPermissionRequestStore = undefined;
+          ctrl2.currentInputTurn = undefined;
+          clearWorkflowObservation();
+          publishInputTurns();
+        }
+        if (await publishExecutionRunTurn({ runId: args.runId, turnId, rawText: ctrl2.buffer,
+          diagnostic: failedTurn.diagnostic, finishedAtMs: args.getNowMs(), controller: ctrl2,
+          controllers: args.controllers, runs: args.runs, profileCatalog: args.profileCatalog,
+          sendAcp: args.sendAcp, parentProvider: args.parentProvider,
+          reviewComments: args.reviewComments,
+          onPublicStateUpdated: args.onPublicStateUpdated, admitNextInput,
+        })) return;
+      }
       if (
         ctrl2.turnCancelReason === 'steer'
         && ctrl2.turnCancelEpoch === thisEpoch

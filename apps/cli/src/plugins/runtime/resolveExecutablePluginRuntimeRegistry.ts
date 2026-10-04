@@ -3796,6 +3796,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 }),
             ),
             input: request.input,
+            ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
             ...(params?.scopedActionRuntime
                 ? {
                     actionsSettings:

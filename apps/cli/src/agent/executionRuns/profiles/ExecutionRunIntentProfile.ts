@@ -30,6 +30,8 @@ export type ExecutionRunProfileStartParams = Readonly<{
   runClass: ExecutionRunClass;
   ioMode: ExecutionRunIoMode;
   startedAtMs: number;
+  /** Existing host projection from authoritative native usage evidence. */
+  effectiveEngine?: Readonly<{ agentId: string; modelId?: string }>;
   structuredOutputRecovery?: ExecutionRunStructuredOutputRecovery;
 }>;
 
@@ -75,6 +77,15 @@ export type ExecutionRunProfileBoundedCompleteResult = Readonly<{
   toolResultOutput: unknown;
   toolResultMeta?: Record<string, unknown>;
   structuredMeta?: ExecutionRunStructuredMeta;
+  /** A distinct next input, admitted by the incumbent host on this same Run. */
+  nextInput?: Readonly<{ instructions: string; intentInput: unknown; localId: string }>;
+  updatedIntentInput?: unknown;
+}>;
+
+export type ExecutionRunProfileTurnCompleteParams = ExecutionRunProfileBoundedCompleteParams & Readonly<{
+  turnId: string;
+  inputIds?: readonly string[];
+  previousStructuredMeta?: ExecutionRunStructuredMeta;
 }>;
 
 export type ExecutionRunProfileActionParams = Readonly<{
@@ -103,10 +114,14 @@ export type ExecutionRunProfileInvalidOutputRepairPromptParams = Readonly<{
 }>;
 
 export type ExecutionRunProfilePrepareStartParams = Readonly<{
+  /** Trusted host scope, independent of caller-authored intent input. */
+  sessionId?: string | null;
   request: Omit<ExecutionRunStartRequest, 'backendTarget'> & Readonly<{
     backendTarget: ExecutionRunStartRequest['backendTarget'] | BackendTargetRefV1;
   }>;
   cwd: string;
+  /** Offered-model truth from the host probe, never caller-authored intent input. */
+  contextWindowTokens?: number;
 }>;
 
 export type ExecutionRunIntentProfile = Readonly<{
@@ -122,6 +137,24 @@ export type ExecutionRunIntentProfile = Readonly<{
     params: ExecutionRunProfilePrepareStartParams,
   ) => Promise<Readonly<Record<string, unknown>> | undefined> | Readonly<Record<string, unknown>> | undefined;
   onBoundedComplete: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult;
+  /** Publish an already prepared artifact after the retained runtime is established. */
+  onStarted?: (params: ExecutionRunProfileBoundedCompleteParams) => ExecutionRunProfileBoundedCompleteResult | null | Promise<ExecutionRunProfileBoundedCompleteResult | null>;
+  /** Bind output revisions through the existing input owner before any provider effect. */
+  onBeforeRetainedInput?: (params: Readonly<{ start: ExecutionRunProfileStartParams; localId: string }>) => Promise<void>;
+  /** Publish progress only after the incumbent Pending owner confirms acceptance. */
+  onRetainedInputAdmitted?: (params: Readonly<{ start: ExecutionRunProfileStartParams; localId: string }>) =>
+    Promise<ExecutionRunProfileBoundedCompleteResult | null>;
+  buildInitialInputContext?: (params: Readonly<{ start: ExecutionRunProfileStartParams; structuredMeta?: ExecutionRunStructuredMeta }>) => string;
+  onTerminal?: (params: Readonly<{ start: ExecutionRunProfileStartParams; status: 'failed' | 'cancelled';
+    finishedAtMs: number; structuredMeta?: ExecutionRunStructuredMeta }>) =>
+    Pick<ExecutionRunProfileBoundedCompleteResult, 'toolResultOutput' | 'structuredMeta'> | null |
+    Promise<Pick<ExecutionRunProfileBoundedCompleteResult, 'toolResultOutput' | 'structuredMeta'> | null>;
+  /** Valid structured output from a retained turn. Ordinary prose returns null. */
+  onTurnComplete?: (params: ExecutionRunProfileTurnCompleteParams) =>
+    ExecutionRunProfileBoundedCompleteResult | null | Promise<ExecutionRunProfileBoundedCompleteResult | null>;
+  onTurnFailed?: (params: ExecutionRunProfileTurnCompleteParams & Readonly<{
+    diagnostic: Readonly<{ code: string; message?: string }>;
+  }>) => ExecutionRunProfileBoundedCompleteResult | null | Promise<ExecutionRunProfileBoundedCompleteResult | null>;
   computeSidechainStreamText?: (params: ExecutionRunProfileSidechainTextParams) => string;
   buildInvalidOutputRepairPrompt?: (params: ExecutionRunProfileInvalidOutputRepairPromptParams) => string;
   /**

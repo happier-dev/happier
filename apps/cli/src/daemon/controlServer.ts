@@ -1386,6 +1386,7 @@ export function createDaemonControlApp({
                 terminalPolicy: await waitForTerminalPresentUserPolicyRefresh(externalActionApi.terminalPolicyScope),
               }),
               actionCaller: { kind: 'host' },
+              ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
             },
           );

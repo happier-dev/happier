@@ -63,6 +63,7 @@ export type PluginActionExecutionRequestOwner = (request: Readonly<{
     /** Bounded host-stamped descriptive fact; never permission ancestry. */
     startedBy?: WorkflowRunStartedByV1;
     expectedContributorOccurrenceId?: string;
+    requiredDangerLevel?: 'safe';
   }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<PluginActionExecutionAttempt>;
 
 /** Routes dynamic/meta Actions to one explicit execution owner before the built-in executor. */
@@ -79,6 +80,7 @@ export function createPluginActionExecutor(params: Readonly<{
     const admittingCaller = context?.actionCaller ?? params.initiatingActionCaller;
     const request = {
       actionId, input, surface,
+      ...(context?.requiredContributedActionDangerLevel ? { requiredDangerLevel: context.requiredContributedActionDangerLevel } : {}),
       ...(admittingCaller ? { startedBy: resolveWorkflowRunStartedByForActionCallerV1(admittingCaller) } : {}),
       ...(typeof context?.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
       ...(typeof context?.expectedContributorOccurrenceId === 'string'
@@ -93,7 +95,9 @@ export function createPluginActionExecutor(params: Readonly<{
     invokeContributedAction: async (request) => {
       const attempt = await requestContributed('action.invoke', {
         action: request.action, input: request.input,
-      }, { ...request.context, ...(request.signal ? { signal: request.signal } : {}) });
+      }, { ...request.context,
+        ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
+        ...(request.signal ? { signal: request.signal } : {}) });
       // A nested invocation must never fall back to the same base Action owner.
       return attempt.matched ? attempt.result : {
         ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable',

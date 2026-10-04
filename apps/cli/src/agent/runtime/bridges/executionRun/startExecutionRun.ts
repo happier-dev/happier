@@ -45,6 +45,7 @@ import type {
   ExecutionRunController,
   ExecutionRunVoiceAgentController,
 } from '@/agent/executionRuns/controllers/types';
+import { readBackendResumableRuntimeId } from '@/agent/executionRuns/controllers/types';
 import {
   appendExecutionRunControllerHostBarrier,
   failureSignal,
@@ -55,6 +56,7 @@ import { writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import { createExecutionRunControllerMessageHandler } from './messages/sessionStateEmission';
+import { publishExecutionRunTurn } from './publishExecutionRunTurn';
 import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import {
   areExecutionRunBackendTargetsEqual,
@@ -68,6 +70,7 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
+import { assertExecutionRunStructuredOutputModelAllowed } from './structuredOutputAdmission';
 
 type SendAcp = ExecutionRunTranscriptPublisher;
 
@@ -105,24 +108,6 @@ function normalizeVoiceAgentModelId(value: unknown): string {
   if (typeof value !== 'string') return '';
   const trimmed = value.trim();
   return trimmed === 'default' ? '' : trimmed;
-}
-
-function readScmDiffSummaryCachedOutput(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Readonly<Record<string, unknown>>;
-  if (record.intent !== 'scm_diff_summary') return null;
-  const intentInput = record.intentInput;
-  if (!intentInput || typeof intentInput !== 'object' || Array.isArray(intentInput)) return null;
-  const inputRecord = intentInput as Readonly<Record<string, unknown>>;
-  const cachePolicy = inputRecord.cachePolicy;
-  if (cachePolicy && typeof cachePolicy === 'object' && !Array.isArray(cachePolicy)) {
-    const cachePolicyRecord = cachePolicy as Readonly<Record<string, unknown>>;
-    if (cachePolicyRecord.mode === 'bypass') return null;
-  }
-  const cachedOutput = inputRecord.cachedOutput;
-  if (!cachedOutput || typeof cachedOutput !== 'object' || Array.isArray(cachedOutput)) return null;
-  const output = cachedOutput as Record<string, unknown>;
-  return typeof output.success === 'boolean' ? output : null;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -197,6 +182,17 @@ function assertPreparedReviewRunStartAllowed(params: ExecutionRunManagerStartPar
   throw executionRunNotAllowed(diagnosticMessage);
 }
 
+async function assertStructuredAnalysisModelAllowed(params: ExecutionRunManagerStartParams): Promise<void> {
+  const outputs = readRecord(params.intentInput)?.outputs;
+  if (params.intent !== 'scm_diff_summary'
+    && !(params.intent === 'review' && Array.isArray(outputs) && outputs.includes('walkthrough'))) return;
+  try {
+    await assertExecutionRunStructuredOutputModelAllowed(params);
+  } catch (error) {
+    throw markExecutionRunStartFailure(error, 'noRunCreated');
+  }
+}
+
 type ExecuteBoundedRun = (args: {
   runId: string;
   callId: string;
@@ -214,6 +210,7 @@ export function omitExecutionRunRoleCompositionContext(
     resolvedRole: _resolvedRole,
     roleSessionMetadata: _roleSessionMetadata,
     promptCredentials: _promptCredentials,
+    reviewNarration: _reviewNarration,
     ...startParams
   } = params;
   return startParams;
@@ -391,6 +388,7 @@ export async function startExecutionRun(args: Readonly<{
     const existing = args.runs.get(requestBoundRunId);
     if (existing) return projectExistingExecutionRunStartResult(existing);
   }
+  await assertStructuredAnalysisModelAllowed(args.params);
   let initialSecretReferenceEnvironment:
     Readonly<Record<string, string>> | undefined;
   if (args.params.secretReferenceOverlay) {
@@ -591,22 +589,24 @@ export async function startExecutionRun(args: Readonly<{
       }
     }
 
-    const cachedScmDiffSummaryOutput = readScmDiffSummaryCachedOutput(args.params);
-    if (cachedScmDiffSummaryOutput) {
+    const initialPublication = args.params.runClass === 'bounded'
+      ? await profile.onStarted?.({ start: args.runs.get(runId)!, rawText: '', finishedAtMs: args.getNowMs() }) : null;
+    if (args.runs.get(runId)?.status !== 'running') return startResult;
+    if (initialPublication) {
       const finishedAtMs = args.getNowMs();
-      const status = cachedScmDiffSummaryOutput.success === true ? 'succeeded' : 'failed';
+      const status = initialPublication.status;
       await args.finishRun(
         runId,
         {
           status,
-          summary: status === 'succeeded' ? 'Diff summary restored from cache.' : 'Cached diff summary failure restored.',
+          summary: initialPublication.summary,
           finishedAtMs,
           ...(status === 'failed'
             ? { error: { code: 'cached_diff_summary_failed', message: 'Cached diff summary failure restored.' } }
             : {}),
         },
-        { output: cachedScmDiffSummaryOutput, meta: { cache: 'hit' } },
-        { kind: 'scm_diff_summary.v1', payload: cachedScmDiffSummaryOutput },
+        { output: initialPublication.toolResultOutput, meta: initialPublication.toolResultMeta },
+        initialPublication.structuredMeta,
       );
       return startResult;
     }
@@ -985,10 +985,11 @@ export async function startExecutionRun(args: Readonly<{
           ctrl.runtimeId = runtimeId;
 
           const existing = args.runs.get(runId);
-          if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
+          const providerSessionId = readBackendResumableRuntimeId(ctrl, existing?.resumeHandle);
+          if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume && providerSessionId) {
               args.runs.set(runId, {
                 ...existing,
-                resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), providerSessionId: runtimeId },
+                resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.params.backendTarget), providerSessionId },
               });
             void args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
             args.onPublicStateUpdated?.(runId);
@@ -1034,7 +1035,7 @@ export async function startExecutionRun(args: Readonly<{
       return startResult;
     }
 
-    const initialInstructions = typeof args.params.instructions === 'string'
+    const initialInstructions = args.params.initialInput?.kind !== 'deferred_session_pending' && typeof args.params.instructions === 'string'
       ? args.params.instructions
       : '';
     const retainedInitialInputLocalId = args.params.localInputId ?? `execution-run-initial:${runId}`;
@@ -1149,6 +1150,20 @@ export async function startExecutionRun(args: Readonly<{
         }
         ctrl.runtimeId = runtimeId;
 
+        // Seed validated saved output before exposing the retained input target.
+        // Its first accepted continuation reads this same profile publication.
+        if (profile.onStarted) {
+          await publishExecutionRunTurn({ runId, turnId: '', rawText: '', started: true,
+            finishedAtMs: args.getNowMs(), controller: ctrl, controllers: args.controllers, runs: args.runs,
+            profileCatalog: args.profileCatalog, sendAcp, parentProvider: args.parentProvider,
+            onPublicStateUpdated: args.onPublicStateUpdated });
+        }
+        // Saved publication may await disk and transcript transport. Stop can
+        // retire this exact occurrence during either await; do not attach a new
+        // input consumer or publish resume support after it was retired.
+        if (ctrl.cancelled || args.runs.get(runId)?.status !== 'running'
+          || !isExecutionRunControllerCurrent({ runId, controller: ctrl, controllers: args.controllers })) return;
+
         // Only the retained Session-owned occurrence consumes canonical Pending.
         // Detached runs retain the direct execution.run.send boundary below.
         if (usesRetainedSessionInput) {
@@ -1214,13 +1229,14 @@ export async function startExecutionRun(args: Readonly<{
         }
 
         const existing = args.runs.get(runId);
-        if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume) {
+        const providerSessionId = readBackendResumableRuntimeId(ctrl, existing?.resumeHandle);
+        if (existing && args.params.retentionPolicy === 'resumable' && backendSupportsResume && providerSessionId) {
           args.runs.set(runId, {
             ...existing,
             resumeHandle: {
               kind: 'provider_session.v1',
               backendTarget: readBackendTargetRefV2(args.params.backendTarget),
-              providerSessionId: runtimeId,
+              providerSessionId,
             },
           });
           await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});

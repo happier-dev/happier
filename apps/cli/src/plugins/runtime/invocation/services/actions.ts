@@ -131,6 +131,8 @@ export type InvokeContributedAction = (params: Readonly<{
     action: PluginContributionRef;
     /** `action.invoke` accepts omitted input; target validation retains that distinction. */
     input: JsonValue | undefined;
+    /** Host-only constrained nested source read; not a public service option. */
+    requiredDangerLevel?: 'safe';
     /** A plugin-to-plugin invocation is always authorized on the target plugin surface. */
     surface: 'plugin';
     /** Diagnostic origin, deliberately separate from the target authorization surface. */

@@ -1,5 +1,8 @@
 import { REPOSITORY_CHECKPOINT_RECEIPT_IDS } from './receipts';
 import { isRepositoryCheckpointRollbackBackupRef, parseRepositoryCheckpointRef } from './refs';
+import { buildRepositoryCheckpointRef } from './refs';
+import { runGitCheckpointCommand } from './gitCheckpointCommands';
+import type { RepositoryCheckpointRef } from './types';
 import type {
     RepositoryCheckpointCleanupRequest,
     RepositoryCheckpointCleanupResult,
@@ -9,6 +12,18 @@ import { scmDiffSummaryCacheStore } from '@/agent/executionRuns/tasks/scmDiffSum
 
 const DEFAULT_MAX_FINALIZED_TURNS = 100;
 const DEFAULT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Dispose only the exact temporary capture this operation owns, after durable evidence is pinned. */
+export async function disposeOwnedRepositoryCheckpointRef(input: Readonly<{
+    cwd: string; checkpointRef: RepositoryCheckpointRef; expectedOid: string;
+}>): Promise<void> {
+    const expected = buildRepositoryCheckpointRef(input.checkpointRef);
+    if (expected.ref !== input.checkpointRef.ref || expected.encodedScope !== input.checkpointRef.encodedScope) {
+        throw new Error('Temporary checkpoint ref is outside its canonical namespace');
+    }
+    const result = await runGitCheckpointCommand({ cwd: input.cwd, args: ['update-ref', '-d', expected.ref, input.expectedOid] });
+    if (!result.success) throw new Error(result.stderr || 'Temporary checkpoint ref cleanup failed');
+}
 
 function applyDiffSummaryCacheCleanup(receipts: RepositoryCheckpointCleanupResult['receipts']): void {
     for (const receipt of receipts) {

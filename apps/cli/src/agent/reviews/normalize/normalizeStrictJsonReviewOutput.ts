@@ -6,6 +6,7 @@ import {
   ReviewQuestionSchema,
   ReviewCommentProposalsV1Schema,
   ReviewFindingsV2Schema,
+  ScmComparisonSchema,
   type ReviewFinding,
 } from '@happier-dev/protocol';
 
@@ -15,6 +16,13 @@ import type {
 } from '../../executionRuns/profiles/ExecutionRunIntentProfile';
 import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 import { parseTrailingJsonObject } from '../../executionRuns/profiles/shared/parseTrailingJsonObject';
+
+function parseModelFinding(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ReviewFindingSchema.safeParse(value);
+  // Persisted references are attached only by the host ReviewComment owner.
+  const { comment: _modelComment, ...finding } = value as Record<string, unknown>;
+  return ReviewFindingSchema.safeParse(finding);
+}
 
 export function normalizeStrictJsonReviewOutput(params: Readonly<{
   runId: string;
@@ -29,7 +37,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
   retentionPolicy?: ExecutionRunRetentionPolicy;
 }>): ExecutionRunProfileBoundedCompleteResult {
   const trimmed = params.rawText.trim();
-  const parsedJson: any = parseTrailingJsonObject(trimmed);
+  const parsedJson: unknown = parseTrailingJsonObject(trimmed);
 
   const parsedRecord =
     parsedJson && typeof parsedJson === 'object' && !Array.isArray(parsedJson)
@@ -69,7 +77,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
 
     const updatedFindings = Array.isArray(updatedFindingsRaw)
       ? updatedFindingsRaw.flatMap((item) => {
-        const parsedFinding = ReviewFindingSchema.safeParse(item);
+        const parsedFinding = parseModelFinding(item);
         return parsedFinding.success ? [parsedFinding.data] : [];
       })
       : undefined;
@@ -116,7 +124,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
         startedAtMs: params.startedAtMs,
         finishedAtMs: params.finishedAtMs,
       },
-      toolResultMeta: { happier: structuredMeta } as any,
+      toolResultMeta: { happier: structuredMeta },
       structuredMeta,
     };
   }
@@ -143,7 +151,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
 
   const findings: ReviewFinding[] = [];
   for (const item of findingsRaw) {
-    const parsedFinding = ReviewFindingSchema.safeParse(item);
+    const parsedFinding = parseModelFinding(item);
     if (!parsedFinding.success) {
       const summary = 'Invalid review output (expected strict JSON).';
       return {
@@ -195,8 +203,32 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     };
   }
 
+  const input = params.intentInput && typeof params.intentInput === 'object' && !Array.isArray(params.intentInput)
+    ? params.intentInput as Record<string, unknown> : {};
+  const comparison = input.comparison && typeof input.comparison === 'object'
+    ? input.comparison as Record<string, unknown> : {};
+  const inventory = comparison.inventory && typeof comparison.inventory === 'object'
+    ? comparison.inventory as Record<string, unknown> : {};
+  const limits = parsedRecord.limits && typeof parsedRecord.limits === 'object'
+    ? parsedRecord.limits as Record<string, unknown> : {};
+  const reviewOutcome = parsedRecord.status === 'failed' ? 'failed'
+    : parsedRecord.status === 'partial' || limits.findingsTruncated === true
+      || (inventory.state !== undefined && inventory.state !== 'complete') ? 'partial' : 'complete';
+  const { triage: _triage, publication: _publication, commentIds: _commentIds,
+    materialization: _materialization, materializationFailures: _materializationFailures,
+    perEngineOutcome: _perEngineOutcome, reviewedFingerprint: _reviewedFingerprint,
+    engineId: _engineId, updatedFindings: _updatedFindings, fileCount: _fileCount, ...modelContent } = parsedRecord;
+  const capturedComparison = ScmComparisonSchema.safeParse(input.comparison);
+  const fileCount = capturedComparison.success && capturedComparison.data.id === input.comparisonId
+    ? capturedComparison.data.inventory.files.length : undefined;
   const findingsPayload = ReviewFindingsV2Schema.parse({
-    ...parsedRecord,
+    ...modelContent,
+    reviewOutcome,
+    ...(fileCount !== undefined ? { fileCount } : {}),
+    // The comparison binding is captured by the host, never by model JSON.
+    comparisonId: params.intentInput && typeof params.intentInput === 'object'
+      && 'comparisonId' in params.intentInput && typeof params.intentInput.comparisonId === 'string'
+      ? params.intentInput.comparisonId : undefined,
     runRef: {
       runId: params.runId,
       callId: params.callId,
@@ -226,7 +258,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
   }));
 
   const structuredMeta: ExecutionRunStructuredMeta = { kind: 'review_findings.v2', payload: findingsPayload };
-  const failed = parsedRecord.status === 'failed';
+  const failed = reviewOutcome === 'failed';
   const errorRecord = parsedRecord.error
     && typeof parsedRecord.error === 'object'
     && !Array.isArray(parsedRecord.error)
@@ -237,6 +269,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     : 'review_failed';
   const output = {
     status: failed ? 'failed' : 'succeeded',
+    reviewOutcome,
     summary,
     runId: params.runId,
     callId: params.callId,
@@ -253,7 +286,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     status: failed ? 'failed' : 'succeeded',
     summary,
     toolResultOutput: output,
-    toolResultMeta: { happier: structuredMeta } as any,
+    toolResultMeta: { happier: structuredMeta },
     structuredMeta,
   };
 }

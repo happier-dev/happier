@@ -491,6 +491,7 @@ export type CliActionMachineAdmissionTransport = NonNullable<
 
 export function createCliActionExecutorFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
+  scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
   onAccountServerRequestIssued?: () => void;
   /**
@@ -714,6 +715,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     });
     return createCliActionExecutor({
       ...cryptoContext,
+      ...(params.scmFilesystemAccessPolicy ? { scmFilesystemAccessPolicy: params.scmFilesystemAccessPolicy } : {}),
       ...(params.resolveExactSessionEncryptionMaterial
         ? { resolveExactSessionEncryptionMaterial: params.resolveExactSessionEncryptionMaterial }
         : {}),

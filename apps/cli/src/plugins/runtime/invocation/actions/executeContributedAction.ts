@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol/actions';
 import {
   projectPluginActionUnavailableOutcomeCode,
+  pluginActionRequiresPresentUserIntent,
   type ActionsSettingsV1,
   type JsonValue,
   type MessageActionAvailableSnapshotV1,
@@ -323,6 +324,8 @@ export async function executeContributedAction(params: Readonly<{
   runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
   actionId: ActionId | string;
   input?: unknown;
+  /** Host-only read constraint; checked before activation on this registry lease. */
+  requiredDangerLevel?: 'safe';
   /** Host-admitted settings snapshot; scoped runtimes must never consult ambient Account policy. */
   actionsSettings?: ActionsSettingsV1;
   /** Host-private request from ActionsService.executeWithExecutionOrigin only. */
@@ -399,6 +402,12 @@ export async function executeContributedAction(params: Readonly<{
   const action = contributes.actionsById?.get(actionId);
   if (!action) {
     return { matched: false };
+  }
+
+  if (params.requiredDangerLevel === 'safe' && action.definition.dangerLevel !== 'safe') {
+    return { matched: true, result: actionHandlerNotStartedFailure(
+      'plugin_action_read_only_required', 'This source requires a read-only contributed Action',
+    ) };
   }
 
   // A contributed Action declares one exact execution target. The daemon is
@@ -656,8 +665,7 @@ export async function executeContributedAction(params: Readonly<{
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
           const requestedSurface = request.invocationSurface ?? request.surface;
           const createsDurableApiApproval = requestedSurface === 'api'
-            && (request.action.confirmation !== undefined
-              || request.action.approvalRequiredByActionSettings === true);
+            && pluginActionRequiresPresentUserIntent(request.action, requestedSurface);
           if (!createsDurableApiApproval) return await params.requestCurrentIntent!(request);
           const currentPlacement = await resolveCurrentTargetApprovalReplayPlacement(
             runtimeRegistry,
@@ -732,10 +740,12 @@ export async function executeContributedAction(params: Readonly<{
             actionSettingsProvider.getActionsSettings(),
             { surface: actionSurface },
           ),
-          isApprovalRequiredByActionSettings: () => isApprovalRequiredByActionsSettings(
+          isApprovalRequiredByActionSettings: (manifestDefault: boolean) => isApprovalRequiredByActionsSettings(
             contributedActionSettingsId,
             actionSettingsProvider.getActionsSettings(),
             { surface: actionSurface },
+            undefined,
+            manifestDefault,
           ),
         }),
       ...(requestCurrentIntent ? { requestCurrentIntent } : {}),

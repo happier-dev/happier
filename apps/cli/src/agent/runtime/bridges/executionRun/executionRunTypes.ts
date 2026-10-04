@@ -51,6 +51,8 @@ export type ExecutionRunManagerStartParams = Readonly<{
   instructions?: string;
   /** Explicit attached-run creation without an initial turn. */
   initialInput?: ExecutionRunInitialInputV1;
+  /** Host-derived reviewer provenance; never admitted from a public Run request. */
+  reviewNarration?: Readonly<{ phase: 'writing'; provenance: import('@happier-dev/protocol').ScmDiffSummaryReviewProvenance }>;
   /** Host-stamped Action identity used only to rejoin the same accepted start. */
   actionRequestId?: string;
   /**

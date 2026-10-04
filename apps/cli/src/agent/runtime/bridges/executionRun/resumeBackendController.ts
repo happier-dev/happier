@@ -259,7 +259,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
       status: 'running',
       finishedAtMs: undefined,
       error: undefined,
-      resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.run.backendTarget), providerSessionId: loaded.runtimeId },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(args.run.backendTarget), providerSessionId },
     });
     args.onPublicStateUpdated?.(args.runId);
     return { ok: true };

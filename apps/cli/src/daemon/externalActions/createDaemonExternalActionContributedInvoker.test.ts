@@ -118,6 +118,8 @@ function createExternalActionRuntime(
   ) => TargetActionApprovalReplayPlacementV1 | null,
   onServicesSeed?: (seed: PluginActionsServiceSeed) => void,
   serviceOwners?: Pick<ReturnType<typeof createProductionPluginInvocationServiceOwners>, 'createServices' | 'resolveHostBinding'>,
+  dangerLevel: 'safe' | 'writesRemote' = 'safe',
+  activationOnly?: () => void,
 ): ResolvedExecutablePluginRuntimeRegistry {
   const plugin = {
     pluginId,
@@ -147,7 +149,8 @@ function createExternalActionRuntime(
           // `api` deliberately is not an author-visible Action surface.
           surfaces: ['cli'],
           execution: { target: 'daemon' },
-          dangerLevel: 'safe',
+          dangerLevel,
+          ...(dangerLevel === 'safe' ? {} : { confirmation: { title: 'Write', body: 'Write provider state?', confirmLabel: 'Write' } }),
         }],
       },
     }),
@@ -202,7 +205,7 @@ function createExternalActionRuntime(
   const fixtureOccurrenceId = createPluginRuntimeOccurrenceId(pluginId);
   const targetActionInvocations = buildTargetActionInvocationRegistry({
     contributes,
-    targetRegistrations: [{
+    targetRegistrations: activationOnly ? [] : [{
       pluginId,
       occurrenceId: fixtureOccurrenceId,
       registration: {
@@ -224,7 +227,7 @@ function createExternalActionRuntime(
     readCurrentPluginSourceCustody: (currentPluginId) => (
       currentPluginId === pluginId ? sourceCustody : null
     ),
-    readTargetActivationFacts: () => [{
+    readTargetActivationFacts: () => activationOnly ? [] : [{
       pluginId,
       pluginVersion: '1.0.0',
       source: 'localPath',
@@ -276,7 +279,7 @@ function createExternalActionRuntime(
     scmHostingProvidersById: new Map(),
     pluginDiagnosticsByPluginId: {},
     activatedPluginIds: new Set(),
-    activateContributionsOnDemand: async () => [],
+    activateContributionsOnDemand: async () => { activationOnly?.(); return []; },
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
     resolvePromptAssetBlocks: async () => [],
     retireConsumers: () => {},
@@ -370,6 +373,62 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  it('allows a source read but rejects writes under the same current read-only invocation lease', async () => {
+    for (const dangerLevel of ['safe', 'writesRemote'] as const) {
+      let invoked = false;
+      const runtime = createExternalActionRuntime('global', 'acme.external', () => { invoked = true; },
+        undefined, undefined, undefined, undefined, dangerLevel);
+      const lease = { registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {} } satisfies PluginRuntimeRegistryLease;
+      const executor = createExternalActionExecutor(createDaemonExternalActionContributedInvoker({
+        acquireRuntimeRegistryLease: async () => lease,
+      }));
+      const result = await executor.execute('action.invoke', { action: { pluginId: 'acme.external', localId: 'inspect' }, input: {} }, {
+        surface: 'api', requiredContributedActionDangerLevel: 'safe',
+      });
+      expect(result).toMatchObject(dangerLevel === 'safe'
+        ? { ok: true, result: { surface: 'api' } }
+        : { ok: false, errorCode: 'plugin_action_read_only_required' });
+      expect(invoked).toBe(dangerLevel === 'safe');
+    }
+  });
+
+  it('keeps read-only source invocation subject to the exact contributed Action API grant', async () => {
+    let invoked = false;
+    const runtime = createExternalActionRuntime('global', 'acme.external', () => { invoked = true; });
+    const lease = { registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {} } satisfies PluginRuntimeRegistryLease;
+    const executor = createExternalActionExecutor(createDaemonExternalActionContributedInvoker({
+      acquireRuntimeRegistryLease: async () => lease,
+    }));
+    await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.external', localId: 'inspect' }, input: {} }, {
+      surface: 'api', requiredContributedActionDangerLevel: 'safe',
+      externalActionCredential: { accountId: 'account-1', principalId: 'principal-1',
+        credentialId: '11111111-1111-4111-8111-111111111111',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['action.invoke'] } },
+      },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(invoked).toBe(false);
+    await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.external', localId: 'inspect' }, input: {} }, {
+      surface: 'api', requiredContributedActionDangerLevel: 'safe',
+      externalActionCredential: { accountId: 'account-1', principalId: 'principal-1',
+        credentialId: '11111111-1111-4111-8111-111111111111',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['acme.external/actions/inspect'] } },
+      },
+    })).resolves.toMatchObject({ ok: true, result: { surface: 'api' } });
+    expect(invoked).toBe(true);
+  });
+  it('rejects a write source before activating its unbound contributor', async () => {
+    let activated = false;
+    const runtime = createExternalActionRuntime('global', 'acme.external', undefined,
+      undefined, undefined, undefined, undefined, 'writesRemote', () => { activated = true; });
+    const lease = { registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {} } satisfies PluginRuntimeRegistryLease;
+    const executor = createExternalActionExecutor(createDaemonExternalActionContributedInvoker({
+      acquireRuntimeRegistryLease: async () => lease,
+    }));
+    await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.external', localId: 'inspect' }, input: {} }, {
+      surface: 'api', requiredContributedActionDangerLevel: 'safe',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_read_only_required' });
+    expect(activated).toBe(false);
+  });
   it('invokes the committed contributor through authenticated exact-machine Action RPC without borrowing plugin identity', async () => {
     const executor = createExternalActionIngressExecutor();
     const handlers = new Map<string, (input: unknown) => Promise<unknown>>();

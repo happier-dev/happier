@@ -4,6 +4,23 @@ import { createActionExecutor, createScmCapabilities } from '@happier-dev/protoc
 import { createCliActionDeps } from './createCliActionDeps';
 
 describe('exact-machine SCM Action targeting', () => {
+  it('admits machine saved inventory without a fabricated directory and refuses a Session-wide inventory', async () => {
+    const calls: unknown[] = [];
+    const inventory = { success: true, results: [], count: 0, bytes: 0,
+      sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 1 } };
+    const executor = createActionExecutor(createCliActionDeps({
+      token: 'already-admitted-daemon-token', sessionId: '', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async (method, request) => { calls.push({ method, request }); return inventory; } },
+    }));
+    expect(await executor.execute('scm.diffSummary.result.list', {}, { surface: 'rpc', authority: 'account_automation',
+      externalActionTarget: { kind: 'machine', machineId: 'machine' },
+    })).toEqual({ ok: true, result: inventory });
+    expect(calls).toEqual([{ method: 'scm.diffSummary.result.list', request: {} }]);
+    expect(await executor.execute('scm.diffSummary.result.list', {}, { surface: 'rpc', authority: 'account_automation',
+      defaultSessionId: 'session', externalActionTarget: { kind: 'session', sessionId: 'session' },
+    })).toMatchObject({ ok: false, errorCode: 'machine_not_selected' });
+    expect(calls).toHaveLength(1);
+  });
   it('uses the admitted machine transport and exact directory without requiring a Session', async () => {
     const calls: Array<Readonly<{ method: string; request: unknown; signal?: AbortSignal }>> = [];
     const signal = new AbortController().signal;

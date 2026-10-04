@@ -13,6 +13,8 @@ import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingRes
   type SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
+import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { resolveCwd } from '@/scm/runtime';
 import { SessionActionRpcOriginV1Schema, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows';
 
@@ -128,6 +130,7 @@ import {
   resolveWorkflowDefinitionRefV1,
   WorkflowRunSummaryV1Schema,
   ExecutionRunGetResponseSchema,
+  ExecutionRunGetRequestSchema,
   readSessionRolesV1,
   formatWorkflowDefinitionRefV1,
   ActionDefinitionV1Schema,
@@ -375,7 +378,10 @@ import type {
   RevalidatePluginActionCallerMaterialization,
 } from '@/plugins/runtime/invocation/services/actionCaller';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { createCliScmReviewedMarkAction, clearCliScmReviewedMarks } from '@/scm/actions/executeScmReviewedMarkAction';
 import { executeScmDiffSummaryAction } from '@/scm/actions/executeScmDiffSummaryAction';
+import { createRepositoryCheckpointTranscriptPageReader } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';
+import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { executePluginExternalSessionAction } from './externalSessions/pluginExternalSessionActionExecutor';
 import type {
@@ -738,6 +744,8 @@ export function createCliActionDeps(params: Readonly<{
   /** Local delivery only; a host without a link consumer refuses creation before HTTP. */
   onPublicLinkIssued?: (link: import('@happier-dev/protocol').ArtifactPublicLinkIssuedV1) => void | Promise<void>;
   credentials?: StoredCredentials;
+  /** Machine-owned policy intersects the selected Session's confined SCM root. */
+  scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   stageWorkStateMutation?: (mutation: import('@/api/session/client/transport/mutations/sessionClientDurableMutationTypes').DaemonWorkStateFieldMutation) => Promise<void>;
   stageSessionStateMutation?: (mutation: import('@/api/session/client/transport/mutations/sessionClientDurableMutationTypes').RegisteredSessionStateFieldMutationV1) => Promise<void>;
   publishWorkerReport?: (report: SessionWorkerPublishInputV1) => Promise<Readonly<{ persisted: boolean; localId?: string }>>;
@@ -1765,12 +1773,16 @@ export function createCliActionDeps(params: Readonly<{
           ...(opts.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
         });
       }
+      const getRequest = method === SESSION_RPC_METHODS.EXECUTION_RUN_GET
+        ? ExecutionRunGetRequestSchema.safeParse(request)
+        : null;
       return await callMachineRpc({
         credentials: params.credentials,
         machineId: target.machineId,
         method,
         request,
         ...(DETACHED_EXECUTION_RUN_CALLER_LIFECYCLE_METHODS.has(method)
+          || getRequest?.success && Boolean(getRequest.data.waitForInputId || getRequest.data.waitForOutput)
           || method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ
             && request !== null && typeof request === 'object' && 'waitForEvents' in request && request.waitForEvents === true
           ? { timeoutMs: null }
@@ -2202,6 +2214,20 @@ export function createCliActionDeps(params: Readonly<{
     context,
     executeCanonicalAction,
   }) => {
+    const accountMarksDeps = params.credentials ? {
+      executeReviewedMarks: (comparison: import('@happier-dev/protocol').ScmComparison, request: import('@happier-dev/protocol').ScmReviewedMarkInput, reviewed: boolean) => createCliScmReviewedMarkAction({
+        credentials: params.credentials!, comparison, changeRefs: request.changeRefs, reviewed,
+        ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
+        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request),
+        ...(context.signal ? { signal: context.signal } : {}),
+      }),
+      clearReviewedMarks: (comparison: import('@happier-dev/protocol').ScmComparison) => clearCliScmReviewedMarks({
+        credentials: params.credentials!, comparison,
+        ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
+        resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request),
+        ...(context.signal ? { signal: context.signal } : {}),
+      }),
+    } : {};
     const attachSuccessfulPullRequest = async (response: unknown) => {
       const sessionId = normalizeStringValue(context.defaultSessionId);
       if (actionId !== 'scm.pullRequest.openOrReuse' || !sessionId) return response;
@@ -2223,17 +2249,31 @@ export function createCliActionDeps(params: Readonly<{
     const inputRecord = input && typeof input === 'object' && !Array.isArray(input)
       ? input as Readonly<Record<string, unknown>>
       : {};
+    const machineInventory = actionId === 'scm.diffSummary.result.list' || actionId === 'scm.diffSummary.result.clear';
+    if (machineInventory && context.externalActionTarget?.kind !== 'machine') {
+      return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
+    }
     if (context.externalActionTarget?.kind === 'machine') {
       const machineId = normalizeStringValue(context.externalActionTarget.machineId);
       const cwd = normalizeStringValue(actionId === 'scm.repository.clone'
         ? inputRecord.destinationParentPath
         : inputRecord.cwd);
       const method = getActionSpec(actionId).bindings?.rpcMethod;
-      if (!machineId || !cwd || !method || actionId === 'scm.reviewWorkspace.materializePrepared') {
+      if (!machineId || (!machineInventory && !cwd) || !method || actionId === 'scm.reviewWorkspace.materializePrepared') {
         return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
       }
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      if (params.credentials && actionId.startsWith('scm.diffSummary.')
+        && actionId !== 'scm.diffSummary.generate' && actionId !== 'scm.diffSummary.capture') {
+        const currentMachine = await readCurrentMachineControlIdentity();
+        if (currentMachine.machineId === machineId) {
+          return executeScmActionOperation({ actionId, input: inputRecord, workingDirectory: cwd ?? process.cwd(),
+            accessPolicy: params.scmFilesystemAccessPolicy ?? resolveFilesystemAccessPolicy(),
+            executeCanonicalAction, actionContext: context, ...accountMarksDeps, ...(context.signal ? { signal: context.signal } : {}),
+          });
+        }
       }
       const admitPolicy = actionId === 'scm.commit.create'
         ? (capabilities?: ScmCapabilities) => admitScmCommitPolicy(ScmCommitCreateRequestSchema.parse(inputRecord), capabilities)
@@ -2258,7 +2298,14 @@ export function createCliActionDeps(params: Readonly<{
         const admission = admitPolicy(capabilities);
         if (!admission.success) return admission;
       }
-      return await attachSuccessfulPullRequest(await callMachineAction({ machineId, method, request: { ...inputRecord, outcomeVersion: 1, ...(actionId === 'scm.status.snapshot' ? { operationStateVersion: 1 } : {}) }, ...(context.signal ? { signal: context.signal } : {}) }));
+      return await attachSuccessfulPullRequest(await callMachineAction({ machineId, method, request: {
+        ...inputRecord,
+        ...(actionId.startsWith('scm.diffSummary.')
+          ? { ...((actionId === 'scm.diffSummary.generate' || actionId === 'scm.diffSummary.capture') && context.defaultSessionId
+              ? { sessionId: context.defaultSessionId } : {}) }
+          : { outcomeVersion: 1 }),
+        ...(actionId === 'scm.status.snapshot' ? { operationStateVersion: 1 } : {}),
+      }, ...(context.signal ? { signal: context.signal } : {}) }));
     }
     if (!params.credentials) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -2330,11 +2377,18 @@ export function createCliActionDeps(params: Readonly<{
       };
     }
 
+    if (params.scmFilesystemAccessPolicy) {
+      const authorized = resolveCwd(workingDirectory, workingDirectory, params.scmFilesystemAccessPolicy);
+      if (!authorized.ok) return { ok: false, errorCode: 'scm_action_path_denied', error: authorized.error };
+    }
+
     const sessionBoundInput = actionId === 'scm.repository.clone'
       ? inputRecord
       : actionId === 'scm.pullRequest.prepareWorktree'
         ? { ...inputRecord, cwd: workingDirectory, sourcePath: workingDirectory }
-        : { ...inputRecord, cwd: workingDirectory };
+        : { ...inputRecord, cwd: workingDirectory,
+            ...(actionId === 'scm.diffSummary.capture' ? { sessionId: transport.sessionId } : {}),
+          };
     const backendTarget = (() => {
       if (actionId !== 'scm.diffSummary.generate') return null;
       const selector = sessionBoundInput.modelSelector;
@@ -2365,16 +2419,46 @@ export function createCliActionDeps(params: Readonly<{
       return resolveBackendTargetFromSessionMetadata(metadata);
     })();
 
+    const readComparisonTranscriptPage = createRepositoryCheckpointTranscriptPageReader({
+      credentials: params.credentials,
+      resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.transcript.get', request),
+      ...(context.signal ? { signal: context.signal } : {}),
+    });
+    const readPullRequestComparisonPage: ReadPullRequestComparisonPage = async ({ sourceAction, continuation }) => {
+      const input = sourceAction.input;
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new Error('Pull-request source Action requires object input');
+      }
+      // The initial request always starts at page one; only the source can mint
+      // continuations consumed by the comparison owner after that first read.
+      const selectedSourceInput = Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'continuation'));
+      const result = await executeCanonicalAction('action.invoke', {
+        action: sourceAction.action,
+        input: { ...selectedSourceInput, comparison: true, ...(continuation ? { continuation } : {}) },
+      }, { requiredContributedActionDangerLevel: 'safe' });
+      if (!result.ok) throw new Error(`Pull-request source Action unavailable: ${result.errorCode}`);
+      return result.result;
+    };
     return await attachSuccessfulPullRequest(await executeScmActionOperation({
       actionId,
       input: sessionBoundInput,
       workingDirectory,
       accessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] },
+      readComparisonTranscriptPage,
+      readPullRequestComparisonPage,
+      sessionId: transport.sessionId,
+      executeCanonicalAction,
+      actionContext: context,
+      ...accountMarksDeps,
       ...(context.signal ? { signal: context.signal } : {}),
       executeDiffSummary: async ({ request }) => await executeScmDiffSummaryAction({
         request: request as ScmDiffSummaryGenerateInput,
+        sessionId: transport.sessionId,
+        readTranscriptPage: readComparisonTranscriptPage,
+        readPullRequestComparisonPage,
         backendTarget,
         executeCanonicalAction,
+        ...(context.signal ? { signal: context.signal } : {}),
       }),
     }));
   };
@@ -3049,7 +3133,7 @@ export function createCliActionDeps(params: Readonly<{
         runId: request.runId,
         timeoutMs: normalizeExecutionRunWaitTimeoutMs(request.timeoutSeconds),
         ...(request.condition ? { condition: request.condition } : {}),
-        ...(request.after ? { after: request.after } : {}),
+        ...(request.after ? { after: ExecutionRunGetResponseSchema.parse(request.after) } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
     },

@@ -577,6 +577,7 @@ export async function controlDaemonPluginDevelopment(
 export async function requestDaemonPluginActionExecution(request: Readonly<{
   actionId: string;
   input: unknown;
+  requiredDangerLevel?: 'safe';
   surface: 'cli' | 'mcp' | 'agent';
   defaultSessionId?: string;
   /** Host-stamped descriptive starter, not an authorization principal. */
