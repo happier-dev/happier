@@ -65,8 +65,15 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const packages = await selectAffectedGatePackages({ changedPaths });
   if (process.env.GITHUB_OUTPUT) {
     const serverDbContract = changedPaths.some((path) => path.startsWith('apps/server/prisma/'));
+    // Retain the existing UI lane's 16 part ranges: running all of its
+    // sub-shards in one gate job exceeded GitHub's six-hour execution window.
+    // P3 owns measured repartitioning; this preserves full-suite coverage now.
+    const unitMatrix = { include: packages.flatMap((packageName) => {
+      const parts = packageName === 'ui' ? 16 : 1;
+      return Array.from({ length: parts }, (_, index) => ({ package: packageName, part: index + 1, parts }));
+    }) };
     await appendFile(process.env.GITHUB_OUTPUT,
-      `packages=${JSON.stringify(packages)}\nserver_db_contract=${serverDbContract}\n`);
+      `packages=${JSON.stringify(packages)}\nunit_matrix=${JSON.stringify(unitMatrix)}\nserver_db_contract=${serverDbContract}\n`);
   }
   process.stdout.write(`${JSON.stringify(packages)}\n`);
 }

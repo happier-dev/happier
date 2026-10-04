@@ -313,6 +313,42 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
     expect(readFileSync(join(destinationDir, 'dist', 'index.js'), 'utf8'))
       .toBe('export const generation = "last-green";\n');
   });
+
+  it('requires declared native bytes before publication and retains them in the prepared package', () => {
+    const root = createTempRoot('cli-common-workspace-native-publication-');
+    const sourceDir = join(root, 'packages', 'iroh-native');
+    const destinationDir = join(root, 'apps', 'cli', 'node_modules', '@happier-dev', 'iroh-native');
+    const nativePath = 'native/happier-iroh-native-lifecycle.linux-x64.node';
+    writePackage(sourceDir, {
+      name: '@happier-dev/iroh-native', version: '0.0.0', type: 'module',
+      exports: { '.': './dist/index.js' }, files: ['dist', 'native'],
+    }, { 'dist/index.js': 'export const generation = "current";\n' });
+    writePackage(destinationDir, {
+      name: '@happier-dev/iroh-native', version: '0.0.0', type: 'module',
+      exports: { '.': './dist/index.js' },
+    }, {
+      'dist/index.js': 'export const generation = "last-green";\n',
+      [nativePath]: 'last-green native fixture bytes',
+    });
+    const publish = () => bundleWorkspacePackageWithRuntimeDependencies({
+      packageName: '@happier-dev/iroh-native', srcDir: sourceDir, destDir: destinationDir,
+      dereferenceRootDir: root, pruneStale: true,
+      validatePreparedPackage: ({ packageDir }) => {
+        expect(readFileSync(join(packageDir, nativePath), 'utf8')).toBe('prepared native fixture bytes');
+      },
+    });
+
+    expect(publish).toThrow("Bundled workspace package declared file is missing: 'native'");
+    expect(readFileSync(join(destinationDir, 'dist/index.js'), 'utf8')).toContain('last-green');
+    expect(readFileSync(join(destinationDir, nativePath), 'utf8')).toBe('last-green native fixture bytes');
+
+    // Opaque byte-copy fixture, never loaded as or represented as a real addon.
+    mkdirSync(join(sourceDir, 'native'));
+    writeFileSync(join(sourceDir, nativePath), 'prepared native fixture bytes');
+    publish();
+    expect(readFileSync(join(destinationDir, nativePath), 'utf8')).toBe('prepared native fixture bytes');
+    expect(readFileSync(join(destinationDir, 'dist/index.js'), 'utf8')).toContain('current');
+  });
 });
 
 describe('materializePrepublicationWorkspacePackageRoots', () => {

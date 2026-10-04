@@ -49,4 +49,28 @@ test('gate selection includes changed workspace consumers, including peer consum
   const lines = await readFile(output, 'utf8');
   assert.match(lines, /^packages=\["server"\]$/m);
   assert.match(lines, /^server_db_contract=true$/m);
+
+  const unitOutput = join(rootDir, 'github-unit-output');
+  execFileSync(process.execPath, ['--experimental-loader', pathToFileURL(loader).href, fileURLToPath(new URL('./selectAffectedGatePackages.mjs', import.meta.url))], {
+    cwd: rootDir,
+    env: { ...process.env, GITHUB_OUTPUT: unitOutput },
+    input: 'apps/ui/sources/view.ts\0apps/server/sources/route.ts\0',
+  });
+  const unitLines = await readFile(unitOutput, 'utf8');
+  const matrixLine = unitLines.split('\n').find((line) => line.startsWith('unit_matrix='));
+  assert.ok(matrixLine, 'the gate must emit runnable unit partitions, not one unpartitioned UI job');
+  const { include } = JSON.parse(matrixLine.slice('unit_matrix='.length));
+  assert.deepEqual(include.filter((row) => row.package !== 'ui'), [{ package: 'server', part: 1, parts: 1 }]);
+  const uiParts = include.filter((row) => row.package === 'ui');
+  assert.ok(uiParts.length > 1, 'the full UI suite exceeds a single GitHub job execution window');
+  const { resolveVitestShardRange } = await import('../../apps/ui/scripts/runVitestShards.mjs');
+  const covered = uiParts.flatMap(({ part, parts }) => {
+    assert.equal(parts, uiParts.length);
+    const range = resolveVitestShardRange({
+      HAPPIER_UI_VITEST_PART: String(part), HAPPIER_UI_VITEST_PARTS: String(parts),
+    }, 402);
+    return Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index);
+  });
+  assert.deepEqual(covered, Array.from({ length: 402 }, (_, index) => index + 1),
+    'the published matrix must execute every canonical UI shard exactly once');
 });
