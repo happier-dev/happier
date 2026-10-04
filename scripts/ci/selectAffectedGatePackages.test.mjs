@@ -54,15 +54,27 @@ test('gate selection includes changed workspace consumers, including peer consum
   execFileSync(process.execPath, ['--experimental-loader', pathToFileURL(loader).href, fileURLToPath(new URL('./selectAffectedGatePackages.mjs', import.meta.url))], {
     cwd: rootDir,
     env: { ...process.env, GITHUB_OUTPUT: unitOutput },
-    input: 'apps/ui/sources/view.ts\0apps/server/sources/route.ts\0',
+    input: 'yarn.lock\0apps/server/prisma/schema.prisma\0',
   });
   const unitLines = await readFile(unitOutput, 'utf8');
   const matrixLine = unitLines.split('\n').find((line) => line.startsWith('unit_matrix='));
   assert.ok(matrixLine, 'the gate must emit runnable unit partitions, not one unpartitioned UI job');
   const { include } = JSON.parse(matrixLine.slice('unit_matrix='.length));
-  assert.deepEqual(include.filter((row) => row.package !== 'ui'), [{ package: 'server', part: 1, parts: 1 }]);
+  const selectedPackages = JSON.parse(unitLines.split('\n').find((line) => line.startsWith('packages=')).slice('packages='.length));
+  assert.deepEqual(selectedPackages, ['cli', 'plugins', 'protocol', 'server', 'ui']);
+  assert.match(unitLines, /^server_db_contract=true$/m);
+  const automaticJobs = include.length + 3 + 1; // selection/compiler, artifacts, Gate, and the selected DB contract
+  assert.ok(automaticJobs <= 10, `the automatic v0.3 gate must use at most 10 jobs, received ${automaticJobs}`);
+  assert.deepEqual(include.filter((row) => row.package !== 'ui'), [
+    { package: 'cli', packages: ['cli'], part: 1, parts: 1 },
+    { package: 'group', packages: ['plugins', 'protocol', 'server'], part: 1, parts: 1 },
+  ]);
+  assert.deepEqual([...new Set(include.flatMap((row) => row.packages))].sort(), selectedPackages,
+    'partitioning must retain every selected package suite');
   const uiParts = include.filter((row) => row.package === 'ui');
-  assert.ok(uiParts.length > 1, 'the full UI suite exceeds a single GitHub job execution window');
+  assert.equal(uiParts.length, 4, 'the capacity ruling assigns four automatic UI jobs');
+  assert.deepEqual(uiParts.map((row) => row.packages), [['ui'], ['ui'], ['ui'], ['ui']]);
+  assert.deepEqual(uiParts.map((row) => row.part), [1, 2, 3, 4]);
   const { resolveVitestShardRange } = await import('../../apps/ui/scripts/runVitestShards.mjs');
   const covered = uiParts.flatMap(({ part, parts }) => {
     assert.equal(parts, uiParts.length);

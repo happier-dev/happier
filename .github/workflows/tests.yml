@@ -215,8 +215,8 @@ on:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  # Push runs retain exact-SHA evidence; superseded PR runs release runner capacity.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Preserve superseded PR cancellation and release automatic v0.3 push capacity.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (!inputs.select_jobs_explicitly && github.event_name == 'push' && github.ref_name == 'v0.3') }}
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).
@@ -242,6 +242,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
+          cache: yarn
       - name: Select changed workspaces and their consumers
         id: select
         env:
@@ -254,21 +255,6 @@ jobs:
           fi
           packages="$(git diff --no-renames --name-only -z "$base" HEAD | node scripts/ci/selectAffectedGatePackages.mjs)"
           echo "Affected gate packages: $packages"
-
-  gate-typecheck:
-    name: Gate — compiler typecheck
-    needs: [gate-packages]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 22.x
-          cache: yarn
       - name: Enable Corepack
         run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - uses: ./.github/actions/install-yarn-dependencies
@@ -313,22 +299,36 @@ jobs:
       - name: Load the prepared Iroh native runtime
         if: ${{ matrix.package == 'cli' }}
         run: yarn workspace @happier-dev/iroh-native verify:native --package-root "$GITHUB_WORKSPACE/apps/cli/node_modules/@happier-dev/iroh-native"
-      - name: Prepare compiled plugin contract inputs through the workspace build owner
-        if: ${{ matrix.package == 'plugins' }}
-        run: ./apps/stack/bin/hstack-exec -- node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/plugins-channels @happier-dev/plugins-elevenlabs
       - name: Run affected package unit suite
         env:
-          GATE_PACKAGE: ${{ matrix.package }}
+          GATE_PACKAGES: ${{ join(matrix.packages, ' ') }}
         run: |
           set -euo pipefail
-          case "$GATE_PACKAGE" in
-            cli) yarn workspace @happier-dev/cli test:unit ;;
-            ui) yarn workspace @happier-dev/app test:unit ;;
-            server) yarn --cwd apps/server test:unit ;;
-            protocol) yarn workspace @happier-dev/protocol test ;;
-            plugins) yarn test:plugin-workspaces ;;
-            *) echo "::error::Unknown gate package: $GATE_PACKAGE"; exit 1 ;;
-          esac
+          gate_status=0
+          for gate_package in $GATE_PACKAGES; do
+            case "$gate_package" in
+              cli) yarn workspace @happier-dev/cli test:unit || gate_status=1 ;;
+              ui) yarn workspace @happier-dev/app test:unit || gate_status=1 ;;
+              server) yarn --cwd apps/server test:unit || gate_status=1 ;;
+              protocol) yarn workspace @happier-dev/protocol test || gate_status=1 ;;
+              plugins)
+                if ./apps/stack/bin/hstack-exec -- node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/plugins-channels @happier-dev/plugins-elevenlabs; then
+                  yarn test:plugin-workspaces || gate_status=1
+                else
+                  gate_status=1
+                fi
+                ;;
+              *) echo "::error::Unknown gate package: $gate_package"; gate_status=1 ;;
+            esac
+          done
+          exit "$gate_status"
+      - name: Upload CLI unit bundled-plugin preparation diagnostics
+        if: ${{ always() && matrix.package == 'cli' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-cli-unit-bundled-plugin-publication-failures
+          path: apps/cli/.project/tmp/bundled-plugin-publication/failures.json
+          if-no-files-found: ignore
 
   gate-build-artifacts:
     name: Gate — build artifacts and staged import smoke
@@ -378,6 +378,13 @@ jobs:
         run: ./apps/stack/bin/hstack-exec -- cargo install wasm-bindgen-cli --version 0.2.127 --locked
       - name: Build the web artifact
         run: ./apps/stack/bin/hstack-exec -- node scripts/pipeline/release/build-ui-web-bundle.mjs --channel preview --version 0.0.0-ci.${{ github.run_id }}
+      - name: Upload artifact-build bundled-plugin preparation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-artifact-build-bundled-plugin-publication-failures
+          path: apps/cli/.project/tmp/bundled-plugin-publication/failures.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gate-build-artifacts
@@ -391,7 +398,7 @@ jobs:
   gate:
     name: Gate
     if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
-    needs: [gate-packages, gate-typecheck, gate-unit, gate-build-artifacts, server-db-contract]
+    needs: [gate-packages, gate-unit, gate-build-artifacts, server-db-contract]
     runs-on: ubuntu-latest
     permissions:
       contents: read

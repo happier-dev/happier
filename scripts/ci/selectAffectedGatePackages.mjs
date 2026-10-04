@@ -65,13 +65,17 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const packages = await selectAffectedGatePackages({ changedPaths });
   if (process.env.GITHUB_OUTPUT) {
     const serverDbContract = changedPaths.some((path) => path.startsWith('apps/server/prisma/'));
-    // Retain the existing UI lane's 16 part ranges: running all of its
-    // sub-shards in one gate job exceeded GitHub's six-hour execution window.
-    // P3 owns measured repartitioning; this preserves full-suite coverage now.
-    const unitMatrix = { include: packages.flatMap((packageName) => {
-      const parts = packageName === 'ui' ? 16 : 1;
-      return Array.from({ length: parts }, (_, index) => ({ package: packageName, part: index + 1, parts }));
-    }) };
+    // Four UI ranges retain all canonical sub-shards. Group the other suites
+    // while CLI keeps its native preparation, within the temporary 10-job cap.
+    // P3 still owns duration validation against GitHub's execution window.
+    const groupedPackages = packages.filter((packageName) => packageName !== 'cli' && packageName !== 'ui');
+    const unitMatrix = { include: [
+      ...(packages.includes('cli') ? [{ package: 'cli', packages: ['cli'], part: 1, parts: 1 }] : []),
+      ...(groupedPackages.length ? [{ package: 'group', packages: groupedPackages, part: 1, parts: 1 }] : []),
+      ...(packages.includes('ui') ? Array.from({ length: 4 }, (_, index) => ({
+        package: 'ui', packages: ['ui'], part: index + 1, parts: 4,
+      })) : []),
+    ] };
     await appendFile(process.env.GITHUB_OUTPUT,
       `packages=${JSON.stringify(packages)}\nunit_matrix=${JSON.stringify(unitMatrix)}\nserver_db_contract=${serverDbContract}\n`);
   }
