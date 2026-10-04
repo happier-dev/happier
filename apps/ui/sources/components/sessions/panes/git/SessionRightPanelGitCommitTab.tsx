@@ -27,6 +27,7 @@ import {
 } from '@/components/workspaces/scm/changes/ChangedFileEvidenceDisclosure';
 import { ScmCommitComposerCard, type ScmCommitComposerCardProps } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
 import { ScmChangeRow, resolveScmChangeStatsColumnWidth } from '@/components/workspaces/scm/changes/ScmChangeRow';
+import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
 import { ScmCommitSelectionCheckGlyph } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import { Text } from '@/components/ui/text/Text';
 import type { ScmFileStatus, ScmStatusFiles } from '@/scm/scmStatusFiles';
@@ -50,6 +51,12 @@ import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
+/** A selected commit proposal over the list (lab WT4-C2): its exact paths, split-file notes and number. */
+export type GitProposalHighlight = Readonly<{
+    paths: ReadonlySet<string>;
+    notes: ReadonlyMap<string, string>;
+    groupNumber: number;
+}>;
 
 export type SessionRightPanelGitCommitTabProps = Readonly<{
     theme: any;
@@ -74,6 +81,8 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
 
     allRepositoryChangedFiles: ScmFileStatus[];
     selectedRepositoryChangedFiles?: ScmFileStatus[];
+    proposedGroupSelected?: boolean;
+    proposalHighlight?: GitProposalHighlight | null;
     turnAttributedFiles?: SessionAttributedFile[];
     turnAgentReportedFiles?: SessionAttributedFile[];
     turnCheckpointFiles?: SessionAttributedFile[];
@@ -259,6 +268,8 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                 sessionCheckpointOverlap={props.sessionCheckpointOverlap}
                 allRepositoryChangedFiles={props.allRepositoryChangedFiles}
                 selectedRepositoryChangedFiles={props.selectedRepositoryChangedFiles}
+                proposedGroupSelected={props.proposedGroupSelected}
+                proposalHighlight={props.proposalHighlight ?? null}
                 turnAttributedFiles={props.turnAttributedFiles}
                 turnAgentReportedFiles={props.turnAgentReportedFiles}
                 turnCheckpointFiles={props.turnCheckpointFiles}
@@ -481,6 +492,8 @@ type CommitChangesSurfaceProps = Readonly<{
 
     allRepositoryChangedFiles: ScmFileStatus[];
     selectedRepositoryChangedFiles?: ScmFileStatus[];
+    proposedGroupSelected?: boolean;
+    proposalHighlight?: GitProposalHighlight | null;
     turnAttributedFiles?: SessionAttributedFile[];
     turnAgentReportedFiles?: SessionAttributedFile[];
     turnCheckpointFiles?: SessionAttributedFile[];
@@ -868,6 +881,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         repositoryName,
         selectedPathSet,
         selectionActive: props.selectionActive,
+        proposedGroupSelected: props.proposedGroupSelected,
+        proposalHighlight: props.proposalHighlight ?? null,
         onToggleGroupSelection: props.onToggleGroupSelection,
         changedFileRowLayout,
         activeReviewFileKey,
@@ -886,6 +901,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         repositoryName,
         selectedPathSet,
         selectionActive: props.selectionActive,
+        proposedGroupSelected: props.proposedGroupSelected,
+        proposalHighlight: props.proposalHighlight ?? null,
         onToggleGroupSelection: props.onToggleGroupSelection,
         changedFileRowLayout,
         activeReviewFileKey,
@@ -911,6 +928,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         pathsByFileName,
         selectedPathSet,
         selectionActive: props.selectionActive,
+        proposalHighlight: props.proposalHighlight ?? null,
         changedFileRowLayout,
         activeReviewFileKey,
     }), [
@@ -920,6 +938,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         pathsByFileName,
         selectedPathSet,
         props.selectionActive,
+        props.proposedGroupSelected,
+        props.proposalHighlight,
         themeTextPrimary,
         themeTextSecondary,
         virtualizedChangedFiles.length,
@@ -938,6 +958,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                     selectedPathSet={state.selectedPathSet}
                     selectionActive={state.selectionActive}
                     onToggleGroupSelection={state.onToggleGroupSelection}
+                    proposalHighlight={state.proposalHighlight}
                 />
             );
         }
@@ -962,6 +983,9 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
             <ScmChangeRow
                 theme={theme}
                 file={file}
+                proposalEmphasis={virtualizedRowStateRef.current.proposalHighlight ? (virtualizedRowStateRef.current.proposalHighlight.paths.has(file.fullPath) ? 'in' : 'out') : null}
+                proposalNote={virtualizedRowStateRef.current.proposalHighlight?.notes.get(file.fullPath) ?? null}
+                tag={resolveScmChangePathTag(file.fullPath)}
                 layout={rowLayout}
                 activeReviewFileKey={rowActiveReviewFileKey}
                 siblingPaths={sameNamePaths && sameNamePaths.length > 1 ? sameNamePaths : undefined}
@@ -1036,7 +1060,9 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                     snapshot={props.scmSnapshot}
                     files={listedFiles}
                     selectedPaths={selectedPathSet}
-                    selectionEnabled={props.selectionActive}
+                    selectionEnabled={props.selectionActive || props.proposedGroupSelected === true}
+                    selectionReadOnly={props.proposedGroupSelected}
+                    proposal={props.proposalHighlight ?? null}
                     onToggleFile={onToggleTreeFile}
                     onToggleFolder={onToggleFolderPaths}
                     onOpenFile={onOpenTreeFile}
@@ -1096,6 +1122,7 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
     selectedPathSet: ReadonlySet<string>;
     selectionActive: boolean;
     onToggleGroupSelection?: (files: readonly ScmFileStatus[], select: boolean) => void;
+    proposalHighlight?: GitProposalHighlight | null;
 }>) => {
     const { group, onToggleGroupSelection } = props;
     let selected = 0;
@@ -1104,6 +1131,7 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
     }
     const state = selected === 0 ? 'unchecked' : selected === group.files.length ? 'checked' : 'mixed';
     const canToggle = props.selectionActive && Boolean(onToggleGroupSelection) && group.files.length > 0;
+    const proposalCount = props.proposalHighlight ? group.files.filter((file) => props.proposalHighlight!.paths.has(file.fullPath)).length : 0;
     const onPress = React.useCallback(() => {
         onToggleGroupSelection?.(group.files, state !== 'checked');
     }, [group.files, onToggleGroupSelection, state]);
@@ -1134,6 +1162,11 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
             <Text style={{ fontSize: 12, color: textTertiary, fontVariant: ['tabular-nums'], ...Typography.default() }}>
                 {formatExactCount(group.files.length)}
             </Text>
+            {proposalCount > 0 && props.proposalHighlight ? (
+                <Text testID={`scm-change-group-proposal:${group.id}`} style={{ marginLeft: 'auto', fontSize: 12, color: props.theme.colors.state.active.foreground, fontVariant: ['tabular-nums'], ...Typography.default('semiBold') }}>
+                    {t('commitProposal.gitPane.inCommit', { count: proposalCount, number: props.proposalHighlight.groupNumber })}
+                </Text>
+            ) : null}
         </View>
     );
 });
