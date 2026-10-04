@@ -284,7 +284,6 @@ describe('GitHub issue-comment Channel polling', () => {
       checkpointAfterBatch: {
         updatedAtIso: '2026-08-10T12:00:00.000Z',
         commentIdAtUpdatedAt: '0',
-        continuation: null,
       },
     });
     if (baseline.kind !== 'checkpointOnly') {
