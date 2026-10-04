@@ -1,4 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isExternalActionResultWithinResponseEnvelopeLimitV1 } from '@happier-dev/plugin-sdk/actions';
 import {
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
@@ -45,6 +46,8 @@ import {
 } from './detail/projection.js';
 import {
   readGithubChangedFilesPage,
+  readGithubPullRequestComparisonEndpoints,
+  readGithubPullRequestComparisonBeforeOid,
   readGithubChecksSurface,
   readGithubTimelinePage,
   type GithubDetailPageV1,
@@ -57,6 +60,7 @@ import { readGithubCheckOutcomeV1 } from './checkOutcome.js';
 import { buildGithubStateRowFactsV1 } from './mapping/facts.js';
 import { readLatestGithubReviewsV1 } from './mapping/reviews.js';
 import { classifyGithubTransportFailure } from './errors.js';
+import { buildGithubRepositoryKey } from './locator.js';
 
 /**
  * The seven bound source-native detail operations.
@@ -302,18 +306,123 @@ export async function listGithubChangedFiles(
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
 
+  const frontier = request.continuation === undefined ? null : decodeGithubDetailContinuation(request.continuation);
+  if (request.comparison !== true && frontier?.comparison !== undefined) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
+  const dependencies = { client: admitted.client, now: Date.now };
+  const endpointInput = { route: admitted.route, entryNumber: admitted.entryNumber, repositoryId: admitted.repository.repositoryId };
+  const binding = JSON.stringify([request.instance.instance, request.instance.binding.account, admitted.localRef, admitted.route]);
+  const previous = frontier?.comparison;
+  if (request.comparison === true && request.continuation !== undefined && (previous === undefined || previous.binding !== binding)) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
+  const captured = request.comparison === true
+    ? await readGithubPullRequestComparisonEndpoints(endpointInput, dependencies)
+    : null;
+  if (captured !== null && !captured.ok) return unavailable(toTriageFailure(captured.failure));
+  // This route has passed Account/repository admission; the metadata read proves
+  // its PR number and repository id. Caller display fields are never this fact.
+  const repository = buildGithubRepositoryKey(admitted.route);
+  const number = Number(admitted.entryNumber);
+  if (request.comparison === true && (repository === null || !Number.isSafeInteger(number) || number < 1)) return unavailable(INVALID_INPUT_FAILURE);
+  const locator = Object.freeze({ providerId: 'github' as const, repository: repository ?? '', number });
+  if (captured?.ok && previous !== undefined && (previous.baseOid !== captured.value.baseOid || previous.headOid !== captured.value.headOid || previous.totalFileCount !== captured.value.totalFileCount)) {
+    return Object.freeze({ kind: 'changedFiles', rows: Object.freeze([]), omittedRowCount: 0, projectionTruncated: false,
+      comparison: Object.freeze({ ...captured.value, locator, beforeOid: previous.beforeOid, baseOid: previous.baseOid, headOid: previous.headOid, totalFileCount: previous.totalFileCount,
+        enumeratedFileCount: previous.enumeratedFileCount, freshness: 'stale', inventory: 'incomplete', content: previous.contentIncomplete ? 'incomplete' : 'complete', reasons: Object.freeze(['source_changed']) }),
+    });
+  }
+
+  const before = captured?.ok
+    ? previous !== undefined ? { ok: true as const, value: previous.beforeOid }
+      : await readGithubPullRequestComparisonBeforeOid({ route: admitted.route, ...captured.value }, dependencies)
+    : null;
+  if (before !== null && !before.ok) return unavailable(toTriageFailure(before.failure));
+  const endpoints = captured?.ok && before?.ok ? { ...captured.value, beforeOid: before.value } : null;
+
   const page = await readGithubChangedFilesPage({
     route: admitted.route,
     entryNumber: admitted.entryNumber,
     perPage: request.limit,
     page: position.page,
-  }, { client: admitted.client, now: Date.now });
-  if (!page.ok) return unavailable(toTriageFailure(page.failure));
+    ...(request.comparison === true ? { comparison: true as const } : {}),
+  }, dependencies);
+  if (!page.ok) {
+    if (endpoints) return Object.freeze({ kind: 'changedFiles', rows: Object.freeze([]), omittedRowCount: 0, projectionTruncated: false,
+      comparison: Object.freeze({ ...endpoints, locator, enumeratedFileCount: previous?.enumeratedFileCount ?? 0,
+        freshness: 'unverified', inventory: 'incomplete', content: 'incomplete', reasons: Object.freeze(['page_failed']), failure: toTriageFailure(page.failure) }),
+    });
+    return unavailable(toTriageFailure(page.failure));
+  }
+
+  if (endpoints) {
+    const refreshed = await readGithubPullRequestComparisonEndpoints(endpointInput, dependencies);
+    const freshness = !refreshed.ok ? 'unverified' as const
+      : refreshed.value.baseOid !== endpoints.baseOid || refreshed.value.headOid !== endpoints.headOid || refreshed.value.totalFileCount !== endpoints.totalFileCount ? 'stale' as const : 'current' as const;
+    const enumeratedFileCount = (previous?.enumeratedFileCount ?? 0) + page.value.rows.length + page.value.omittedRowCount;
+    const reasons: string[] = [];
+    if (page.value.nextPage !== null) reasons.push('pages_pending');
+    if (page.value.incomplete !== null) reasons.push(page.value.incomplete);
+    if (page.value.omittedRowCount > 0 || page.value.projectionTruncated || previous?.inventoryIncomplete) reasons.push('omitted_rows');
+    if (page.value.nextPage === null && enumeratedFileCount !== endpoints.totalFileCount) reasons.push('file_count_mismatch');
+    if (freshness !== 'current') reasons.push(freshness === 'stale' ? 'source_changed' : 'freshness_unverified');
+    const inventory = reasons.length === 0 ? 'complete' as const : 'incomplete' as const;
+    const contentIncomplete = previous?.contentIncomplete === true || page.value.rows.some((row) => row.evidence?.state !== 'available');
+    const comparison = Object.freeze({ ...endpoints, locator, enumeratedFileCount, freshness, inventory,
+      content: contentIncomplete ? 'incomplete' as const : 'complete' as const, reasons: Object.freeze(reasons),
+      ...(!refreshed.ok ? { failure: toTriageFailure(refreshed.failure) } : {}),
+    });
+    const continuation = freshness === 'current' && page.value.nextPage !== null
+      ? encodeGithubDetailContinuation({ v: 1, page: page.value.nextPage, perPage: request.limit, comparison: {
+        binding, ...endpoints, enumeratedFileCount,
+        inventoryIncomplete: page.value.omittedRowCount > 0 || page.value.projectionTruncated || previous?.inventoryIncomplete === true,
+        contentIncomplete,
+      } }) : null;
+    const result = Object.freeze({ kind: 'changedFiles' as const, rows: page.value.rows, omittedRowCount: page.value.omittedRowCount,
+      projectionTruncated: page.value.projectionTruncated, comparison,
+      ...(page.value.incomplete === null ? {} : { incomplete: page.value.incomplete }),
+      ...(continuation === null ? {} : { continuation }),
+    });
+    return fitGithubComparisonPage(result, request.limit);
+  }
 
   return Object.freeze({
     kind: 'changedFiles' as const,
     ...shapePage(page.value, request.limit),
   });
+}
+
+/** Preserve inventory when exact text cannot cross the existing Action envelope. */
+function fitGithubComparisonPage(
+  result: Extract<GithubChangedFilesResultV1, { kind: 'changedFiles' }>,
+  perPage: number,
+): GithubChangedFilesResultV1 {
+  if (isExternalActionResultWithinResponseEnvelopeLimitV1(result)) return result;
+  const comparison = result.comparison;
+  if (comparison === undefined) return result;
+  const rows = [...result.rows];
+  const order = rows.map((row, index) => ({ index, size: row.evidence !== undefined && 'patch' in row.evidence ? row.evidence.patch.length : 0 }))
+    .sort((a, b) => b.size - a.size);
+  const frontier = result.continuation === undefined ? null : decodeGithubDetailContinuation(result.continuation);
+  const continuation = frontier?.comparison === undefined ? null : encodeGithubDetailContinuation({ ...frontier,
+    comparison: { ...frontier.comparison, contentIncomplete: true },
+  });
+  const shape = () => Object.freeze({ ...result, rows: Object.freeze([...rows]),
+    comparison: Object.freeze({ ...comparison, content: 'incomplete' as const, reasons: Object.freeze([...comparison.reasons, 'transport_limit']) }),
+    ...(continuation === null ? {} : { continuation }),
+  });
+  for (const item of order) {
+    if (item.size === 0) continue;
+    rows[item.index] = { ...rows[item.index]!, evidence: { state: 'unavailable', reason: 'transport_limit' } };
+    const fitted = shape();
+    if (isExternalActionResultWithinResponseEnvelopeLimitV1(fitted)) return fitted;
+  }
+  // Path/inventory bytes themselves can exceed the same transport contract. The
+  // existing sequence fitter keeps a usable prefix and states omitted evidence.
+  return fitActionResultSequenceV1(rows, (included, omitted) => ({ ...shape(), rows: included,
+    omittedRowCount: result.omittedRowCount + omitted, projectionTruncated: true,
+    comparison: { ...shape().comparison, inventory: 'incomplete' as const },
+    ...(frontier?.comparison === undefined ? {} : { continuation: encodeGithubDetailContinuation({ ...frontier, perPage,
+      comparison: { ...frontier.comparison, contentIncomplete: true, inventoryIncomplete: true },
+    }) ?? undefined }),
+  })).result;
 }
 
 /* ------------------------------------------------------------------- feedback */

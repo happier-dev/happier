@@ -321,8 +321,64 @@ export type GithubTimelineResultV1 = ReturnType<typeof GithubTimelineResultV1Sch
 
 /* -------------------------------------------------------------- changed files */
 
-export const GithubChangedFilesInputV1Schema = pagedPlaneInput;
+export const GithubChangedFilesInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
+  limit: PageLimitSchema,
+  continuation: ContinuationSchema.optional(),
+  /** Opt in to comparison evidence through the existing source Action. */
+  comparison: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
 export type GithubChangedFilesInputV1 = ReturnType<typeof GithubChangedFilesInputV1Schema.parse>;
+
+const GithubPatchEvidenceV1Schema = defineProtocolUnion([
+  defineProtocolObject({ state: defineProtocolLiteral('available'), patch: defineProtocolString() }, { policy: 'closed' }),
+  defineProtocolObject({
+    state: defineProtocolLiteral('unavailable'),
+    reason: defineProtocolUnion([defineProtocolLiteral('provider_patch_missing'), defineProtocolLiteral('transport_limit')]),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    state: defineProtocolLiteral('truncated'),
+    patch: defineProtocolString(),
+    reason: defineProtocolLiteral('provider_patch_truncated'),
+  }, { policy: 'closed' }),
+]);
+export type GithubPatchEvidenceV1 = ReturnType<typeof GithubPatchEvidenceV1Schema.parse>;
+
+export const GithubComparisonEvidenceV1Schema = defineProtocolObject({
+  locator: defineProtocolObject({
+    providerId: defineProtocolLiteral('github'),
+    repository: defineProtocolString({ minLength: 1 }),
+    number: defineProtocolNumber({ integer: true, minimum: 1 }),
+  }, { policy: 'closed' }),
+  beforeOid: IdentifierSchema,
+  /** Base tip is a freshness witness; beforeOid attests the patch's actual merge base. */
+  baseOid: IdentifierSchema,
+  headOid: IdentifierSchema,
+  totalFileCount: CountSchema,
+  enumeratedFileCount: CountSchema,
+  freshness: defineProtocolUnion([defineProtocolLiteral('current'), defineProtocolLiteral('stale'), defineProtocolLiteral('unverified')]),
+  inventory: defineProtocolUnion([defineProtocolLiteral('complete'), defineProtocolLiteral('incomplete')]),
+  content: defineProtocolUnion([defineProtocolLiteral('complete'), defineProtocolLiteral('incomplete')]),
+  reasons: defineProtocolArray(defineProtocolString({ minLength: 1 })),
+  failure: TriageSourceFailureV1Schema.optional(),
+}, { policy: 'closed' });
+export type GithubComparisonEvidenceV1 = ReturnType<typeof GithubComparisonEvidenceV1Schema.parse>;
+
+/** Correlation only; the configured Account and repository are read again on every invocation. */
+export const GithubComparisonContinuationV1Schema = defineProtocolObject({
+  binding: defineProtocolString({ minLength: 1 }),
+  beforeOid: IdentifierSchema,
+  baseOid: IdentifierSchema,
+  headOid: IdentifierSchema,
+  totalFileCount: CountSchema,
+  enumeratedFileCount: CountSchema,
+  inventoryIncomplete: GithubBooleanSchema,
+  contentIncomplete: GithubBooleanSchema,
+}, { policy: 'closed' });
+export type GithubComparisonContinuationV1 = ReturnType<typeof GithubComparisonContinuationV1Schema.parse>;
 
 export const GithubProjectedChangedFileRowV1Schema = defineProtocolObject({
   path: PathSchema,
@@ -333,13 +389,9 @@ export const GithubProjectedChangedFileRowV1Schema = defineProtocolObject({
   changes: CountSchema,
   blobSha: IdentifierSchema.optional(),
   webUrl: LocationSchema.optional(),
-  /**
-   * Whether GitHub supplied a patch for this file. The patch itself is never
-   * published: the rich diff body is held under B6, and a changed-file list that
-   * shipped diff bytes to a surface with no renderer for them would be paying
-   * the cost of a feature that does not exist yet.
-   */
+  /** Display availability is not proof of complete comparison content. */
   diffAvailable: GithubBooleanSchema,
+  evidence: GithubPatchEvidenceV1Schema.optional(),
   /** Source-native patch evidence used only by the deterministic Files ordering owner. */
   importSpecifiers: defineProtocolArray(PathSchema).optional(),
   truncated: defineProtocolLiteral(true).optional(),
@@ -355,6 +407,7 @@ export const GithubChangedFilesResultV1Schema = defineProtocolUnion([
     projectionTruncated: GithubBooleanSchema,
     incomplete: IncompleteReasonSchema.optional(),
     continuation: ContinuationSchema.optional(),
+    comparison: GithubComparisonEvidenceV1Schema.optional(),
   }, { policy: 'closed' }),
   GithubDetailUnavailableSchema,
 ]);

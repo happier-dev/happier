@@ -17,6 +17,7 @@ import {
   GITHUB_FIXTURE_REPOSITORY,
   GITHUB_ISSUE_RESPONSE,
   GITHUB_PULL_REQUEST_RESPONSE,
+  GITHUB_REPOSITORY_RESPONSE,
   githubChangedFile,
   githubCheckRun,
   githubCheckRunsResponse,
@@ -53,6 +54,7 @@ import {
 
 const REPOSITORY_KEY = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`.toLowerCase();
 const HEAD_SHA = '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29';
+const BASE_SHA = '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e';
 const CONFIGURED_ACCOUNT: ConnectedAccountRef = Object.freeze({
   service: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' }),
   accountId: 'configured-account',
@@ -445,6 +447,174 @@ describe('GitHub timeline plane', () => {
 /* ---------------------------------------------------------------- changed files */
 
 describe('GitHub changed-files plane', () => {
+  it('retains exact comparison patches and pins endpoints across source continuations', async () => {
+    const patch = '@@ -1 +1 @@\n-old  \n+new Ω  ';
+    const mergeBaseOid = 'c'.repeat(40);
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const url = new URL(request.url);
+        if (url.pathname.includes('/compare/')) {
+          expect(url.pathname).toBe(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}`);
+          return jsonResponse({ base_commit: { sha: BASE_SHA }, merge_base_commit: { sha: mergeBaseOid } });
+        }
+        if (url.pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 101 });
+        if (!url.pathname.endsWith('/files')) return undefined;
+        const paths = url.searchParams.get('page') === '1' ? Array.from({ length: 100 }, (_, index) => `first-${index}.ts`) : ['second.ts'];
+        return jsonResponse(paths.map((filename) => ({ ...githubChangedFile({ filename }), additions: 1, deletions: 1, changes: 2, patch })),
+          url.searchParams.get('page') === '1' ? { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: 2 }) } : {});
+      },
+    });
+    const first = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 100 }), stub.context));
+    expect(first.kind).toBe('changedFiles');
+    if (first.kind !== 'changedFiles') return;
+    expect(first.rows[0]).toMatchObject({ evidence: { state: 'available', patch } });
+    expect(first.rows).toHaveLength(100);
+    expect(first.comparison).toMatchObject({ beforeOid: mergeBaseOid, baseOid: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e', headOid: HEAD_SHA, freshness: 'current', inventory: 'incomplete', content: 'complete', totalFileCount: 101 });
+    expect(first.comparison).toMatchObject({ locator: { providerId: 'github', repository: REPOSITORY_KEY, number: 1284 } });
+    const second = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 100, continuation: first.continuation }), stub.context));
+    expect(second.kind).toBe('changedFiles');
+    if (second.kind !== 'changedFiles') return;
+    expect(second.rows[0]?.path).toBe('second.ts');
+    expect(second.comparison).toMatchObject({ beforeOid: mergeBaseOid, inventory: 'complete', content: 'complete', enumeratedFileCount: 101 });
+    expect(second.comparison).toMatchObject({ locator: { providerId: 'github', repository: REPOSITORY_KEY, number: 1284 } });
+    expect(second.continuation).toBeUndefined();
+    expect(stub.materializations.every((read) => read.account.accountId === CONFIGURED_ACCOUNT.accountId)).toBe(true);
+  });
+
+  it('keeps usable evidence when the metadata reread fails and refuses exact completeness', async () => {
+    let metadataReads = 0;
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) {
+        return ++metadataReads === 1 ? jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 1 }) : { status: 429, headers: { 'retry-after': '60' }, body: { message: 'rate limited' } };
+      }
+      return request.url.includes('/files') ? jsonResponse([githubChangedFile({ filename: 'retained.ts' })]) : undefined;
+    } });
+    const result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true }), stub.context));
+    expect(result.kind).toBe('changedFiles');
+    if (result.kind !== 'changedFiles') return;
+    expect(result.rows[0]?.path).toBe('retained.ts');
+    expect(result.comparison).toMatchObject({ freshness: 'unverified', inventory: 'incomplete', failure: { class: 'rateLimit' } });
+  });
+
+  it.each(['base', 'head'] as const)('marks page evidence stale if the %s endpoint changes during its read', async (endpoint) => {
+    let reads = 0;
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE,
+        changed_files: 1, [endpoint]: { sha: ++reads === 1 ? (endpoint === 'head' ? HEAD_SHA : '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e') : 'a'.repeat(40), repo: GITHUB_REPOSITORY_RESPONSE },
+      });
+      return request.url.includes('/files') ? jsonResponse([githubChangedFile({ filename: 'mixed.ts' })]) : undefined;
+    } });
+    const result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true }), stub.context));
+    expect(result.kind).toBe('changedFiles');
+    if (result.kind !== 'changedFiles') return;
+    expect(result.comparison).toMatchObject({ headOid: HEAD_SHA, freshness: 'stale', inventory: 'incomplete', reasons: expect.arrayContaining(['source_changed']) });
+    expect(result.continuation).toBeUndefined();
+  });
+
+  it('keeps evidence incomplete when a provider continuation points outside its source route', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 2 });
+      return request.url.includes('/files') ? jsonResponse([githubChangedFile({ filename: 'retained.ts' })], { link: '<https://other.example/steal?page=2>; rel="next"' }) : undefined;
+    } });
+    const result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true }), stub.context));
+    expect(result).toMatchObject({ kind: 'changedFiles', incomplete: 'pagination', comparison: { inventory: 'incomplete', reasons: expect.arrayContaining(['pagination']) } });
+    expect(stub.requests.some((request) => request.url.startsWith('https://other.example'))).toBe(false);
+  });
+
+  it('retains missing and truncated patch facts without normalizing exact paths or patch bytes', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 3 });
+      return request.url.includes('/files') ? jsonResponse([
+        githubChangedFile({ filename: 'bin.dat', withPatch: false }),
+        { ...githubChangedFile({ filename: 'two  spaces.ts' }), additions: 2, deletions: 1, changes: 3, patch: '@@ -1 +1,2 @@\n-old\n+first' },
+        { ...githubChangedFile({ filename: ' ' }), additions: 0, deletions: 0, changes: 0, patch: '' },
+      ]) : undefined;
+    } });
+    const result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true }), stub.context));
+    expect(result.kind).toBe('changedFiles');
+    if (result.kind !== 'changedFiles') return;
+    expect(result.rows[0]?.evidence).toEqual({ state: 'unavailable', reason: 'provider_patch_missing' });
+    expect(result.rows[1]).toMatchObject({ path: 'two  spaces.ts', evidence: { state: 'truncated', patch: '@@ -1 +1,2 @@\n-old\n+first', reason: 'provider_patch_truncated' } });
+    expect(result.rows[2]).toMatchObject({ path: ' ', evidence: { state: 'available', patch: '' } });
+    expect(result.comparison).toMatchObject({ inventory: 'complete', content: 'incomplete' });
+  });
+
+  it('keeps file inventory and states the real Action envelope limit for an oversized patch', async () => {
+    const patch = '@@ -0,0 +1 @@\n+' + 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 1 });
+      return request.url.includes('/files') ? jsonResponse([{ ...githubChangedFile({ filename: 'large.txt' }), additions: 1, deletions: 0, changes: 1, patch }]) : undefined;
+    } });
+    const result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true }), stub.context));
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(result.kind).toBe('changedFiles');
+    if (result.kind !== 'changedFiles') return;
+    expect(result.rows[0]).toMatchObject({ path: 'large.txt', evidence: { state: 'unavailable', reason: 'transport_limit' } });
+    expect(result.comparison).toMatchObject({ inventory: 'complete', content: 'incomplete', reasons: expect.arrayContaining(['transport_limit']) });
+  });
+
+  it.each(['base', 'head'] as const)('refuses a mixed comparison when the %s tip moves before the next page', async (endpoint) => {
+    let headOid = HEAD_SHA;
+    let baseOid = BASE_SHA;
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 2,
+        base: { sha: baseOid, repo: GITHUB_REPOSITORY_RESPONSE }, head: { sha: headOid } });
+      return request.url.includes('/files') ? jsonResponse([githubChangedFile({ filename: 'prefix.ts' })], { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: 2 }) }) : undefined;
+    } });
+    const first = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 1 }), stub.context));
+    if (first.kind !== 'changedFiles') throw new Error('Expected the source prefix');
+    if (endpoint === 'head') headOid = 'b'.repeat(40);
+    else baseOid = 'b'.repeat(40);
+    const second = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 1, continuation: first.continuation }), stub.context));
+    expect(second).toMatchObject({ kind: 'changedFiles', rows: [], comparison: { headOid: HEAD_SHA, freshness: 'stale', inventory: 'incomplete' } });
+    expect(stub.requests.filter((request) => request.url.includes('/files'))).toHaveLength(1);
+  });
+
+  it.each(['missing', 'wrong-base', 'forbidden'] as const)('refuses exact comparison evidence when the merge-base attestation is %s', async (mode) => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.includes('/compare/')) return mode === 'forbidden'
+        ? { status: 403, body: { message: 'Resource not accessible by integration' } }
+        : jsonResponse({ base_commit: { sha: mode === 'wrong-base' ? 'a'.repeat(40) : BASE_SHA },
+          ...(mode === 'missing' ? {} : { merge_base_commit: { sha: 'c'.repeat(40) } }) });
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 1 });
+      return request.url.includes('/files') ? jsonResponse([githubChangedFile({ filename: 'file.ts' })]) : undefined;
+    } });
+    const result = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true }), stub.context));
+    expect(result).toMatchObject({ kind: 'unavailable', failure: { class: mode === 'forbidden' ? 'permission' : 'unsupportedContract' } });
+  });
+
+  it('returns a typed failed-page comparison without erasing a previously delivered prefix', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 2 });
+      if (!url.pathname.endsWith('/files')) return undefined;
+      return url.searchParams.get('page') === '1'
+        ? jsonResponse([githubChangedFile({ filename: 'prefix.ts' })], { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: 2 }) })
+        : { status: 401, body: { message: 'Bad credentials' } };
+    } });
+    const first = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 1 }), stub.context));
+    if (first.kind !== 'changedFiles') throw new Error('Expected the source prefix');
+    const second = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 1, continuation: first.continuation }), stub.context));
+    expect(second).toMatchObject({ kind: 'changedFiles', rows: [], comparison: { enumeratedFileCount: 1, inventory: 'incomplete', failure: { class: 'authentication' } } });
+    expect(first.rows[0]?.path).toBe('prefix.ts');
+  });
+
+  it('rejects display-only or foreign-account continuations in comparison mode', async () => {
+    const stub = createStubGithubTransport({ respond: (request) => {
+      if (new URL(request.url).pathname.endsWith('/pulls/1284')) return jsonResponse({ ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 2 });
+      return request.url.includes('/files') ? jsonResponse([githubChangedFile({ filename: 'prefix.ts' })], { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: 2 }) }) : undefined;
+    } });
+    const first = GithubChangedFilesResultV1Schema.parse(await listGithubChangedFiles(planeInput({ comparison: true, limit: 1 }), stub.context));
+    if (first.kind !== 'changedFiles') throw new Error('Expected the source prefix');
+    const original = configuredInstance();
+    const foreign = { ...original, binding: { ...original.binding, account: { ...CONFIGURED_ACCOUNT, accountId: 'other-account' } } };
+    for (const input of [
+      planeInput({ comparison: true, limit: 1, continuation: encodeGithubDetailContinuation({ v: 1, page: 2, perPage: 1 }) }),
+      planeInput({ comparison: true, limit: 1, continuation: first.continuation, instance: foreign }),
+    ]) expect(await listGithubChangedFiles(input, stub.context)).toMatchObject({ kind: 'unavailable', failure: { code: 'github_detail_continuation_unreadable' } });
+    expect(stub.requests.filter((request) => request.url.includes('/files'))).toHaveLength(1);
+  });
+
   it('renders a complete walk as complete', async () => {
     const stub = createStubGithubTransport({
       respond: (request) => (request.url.includes('/pulls/1284/files')

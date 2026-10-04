@@ -196,6 +196,10 @@ export function createStubGithubTransport(input: Readonly<{
         recorded.method === 'GET'
         && pathname === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`
           ? { status: 200, body: GITHUB_REPOSITORY_RESPONSE }
+          // Pinned comparison metadata is a genuine HTTP boundary; individual tests
+          // override this response to exercise divergence and provider failures.
+          : recorded.method === 'GET' && pathname.startsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/compare/`)
+            ? { status: 200, body: { base_commit: { sha: pathname.split('/').at(-1)?.split('...')[0] }, merge_base_commit: { sha: 'c'.repeat(40) } } }
           : undefined
       );
       if (response === undefined) {

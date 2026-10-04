@@ -22,7 +22,9 @@ import {
   GITHUB_PULL_REQUEST_RESPONSE,
   GITHUB_SEARCH_PULL_REQUEST_ITEM,
   githubSearchResponse,
+  githubChangedFile,
 } from './__fixtures__/githubResponses.js';
+import { listGithubChangedFiles } from './detailOperations.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import {
   getGithubTriageEntry,
@@ -319,6 +321,24 @@ describe('GitHub Triage source operations', () => {
       },
       { signal: materializer.context.signal },
     );
+  });
+
+  it('keeps a PR present without comparison routing when the source cannot pin its endpoints', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => new URL(request.url).pathname.endsWith('/pulls/1284')
+        ? { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, head: null } }
+        : undefined,
+    });
+    const result = TriageGetResultV1Schema.parse(await getGithubTriageEntry({
+      v: 1,
+      instance: configuredInstance({ scope: 'account' }),
+      localRef: { kindId: 'pull-request', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`, entryId: '1284' },
+      lastKnownLocator: { v: 1, routingToken: REPOSITORY_KEY },
+    }, stub.context));
+
+    expect(result.kind).toBe('present');
+    expect(result).not.toHaveProperty('comparisonSource');
+    expect(result).not.toHaveProperty('snapshot.reviewRevision');
   });
 
   it.each([
@@ -679,6 +699,9 @@ describe('GitHub Triage source operations', () => {
   it('returns the exact input local ref from an authoritative get', async () => {
     const stub = createStubGithubTransport({
       respond: (request): StubHttpResponse | undefined => {
+        if (new URL(request.url).pathname.endsWith('/pulls/1284/files')) {
+          return { status: 200, headers: { 'content-type': 'application/json' }, body: [githubChangedFile({ filename: 'current.ts' })] };
+        }
         if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
           return undefined;
         }
@@ -716,6 +739,41 @@ describe('GitHub Triage source operations', () => {
       headSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
       nativeRevision: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
     });
+    expect(result).toMatchObject({
+      comparisonSource: {
+        kind: 'pullRequest',
+        locator: {
+          providerId: 'github',
+          repository: REPOSITORY_KEY,
+          number: 1284,
+          baseOid: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e',
+          headOid: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+          sourceAction: {
+            action: { pluginId: GITHUB_PLUGIN_ID, localId: 'triage/list-github-changed-files' },
+            input: {
+              v: 1,
+              instance: configuredInstance({ scope: 'repository' }),
+              localRef,
+              routingToken: REPOSITORY_KEY,
+              limit: 100,
+              comparison: true,
+            },
+          },
+        },
+      },
+    });
+    if (result.comparisonSource?.kind !== 'pullRequest') throw new Error('expected source-owned PR comparison');
+    const evidence = await listGithubChangedFiles(result.comparisonSource.locator.sourceAction?.input, stub.context);
+    expect(evidence).toMatchObject({
+      kind: 'changedFiles',
+      rows: [{ path: 'current.ts' }],
+      comparison: {
+        baseOid: result.comparisonSource.locator.baseOid,
+        headOid: result.comparisonSource.locator.headOid,
+        locator: { providerId: 'github', repository: REPOSITORY_KEY, number: 1284 },
+      },
+    });
+    expect(stub.materializations.every((read) => read.account.accountId === CONFIGURED_ACCOUNT.accountId)).toBe(true);
   });
 
   it.each([
