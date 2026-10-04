@@ -8,6 +8,7 @@ import type { Option, OptionLongPressHandler } from '../MarkdownBlockView';
 import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRangeLayoutObserver } from '../MarkdownView';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
+import type { MarkdownInlineReferences } from '../markdownInlineReferences';
 import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
 import { SpecialMarkdownBlockView } from './SpecialMarkdownBlockView';
 
@@ -33,6 +34,7 @@ type MarkdownSegmentViewProps = Readonly<{
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
     agentTexMath: boolean;
+    inlineReferences?: MarkdownInlineReferences;
 }>;
 
 export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) => {
@@ -54,6 +56,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 testID="markdown-enriched-run"
                 suppressLeadingTopMargin={props.segment.first}
                 agentTexMath={props.agentTexMath}
+                inlineReferences={props.inlineReferences}
             />
         )
         : (

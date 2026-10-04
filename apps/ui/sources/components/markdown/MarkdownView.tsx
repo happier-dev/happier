@@ -8,6 +8,8 @@ import {
     type MarkdownRenderingProfile,
 } from './rendering/MarkdownRenderingProfile';
 import { MarkdownViewRenderer } from './rendering/MarkdownViewRenderer';
+import type { MarkdownInlineReferences } from './markdownInlineReferences';
+export type { MarkdownInlineReference, MarkdownInlineReferences } from './markdownInlineReferences';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 import type { MarkdownStreamingMode } from './streaming/usePreparedStreamingMarkdown';
 
@@ -46,6 +48,8 @@ export const MarkdownView = React.memo((props: {
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
     agentTexMath?: boolean;
+    /** Citations the caller owns, drawn inline where the author placed them (`[text](scheme:target)`). */
+    inlineReferences?: MarkdownInlineReferences;
 }) => {
     const profile = normalizeMarkdownRenderingProfile({
         profile: props.profile,
@@ -73,6 +77,7 @@ export const MarkdownView = React.memo((props: {
             renderAfterSourceRange={props.renderAfterSourceRange}
             highlightSourceRange={props.highlightSourceRange}
             agentTexMath={props.agentTexMath === true}
+            inlineReferences={props.inlineReferences}
         />
     );
 });

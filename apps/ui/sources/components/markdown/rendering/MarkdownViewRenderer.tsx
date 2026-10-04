@@ -7,6 +7,7 @@ import type { MarkdownSourceRange, MarkdownSourceRangeAction, MarkdownSourceRang
 import { usePreparedStreamingMarkdown, type MarkdownStreamingMode } from '../streaming/usePreparedStreamingMarkdown';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import type { MarkdownRenderingProfile } from './MarkdownRenderingProfile';
+import type { MarkdownInlineReferences } from '../markdownInlineReferences';
 import { MarkdownSegmentView } from './MarkdownSegmentView';
 import {
     readMarkdownRenderSegmentsCache,
@@ -35,6 +36,7 @@ type MarkdownViewRendererProps = Readonly<{
     renderAfterSourceRange?: (action: MarkdownSourceRangeAction) => React.ReactNode;
     highlightSourceRange?: MarkdownSourceRange | null;
     agentTexMath: boolean;
+    inlineReferences?: MarkdownInlineReferences;
 }>;
 
 function buildMarkdownRenderSegmentsCacheKey(params: Readonly<{
@@ -151,6 +153,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
                         renderAfterSourceRange={props.renderAfterSourceRange}
                         highlightSourceRange={props.highlightSourceRange}
                         agentTexMath={props.agentTexMath}
+                        inlineReferences={props.inlineReferences}
                     />
                 ))}
             </View>
