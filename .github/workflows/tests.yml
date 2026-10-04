@@ -296,6 +296,9 @@ jobs:
       - name: Enable Corepack
         run: corepack enable && corepack prepare yarn@1.22.22 --activate
       - uses: ./.github/actions/install-yarn-dependencies
+      - name: Prepare the canonical CLI unit runtime closure
+        if: ${{ matrix.package == 'cli' }}
+        run: yarn workspace @happier-dev/cli build:shared
       - name: Run affected package unit suite
         env:
           GATE_PACKAGE: ${{ matrix.package }}
