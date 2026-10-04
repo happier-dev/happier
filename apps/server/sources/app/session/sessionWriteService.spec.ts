@@ -4486,6 +4486,9 @@ describe("sessionWriteService", () => {
             turnId: "turn-1",
             agentId: "codex",
             agentTurnId: "provider-turn-1",
+            initiator: "user",
+            workDepth: 0,
+            workflowInvocationJson: null,
             status: "completed",
             startedAt: BigInt(100),
             updatedAt: BigInt(200),
@@ -4585,10 +4588,11 @@ describe("sessionWriteService", () => {
             });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             markAccountChanged.mockResolvedValueOnce(101);
-            const dateNowMock = vi.spyOn(Date, "now")
-                .mockReturnValueOnce(1_000)
-                .mockReturnValueOnce(2_000)
-                .mockReturnValue(3_000);
+            const dateNowMock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+            // Advance at receipt persistence, not incidental clock reads during admission.
+            currentTx.sessionTurnMutationReceipt.create.mockImplementation(async () => {
+                dateNowMock.mockReturnValue(2_000);
+            });
 
             const res = await (async () => {
                 try {
@@ -5346,6 +5350,7 @@ describe("sessionWriteService", () => {
             expect(admitSessionLifecycleAutomationRunsTx).toHaveBeenCalledWith({
                 tx: currentTx,
                 accountId: "u1",
+                sourceTurnFacts: { initiator: "user", workDepth: 0 },
                 occurrence: {
                     v: 1,
                     kind: "sessionLifecycle",
@@ -6255,10 +6260,11 @@ describe("sessionWriteService", () => {
 
         it("persists a non-positive decision for an exact end-session target that is missing", async () => {
             expect(typeof applySessionTurnMutation).toBe("function");
-            const dateNowMock = vi.spyOn(Date, "now")
-                .mockReturnValueOnce(1_000)
-                .mockReturnValueOnce(2_000)
-                .mockReturnValue(3_000);
+            const dateNowMock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+            // Advance at receipt persistence, not incidental clock reads during admission.
+            currentTx.sessionTurnMutationReceipt.create.mockImplementation(async () => {
+                dateNowMock.mockReturnValue(2_000);
+            });
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -6841,7 +6847,10 @@ describe("sessionWriteService", () => {
             });
             markAccountChanged.mockResolvedValue(200);
             const result = await applySessionReadCursorOperation({ authentication,  actorUserId: "u1", sessionId: "s1", operation: { kind: "mark-unread" } });
-            expect(lifecycle).toEqual(["initial-authorization", "external-scan", "final-authorization", "lower-cursor"]);
+            // Repeated admission reads in one transaction are one lifecycle stage.
+            expect(lifecycle.filter((stage, index) => stage !== lifecycle[index - 1])).toEqual([
+                "initial-authorization", "external-scan", "final-authorization", "lower-cursor",
+            ]);
             expect(initial.tx.sessionMessage.findMany).not.toHaveBeenCalled();
             expect(final.tx.sessionMessage.findMany).not.toHaveBeenCalled();
             expect(dbMocks.db.sessionMessage.findMany).toHaveBeenNthCalledWith(2, {
