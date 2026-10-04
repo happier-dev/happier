@@ -124,6 +124,8 @@ describe('agent model config', () => {
     expect(codex.staticModels).toBeUndefined();
     expect(codex.allowedModes).toEqual(['default']);
     expect(codexModels).toEqual([{ id: 'default', name: 'default' }]);
+    expect(getAgentStaticModels('codex', { catalogOnly: true })).toEqual([]);
+    expect(getAgentStaticModels('claude', { catalogOnly: true })).toEqual(getAgentModelConfig('claude')!.staticModels);
   });
 
   it('constrains Gemini freeform model ids to Gemini resource names', () => {

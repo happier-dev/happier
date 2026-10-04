@@ -20,6 +20,7 @@ import {
   SessionResponsibilityCandidatesRequestSchema, SessionResponsibilityCandidatesResponseSchema,
 } from '../sessions/access/sessionResponsibilityV1.js';
 import { z } from 'zod';
+import { ScmComparisonSourceSchema } from '../scm/comparison.js';
 import { ExecutionRunWaitConditionSchema } from '../execution/runs/waitForTerminal.js';
 import { WaitActionInputV1Schema, WaitActionResultV1Schema, WAIT_CLI_PROJECTION } from './specs/wait.js';
 import { ComputerAccessV1Schema, ComputerTargetV1Schema } from '../computer/v1.js';
@@ -49,7 +50,7 @@ import {
   DaemonAgentInstallCancelResponseSchema,
 } from '../daemon/agentInstallJobs.js';
 import type { ActionCompletionDeclaration } from './actionCompletion.js';
-import { planStartCompletion, reviewStartCompletion } from './specs/executionRunCompletion.js';
+import { planStartCompletion, reviewStartCompletion, reviewWalkthroughCompletion } from './specs/executionRunCompletion.js';
 import { SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
 import { WORKSPACE_ACTION_SPECS, WORKSPACE_ACTION_INPUT_SCHEMAS, WORKSPACE_ACTION_OUTPUT_SCHEMAS, type WorkspaceActionId } from './workspaceActionFamily.js';
 import { SESSION_TERMINAL_ACTION_SPECS, SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS, type SessionTerminalActionId } from './sessionTerminalActionFamily.js';
@@ -204,6 +205,7 @@ export {
 };
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
+import { ReviewWalkthroughInputSchema, ReviewExplainFindingsInputSchema, ReviewWalkthroughObservationSchema } from '../reviews/reviewNarration.js';
 import {
   REVIEW_COMMENT_ACTION_IDS_V1,
   ReviewCommentActionInputSchemasV1,
@@ -283,7 +285,6 @@ import {
   type AutomationEventActionIdV1,
 } from '../automations/automationActionSpecsV1.js';
 import {
-  PluginContributionIdentityV1Schema,
   PluginContributionLocalIdSchema,
 } from '../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
@@ -640,6 +641,7 @@ import {
 } from '../identity/githubApps.js';
 import { ActionApprovalSchema, resolveActionApprovalFlow, type ActionApproval } from './actionApprovalMetadata.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { ActionInvokeInputSchema } from './actionInvokeInput.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import {
   ActionContextualDefaultsSchema,
@@ -1711,6 +1713,7 @@ const ExecutionRunStartInputSchema = z.preprocess<
 const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
   includeStructured: z.boolean().optional(),
   waitForInputId: z.string().trim().min(1).optional(),
+  waitForOutput: ReviewWalkthroughObservationSchema.optional(),
 }).passthrough();
 
 export const DetachedExecutionRunSendInputSchema = z.object({
@@ -1780,6 +1783,12 @@ const SessionOpenInputSchema = z.object({
   sessionTitle: z.string().trim().min(1).optional(),
   serverId: z.string().trim().min(1).optional(),
   approvedNewDirectoryCreation: z.boolean().optional(),
+  destination: z.object({
+    kind: z.literal('scmReview'),
+    comparison: ScmComparisonSourceSchema,
+    view: z.enum(['walkthrough', 'files']),
+    comparisonId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   if (!(typeof value.sessionId === 'string' && value.sessionId.trim().length > 0) && !(typeof value.sessionTitle === 'string' && value.sessionTitle.trim().length > 0)) {
     ctx.addIssue({
@@ -2209,12 +2218,6 @@ const ActionOptionsResolveResultSchema = z.object({
     ctx.addIssue({ code: 'custom', path: ['modelCatalog'], message: 'Model catalog belongs to Session spawn model selection' });
   }
 });
-
-/** One generic dynamic Action bridge; selection and policy remain executor-owned. */
-const ActionInvokeInputSchema = z.object({
-  action: asProtocolZod(PluginContributionIdentityV1Schema),
-  input: StrictJsonValueSchema.optional(),
-}).strict();
 
 /** Current-UI semantic payloads stay behind the ephemeral opaque command handle. */
 const CurrentUiContextCommandInvokeInputSchema = z.object({
@@ -3018,7 +3021,25 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'scm.pullRequest.get',
   'scm.pullRequest.openCompose',
   'scm.hostingRepository.describePublishTargets',
+  'scm.diffSummary.capture',
   'scm.diffSummary.generate',
+  'scm.diffSummary.result.read',
+  'scm.diffSummary.result.list',
+  'scm.diffSummary.result.clear',
+  'scm.diffSummary.result.edit',
+  'scm.diffSummary.result.undo',
+  'scm.diffSummary.result.delete',
+  'scm.diffSummary.refine',
+  'scm.diffSummary.addOutputs',
+  'scm.diffSummary.discuss',
+  'scm.diffSummary.commitPlan.accept',
+  'scm.diffSummary.commitPlan.stop',
+  'scm.diffSummary.commitPlan.includeHookChanges',
+  'scm.diffSummary.commitPlan.cancel',
+  'scm.diffSummary.commitPlan.recover',
+  'scm.commit.resolveOutcome',
+  'scm.diffSummary.reviewed.mark',
+  'scm.diffSummary.reviewed.unmark',
   'browser.sandbox.install',
   'browser.view.open',
   'browser.view.close',
@@ -3227,6 +3248,8 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'session.follow.sources.set',
   'session.follow.sources.remove',
   'review.start',
+  'review.walkthrough',
+  'review.explain_findings',
   'subagents.plan.start',
   'subagents.delegate.start',
   'voice_agent.start',
@@ -5602,6 +5625,20 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
           optionsSourceId: 'review.engines.available',
         },
         {
+          path: 'outputs', title: 'Also write a walkthrough', widget: 'multiselect',
+          options: [{ value: 'walkthrough', label: 'Walkthrough' }],
+        },
+        {
+          path: 'comparisonId', title: 'Captured comparison', widget: 'text',
+          description: 'Saved exact comparison identity required when requesting a walkthrough.',
+        },
+        {
+          path: 'narrator.engineId', title: 'Narrator', widget: 'select',
+          description: 'Optional explicit capable engine; defaults to the first selected capable reviewer.',
+          optionsSourceId: 'review.engines.available',
+        },
+        { path: 'narrator.modelId', title: 'Narrator model', widget: 'text' },
+        {
           path: 'instructions',
           title: 'Instructions',
           description: 'What you want the reviewers to focus on.',
@@ -5677,6 +5714,49 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     outputSchema: StrictJsonValueSchema,
     inputSchema: ReviewStartInputSchema,
     completion: reviewStartCompletion,
+  },
+  {
+    id: 'review.walkthrough',
+    title: 'Walk through review',
+    sideEffectClass: 'external',
+    safety: 'safe',
+    placements: ['session_action_menu', 'command_palette', 'voice_panel'],
+    bindings: { voiceClientToolName: 'reviewWalkthrough', mcpToolName: 'review_walkthrough' },
+    cli: { commands: [{ path: ['review', 'walkthrough'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"runId":"review-1","comparisonId":"comparison-1"}' } },
+    inputHints: { fields: [
+      { path: 'runId', title: 'Reviewer Run', widget: 'text', required: true },
+      { path: 'reviewRunIds', title: 'Reviewer Runs', widget: 'text_list', listSeparator: 'comma' },
+      { path: 'comparisonId', title: 'Captured comparison', widget: 'text', required: true },
+      { path: 'narrator.engineId', title: 'Narrator', widget: 'select', optionsSourceId: 'review.engines.available' },
+      { path: 'narrator.modelId', title: 'Narrator model', widget: 'text' },
+    ] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: ReviewWalkthroughInputSchema,
+    outputSchema: StrictJsonValueSchema,
+    completion: reviewWalkthroughCompletion,
+  },
+  {
+    id: 'review.explain_findings',
+    title: 'Explain review findings',
+    sideEffectClass: 'external',
+    safety: 'safe',
+    placements: ['session_action_menu', 'command_palette', 'voice_panel'],
+    bindings: { voiceClientToolName: 'reviewExplainFindings', mcpToolName: 'review_explain_findings' },
+    cli: { commands: [{ path: ['review', 'explain-findings'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"runId":"review-1","cwd":"/repo","resultId":"result-1","expectedRevision":1,"findingIds":[{"runId":"review-1","findingId":"finding-1"}]}' } },
+    inputHints: { fields: [
+      { path: 'runId', title: 'Reviewer Run', widget: 'text', required: true },
+      { path: 'reviewRunIds', title: 'Reviewer Runs', widget: 'text_list', listSeparator: 'comma' },
+      { path: 'cwd', title: 'Repository', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Current result revision', widget: 'integer', required: true },
+      { path: 'findingIds', title: 'Finding Run identities', widget: 'json', required: true },
+      { path: 'instructions', title: 'Instructions', widget: 'textarea' },
+    ] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: ReviewExplainFindingsInputSchema,
+    outputSchema: StrictJsonValueSchema,
   },
   {
     id: 'subagents.plan.start',
@@ -12335,6 +12415,8 @@ const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'sessions.external.operation.discard',
   'action.options.resolve',
   'review.start',
+  'review.walkthrough',
+  'review.explain_findings',
   'subagents.plan.start',
   'subagents.delegate.start',
   'voice_agent.start',

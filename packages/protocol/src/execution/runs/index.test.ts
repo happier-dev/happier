@@ -226,6 +226,20 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunStartRequestSchema.safeParse(missingArm).success).toBe(false);
   });
 
+  it('admits a deferred retained SCM narrator with saved comparison configuration and no initial turn', () => {
+    const narrator = {
+      intent: 'scm_diff_summary', kind: 'scm_diff_summary.v1',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      initialInput: { kind: 'deferred_session_pending' },
+      intentInput: { cwd: '/repo', source: { kind: 'workingTree' }, comparisonId: 'saved-comparison', outputs: ['walkthrough'] },
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+    } as const;
+    expect(ExecutionRunStartRequestSchema.safeParse(narrator).success).toBe(true);
+    for (const patch of [{ instructions: 'too early' }, { localInputId: 'embedded' }, { runClass: 'bounded' }, { retentionPolicy: 'ephemeral' }]) {
+      expect(ExecutionRunStartRequestSchema.safeParse({ ...narrator, ...patch }).success).toBe(false);
+    }
+  });
+
   it('carries only strict Saved Secret references on one execution-run launch', () => {
     expect(ExecutionRunStartRequestSchema.parse({
       intent: 'agent',
@@ -943,14 +957,14 @@ describe('executionRuns protocol', () => {
     }).success).toBe(false);
   });
 
-  it('validates scm_diff_summary.v1 start requests as bounded read-only execution runs', () => {
+  it('validates scm_diff_summary.v1 start requests as retained read-only execution runs', () => {
     const parsed = ExecutionRunStartRequestSchema.parse({
       kind: 'scm_diff_summary.v1',
       intent: 'scm_diff_summary',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
       ioMode: 'request_response',
       intentInput: {
         cwd: '/repo',
@@ -988,24 +1002,23 @@ describe('executionRuns protocol', () => {
     expect(parsed.intent).toBe('scm_diff_summary');
   });
 
-  it('rejects scm_diff_summary.v1 checkpoint starts without TurnChangeSet evidence', () => {
-    expect(() =>
-      ExecutionRunStartRequestSchema.parse({
+  it('accepts checkpoint selectors and a captured comparison id without client-authored evidence', () => {
+    expect(ExecutionRunStartRequestSchema.safeParse({
         kind: 'scm_diff_summary.v1',
         intent: 'scm_diff_summary',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
+        retentionPolicy: 'resumable',
+        runClass: 'long_lived',
         ioMode: 'request_response',
         intentInput: {
           cwd: '/repo',
           source: { kind: 'turnCheckpoint' },
           turnId: 'turn-1',
           checkpointReceiptId: 'checkpoint.diff_computed',
+          comparisonId: 'captured-comparison',
         },
-      }),
-    ).toThrow();
+      }).success).toBe(true);
   });
 
   it('rejects write-capable scm_commit_message.v1 start requests', () => {

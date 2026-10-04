@@ -88,6 +88,11 @@ export {
 export {
   ExecutionRunInteractionV1Schema,
 } from './executionRunInteractionV1.js';
+export {
+  NO_EXECUTION_RUN_INTERACTION,
+  resolveExecutionRunInteractionAffordances,
+  type ExecutionRunInteractionAffordances,
+} from './interactionAffordances.js';
 export type {
   ExecutionRunInteractionV1,
 } from './executionRunInteractionV1.js';

@@ -2296,6 +2296,14 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('execution.run.wait').surfaces).toMatchObject({ voice: false, plugin: true, api: true });
   });
 
+  it('exposes saved explanation listing and clearing to dedicated voice tools', () => {
+    const bindings = new Map(listActionSpecs()
+      .filter((spec) => spec.surfaces.voice && spec.bindings?.voiceClientToolName)
+      .map((spec) => [spec.bindings!.voiceClientToolName, spec.id]));
+    expect(bindings.get('listScmDiffSummaryResults')).toBe('scm.diffSummary.result.list');
+    expect(bindings.get('clearScmDiffSummaryResults')).toBe('scm.diffSummary.result.clear');
+  });
+
   it('surfaces Action discovery and machine listing on the credential-aware CLI', () => {
     for (const actionId of ['action.spec.search', 'action.spec.get', 'machines.list'] as const) {
       expect(getActionSpec(actionId).surfaces.cli, actionId).toBe(true);

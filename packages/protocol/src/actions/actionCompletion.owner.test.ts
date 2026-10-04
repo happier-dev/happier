@@ -1,14 +1,104 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from './actionSpecs.js';
 
 import { planStartCompletion, reviewStartCompletion } from './specs/executionRunCompletion.js';
 import {
   freezeActionCompletionContractV1,
   prepareActionCompletionV1,
   resumeActionCompletionV1,
+  readActionCompletionRunObservationV1,
   type ActionCompletionStateV1,
 } from './actionCompletion.js';
 
 describe('Action completion owner', () => {
+  it('observes standalone walkthrough completion without waiting for its retained process to exit', () => {
+    const declaration = getActionSpec('review.walkthrough').completion;
+    expect(declaration).toBeDefined();
+    const prepared = prepareActionCompletionV1(declaration, { ok: true, result: {
+      runId: 'narrator-1', comparisonId: 'comparison-1', mode: 'seeded_narrator', state: 'collecting',
+      observation: { kind: 'review_walkthrough', comparisonId: 'comparison-1', resultId: 'saved-1', afterRevision: 2 },
+    } });
+    expect(prepared).toMatchObject({ kind: 'awaiting', state: { awaitedRuns: [{
+      key: 'narrator', runId: 'narrator-1', observation: { kind: 'review_walkthrough', comparisonId: 'comparison-1', resultId: 'saved-1', afterRevision: 2 },
+    }] } });
+  });
+  it.each(['partial', 'failed'] as const)('does not promote %s findings to a clean review when narration completes', async (reviewOutcome) => {
+    const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: {
+      intent: 'review', sessionId: 'origin', results: [{ key: 'codex', ok: true, result: { runId: 'review-1' } }],
+      narration: { runId: 'review-1', comparisonId: 'comparison-1', mode: 'continued_review', state: 'collecting' },
+    } });
+    if (prepared.kind !== 'awaiting') throw new Error('Expected retained narration observation');
+    const narrated = {
+      success: true, sourceKey: 'comparison-1', metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison-1' },
+      comparison: { id: 'comparison-1', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' },
+        endpoints: { before: 'a', after: 'b' }, inventory: { state: 'complete', reasons: [], files: [] } },
+      requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete',
+        value: { title: 'Changes', intro: '', stops: [], otherChangeRefs: [] } } },
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+      producer: { kind: 'review', reviewedRuns: [{ runId: 'review-1', callId: 'call-1', backendId: 'codex',
+        status: 'running', hasOutput: true, reviewOutcome }] },
+    };
+    expect(await resumeActionCompletionV1({ actionId: 'review.start',
+      completion: freezeActionCompletionContractV1(reviewStartCompletion), state: prepared.state,
+      resolveDeclaration: () => reviewStartCompletion,
+      observeRun: async () => ({ kind: 'completed', result: narrated }),
+    })).toMatchObject({ kind: 'completed', value: { reviewedFingerprint: null, commentIds: [],
+      perEngineOutcome: [{ runId: 'review-1', outcome: reviewOutcome === 'failed' ? 'failed' : 'completed', reviewOutcome }],
+      narration: { runId: 'review-1', outputState: 'complete', outcome: 'completed' },
+    } });
+  });
+  it.each(['completed', 'failed', 'cancelled'] as const)('preserves actual findings independently of %s narration on the same Run', async (status) => {
+    const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: {
+      intent: 'review', sessionId: 'origin', results: [{ key: 'codex', ok: true, result: { runId: 'review-1' } }],
+      narration: { runId: 'review-1', comparisonId: 'comparison-1', mode: 'continued_review', state: 'collecting' },
+    } });
+    if (prepared.kind !== 'awaiting') throw new Error('Expected retained narration observation');
+    const payload = {
+      success: true, sourceKey: 'comparison-1', metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison-1' },
+      comparison: { id: 'comparison-1', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' },
+        endpoints: { before: 'a', after: 'b' }, inventory: { state: 'complete', reasons: [], files: [] } },
+      requestedOutputs: ['walkthrough'], outputs: { walkthrough: status === 'completed'
+        ? { state: 'complete', value: { title: 'Changes', intro: '', stops: [], otherChangeRefs: [] } }
+        : { state: 'writing' } },
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+      producer: { kind: 'review', reviewedRuns: [{ runId: 'review-1', callId: 'call-1', backendId: 'codex',
+        status: 'running', hasOutput: true, reviewOutcome: 'complete' }] },
+    };
+    const complete = (snapshot: unknown) => resumeActionCompletionV1({ actionId: 'review.start',
+      completion: freezeActionCompletionContractV1(reviewStartCompletion), state: prepared.state,
+      resolveDeclaration: () => reviewStartCompletion,
+      observeRun: async ({ observation }) => readActionCompletionRunObservationV1({
+        run: { status: status === 'completed' ? 'running' : status,
+          ...(status === 'failed' ? { error: { code: 'revision_conflict' } } : {}) },
+        structuredMeta: { kind: 'scm_diff_summary.v1', payload: snapshot },
+      }, observation),
+    });
+    expect(await complete(payload)).toMatchObject({ kind: 'completed', value: { reviewedFingerprint: null, commentIds: [],
+      perEngineOutcome: [{ runId: 'review-1', outcome: 'completed', reviewOutcome: 'complete' }],
+      narration: { runId: 'review-1', outcome: status },
+    } });
+    const materialization = status === 'failed' ? { kind: 'complete' as const }
+      : { kind: 'partial' as const, errorCode: 'review_comment_writes_partial' };
+    expect(await complete({ ...payload, producer: { ...payload.producer, reviewedRuns: [{
+      ...payload.producer.reviewedRuns[0], reviewedFingerprint: 'reviewed-before-narration',
+      commentIds: ['persisted-comment'], materialization,
+    }] } })).toMatchObject({ kind: 'completed', value: {
+      reviewedFingerprint: 'reviewed-before-narration', commentIds: ['persisted-comment'],
+      perEngineOutcome: [{ runId: 'review-1', outcome: 'completed', reviewOutcome: 'complete', materialization }],
+      narration: { runId: 'review-1', outcome: status },
+    } });
+    for (const foreign of [
+      { ...payload, comparison: { ...payload.comparison, id: 'other-comparison' } },
+      { ...payload, producer: { ...payload.producer, reviewedRuns: [{ ...payload.producer.reviewedRuns[0], runId: 'other-review' }] } },
+    ]) {
+      if (status === 'completed' && foreign.comparison.id !== 'comparison-1') {
+        expect(await complete(foreign)).toMatchObject({ kind: 'outcome_uncertain' });
+      } else expect(await complete(foreign)).toMatchObject({ kind: 'completed', value: {
+        perEngineOutcome: [{ runId: 'review-1', outcome: 'failed', reviewOutcome: 'unavailable', errorCode: 'review_output_unavailable' }],
+        narration: { runId: 'review-1', outcome: status },
+      } });
+    }
+  });
   it.each([
     { second: 'F-b', expected: 'F-b' },
     { second: 'F-c', expected: null },
@@ -55,7 +145,8 @@ describe('Action completion owner', () => {
       intent: 'review', sessionId: 'session-1', results: [
         { key: 'codex', ok: true, result: { runId: 'run-codex', callId: 'call-codex', sidechainId: 'call-codex' } },
         { key: 'claude', ok: true, result: { runId: 'run-claude', callId: 'call-claude', sidechainId: 'call-claude' } },
-        { key: 'gemini', ok: false, errorCode: 'engine_busy', error: 'engine_busy' },
+        { key: 'gemini', ok: false, errorCode: 'engine_busy', error: 'engine_busy',
+          details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } },
       ],
     } };
     const frozen = freezeActionCompletionContractV1(reviewStartCompletion);

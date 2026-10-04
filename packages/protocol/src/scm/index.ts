@@ -28,6 +28,9 @@ export * from './commitPublication.js';
 export * from './branches.js';
 export * from './stash.js';
 export * from './pullRequests.js';
+export * from './diffSummary.js';
+export * from './diffSummaryResult.js';
+export * from './diffSummaryCommitPlan.js';
 export * from './repositoryProvisioning.js';
 export * from './worktrees.js';
 import {

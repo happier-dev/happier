@@ -9,6 +9,7 @@ import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentia
 import { ExecutionRunTeamCredentialSessionBindingConsentV1Schema } from '../execution/runs/startRequest.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
+import { ReviewNarratorSelectionSchema } from './reviewNarration.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -47,6 +48,9 @@ export const ReviewStartInputSchema = z
     target: z.object({ kind: z.literal('detached') }).strict().optional(),
     engineIds: z.array(ReviewEngineIdSchema).min(1),
     instructions: z.string().trim().min(1),
+    outputs: z.array(z.literal('walkthrough')).min(1).optional(),
+    comparisonId: z.string().min(1).optional(),
+    narrator: ReviewNarratorSelectionSchema.optional(),
     notifyParentOnCompletion: z.boolean().optional(),
     reviewCommentAuthorIntent: z.enum(['open', 'propose']).default('propose'),
     // Intentionally default to uncommitted changes: the common "review what I just changed"

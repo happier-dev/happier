@@ -83,6 +83,7 @@ import {
 import * as backendProjection from './backendProjections.js';
 import * as hostingProviderProjection from './hostingProviderProjections.js';
 import * as protocolScm from '@happier-dev/protocol/scm';
+import { defineProtocolObject } from '../protocol/index.js';
 
 const ROOT_RUNTIME_EXPORTS = [
     'SCM_COMMIT_MESSAGE_MAX_LENGTH',
@@ -92,6 +93,9 @@ const ROOT_RUNTIME_EXPORTS = [
     'SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN',
     'ScmCapabilitiesSchema',
     'ScmCloneProtocolSchema',
+    'ScmComparisonSchema',
+    'ScmComparisonSourceProtocolSchema',
+    'ScmComparisonSourceSchema',
     'ScmOperationOutcomeSchema',
     'ScmRefreshPolicySchema',
     'ScmSelectedMutationPathSchema',
@@ -127,6 +131,8 @@ const TRANSITIVE_DECLARATION_CLOSURE_TYPES = [
 
 const ROOT_TYPE_EXPORTS = [
     'PluginScmRegistrationApi',
+    'ScmComparison',
+    'ScmComparisonSource',
     'ScmBranchCheckoutRequest',
     'ScmBranchCheckoutResponse',
     'ScmBranchCreateRequest',
@@ -150,6 +156,10 @@ const ROOT_TYPE_EXPORTS = [
     'ScmCommitUndoLastResponse',
     'ScmCommitCreateRequest',
     'ScmCommitCreateResponse',
+    'ScmCommitPublication',
+    'ScmCommitResolveOutcomeRequest',
+    'ScmCommitResolveOutcomeResponse',
+    'ScmCommitHookContentChanges',
     'ScmConflictAcceptSideRequest',
     'ScmConflictAcceptSideResponse',
     'ScmConflictEntry',
@@ -426,6 +436,10 @@ type RootProjectionTypes = [
     scmProjection.ScmCommitUndoLastResponse,
     scmProjection.ScmCommitCreateRequest,
     scmProjection.ScmCommitCreateResponse,
+    scmProjection.ScmCommitPublication,
+    scmProjection.ScmCommitResolveOutcomeRequest,
+    scmProjection.ScmCommitResolveOutcomeResponse,
+    scmProjection.ScmCommitHookContentChanges,
     scmProjection.ScmDefaultBranchPushPolicy,
     scmProjection.ScmDiffCommitRequest,
     scmProjection.ScmDiffCommitResponse,
@@ -547,6 +561,15 @@ type LegacyCloneProtocol = never; /* @sdk-negative-type-case-end */
 }
 
 describe('SCM package-local projections', () => {
+    it('embeds the canonical comparison source as a closed portable protocol value', () => {
+        const request = defineProtocolObject({ source: rootScm.ScmComparisonSourceSchema }, { policy: 'closed' });
+        const source = { kind: 'pullRequest', locator: { providerId: 'source-plugin', repository: 'owner/repo', number: 17,
+            sourceAction: { action: { pluginId: 'acme.source', localId: 'detail' }, input: { id: '17' } } } } as const;
+        expect(request.parse({ source })).toEqual({ source });
+        expect(request.safeParse({ source: { ...source, locator: { ...source.locator, extraAuthority: true } } }).success).toBe(false);
+        expect(rootScm.ScmComparisonSourceSchema).toBe(protocolScm.ScmComparisonSourceProtocolSchema);
+        expect(request.jsonSchema).toMatchObject({ additionalProperties: false });
+    });
     it.each(PORTABLE_VALUE_PROJECTIONS)(
         'keeps the $source publication values free of Node runtime reach',
         async (projection) => {
@@ -619,6 +642,10 @@ describe('SCM package-local projections', () => {
             .toEqualTypeOf<protocolScm.ScmWorktreeCreateResponse>();
         expectTypeOf<scmProjection.ScmCommitCreateRequest>()
             .toEqualTypeOf<protocolScm.ScmCommitCreateRequest>();
+        expectTypeOf<scmProjection.ScmCommitResolveOutcomeRequest>()
+            .toEqualTypeOf<protocolScm.ScmCommitResolveOutcomeRequest>();
+        expectTypeOf<scmProjection.ScmCommitResolveOutcomeResponse>()
+            .toEqualTypeOf<protocolScm.ScmCommitResolveOutcomeResponse>();
         expectTypeOf<scmProjection.ScmCommitUndoLastRequest>()
             .toEqualTypeOf<protocolScm.ScmCommitUndoLastRequest>();
         expectTypeOf<scmProjection.ScmCommitUndoLastResponse>()

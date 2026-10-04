@@ -168,3 +168,5 @@ export { sameScmHostingRepositoryIdentity } from './projections.js';
 export { parseScmRemoteUrl } from './projections.js';
 export { resolveScmScopedChangedPaths } from './projections.js';
 export { stripTrailingSlash } from './projections.js';
+export { ScmComparisonSourceSchema, ScmComparisonSourceProtocolSchema, ScmComparisonSchema } from './projections.js';
+export type { ScmComparisonSource, ScmComparison } from './projections.js';

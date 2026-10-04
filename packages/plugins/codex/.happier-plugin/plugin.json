@@ -99,6 +99,11 @@
             ],
             "workspaceWrites": "deny"
           },
+          "structuredOutput": {
+            "formats": [
+              "json"
+            ]
+          },
           "surfaces": [
             "externalSessions"
           ],

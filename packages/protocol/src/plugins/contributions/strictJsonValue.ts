@@ -173,6 +173,7 @@ function walkStrictPluginJsonValue(
   path: string,
   copiesValue: boolean,
   limits?: StrictPluginJsonTraversalLimits,
+  omitUndefinedObjectMembers = false,
 ): unknown {
   if (limits && (
     !Number.isSafeInteger(limits.maxDepth)
@@ -288,6 +289,7 @@ function walkStrictPluginJsonValue(
       if (!descriptor || !('value' in descriptor)) {
         throw new Error(`${path}.${key} must be an enumerable data property`);
       }
+      if (omitUndefinedObjectMembers && descriptor.value === undefined) continue;
       tasks.push({
         kind: 'visit',
         input: descriptor.value,
@@ -312,6 +314,11 @@ export function cloneStrictPluginJsonValue(
   path: string,
 ): unknown {
   return walkStrictPluginJsonValue(value, path, true);
+}
+
+/** @internal Native optional members omit undefined exactly at the JSON transport boundary. */
+export function cloneNativeJsonValueForTransport(value: unknown, path: string): unknown {
+  return walkStrictPluginJsonValue(value, path, true, undefined, true);
 }
 
 /** @internal Feature-owned bounded cloning through the one strict JSON walker. */

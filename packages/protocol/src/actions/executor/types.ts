@@ -274,13 +274,14 @@ export type ScmActionExecute = (args: Readonly<{
   input: unknown;
   context: ActionExecutorContext;
   /**
-   * Re-enter the exact current Action boundary for SCM's bounded execution
-   * consumption. This carries the original host-stamped context; it is not a
+   * Re-enter the exact current Action boundary for SCM's source reads and run
+   * admission. This carries the original host-stamped context; it is not a
    * second dispatcher, Session adapter, or execution-run service.
    */
   executeCanonicalAction: (
-    actionId: Extract<ActionId, 'execution.run.start' | 'execution.run.get'>,
+    actionId: Extract<ActionId, 'execution.run.start' | 'execution.run.get' | 'session.message.send' | 'action.invoke'>,
     input: unknown,
+    options?: Readonly<{ requiredContributedActionDangerLevel?: 'safe' }>,
   ) => Promise<ActionExecuteResult>;
 }>) => Promise<unknown>;
 
@@ -353,6 +354,8 @@ export type InvokeContributedAction = (request: Readonly<{
   input: unknown;
   context: ActionExecutorContext;
   approvalExecutionOrigin?: ApprovalExecutionOriginV1;
+  /** Host-only source-read constraint, enforced against the leased manifest. */
+  requiredDangerLevel?: 'safe';
   signal?: AbortSignal;
 
 }>) => Promise<ActionExecuteResult>;
@@ -451,6 +454,8 @@ export type SessionPermissionRemoteActionArgs =
 export type ActionExecutorContext = Readonly<{
   /** Effective host-stamped role policy; never accepted from Action input. */
   workspaceWrites?: 'allow' | 'deny';
+  /** Host-only nested source-read constraint; never accepted from Action input. */
+  requiredContributedActionDangerLevel?: 'safe';
   /**
    * Host-only Session corpus admission. For autonomous callers,
    * `current_session` also bounds Actions that declare a current-Session
@@ -997,6 +1002,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<ActionSessionReferenceResolution>;
   sessionOpen: (args: ActionSessionAddress & Readonly<{
     tabId?: string;
+    destination?: PublicActionInputById['session.open']['destination'];
     actionRequestId?: string | null;
     approvedNewDirectoryCreation?: boolean;
     signal?: AbortSignal;

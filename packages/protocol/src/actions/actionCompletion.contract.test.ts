@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { getActionSpec } from './actionSpecs.js';
 import {
   freezeActionCompletionContractV1, prepareActionCompletionV1, resumeActionCompletionV1,
   type ActionCompletionDeclaration,
@@ -67,6 +68,26 @@ describe('generic Action completion seam', () => {
       state: { output: { runId: 'run-a' }, awaitedRuns: [{ key: 'a', runId: 'run-a' }] },
       resolveDeclaration: () => declaration,
       observeRun: async () => { throw new Error('machine unavailable'); },
+    })).toEqual({ kind: 'outcome_uncertain', errorCode: 'outcome_uncertain' });
+  });
+
+  it('keeps a partially acknowledged review launch uncertain after valid known-run completion', async () => {
+    const review = getActionSpec('review.start').completion;
+    if (!review) throw new Error('Review completion declaration missing');
+    const prepared = prepareActionCompletionV1(review, { ok: true, result: {
+      intent: 'review', sessionId: 'session-a', reviewedFingerprint: 'fingerprint',
+      results: [
+        { key: 'codex', ok: true, result: { runId: 'review-a' } },
+        { key: 'claude', ok: false, errorCode: 'native_response_lost', error: 'native_response_lost' },
+      ],
+    } });
+    if (prepared.kind !== 'awaiting') throw new Error('Known review run did not retain observation custody');
+    expect(await resumeActionCompletionV1({
+      actionId: 'review.start', completion: freezeActionCompletionContractV1(review),
+      state: prepared.state, resolveDeclaration: (actionId) => actionId === 'review.start'
+        ? getActionSpec('review.start').completion : undefined,
+      observeRun: async () => ({ kind: 'completed', result: {}, reviewedFingerprint: 'fingerprint',
+        commentIds: [], materialization: { kind: 'complete' } }),
     })).toEqual({ kind: 'outcome_uncertain', errorCode: 'outcome_uncertain' });
   });
 });

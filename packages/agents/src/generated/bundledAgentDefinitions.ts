@@ -392,6 +392,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "direct": true,
       "persisted": true
     },
+    "structuredOutput": {
+      "formats": [
+        "json"
+      ]
+    },
     "tools": {
       "delivery": "native_mcp",
       "support": "supported"
@@ -1190,6 +1195,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "sessionStorage": {
       "direct": true,
       "persisted": true
+    },
+    "structuredOutput": {
+      "formats": [
+        "json"
+      ]
     },
     "tools": {
       "delivery": "native_mcp",

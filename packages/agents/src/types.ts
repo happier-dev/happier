@@ -180,6 +180,8 @@ export type AgentCoreRuntimeControlSurface = Readonly<{
     localControl?: AgentLocalControlConfig | null;
     runtimeInput?: AgentRuntimeInputConfig | null;
     tools: AgentToolsConfig;
+    /** Prompted JSON output accepted by the host's strict structured profiles. */
+    structuredOutput?: Readonly<{ formats: readonly ['json'] }>;
 }>;
 
 export type AgentCore = Readonly<{

@@ -85,6 +85,7 @@ export type ProviderModelDescriptorV1 = Readonly<{
   capabilities?: Readonly<{
     toolRoundTrips?: z.infer<typeof CapabilitySupportSchema>;
     reasoningControls?: z.infer<typeof CapabilitySupportSchema>;
+    structuredOutput?: z.infer<typeof CapabilitySupportSchema>;
   }>;
 }>;
 
@@ -99,6 +100,7 @@ export const ProviderModelDescriptorV1Schema = z.object({
   capabilities: z.object({
     toolRoundTrips: CapabilitySupportSchema.optional(),
     reasoningControls: CapabilitySupportSchema.optional(),
+    structuredOutput: CapabilitySupportSchema.optional(),
   }).strict().optional(),
 }).strict().superRefine((value, context) => {
   if (value.aliases) {
@@ -112,3 +114,17 @@ export const ProviderModelDescriptorV1Schema = z.object({
 }) satisfies z.ZodType<ProviderModelDescriptorV1>;
 
 export type AgentModelDescriptor = ProviderModelDescriptorV1;
+
+/** Catalog membership and the exact Agent's declared JSON contract establish support.
+ * A freeform id never borrows that contract; explicit model evidence always wins.
+ * This describes JSON publication with host validation/repair, not native schema enforcement.
+ */
+export function resolveModelStructuredOutputSupport(params: Readonly<{
+  model?: Pick<ProviderModelDescriptorV1, 'capabilities'> | null;
+  catalogModel: boolean;
+  agentFormats?: readonly string[] | null;
+}>): z.infer<typeof CapabilitySupportSchema> {
+  const explicit = params.model?.capabilities?.structuredOutput;
+  if (explicit !== undefined) return explicit;
+  return params.catalogModel && params.agentFormats?.includes('json') === true ? 'supported' : 'unknown';
+}

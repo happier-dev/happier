@@ -5,9 +5,17 @@ import {
   ScmDiffSummaryCacheKeyDescriptorSchema,
   ScmDiffSummaryGenerateInputSchema,
   ScmDiffSummaryGenerateOutputSchema,
+  buildScmDiffSummaryCacheKey,
 } from './diffSummary.js';
 
 describe('SCM diff-summary cache protocol', () => {
+  it('does not reuse summary-only analysis for requested walkthrough output', () => {
+    const base = { source: { kind: 'comparison' as const, comparisonId: 'exact-tree-pair' },
+      summarySchemaVersion: 1, resolvedSelector: { catalogId: 'model:one' } };
+    expect(buildScmDiffSummaryCacheKey(base)).not.toBe(buildScmDiffSummaryCacheKey({ ...base, outputs: ['walkthrough'] }));
+    expect(buildScmDiffSummaryCacheKey({ ...base, outputs: ['summary', 'walkthrough'] }))
+      .toBe(buildScmDiffSummaryCacheKey({ ...base, outputs: ['walkthrough', 'summary'] }));
+  });
   it('requires receipt, schema version, and resolved selector for durable checkpoint cache descriptors', () => {
     expect(ScmDiffSummaryCacheKeyDescriptorSchema.parse({
       source: { kind: 'turnCheckpoint' },

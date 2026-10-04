@@ -67,3 +67,5 @@ export { ReviewCommentRevisionedPublicationPlanV1ProtocolSchema } from './commen
 export { ReviewCommentPublicationResultV1ProtocolSchema } from './comments.js';
 export { ReviewCommentUnversionedPublicationPlanV1ProtocolSchema } from './comments.js';
 export { ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema } from './comments.js';
+export { ReviewEngineCapabilitiesSchema, resolveReviewNarratorPolicy } from './narratorPolicy.js';
+export type { ReviewNarratorEngineOption } from './narratorPolicy.js';

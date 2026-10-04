@@ -24,7 +24,41 @@ import {
     ScmWorkingSnapshotSchema as canonicalScmWorkingSnapshotSchema,
     ScmOperationOutcomeSchema as canonicalScmOperationOutcomeSchema,
     SourceControlCloneProtocolSchema as canonicalScmCloneProtocolSchema,
+    ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema,
+    ScmComparisonSchema as canonicalScmComparisonSchema,
 } from '@happier-dev/protocol/scm';
+import type { ScmComparison, ScmComparisonSource as CanonicalScmComparisonSource } from '@happier-dev/protocol/scm';
+import type { JsonValue, PluginContributionRef } from '../identity.js';
+import type { ProtocolComposableSchema } from '../protocol/index.js';
+
+export type { ScmComparison } from '@happier-dev/protocol/scm';
+/** Declaration-neutral projection; the portable Protocol parser is the sole validator. */
+export type ScmComparisonSource =
+    | { kind: 'turnCheckpoint'; sessionId?: string; turnId?: string; checkpointReceiptId?: string;
+        evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' }
+    | { kind: 'session'; sessionId: string }
+    | { kind: 'workingTree' }
+    | { kind: 'branch'; head: string; base: string }
+    | { kind: 'commit'; commit: string; parent?: string }
+    | { kind: 'pullRequest'; locator: {
+        providerId: string; repository: string; number: number; baseOid?: string; headOid?: string;
+        sourceAction?: { action: PluginContributionRef; input?: JsonValue };
+    } };
+type AssertScmSourceProjection<T extends true> = T;
+type _ScmSourceProjectionMustMatchCanonical = AssertScmSourceProjection<
+    [ScmComparisonSource] extends [CanonicalScmComparisonSource]
+        ? [CanonicalScmComparisonSource] extends [ScmComparisonSource] ? true : false
+        : false
+>;
+/** The source parser and portable grammar remain the Protocol-owned value. */
+export const ScmComparisonSourceProtocolSchema: ProtocolComposableSchema<ScmComparisonSource> = canonicalScmComparisonSourceProtocolSchema;
+export const ScmComparisonSourceSchema: ProtocolComposableSchema<ScmComparisonSource> = ScmComparisonSourceProtocolSchema;
+export const ScmComparisonSchema: {
+    parse(value: unknown): ScmComparison;
+    safeParse(value: unknown):
+        | Readonly<{ success: true; data: ScmComparison }>
+        | Readonly<{ success: false; error: unknown }>;
+} = canonicalScmComparisonSchema;
 
 export const buildWorktreeRelativePath: (branchName: string) => string = canonicalBuildWorktreeRelativePath;
 export const hasForbiddenGitRefName: (value: string) => boolean = canonicalHasForbiddenGitRefName;

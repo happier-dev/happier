@@ -31,6 +31,8 @@ import {
 import {
   ScmDiffSummaryGenerateInputSchema,
   ScmDiffSummaryGenerateOutputSchema,
+  ScmComparisonCaptureInputSchema,
+  ScmComparisonCaptureOutputSchema,
 } from '../scm/diffSummary.js';
 import {
   ScmRepositoryCloneInputSchema,
@@ -38,6 +40,16 @@ import {
   SourceControlCloneProtocolSchema,
   type SourceControlCloneProtocol,
 } from '../scm/repositoryClone.js';
+import {
+  ScmDiffSummaryResultReadInputSchema, ScmDiffSummaryResultRevisionInputSchema,
+  ScmDiffSummaryResultEditInputSchema, ScmDiffSummaryRefineInputSchema,
+  ScmDiffSummaryAddOutputsInputSchema, ScmDiffSummaryDiscussInputSchema,
+  ScmDiffSummaryResultResponseSchema, ScmDiffSummaryResultDeleteResponseSchema,
+  ScmDiffSummaryResultListInputSchema, ScmDiffSummaryResultListResponseSchema,
+  ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultClearResponseSchema,
+} from '../scm/diffSummaryResult.js';
+import { ScmReviewedMarkInputSchema, ScmReviewedMarkResponseSchema } from '../scm/reviewedMarks.js';
+import { ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema } from '../scm/diffSummaryCommitPlan.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import * as scm from '../scm/index.js';
 import * as branches from '../scm/branches.js';
@@ -249,6 +261,25 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
         { path: 'patches', title: 'patches', widget: 'json' },
       ],
     },
+  }),
+  defineScmActionSpec({
+    id: 'scm.commit.resolveOutcome',
+    title: 'Resolve commit outcome',
+    description: 'Inspect a known candidate commit and its expected target history without publishing or retrying it.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SCM_COMMIT_RESOLVE_OUTCOME, mcpToolName: 'scm_commit_resolve_outcome' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'read',
+    cli: { commands: [{ path: ['scm', 'commit', 'resolve-outcome'], visibility: 'canonical' }] },
+    inputSchema: scm.ScmCommitResolveOutcomeRequestSchema,
+    outputSchema: scm.ScmCommitResolveOutcomeResponseSchema,
+    inputHints: { title: 'Resolve commit outcome', fields: [
+      { path: 'cwd', title: 'cwd', widget: 'text' },
+      { path: 'candidateOid', title: 'Known candidate commit', widget: 'text' },
+      { path: 'expectedHeadOid', title: 'Expected parent', widget: 'text' },
+      { path: 'expectedRef', title: 'Expected target ref', widget: 'text' },
+    ] },
   }),
   defineScmActionSpec({
     id: 'scm.commit.undoLast',
@@ -1387,31 +1418,52 @@ const SCM_GIT_ACTION_SPECS_SUFFIX = [
     },
   }),
   defineScmActionSpec({
+    id: 'scm.diffSummary.capture',
+    title: 'Capture source-control comparison',
+    description: 'Read comparison inventory and evidence without starting model analysis.',
+    safety: 'safe', placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, sdkMethod: 'scm.diffSummary.capture', mcpToolName: 'scm_diff_summary_capture', voiceClientToolName: 'captureScmComparison' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'capture'], visibility: 'canonical' }] },
+    sideEffectClass: 'read',
+    inputSchema: ScmComparisonCaptureInputSchema,
+    outputSchema: ScmComparisonCaptureOutputSchema,
+    inputHints: { title: 'Capture comparison', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'sessionId', title: 'Session id', widget: 'text' },
+      { path: 'source.kind', title: 'Comparison source', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
     id: 'scm.diffSummary.generate',
     title: 'Generate source-control diff summary',
-    description: 'Generate a buffered AI summary for checkpoint-backed or working-tree source-control changes.',
+    description: 'Capture comparison evidence and start retained summary, walkthrough, or commit-plan analysis.',
     safety: 'safe',
     placements: [],
     bindings: {
       rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE,
       sdkMethod: 'scm.diffSummary.generate',
+      mcpToolName: 'scm_diff_summary_generate',
+      voiceClientToolName: 'generateScmDiffSummary',
     },
     surfaces: {
-      ui: false,
-      voice: false,
+      ui: true,
+      voice: true,
       agent: true,
       mcp: true,
       cli: true,
       rpc: true,
     },
     sideEffectClass: 'external',
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'generate'], visibility: 'canonical' }] },
     outputSchema: ScmDiffSummaryGenerateOutputSchema,
     inputSchema: ScmDiffSummaryGenerateInputSchema,
     inputHints: {
       title: 'Generate diff summary',
-      description: 'Summaries for turn checkpoints must resolve CHKPT-2 TurnChangeSet evidence by turn id or checkpoint receipt.',
+      description: 'Read captured changes immediately while the selected session analyses them. Turn and session evidence is resolved by the host.',
       fields: [
         { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
         {
           path: 'source.kind',
           title: 'Summary source',
@@ -1420,6 +1472,10 @@ const SCM_GIT_ACTION_SPECS_SUFFIX = [
           options: [
             { value: 'turnCheckpoint', label: 'Turn checkpoint' },
             { value: 'workingTree', label: 'Working tree' },
+            { value: 'session', label: 'This session' },
+            { value: 'branch', label: 'Branch versus base' },
+            { value: 'commit', label: 'Commit' },
+            { value: 'pullRequest', label: 'Pull request' },
           ],
         },
         { path: 'turnId', title: 'Turn id', widget: 'text' },
@@ -1432,11 +1488,250 @@ const SCM_GIT_ACTION_SPECS_SUFFIX = [
   }),
 ] as const;
 
+const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS = [
+  defineScmActionSpec({
+    id: 'scm.diffSummary.result.list', title: 'List saved change explanations',
+    description: 'Read permitted saved results, storage usage and available seven-day cost records from the selected machine.',
+    safety: 'safe', placements: [], sideEffectClass: 'read',
+    bindings: { rpcMethod: 'scm.diffSummary.result.list', sdkMethod: 'scm.diffSummary.result.list', mcpToolName: 'scm_diff_summary_result_list', voiceClientToolName: 'listScmDiffSummaryResults' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryResultListInputSchema, outputSchema: ScmDiffSummaryResultListResponseSchema,
+    examples: { voice: { argsExample: '{}' } },
+    inputHints: { title: 'List saved change explanations', fields: [] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.result.clear', title: 'Clear selected saved change explanations',
+    description: 'Delete only explicitly listed saved revisions and their manual edits on the selected machine.',
+    safety: 'danger', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.result.clear', sdkMethod: 'scm.diffSummary.result.clear', mcpToolName: 'scm_diff_summary_result_clear', voiceClientToolName: 'clearScmDiffSummaryResults' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryResultClearInputSchema, outputSchema: ScmDiffSummaryResultClearResponseSchema,
+    examples: { voice: { argsExample: '{"results":[{"cwd":"/repo","resultId":"saved-result","expectedRevision":1,"comparisonId":"saved-comparison"}]}' } },
+    inputHints: { title: 'Clear selected saved change explanations', fields: [
+      { path: 'results', title: 'Exact saved result revisions', widget: 'json', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.commitPlan.accept', title: 'Accept and apply commit proposals',
+    description: 'Apply the exact ordered pending proposal bound to the checkout and current saved revision.',
+    safety: 'danger', workspaceWrite: true, placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.commitPlan.accept', sdkMethod: 'scm.diffSummary.commitPlan.accept', mcpToolName: 'scm_diff_summary_commit_plan_accept', voiceClientToolName: 'acceptScmCommitPlan' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmCommitPlanAcceptInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'commit-plan', 'accept'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"saved-result","expectedRevision":0,"acceptance":{"comparisonId":"pending-comparison","repositoryRootPath":"/repo","expectedHeadOid":null,"expectedRef":"refs/heads/main","groups":[{"id":"first","message":"fix: selected changes","rationale":"Related correction","changeRefs":["change-1"]}],"leftOutChangeRefs":[]}}' } },
+    inputHints: { title: 'Accept commit proposals', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+      { path: 'acceptance', title: 'Exact acceptance binding', widget: 'json', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.commitPlan.stop', title: 'Stop after the current commit',
+    description: 'Let the active atomic writer finish, then admit no next commit group.',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.commitPlan.stop', sdkMethod: 'scm.diffSummary.commitPlan.stop', mcpToolName: 'scm_diff_summary_commit_plan_stop', voiceClientToolName: 'stopScmCommitPlan' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmCommitPlanControlInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'commit-plan', 'stop'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"saved-result","expectedRevision":1}' } },
+    inputHints: { title: 'Stop commit proposals', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.commitPlan.includeHookChanges', title: 'Include displayed hook changes and commit',
+    description: 'Explicitly accept only the displayed hook tree at the current paused revision.',
+    safety: 'danger', workspaceWrite: true, placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.commitPlan.includeHookChanges', sdkMethod: 'scm.diffSummary.commitPlan.includeHookChanges', mcpToolName: 'scm_diff_summary_commit_plan_include_hook_changes', voiceClientToolName: 'includeScmCommitPlanHookChanges' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmCommitPlanIncludeHookChangesInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'commit-plan', 'include-hook-changes'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"saved-result","expectedRevision":2,"groupId":"first","beforeTreeOid":"1111111111111111111111111111111111111111","afterTreeOid":"2222222222222222222222222222222222222222"}' } },
+    inputHints: { title: 'Include hook changes', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+      { path: 'groupId', title: 'Paused commit', widget: 'text', required: true },
+      { path: 'beforeTreeOid', title: 'Displayed original tree', widget: 'text', required: true },
+      { path: 'afterTreeOid', title: 'Displayed hook tree', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.commitPlan.cancel', title: 'Cancel remaining commit proposals',
+    description: 'Cancel remaining steps without resetting commits or worktree changes.',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.commitPlan.cancel', sdkMethod: 'scm.diffSummary.commitPlan.cancel', mcpToolName: 'scm_diff_summary_commit_plan_cancel', voiceClientToolName: 'cancelScmCommitPlan' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmCommitPlanControlInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'commit-plan', 'cancel'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"saved-result","expectedRevision":1}' } },
+    inputHints: { title: 'Cancel commit proposals', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.commitPlan.recover', title: 'Reconcile an uncertain commit outcome',
+    description: 'Resolve recorded Git publication without retrying or rolling back.',
+    safety: 'safe', placements: [], sideEffectClass: 'read',
+    bindings: { rpcMethod: 'scm.diffSummary.commitPlan.recover', sdkMethod: 'scm.diffSummary.commitPlan.recover', mcpToolName: 'scm_diff_summary_commit_plan_recover', voiceClientToolName: 'recoverScmCommitPlan' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmCommitPlanControlInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'commit-plan', 'recover'], visibility: 'canonical' }] },
+    examples: { voice: { argsExample: '{"cwd":"/repo","resultId":"saved-result","expectedRevision":1}' } },
+    inputHints: { title: 'Reconcile commit outcome', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.reviewed.mark', title: 'Mark changes reviewed',
+    description: 'Explicitly mark exact changes reviewed in the authenticated personal Account.',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK, sdkMethod: 'scm.diffSummary.reviewed.mark', mcpToolName: 'scm_diff_summary_reviewed_mark', voiceClientToolName: 'markScmChangesReviewed' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'reviewed', 'mark'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmReviewedMarkInputSchema, outputSchema: ScmReviewedMarkResponseSchema,
+    inputHints: { title: 'Mark changes reviewed', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'changeRefs', title: 'Exact change references', widget: 'text_list', listSeparator: 'newline', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.reviewed.unmark', title: 'Unmark reviewed changes',
+    description: 'Explicitly remove personal reviewed marks for exact comparison changes.',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_UNMARK, sdkMethod: 'scm.diffSummary.reviewed.unmark', mcpToolName: 'scm_diff_summary_reviewed_unmark', voiceClientToolName: 'unmarkScmChangesReviewed' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'reviewed', 'unmark'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmReviewedMarkInputSchema, outputSchema: ScmReviewedMarkResponseSchema,
+    inputHints: { title: 'Unmark reviewed changes', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'changeRefs', title: 'Exact change references', widget: 'text_list', listSeparator: 'newline', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.result.read', title: 'Read saved change explanation',
+    description: 'Read the current saved result and revision from its owning machine.',
+    safety: 'safe', placements: [], sideEffectClass: 'read',
+    bindings: { rpcMethod: 'scm.diffSummary.result.read', sdkMethod: 'scm.diffSummary.result.read', mcpToolName: 'scm_diff_summary_result_read', voiceClientToolName: 'readScmDiffSummaryResult' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'result', 'read'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryResultReadInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    inputHints: { title: 'Read saved change explanation', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.result.edit', title: 'Edit saved change explanation',
+    description: 'Apply a structured edit to the expected result revision.',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.result.edit', sdkMethod: 'scm.diffSummary.result.edit', mcpToolName: 'scm_diff_summary_result_edit', voiceClientToolName: 'editScmDiffSummaryResult' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'result', 'edit'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryResultEditInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    inputHints: { title: 'Edit saved change explanation', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+      { path: 'edit', title: 'Structured edit', widget: 'json', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.result.undo', title: 'Undo change explanation edit',
+    description: 'Restore the immediate previous output at the expected result revision.',
+    safety: 'safe', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.result.undo', sdkMethod: 'scm.diffSummary.result.undo', mcpToolName: 'scm_diff_summary_result_undo', voiceClientToolName: 'undoScmDiffSummaryResult' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'result', 'undo'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryResultRevisionInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    inputHints: { title: 'Undo change explanation edit', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.result.delete', title: 'Delete saved change explanation',
+    description: 'Delete a saved result and its manual edits at the expected revision.',
+    safety: 'danger', placements: [], sideEffectClass: 'write',
+    bindings: { rpcMethod: 'scm.diffSummary.result.delete', sdkMethod: 'scm.diffSummary.result.delete', mcpToolName: 'scm_diff_summary_result_delete', voiceClientToolName: 'deleteScmDiffSummaryResult' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'result', 'delete'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryResultRevisionInputSchema, outputSchema: ScmDiffSummaryResultDeleteResponseSchema,
+    inputHints: { title: 'Delete saved change explanation', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.refine', title: 'Refine change explanation',
+    description: 'Request targeted structured refinement without overwriting newer edits.',
+    safety: 'safe', placements: [], sideEffectClass: 'external',
+    bindings: { rpcMethod: 'scm.diffSummary.refine', sdkMethod: 'scm.diffSummary.refine', mcpToolName: 'scm_diff_summary_refine', voiceClientToolName: 'refineScmDiffSummary' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'refine'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryRefineInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    inputHints: { title: 'Refine change explanation', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+      { path: 'output', title: 'Requested output', widget: 'text', required: true },
+      { path: 'instructions', title: 'Refinement instructions', widget: 'textarea', required: true },
+      { path: 'stopIds', title: 'Selected stops', widget: 'text_list', listSeparator: 'newline' },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.addOutputs', title: 'Add change explanation outputs',
+    description: 'Continue the saved comparison analysis with additional requested outputs.',
+    safety: 'safe', placements: [], sideEffectClass: 'external',
+    bindings: { rpcMethod: 'scm.diffSummary.addOutputs', sdkMethod: 'scm.diffSummary.addOutputs', mcpToolName: 'scm_diff_summary_add_outputs', voiceClientToolName: 'addScmDiffSummaryOutputs' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'add-outputs'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryAddOutputsInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    inputHints: { title: 'Add change explanation outputs', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+      { path: 'outputs', title: 'Requested outputs', widget: 'text_list', listSeparator: 'newline', required: true },
+    ] },
+  }),
+  defineScmActionSpec({
+    id: 'scm.diffSummary.discuss', title: 'Discuss change explanation',
+    description: 'Send a follow-up to the actual retained generator or explicitly start a seeded conversation.',
+    safety: 'safe', placements: [], sideEffectClass: 'external',
+    bindings: { rpcMethod: 'scm.diffSummary.discuss', sdkMethod: 'scm.diffSummary.discuss', mcpToolName: 'scm_diff_summary_discuss', voiceClientToolName: 'discussScmDiffSummary' },
+    cli: { commands: [{ path: ['scm', 'diff-summary', 'discuss'], visibility: 'canonical' }] },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: ScmDiffSummaryDiscussInputSchema, outputSchema: ScmDiffSummaryResultResponseSchema,
+    inputHints: { title: 'Discuss change explanation', fields: [
+      { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+      { path: 'resultId', title: 'Saved result', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Expected revision', widget: 'text', required: true },
+      { path: 'message', title: 'Message', widget: 'textarea', required: true },
+      { path: 'stopIds', title: 'Selected stops', widget: 'text_list', listSeparator: 'newline' },
+      { path: 'startNew', title: 'Start a seeded conversation', widget: 'boolean' },
+    ] },
+  }),
+
+] as const;
+
 // Preserve exact Action/schema correlations without serializing one oversized tuple.
 export const SCM_GIT_ACTION_SPECS: readonly (
   | (typeof SCM_GIT_ACTION_SPECS_PREFIX)[number]
   | (typeof SCM_GIT_ACTION_SPECS_SUFFIX)[number]
-)[] = [...SCM_GIT_ACTION_SPECS_PREFIX, ...SCM_GIT_ACTION_SPECS_SUFFIX];
+  | (typeof SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS)[number]
+)[] = [...SCM_GIT_ACTION_SPECS_PREFIX, ...SCM_GIT_ACTION_SPECS_SUFFIX, ...SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS];
 
 /** A projection of the declaration owner, not a separate operation taxonomy. */
 export function getScmRpcSideEffectClass(method: string) {

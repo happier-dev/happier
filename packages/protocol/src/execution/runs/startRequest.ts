@@ -56,7 +56,7 @@ export type ExecutionRunTeamCredentialSessionBindingConsentV1 = z.infer<
 >;
 
 /**
- * An attached long-lived Agent Run may be created before its first turn so
+ * An attached long-lived Agent or SCM narrator Run may be created before its first turn so
  * the caller can durably bind the Run identity, then admit the exact prompt
  * through the owning Session Pending queue. Omission retains the ordinary
  * start-with-instructions contract.
@@ -326,17 +326,15 @@ export type ExecutionRunScmCommitMessageResultV1 = z.infer<typeof ExecutionRunSc
 
 export const ExecutionRunScmDiffSummaryInputV1Schema = ScmDiffSummaryGenerateInputSchema.extend({
   turnChangeSet: TurnChangeSetSchema.optional(),
-  maxFiles: z.number().int().positive().max(100).optional(),
-  maxTotalDiffChars: z.number().int().positive().max(400_000).optional(),
-}).passthrough().superRefine((value, ctx) => {
-  if (value.source.kind === 'turnCheckpoint' && !value.turnChangeSet) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'scm_diff_summary.v1 turnCheckpoint runs require CHKPT-2 TurnChangeSet evidence',
-      path: ['turnChangeSet'],
-    });
-  }
-});
+  resultId: z.string().min(1).optional(),
+  expectedRevision: z.number().int().nonnegative().optional(),
+  instructions: z.string().min(1).optional(),
+  stopIds: z.array(z.string().min(1)).min(1)
+    .refine((ids) => new Set(ids).size === ids.length, 'Stop ids must be unique').optional(),
+  seededFromRunId: z.string().min(1).optional(),
+  /** Scoped saved-owner request reference, never caller-authored explanation provenance. */
+  reviewExplanationInputId: z.string().min(1).optional(),
+}).passthrough();
 export type ExecutionRunScmDiffSummaryInputV1 = z.infer<typeof ExecutionRunScmDiffSummaryInputV1Schema>;
 
 export const ExecutionRunScmDiffSummaryResultV1Schema = ScmDiffSummaryGenerateOutputSchema;
@@ -693,10 +691,18 @@ export function refineExecutionRunStartRequest(
       });
     }
   }
-  if (value.initialInput !== undefined && value.intent !== 'agent') {
+  if (value.initialInput !== undefined && value.intent === 'scm_diff_summary') {
+    if (value.instructions !== undefined || value.localInputId !== undefined || value.resultContract !== undefined || value.structuredInput !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'deferred SCM narration must not embed initial turn content or correspondence', path: ['initialInput'] });
+    }
+    if (value.runClass !== 'long_lived' || value.retentionPolicy !== 'resumable') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'deferred SCM narration requires a resumable long-lived Run', path: ['initialInput'] });
+    }
+  }
+  if (value.initialInput !== undefined && value.intent !== 'agent' && value.intent !== 'scm_diff_summary') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'deferred Session Pending input is available only for Agent runs',
+      message: 'deferred Session Pending input is available only for Agent and SCM narration runs',
       path: ['initialInput'],
     });
   }
@@ -823,17 +829,17 @@ export function refineExecutionRunStartRequest(
         path: ['permissionMode'],
       });
     }
-    if (value.retentionPolicy !== 'ephemeral') {
+    if (value.retentionPolicy !== 'resumable') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'scm_diff_summary.v1 must use ephemeral retention',
+        message: 'scm_diff_summary.v1 must use resumable retention',
         path: ['retentionPolicy'],
       });
     }
-    if (value.runClass !== 'bounded') {
+    if (value.runClass !== 'long_lived') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'scm_diff_summary.v1 must use bounded runClass',
+        message: 'scm_diff_summary.v1 must use long_lived runClass',
         path: ['runClass'],
       });
     }

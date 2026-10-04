@@ -6,14 +6,63 @@ import { serializeActionSpec } from './actionCatalog.js';
 import { readActionCompletionRunObservationV1 } from './actionCompletion.js';
 
 describe('Action completion contract', () => {
+  it('observes settled walkthrough output independently of a healthy retained process', () => {
+    const output = {
+      success: true, sourceKey: 'comparison-1', summaryMarkdown: undefined,
+      metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison-1' },
+      resultId: 'saved-1', revision: 2,
+      comparison: { id: 'comparison-1', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' },
+        endpoints: { before: 'a', after: 'b' }, inventory: { state: 'complete', reasons: [], files: [] } },
+      requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'partial',
+        value: { title: 'Changes', intro: '', stops: [], otherChangeRefs: [] }, reason: 'cancelled' } },
+      analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+    };
+    const native = { run: { status: 'running' as const }, structuredMeta: { kind: 'scm_diff_summary.v1', payload: output } };
+    expect(readActionCompletionRunObservationV1(native, { kind: 'review_walkthrough', comparisonId: 'comparison-1' }))
+      .toMatchObject({ kind: 'completed', result: { sourceKey: 'comparison-1' } });
+    expect(readActionCompletionRunObservationV1(native, { kind: 'review_walkthrough', comparisonId: 'other' }))
+      .toMatchObject({ kind: 'outcome_uncertain' });
+    const continuation = { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1', resultId: 'saved-1', afterRevision: 2 };
+    expect(readActionCompletionRunObservationV1(native, continuation))
+      .toMatchObject({ kind: 'outcome_uncertain', code: 'execution_run_output_not_settled' });
+    expect(readActionCompletionRunObservationV1({ ...native, structuredMeta: { ...native.structuredMeta,
+      payload: { ...output, revision: 3 } } }, continuation)).toMatchObject({ kind: 'completed' });
+    expect(readActionCompletionRunObservationV1({ ...native, run: { status: 'running', error: { code: 'revision_conflict' } },
+      structuredMeta: { ...native.structuredMeta, payload: { ...output, revision: 3 } } }, continuation))
+      .toEqual({ kind: 'failed', code: 'revision_conflict' });
+    expect(readActionCompletionRunObservationV1({ ...native, structuredMeta: { ...native.structuredMeta,
+      payload: { ...output, revision: 3, resultId: 'foreign' } } }, continuation)).toMatchObject({ kind: 'outcome_uncertain' });
+    expect(readActionCompletionRunObservationV1({ ...native, structuredMeta: { kind: 'scm_diff_summary.v1',
+      payload: { ...output, outputs: { walkthrough: { state: 'writing' } } } } },
+    { kind: 'review_walkthrough', comparisonId: 'comparison-1' })).toMatchObject({ kind: 'outcome_uncertain' });
+    expect(readActionCompletionRunObservationV1({ ...native, run: { status: 'running',
+      error: { code: 'execution_run_send_outcome_unknown' } } },
+    { kind: 'review_walkthrough', comparisonId: 'comparison-1' }))
+      .toMatchObject({ kind: 'outcome_uncertain', code: 'execution_run_send_outcome_unknown' });
+    expect(readActionCompletionRunObservationV1({ ...native, run: { status: 'succeeded' },
+      structuredMeta: { kind: 'scm_diff_summary.v1', payload: { ...output, outputs: { walkthrough: { state: 'writing' } } } } },
+    { kind: 'review_walkthrough', comparisonId: 'comparison-1' }))
+      .toMatchObject({ kind: 'outcome_uncertain', code: 'execution_run_result_unavailable' });
+  });
+  it('links one narrator operation without treating it as an additional reviewer', () => {
+    const launched = getActionSpec('review.start').completion!.launched({ intent: 'review', sessionId: 's1', results: [
+      { key: 'codex', ok: true, result: { runId: 'review-1' } },
+    ], narration: { runId: 'narrator-1', comparisonId: 'comparison-1', state: 'collecting', mode: 'seeded_narrator' } });
+    expect(launched.runs).toEqual([{ key: 'codex', runId: 'review-1' }, { key: 'narrator', runId: 'narrator-1',
+      observation: { kind: 'review_walkthrough', comparisonId: 'comparison-1' } }]);
+  });
   it('reads terminal native output and materialized review evidence without inventing comments', () => {
-    expect(readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: { output: {
+    expect(readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: {
       reviewedFingerprint: 'fingerprint', commentIds: ['comment-1'], materialization: { kind: 'complete' }, findings: [],
-    } } })).toMatchObject({ kind: 'completed', result: { findings: [] }, reviewedFingerprint: 'fingerprint',
+      summary: undefined,
+    } })).toMatchObject({ kind: 'completed', result: { findings: [] }, reviewedFingerprint: 'fingerprint',
       commentIds: ['comment-1'], materialization: { kind: 'complete' } });
+    // Raw JSON model output can itself have an output member; it is not a host envelope.
+    expect(readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: { output: { value: 'raw' } } }))
+      .toEqual({ kind: 'completed', result: { output: { value: 'raw' } } });
     expect(readActionCompletionRunObservationV1({ run: { status: 'timeout', error: { code: 'budget' } } }))
       .toEqual({ kind: 'failed', code: 'budget' });
-    expect(readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: { output: undefined } }))
+    expect(readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: undefined }))
       .toMatchObject({ kind: 'outcome_uncertain' });
   });
   it.each(['review.start', 'subagents.plan.start'] as const)('declares execution-run completion for %s', (actionId) => {

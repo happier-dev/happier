@@ -559,6 +559,12 @@ export type ExecutionRunControlActionInputById = {
         sessionId?: string | null | undefined;
         includeStructured?: boolean | undefined;
         waitForInputId?: string | undefined;
+        waitForOutput?: {
+            kind: 'review_walkthrough';
+            comparisonId: string;
+            resultId?: string | undefined;
+            afterRevision?: number | undefined;
+        } | undefined;
     };
     readonly "execution.run.send": {
         sessionId: null;

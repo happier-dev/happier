@@ -45,6 +45,15 @@ export function readAgentSessionCapabilities(
         : null;
 }
 
+/** Structured output and continuation are independent declared capabilities. */
+export function readAgentStructuredOutputCapabilities(
+    definition: PluginAgentContributionV2 | null | undefined,
+): NonNullable<PrimaryAgentContributionDefinition['capabilities']['structuredOutput']> | null {
+    return definition && isPrimaryAgentContributionDefinition(definition)
+        ? definition.capabilities.structuredOutput ?? null
+        : null;
+}
+
 /**
  * The one effective Execution Run capability reader.
  *

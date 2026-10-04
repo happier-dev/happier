@@ -14,6 +14,15 @@ import {
 const protocol = { ...sessionInputAdmission, SessionMessageMetaSchema };
 
 describe('session input admission metadata', () => {
+  it('preserves supported context envelopes for a Run whose destination is the canonical Pending target', () => {
+    const recipient = { kind: 'execution_run' as const, runId: 'writer' };
+    const comments = { happier: { kind: 'review_comments.v1', payload: { sessionId: 'session-1', comments: [] } } };
+    const attachment = { happier: { kind: 'attachments.v1', payload: { attachments: [] } } };
+    expect(withParticipantRecipientV1(comments, recipient)).toEqual(comments);
+    expect(withParticipantRecipientV1(attachment, recipient)).toEqual(attachment);
+    expect(() => withParticipantRecipientV1(comments, { kind: 'agent_team_member', teamId: 'team', memberId: 'member' })).toThrow();
+    expect(() => withParticipantRecipientV1({ happier: { kind: 'unsupported.v1' } }, recipient)).toThrow();
+  });
   it('admits an execution-run recipient only on plugin user-text input', () => {
     const userText = {
       kind: 'userText',

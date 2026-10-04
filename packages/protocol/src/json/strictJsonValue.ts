@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { cloneStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
+import { cloneNativeJsonValueForTransport, cloneStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
 
 /**
  * The one Protocol-owned strict JSON value: data that has already passed
@@ -24,6 +24,11 @@ export type JsonValue =
 
 export function normalizeStrictJsonValue(input: unknown): JsonValue {
   return cloneStrictPluginJsonValue(input, 'value') as JsonValue;
+}
+
+/** Projects native optional object members; unsupported JSON data still fails closed. */
+export function projectNativeJsonValueForTransport(input: unknown): JsonValue {
+  return cloneNativeJsonValueForTransport(input, 'value') as JsonValue;
 }
 
 /** Compares normalized strict JSON without depending on object insertion order. */

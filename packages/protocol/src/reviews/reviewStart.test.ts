@@ -7,6 +7,14 @@ const reviewStartExports = reviewStart as typeof reviewStart & {
 };
 
 describe('ReviewStartInputSchema', () => {
+  it('owns narration selection strictly while retaining findings-only defaults', () => {
+    const input = { engineIds: ['codex'], instructions: 'Review.' };
+    expect(reviewStart.ReviewStartInputSchema.parse(input).outputs).toBeUndefined();
+    expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, outputs: ['summary'] }).success).toBe(false);
+    expect(reviewStart.ReviewStartInputSchema.safeParse({
+      ...input, outputs: ['walkthrough'], narrator: { engineId: 'codex', hiddenModel: 'model' },
+    }).success).toBe(false);
+  });
   it('accepts one exact Team credential model selection and rejects fanout ambiguity', () => {
     const teamCredentialModel = {
       kind: 'team_credential_provider_model' as const,

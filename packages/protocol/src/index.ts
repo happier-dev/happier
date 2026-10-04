@@ -868,6 +868,7 @@ export {
 } from './providers/detection/v1.js';
 export {
   ProviderModelDescriptorV1Schema,
+  resolveModelStructuredOutputSupport,
   type ProviderModelDescriptorV1,
 } from './models/descriptor.js';
 export * from './runtime/index.js';
@@ -1096,6 +1097,7 @@ export {
   PluginAgentCapabilitySurfacesV2Schema,
   PluginAgentToolsDeliveryV2Schema,
   PluginAgentToolsCapabilityV2Schema,
+  PluginAgentStructuredOutputCapabilityV2Schema,
   PluginAgentSessionCapabilitiesV2Schema,
   PluginAgentExecutionRunCapabilitiesV2Schema,
   PluginAgentAcpDefinitionV2Schema,
@@ -1154,6 +1156,7 @@ export {
   type PluginAgentCapabilitySurfacesV2,
   type PluginAgentToolsDeliveryV2,
   type PluginAgentToolsCapabilityV2,
+  type PluginAgentStructuredOutputCapabilityV2,
   type PluginAgentSessionCapabilitiesV2,
   type PluginAgentExecutionRunCapabilitiesV2,
   type PluginAgentAcpDefinitionV2,
@@ -5321,6 +5324,20 @@ export {
 } from './scm/reviewWorkspace.js';
 export {
   SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
+  ScmComparisonSourceSchema, ScmComparisonSourceProtocolSchema, ScmComparisonSchema, ScmComparisonFileSchema, ScmChangeOccurrenceSchema,
+  buildScmComparisonSourceKey, buildScmComparisonIdentity, classifyScmChangePath,
+  ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema,
+  type ScmComparisonCaptureInput, type ScmComparisonCaptureOutput,
+  ScmDiffSummaryOutputKindSchema, ScmDiffSummaryOutputStateSchema,
+  ScmDiffSummarySummarySchema, ScmDiffSummaryWalkthroughSchema, ScmDiffSummaryCommitPlanSchema,
+  ScmDiffSummaryModelOutputSchema, ScmDiffSummaryOutputsSchema, ScmDiffSummaryAnalysisCoverageSchema,
+  ScmReviewFindingIdentitySchema, ScmReviewExplanationRequesterSchema, ScmReviewExplanationTargetsSchema, ScmReviewExplanationSchema,
+  type ScmReviewExplanationRequester,
+  normalizeScmDiffSummaryModelOutput, buildScmDiffSummaryCacheKey, isDurableScmDiffSummaryCacheKey,
+  type ScmComparisonSource, type ScmComparison, type ScmComparisonFile, type ScmChangeOccurrence,
+  type ScmDiffSummaryOutputKind, type ScmDiffSummaryOutputState, type ScmDiffSummaryWalkthrough,
+  type ScmDiffSummaryCommitPlan, type ScmDiffSummaryModelOutput, type ScmDiffSummaryOutputs, type ScmDiffSummaryAnalysisCoverage,
+  type ScmDiffSummaryCacheSource, type ScmDiffSummaryResolvedSelectorInput, type ScmDiffSummaryCacheKeyInput,
   ScmDiffSummaryCacheEntrySchema,
   ScmDiffSummaryCacheKeyDescriptorSchema,
   ScmDiffSummaryCachePolicySchema,
@@ -5334,6 +5351,8 @@ export {
   ScmDiffSummaryMetadataSchema,
   ScmDiffSummaryModelSelectorSchema,
   ScmDiffSummaryResolvedSelectorSchema,
+  ScmDiffSummaryReviewRunSchema,
+  ScmDiffSummaryReviewProvenanceSchema,
   ScmDiffSummarySourceKindSchema,
   ScmDiffSummarySourceSchema,
   ScmDiffSummaryTruncationReasonSchema,
@@ -5351,11 +5370,16 @@ export {
   type ScmDiffSummaryMetadata,
   type ScmDiffSummaryModelSelector,
   type ScmDiffSummaryResolvedSelector,
+  type ScmDiffSummaryReviewRun,
+  type ScmDiffSummaryReviewProvenance,
   type ScmDiffSummarySource,
   type ScmDiffSummarySourceKind,
   type ScmDiffSummaryTruncation,
   type ScmDiffSummaryTruncationReason,
 } from './scm/diffSummary.js';
+export * from './scm/diffSummaryResult.js';
+export * from './scm/diffSummaryCommitPlan.js';
+export * from './scm/reviewedMarks.js';
 export {
   ScmRepositoryCloneAuthorizationTokenSchema,
   ScmRepositoryCloneInputSchema,
@@ -5557,6 +5581,9 @@ export {
   ExecutionRunDraftCorrelationIdSchema,
   ExecutionRunPublicStateSchema,
   ExecutionRunInteractionV1Schema,
+  NO_EXECUTION_RUN_INTERACTION,
+  resolveExecutionRunInteractionAffordances,
+  type ExecutionRunInteractionAffordances,
   ExecutionRunLifecycleV1Schema,
   ExecutionRunReplaySeedRequestSchema,
   ExecutionRunVoiceAgentIntentInputV1Schema,
@@ -5693,6 +5720,7 @@ export {
   type ExecutionRunWaitFailure,
   type ExecutionRunWaitReadResult,
   type ExecutionRunWaitLoopResult,
+  type ExecutionRunWaitCondition,
   normalizeExecutionRunProfileResultContract,
   buildExecutionRunResultContractPrompt,
   decodeExecutionRunProfileResult,
@@ -6701,6 +6729,33 @@ export {
   type ReviewEngineInputs,
   type ReviewStartInput,
 } from './reviews/reviewStart.js';
+export {
+  ReviewEngineCapabilitiesSchema,
+  resolveReviewNarratorPolicy,
+  type ReviewEngineCapabilities,
+  type ReviewNarratorEngineOption,
+} from './reviews/reviewEngines.js';
+
+export {
+  ReviewNarratorSelectionSchema,
+  ReviewWalkthroughObservationSchema,
+  type ReviewWalkthroughObservation,
+  ReviewLaunchFailureSchema,
+  ReviewFindingIdentitySchema,
+  ReviewWalkthroughRequestSchema,
+  ReviewWalkthroughInputSchema,
+  ReviewWalkthroughResponseSchema,
+  type ReviewWalkthroughResponse,
+  ReviewExplainFindingsRequestSchema,
+  ReviewExplainFindingsInputSchema,
+  ReviewExplainFindingsRefinementSchema,
+  type ReviewNarratorSelection,
+  type ReviewFindingIdentity,
+  type ReviewWalkthroughRequest,
+  type ReviewWalkthroughInput,
+  type ReviewExplainFindingsRequest,
+  type ReviewExplainFindingsInput,
+} from './reviews/reviewNarration.js';
 
 export {
   ReviewScmScopeBaseRefSourceV1Schema,
@@ -7001,6 +7056,21 @@ export {
 } from './messages/structured/reviewCommentsV1.js';
 
 export {
+  normalizeReviewCommentDraftBody,
+  hasReviewCommentDraftBody,
+  normalizeReviewCommentDraft,
+  normalizeReviewCommentDrafts,
+  getReviewCommentDraftAnchorPrimaryLine,
+  formatReviewCommentDraftAnchorLabel,
+  isReviewCommentDraftIncludedInPrompt,
+  filterReviewCommentDraftsIncludedInPrompt,
+  buildReviewCommentsPromptText,
+  buildReviewCommentsDisplayText,
+  buildReviewCommentsV1MetaPayload,
+  buildReviewCommentsOutboundMessage,
+} from './messages/structured/reviewCommentsInput.js';
+
+export {
   AGENT_THREAD_TEXT_CONVERSATION_TURN_ORIGIN_V1,
   CONVERSATION_TURN_ORIGIN_META_FIELD_V1,
   ConversationTurnOriginV1Schema,
@@ -7033,6 +7103,19 @@ export {
   parseReviewFollowUpV1,
   type ReviewFollowUpV1,
 } from './messages/structured/reviewFollowUpV1.js';
+
+export {
+  resolveEffectiveReviewFindingFollowUps,
+  type EffectiveReviewFindings,
+  type ReviewFindingThreadEntry,
+} from './reviews/resolveEffectiveReviewFindings.js';
+
+export {
+  projectReviewFindingsOverlay,
+  type ReviewFindingsOverlayReview,
+  type ReviewFindingOverlayEntry,
+  type ReviewFindingsOverlay,
+} from './reviews/projectReviewFindingsOverlay.js';
 
 export {
   REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1,
@@ -9370,3 +9453,4 @@ export type { SessionTerminalTargetV1, SessionTerminalLayoutV1, SessionTerminalM
 export * from './account/authoringMemory.js';
 export * from './account/authoringMemoryImport.js';
 export * from './daemon/pluginCaptureSources.js';
+export * from './reviews/reviewPublicationEvidence.js';

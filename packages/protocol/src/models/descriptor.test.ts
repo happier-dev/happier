@@ -3,7 +3,23 @@ import { describe, expect, it } from 'vitest';
 import {
   AgentModelOptionOverrideRuleReadSchema,
   AgentModelOptionOverrideRuleSchema,
+  ProviderModelDescriptorV1Schema,
+  resolveModelStructuredOutputSupport,
 } from './descriptor.js';
+
+describe('structured model capability', () => {
+  it('preserves an explicit unsupported JSON capability from a model catalog', () => {
+    const model = { id: 'catalog-model', name: 'Catalog model', capabilities: { structuredOutput: 'unsupported' } };
+    expect(ProviderModelDescriptorV1Schema.safeParse(model)).toMatchObject({ success: true, data: model });
+  });
+  it('never grants manual models support or overrides negative model evidence', () => {
+    expect(resolveModelStructuredOutputSupport({ catalogModel: false, agentFormats: ['json'] })).toBe('unknown');
+    expect(resolveModelStructuredOutputSupport({ catalogModel: true, agentFormats: ['json'], model: { capabilities: { structuredOutput: 'unsupported' } } })).toBe('unsupported');
+    expect(resolveModelStructuredOutputSupport({ catalogModel: true, agentFormats: ['json'], model: { capabilities: { structuredOutput: 'unknown' } } })).toBe('unknown');
+    expect(resolveModelStructuredOutputSupport({ catalogModel: true, agentFormats: ['json'] })).toBe('supported');
+    expect(resolveModelStructuredOutputSupport({ catalogModel: true })).toBe('unknown');
+  });
+});
 
 /**
  * `AgentModelOptionOverrideRuleSchema` is the canonical producer contract for the override rule,

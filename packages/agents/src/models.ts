@@ -95,14 +95,18 @@ export function getAgentModelConfig(agentId: AgentId): AgentModelConfig | null {
   return readBundledAgentFact(AGENT_MODEL_CONFIG, agentId);
 }
 
-export function getAgentStaticModels(agentId: AgentId): readonly AgentModelDescriptor[] {
+/** Catalog-only callers must not treat compatibility selection modes as offered descriptors. */
+export function getAgentStaticModels(
+  agentId: AgentId,
+  options?: Readonly<{ catalogOnly?: boolean }>,
+): readonly AgentModelDescriptor[] {
   const config = getAgentModelConfig(agentId);
   if (config == null) {
     return [];
   }
   const staticModels = Array.isArray(config.staticModels) && config.staticModels.length > 0
     ? config.staticModels
-    : config.allowedModes.map((id) => ({ id, name: id }));
+    : options?.catalogOnly === true ? [] : config.allowedModes.map((id) => ({ id, name: id }));
 
   const seen = new Set<string>();
   return staticModels.filter((model) => {

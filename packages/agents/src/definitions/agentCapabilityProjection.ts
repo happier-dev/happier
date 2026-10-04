@@ -42,6 +42,7 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
   tools?: Readonly<{
     delivery?: string;
   }> | null;
+  structuredOutput?: Readonly<{ formats: readonly string[] }>;
 }>;
 
 /**
@@ -197,11 +198,16 @@ export function projectAgentCapabilitiesV2FromDefinition(
     }
     : null;
   const tools = projectToolsCapability(facts);
+  const structuredOutput: PluginAgentCapabilitiesV2['structuredOutput'] =
+    facts.structuredOutput?.formats.length === 1 && facts.structuredOutput.formats[0] === 'json'
+      ? { formats: ['json'] }
+      : undefined;
 
   return {
     ...(surfaces.length > 0 ? { surfaces } : {}),
     ...(sessions ? { sessions } : {}),
     ...(!sessions && authored.executionRuns ? { executionRuns: authored.executionRuns } : {}),
     ...(tools ? { tools } : {}),
+    ...(structuredOutput ? { structuredOutput } : {}),
   };
 }

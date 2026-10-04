@@ -427,11 +427,18 @@ export const PluginAgentToolsCapabilityV2Schema = z.object({
 }).strict();
 export type PluginAgentToolsCapabilityV2 = z.infer<typeof PluginAgentToolsCapabilityV2Schema>;
 
+/** Prompted structured JSON consumed by the host's strict output normalizers. */
+export const PluginAgentStructuredOutputCapabilityV2Schema = z.object({
+  formats: z.tuple([z.literal('json')]),
+}).strict();
+export type PluginAgentStructuredOutputCapabilityV2 = z.infer<typeof PluginAgentStructuredOutputCapabilityV2Schema>;
+
 const PluginAgentCapabilitiesV2Shape = {
   surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
   sessions: PluginAgentSessionCapabilitiesV2Schema.optional(),
   executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema.optional(),
   tools: PluginAgentToolsCapabilityV2Schema.optional(),
+  structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
 };
 
 /**
@@ -564,6 +571,7 @@ const PluginAgentSessionCapabilitiesShape = {
   surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
   sessions: PluginAgentSessionCapabilitiesV2Schema,
   tools: PluginAgentToolsCapabilityV2Schema.optional(),
+  structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
 };
 const PluginAgentSessionPrimaryShape = {
   primary: z.literal('sessions'),
@@ -579,6 +587,7 @@ const PluginAgentExecutionPrimaryShape = {
     surfaces: PluginAgentCapabilitySurfacesV2Schema.optional(),
     executionRuns: PluginAgentExecutionRunCapabilitiesV2Schema,
     tools: PluginAgentToolsCapabilityV2Schema.optional(),
+    structuredOutput: PluginAgentStructuredOutputCapabilityV2Schema.optional(),
   }).strict(),
 };
 const PluginAgentPrimaryContributionV2Schema = z.union([
