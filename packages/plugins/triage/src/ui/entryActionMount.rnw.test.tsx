@@ -895,6 +895,7 @@ describe('the entry action controls on the mounted detail header', () => {
      */
     it('launches straight into the one reachable checkout when the profile resolves an agent', async () => {
         const harness = createHarness();
+        const directory = 'C:\\checkouts\\repository';
         harness.setActions([{
             actionId: 'fix',
             label: 'Direct fix',
@@ -920,7 +921,7 @@ describe('the entry action controls on the mounted detail header', () => {
         // One reachable checkout, on a machine that is NOT the one this surface
         // is mounted on.
         harness.setRegistry({
-            items: [projectRow({ machineId: 'machine-b', rootPath: '/checkouts/repository' })],
+            items: [projectRow({ machineId: 'machine-b', rootPath: directory })],
             truncated: false,
         });
         const shell = await mountShell(harness);
@@ -941,7 +942,7 @@ describe('the entry action controls on the mounted detail header', () => {
             profileId: 'profile-1',
         });
         expect(destination?.kind === 'new' ? destination.materialization : null)
-            .toEqual({ kind: 'selectedProject', directory: '/checkouts/repository' });
+            .toEqual({ kind: 'selectedProject', directory });
     }, 60_000);
 
     /**

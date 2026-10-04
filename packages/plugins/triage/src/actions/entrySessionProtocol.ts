@@ -173,7 +173,12 @@ const TriageNewSessionSpawnV1Schema = defineProtocolObject({
 export const TriageStartEntrySessionSettledDraftV1Schema = defineProtocolObject({
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
-    directory: triageText,
+    // Consumer admission for materializations that require a concrete path.
+    // Managed-directory resolution remains exclusively with the Session owner.
+    directory: defineProtocolObject({
+        kind: defineProtocolLiteral('path'),
+        path: triageText,
+    }, { policy: 'closed' }),
     profileId: triageIdentifier.optional(),
     modelSelection: defineProtocolJsonValue().optional(),
     permissionMode: defineProtocolJsonValue().optional(),

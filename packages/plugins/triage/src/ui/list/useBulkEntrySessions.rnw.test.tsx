@@ -262,7 +262,7 @@ describe('bulk placement ownership', () => {
                 return { kind: 'serverStartDraft', draft: {
                     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
-                    directory: '/workspace',
+                    directory: { kind: 'path', path: '/workspace' },
                 } };
             },
             executeAction: async (actionId: string, input: TriageStartEntrySessionInputV1, options?: { selectedActionInput?: unknown }) => {
@@ -322,7 +322,7 @@ describe('bulk placement ownership', () => {
                     draft: {
                         executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
-                        directory: '/workspace',
+                        directory: { kind: 'path', path: '/workspace' },
                     },
                 };
             },
@@ -402,7 +402,7 @@ describe('bulk placement ownership', () => {
                             kind: 'agent',
                             identity: { pluginId: 'happier.test.agent', localId: 'agent' },
                         },
-                        directory: `/workspaces/repository-${selection}`,
+                        directory: { kind: 'path', path: `/workspaces/repository-${selection}` },
                     },
                 };
             },
@@ -483,7 +483,7 @@ describe('bulk placement ownership', () => {
                 return { kind: 'serverStartDraft', draft: {
                     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.test.agent', localId: 'agent' } },
-                    directory: '/user-selected-project',
+                    directory: { kind: 'path', path: '/user-selected-project' },
                 } };
             },
             executeAction: async (actionId: string) => {

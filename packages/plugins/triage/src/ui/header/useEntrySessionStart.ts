@@ -917,7 +917,7 @@ export function useTriageEntrySessionStart(
                     settlement = {
                         executionTarget: executionPlacement.executionTarget,
                         agentTarget: agent.agentTarget,
-                        directory: executionPlacement.directory,
+                        directory: { kind: 'path', path: executionPlacement.directory },
                     };
                 } else {
                     const seed = triageNewSessionDraftSeedV1(
