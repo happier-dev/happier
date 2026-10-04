@@ -13,7 +13,8 @@ import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingRes
   type SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
-import { SessionActionRpcOriginV1Schema, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
+import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
+import { resolveSessionRoleRpcOrigin } from './sessionRoleRpcOrigin';
 import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows';
 
 import {
@@ -22,7 +23,6 @@ import {
   isTerminalAutomationRunStateV3,
   isExecutionRunTerminalStatus,
   AgentStartSessionCallerV1Schema,
-  parseAgentPermissionIntentV1Alias,
   createArtifactAccessActionsV1,
   createLaunchProfilePublisherV1,
   createWorkBoardArtifactPortV1,
@@ -1887,29 +1887,13 @@ export function createCliActionDeps(params: Readonly<{
     context: ActionExecutorContext,
   ): Promise<unknown> => {
     if (context.authority === 'present_user') return await callSessionRpcForTransport(transport, method, input, context.signal);
-    const source = context.sessionInputSource;
-    if (context.actionCaller?.kind !== 'session' || !source || !('sourceSessionId' in source)
-      || source.sourceSessionId !== context.actionCaller.sessionId) {
-      throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
-    }
-    const permissionMode = context.callerPermissionMode ? parseAgentPermissionIntentV1Alias(context.callerPermissionMode) : null;
-    if (context.callerPermissionMode && !permissionMode) {
-      throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
-    }
-    const origin = SessionActionRpcOriginV1Schema.safeParse({
-      v: 1, caller: context.actionCaller,
-      callerPermissionMode: permissionMode,
-      causalPermissionAuthority: context.causalPermissionAuthority ?? null,
-      sourceTurnId: source && 'sourceTurnId' in source ? source.sourceTurnId : undefined,
-      requestId: context.actionRequestId,
-      ...(context.workspaceWrites ? { workspaceWrites: context.workspaceWrites } : {}),
-    });
-    if (!origin.success || !params.sessionActionRpcTransport) {
+    const origin = resolveSessionRoleRpcOrigin(context);
+    if (!params.sessionActionRpcTransport) {
       throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
     }
     context.signal?.throwIfAborted();
     return await params.sessionActionRpcTransport({ sessionId: transport.sessionId, method, input,
-      content: resolveSessionRpcContent(transport), origin: origin.data,
+      content: resolveSessionRpcContent(transport), origin,
       ...(context.signal ? { signal: context.signal } : {}),
     });
   };
