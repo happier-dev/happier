@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { selectAffectedGatePackages } from './selectAffectedGatePackages.mjs';
 
@@ -31,7 +31,17 @@ test('gate selection includes changed workspace consumers, including peer consum
 
   const output = join(rootDir, 'github-output');
   await writeFile(output, '');
-  execFileSync(process.execPath, [fileURLToPath(new URL('./selectAffectedGatePackages.mjs', import.meta.url))], {
+  const loader = join(rootDir, 'preinstall-loader.mjs');
+  // The Node dependency-resolution boundary models checkout before yarn install.
+  await writeFile(loader, [
+    'export async function resolve(specifier, context, nextResolve) {',
+    '  if (!specifier.startsWith(".") && !specifier.startsWith("node:") && !specifier.startsWith("file:") && !specifier.startsWith("/")) {',
+    '    throw new Error(`Dependencies are not installed: ${specifier}`);',
+    '  }',
+    '  return nextResolve(specifier, context);',
+    '}',
+  ].join('\n'));
+  execFileSync(process.execPath, ['--experimental-loader', pathToFileURL(loader).href, fileURLToPath(new URL('./selectAffectedGatePackages.mjs', import.meta.url))], {
     cwd: rootDir,
     env: { ...process.env, GITHUB_OUTPUT: output },
     input: 'apps/server/prisma/schema.prisma\0apps/server/sources/route.ts\0',

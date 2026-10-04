@@ -5,7 +5,7 @@ import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils
 import {
   collectInternalWorkspaceDependencyNames,
   collectAdmittedInternalWorkspacePeerDependencyNames,
-} from '../workspaces/ensureWorkspacePackagesBuilt.mjs';
+} from '../workspaces/workspacePackageDependencies.mjs';
 
 const gatePackages = ['cli', 'plugins', 'protocol', 'server', 'ui'];
 

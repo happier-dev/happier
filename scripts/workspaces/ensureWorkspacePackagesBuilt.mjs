@@ -31,6 +31,10 @@ import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR } from './workspaceChildB
 import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
 import { syncBundledWorkspacePackages } from './syncBundledWorkspacePackages.mjs';
 import { createBundledPluginPublicationFailure } from './bundledPluginPublicationFailure.mjs';
+import {
+  collectInternalWorkspaceDependencyNames,
+  collectAdmittedInternalWorkspacePeerDependencyNames,
+} from './workspacePackageDependencies.mjs';
 
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
   'dist/happier-plugin-ui/ui-artifacts.json';
@@ -85,30 +89,6 @@ async function collectWorkspacePackageDirsByName(monorepoRoot) {
   return packageDirsByName;
 }
 
-export function collectInternalWorkspaceDependencyNames(
-  packageJson,
-  currentPackageName,
-  { includeDevDependencies = true, workspacePackageNames = null } = {},
-) {
-  const knownWorkspacePackageNames = workspacePackageNames
-    ? new Set(workspacePackageNames)
-    : null;
-  const names = [];
-  const dependencyFields = [packageJson?.dependencies, packageJson?.optionalDependencies];
-  if (includeDevDependencies) dependencyFields.push(packageJson?.devDependencies);
-  for (const dependencies of dependencyFields) {
-    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue;
-    for (const name of Object.keys(dependencies)) {
-      const isInternalWorkspace = knownWorkspacePackageNames
-        ? knownWorkspacePackageNames.has(name)
-        : name.startsWith('@happier-dev/');
-      if (!isInternalWorkspace || name === currentPackageName) continue;
-      names.push(name);
-    }
-  }
-  return names;
-}
-
 async function collectWorkspaceDependencyClosure(packageNames, packageDirsByName, { includeDevDependencies = true } = {}) {
   const admitted = new Set();
   const workspacePackageNames = new Set(packageDirsByName.keys());
@@ -124,20 +104,6 @@ async function collectWorkspaceDependencyClosure(packageNames, packageDirsByName
   };
   await Promise.all(packageNames.map(visit));
   return admitted;
-}
-
-export function collectAdmittedInternalWorkspacePeerDependencyNames(
-  packageJson,
-  currentPackageName,
-  { admittedWorkspacePackageNames, workspacePackageNames },
-) {
-  const peers = packageJson?.peerDependencies;
-  if (!peers || typeof peers !== 'object' || Array.isArray(peers)) return [];
-  return Object.keys(peers).filter((name) => (
-    name !== currentPackageName
-    && workspacePackageNames.has(name)
-    && admittedWorkspacePackageNames.has(name)
-  ));
 }
 
 export function collectWorkspacePackageFingerprintDependencyNames(

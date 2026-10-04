@@ -23,3 +23,15 @@ Author self-attack corrected the conditional DB lane so an unsuccessful manual t
 ## P1–P6 — Pending
 
 The approved governance deletion/audit, build sharing/cache/parallelism, E2E smoke restructuring, artifact-based release with one runtime-selected channel build, and ownership documentation remain pending behind P0. No amendment or scope reduction is proposed.
+
+## Push updates
+
+- 2026-10-04: pushed `ead11050eb885c974b945c04b9aaef51d759d711` by ordinary Git, fast-forward from `b4a625c9f16b04b040574454f6cf162d7a6e1d59`, after `git rebase --no-autostash origin/v0.3`. Remote SHA verified with `git ls-remote`. Exact-SHA automatic CI run: https://github.com/happier-dev/happier/actions/runs/37198337549 — pending. P0 remains in progress; gate success is not claimed.
+
+### P0 bootstrap repair
+
+Run `37198337549` terminated **failure** in `gate-packages`; 43 other jobs skipped and the aggregate gate failed. Compilation/unit/build execution never started. Public job metadata establishes the failing step, but detailed logs return HTTP 403 and the managed bot credential broker remains unavailable. A local replay with dependencies temporarily absent reproduced `ERR_MODULE_NOT_FOUND` for `@happier-dev/cli-common` through the imported build helper. A test-first Node module-resolution boundary now rejects external package imports, reproducing the same pre-install failure (RED).
+
+The two existing dependency readers were moved unchanged into `scripts/workspaces/workspacePackageDependencies.mjs`, consumed by both the original build owner and the gate selector; no competing dependency logic or install step was added. The selector regression is GREEN, and a real replay with `node_modules` temporarily absent returned all five affected groups successfully. The overlay was restored immediately; neither shared checkout was changed. The adjacent `ensureWorkspacePackagesBuilt.test.mjs` suite could not load because isolated `cli-common/dist/workspaces/index.js` is not built; this is an unavailable adjacent gate, not a passing test. Hosted CI owns heavy compilation/build validation. P0 remains in progress and P1–P6 remain pending.
+
+Bootstrap repair terminal validation: the same three-suite focused command passed **16/16** again, including the new pre-install subprocess contract. Targeted actionlint and `git diff --check` passed. Self-attack checked that the extracted readers preserve their previous bodies and both consumers use the same module; no dependency bootstrap workaround or extra install was added. The unresolved integrated gate is the next exact-SHA hosted run.
