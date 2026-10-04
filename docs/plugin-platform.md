@@ -106,6 +106,16 @@ derive placement;
 the host remains the filesystem-policy owner. Policy refusal returns
 `INVALID_PATH` and does not mutate the rejected target.
 
+The [SCM comparison contract](scm-diff-summary.md) keeps Git mutation and hosting
+evidence at their contributed owners. Git's ordinary, stacked and accepted-plan
+consumers share one writer and advertised capabilities; the public SCM backend
+command seam carries its native ref-transaction acknowledgement. Shared private
+index setup is a filesystem-only `cli-common` subpath, not a plugin UI dependency.
+GitHub comparison evidence uses its existing configured-source Action and
+validated continuations; display projections do not become authority or select
+credentials. Missing backend/model capabilities fail closed rather than enabling
+an id-based host fallback.
+
 ### Connected Account refresh and quota identity (0.3 development)
 
 The Codex and Claude token-exchange owners classify HTTP 429 and unsuccessful

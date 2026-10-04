@@ -71,6 +71,19 @@ daemon re-arms long deadlines in Node-supported timer chunks without capping
 the requested duration. Generic `wait`/`watch` consumers must explicitly adopt
 these owner APIs; this source seam does not itself certify their integration.
 
+## Retained SCM output publication
+
+SCM explanation Runs use the existing `resumable` retention policy and
+`long_lived` class within Session-owned retained interaction. The host's
+per-turn completion seam invokes `ScmDiffSummaryProfile`, validates structured
+output against captured occurrences and publishes through the revisioned machine
+result owner. A settled output does not imply that the native Run terminated;
+ordinary chat does not write the result. Review narration consumes the same
+publisher after findings settle. Input admission, cancellation, recovery and
+generator replacement stay at their existing host owners. See
+[SCM comparisons and walkthroughs](scm-diff-summary.md) for output, revision,
+discussion and currently unverified integration contracts.
+
 ## Rules for changes
 
 - Extend the owning host path and migrate its callers together. Do not add another Agent registry, lifecycle loop, prompt queue, permission owner, thinking flag or whole-metadata state writer.

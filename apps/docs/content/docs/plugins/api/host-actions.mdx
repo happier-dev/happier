@@ -4076,6 +4076,25 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `includeDisabled` (boolean): Include disabled
 - `scope` (text): Scope
 
+## `review.explain_findings`
+
+**Explain review findings** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `runId` (text, required): Reviewer Run
+- `reviewRunIds` (text_list): Reviewer Runs
+- `cwd` (text, required): Repository
+- `resultId` (text, required): Saved result
+- `expectedRevision` (integer, required): Current result revision
+- `findingIds` (json, required): Finding Run identities
+- `instructions` (textarea): Instructions
+
 ## `review.start`
 
 **Start review** — No additional description is published.
@@ -4088,6 +4107,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `engineIds` (multiselect, required): Review engines — Select one or more engines. Each engine runs as its own execution run.
+- `outputs` (multiselect): Also write a walkthrough
+- `comparisonId` (text): Captured comparison — Saved exact comparison identity required when requesting a walkthrough.
+- `narrator.engineId` (select): Narrator — Optional explicit capable engine; defaults to the first selected capable reviewer.
+- `narrator.modelId` (text): Narrator model
 - `instructions` (textarea, required): Instructions — What you want the reviewers to focus on.
 - `teamCredentialModel` (json): Team credential model (json) — Optional exact Team credential resource/model selection from the recipient-safe Team catalog. Requires one review engine.
 - `secretReferenceOverlay` (json): Saved Secret overrides (json) — Optional value-free Saved Secret references for this launch only. Values are resolved by the exact daemon and the selected Profile is not changed.
@@ -4095,6 +4118,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `base.kind` (select, required): Base selection — How to define the review base for engines that need it.
 - `base.baseBranch` (text): Base branch — Branch name to diff against (when base.kind=branch).
 - `base.baseCommit` (text): Base commit — Commit SHA to diff against (when base.kind=commit).
+
+## `review.walkthrough`
+
+**Walk through review** — No additional description is published.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `runId` (text, required): Reviewer Run
+- `reviewRunIds` (text_list): Reviewer Runs
+- `comparisonId` (text, required): Captured comparison
+- `narrator.engineId` (select): Narrator
+- `narrator.modelId` (text): Narrator model
 
 ## `reviews.comments.attachEvidence`
 
@@ -4546,6 +4586,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `scope` (json): scope
 - `patches` (json): patches
 
+## `scm.commit.resolveOutcome`
+
+**Resolve commit outcome** — Inspect a known candidate commit and its expected target history without publishing or retrying it.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text): cwd
+- `candidateOid` (text): Known candidate commit
+- `expectedHeadOid` (text): Expected parent
+- `expectedRef` (text): Expected target ref
+
 ## `scm.conflict.acceptSide`
 
 **Conflict accept Side** — Conflict accept Side in the explicitly selected source-control repository.
@@ -4604,24 +4660,287 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `path` (text): path
 - `area` (text): area
 
-## `scm.diffSummary.generate`
+## `scm.diffSummary.addOutputs`
 
-**Generate source-control diff summary** — Generate a buffered AI summary for checkpoint-backed or working-tree source-control changes.
+**Add change explanation outputs** — Continue the saved comparison analysis with additional requested outputs.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
 - Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
-- Also surfaced on: `agent`, `mcp`, `cli`, `rpc`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
 - `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+- `outputs` (text_list, required): Requested outputs
+
+## `scm.diffSummary.capture`
+
+**Capture source-control comparison** — Read comparison inventory and evidence without starting model analysis.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `sessionId` (text): Session id
+- `source.kind` (text, required): Comparison source
+
+## `scm.diffSummary.commitPlan.accept`
+
+**Accept and apply commit proposals** — Apply the exact ordered pending proposal bound to the checkout and current saved revision.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+- `acceptance` (json, required): Exact acceptance binding
+
+## `scm.diffSummary.commitPlan.cancel`
+
+**Cancel remaining commit proposals** — Cancel remaining steps without resetting commits or worktree changes.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+
+## `scm.diffSummary.commitPlan.includeHookChanges`
+
+**Include displayed hook changes and commit** — Explicitly accept only the displayed hook tree at the current paused revision.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+- `groupId` (text, required): Paused commit
+- `beforeTreeOid` (text, required): Displayed original tree
+- `afterTreeOid` (text, required): Displayed hook tree
+
+## `scm.diffSummary.commitPlan.recover`
+
+**Reconcile an uncertain commit outcome** — Resolve recorded Git publication without retrying or rolling back.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+
+## `scm.diffSummary.commitPlan.stop`
+
+**Stop after the current commit** — Let the active atomic writer finish, then admit no next commit group.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+
+## `scm.diffSummary.discuss`
+
+**Discuss change explanation** — Send a follow-up to the actual retained generator or explicitly start a seeded conversation.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+- `message` (textarea, required): Message
+- `stopIds` (text_list): Selected stops
+- `startNew` (boolean): Start a seeded conversation
+
+## `scm.diffSummary.generate`
+
+**Generate source-control diff summary** — Capture comparison evidence and start retained summary, walkthrough, or commit-plan analysis.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `sessionId` (text): Session id
 - `source.kind` (select, required): Summary source
 - `turnId` (text): Turn id
 - `checkpointReceiptId` (text): Checkpoint receipt id
 - `modelSelector.profileId` (text): Model profile id
 - `modelSelector.modelId` (text): Model id
 - `modelSelector.backendTargetKey` (text): Backend target key
+
+## `scm.diffSummary.refine`
+
+**Refine change explanation** — Request targeted structured refinement without overwriting newer edits.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+- `output` (text, required): Requested output
+- `instructions` (textarea, required): Refinement instructions
+- `stopIds` (text_list): Selected stops
+
+## `scm.diffSummary.result.clear`
+
+**Clear selected saved change explanations** — Delete only explicitly listed saved revisions and their manual edits on the selected machine.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `results` (json, required): Exact saved result revisions
+
+## `scm.diffSummary.result.delete`
+
+**Delete saved change explanation** — Delete a saved result and its manual edits at the expected revision.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+
+## `scm.diffSummary.result.edit`
+
+**Edit saved change explanation** — Apply a structured edit to the expected result revision.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+- `edit` (json, required): Structured edit
+
+## `scm.diffSummary.result.list`
+
+**List saved change explanations** — Read permitted saved results, storage usage and available seven-day cost records from the selected machine.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `scm.diffSummary.result.read`
+
+**Read saved change explanation** — Read the current saved result and revision from its owning machine.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+
+## `scm.diffSummary.result.undo`
+
+**Undo change explanation edit** — Restore the immediate previous output at the expected result revision.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `expectedRevision` (text, required): Expected revision
+
+## `scm.diffSummary.reviewed.mark`
+
+**Mark changes reviewed** — Explicitly mark exact changes reviewed in the authenticated personal Account.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `changeRefs` (text_list, required): Exact change references
+
+## `scm.diffSummary.reviewed.unmark`
+
+**Unmark reviewed changes** — Explicitly remove personal reviewed marks for exact comparison changes.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `cwd` (text, required): Repository directory
+- `resultId` (text, required): Saved result
+- `changeRefs` (text_list, required): Exact change references
 
 ## `scm.hostingRepository.describePublishTargets`
 

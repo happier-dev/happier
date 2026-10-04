@@ -125,6 +125,17 @@ This is the current development contract, not a released availability claim. Aut
 
 ### Execution result ownership (0.3 development)
 
+SCM explanations have one saved machine result, separate from the disposable
+analysis cache and personal Account-KV reviewed marks. Capture/generate Actions
+resolve authenticated source evidence before admitting a retained analysis Run;
+read/edit/refine/Undo and accepted commit progress use that result's revision
+owner. Review narration publishes through the same store after findings, without
+replacing ReviewComment's disposition authority. The Git plugin owns ordinary,
+stacked and accepted-plan publication; CLI checkpoints share only temporary-index
+mechanics. [SCM comparisons and walkthroughs](scm-diff-summary.md) owns the detailed
+source, coverage, persistence, Git-version and truthful recovery contracts and
+names the unfinished UI/live integration.
+
 `workflow.run.wait` parks in the shared Account Run Action owner. The CLI uses
 the existing user-scoped Account socket; the UI uses its captured Home Account
 change feed. A change or reconnect wakes an exact durable snapshot read from
