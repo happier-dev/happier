@@ -149,7 +149,7 @@ export function checkTriageSourceContributionV1(
         const declaration = operation.declaration;
         const actionId = contribution.operations[role];
         if (actionId === undefined) {
-            if (role !== 'prepareReviewWorkspace' && role !== 'verifyReviewWorkspace') {
+            if (declaration.required) {
                 errors.push(`Triage sources V1 requires the '${role}' source role binding.`);
             }
             continue;

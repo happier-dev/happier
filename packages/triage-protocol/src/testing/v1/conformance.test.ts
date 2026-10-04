@@ -117,12 +117,14 @@ describe('Triage sources V1 contribution conformance', () => {
         expect(() => assertTriageSourceContributionV1(createExternalSourceManifest())).not.toThrow();
     });
 
-    it('accepts a source that omits the optional review-workspace role', () => {
+    it('accepts a source that omits every optional operation role', () => {
         const manifest = mutableManifest();
         const contribution = manifest.contributes.targetedPluginContributions[0]!;
-        delete contribution.operations.prepareReviewWorkspace;
+        for (const [role, operation] of Object.entries(sourceOperations)) {
+            if (!operation.declaration.required) delete contribution.operations[role];
+        }
         manifest.contributes.actions = manifest.contributes.actions
-            .filter((action) => action.id !== ACTION_IDS.prepareReviewWorkspace);
+            .filter((action) => Object.values(contribution.operations).includes(action.id));
 
         expect(checkTriageSourceContributionV1(manifest).ok).toBe(true);
     });
@@ -255,14 +257,17 @@ describe('Triage sources V1 contribution conformance', () => {
         expect(result.ok === false && result.errors.join(' ')).toContain("'rescan'");
     });
 
-    it('rejects a role bound to an Action that is not declared at all', () => {
-        const manifest = mutableManifest();
-        manifest.contributes.targetedPluginContributions[0]!.operations.get = 'author/absent';
+    it.each(['get', 'readPullRequestStatus'] as const)(
+        'rejects %s when bound to an Action that is not declared at all',
+        (role) => {
+            const manifest = mutableManifest();
+            manifest.contributes.targetedPluginContributions[0]!.operations[role] = 'author/absent';
 
-        const result = checkTriageSourceContributionV1(manifest);
-        expect(result.ok).toBe(false);
-        expect(result.ok === false && result.errors.join(' ')).toContain('undeclared Action');
-    });
+            const result = checkTriageSourceContributionV1(manifest);
+            expect(result.ok).toBe(false);
+            expect(result.ok === false && result.errors.join(' ')).toContain('undeclared Action');
+        },
+    );
 
     it('rejects a role bound to an Action declaring a different result schema', () => {
         const manifest = mutableManifest();
