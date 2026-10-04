@@ -15,7 +15,7 @@ export type SpawnSessionNonceResolver = (
 
 export type AwaitSpawnedSessionIdResult =
   | { type: 'success'; sessionId: string; sessionCreationOutcome?: SpawnSessionCreationOutcome }
-  | { type: 'error'; errorCode: string; errorMessage: string; errorDetail?: SpawnSessionErrorDetail };
+  | { type: 'error'; errorCode: string; errorMessage: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail };
 
 export type AbandonSpawnedSessionResult =
   | Readonly<{ status: 'completed'; sessionId: string }>
@@ -35,7 +35,7 @@ function readSpawnResult(result: unknown): Readonly<{
   sessionId?: string;
   spawnNonce?: string;
   sessionCreationOutcome?: SpawnSessionCreationOutcome;
-}> | Readonly<{ type: 'error'; errorCode: string; errorMessage: string }> {
+}> | Readonly<{ type: 'error'; errorCode: string; errorMessage: string; agentId?: string }> {
   if (!result || typeof result !== 'object') {
     return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Unrecognized spawn result envelope' };
   }
@@ -65,7 +65,13 @@ function readSpawnResult(result: unknown): Readonly<{
     : typeof value.error === 'string' && value.error.trim().length > 0
       ? value.error.trim()
       : 'Failed to spawn session';
-  return { type: 'error', errorCode, errorMessage };
+  const normalizedFailure = normalizeSpawnSessionNonceResolution({
+    status: 'error', errorCode, errorMessage, agentId: value.agentId,
+  });
+  return { type: 'error', errorCode, errorMessage,
+    ...(normalizedFailure.status === 'error' && normalizedFailure.agentId
+      ? { agentId: normalizedFailure.agentId } : {}),
+  };
 }
 
 export async function awaitSpawnedSessionId(params: Readonly<{
@@ -114,12 +120,17 @@ export async function awaitSpawnedSessionId(params: Readonly<{
         ? { sessionCreationOutcome: settled.sessionCreationOutcome }
         : {}),
     };
-    case 'error': return {
-      type: 'error',
-      errorCode: settled.errorCode,
-      errorMessage: settled.errorMessage,
-      ...(settled.errorDetail ? { errorDetail: settled.errorDetail } : {}),
-    };
+    case 'error': {
+      const normalizedFailure = normalizeSpawnSessionNonceResolution(settled);
+      return {
+        type: 'error',
+        errorCode: settled.errorCode,
+        errorMessage: settled.errorMessage,
+        ...(normalizedFailure.status === 'error' && normalizedFailure.agentId
+          ? { agentId: normalizedFailure.agentId } : {}),
+        ...(settled.errorDetail ? { errorDetail: settled.errorDetail } : {}),
+      };
+    }
     case 'unsupported': return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Daemon does not support spawn nonce resolution for pending spawns' };
     case 'not_found': return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: 'The accepted spawn is no longer tracked by the daemon' };
     case 'pending':

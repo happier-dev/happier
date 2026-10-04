@@ -82,6 +82,7 @@ import {
   SessionAuthoringTerminalV1Schema,
   normalizeSessionCreationOrganizationPlacementV1,
   normalizeSpawnSessionErrorDetail,
+  normalizeSpawnSessionNonceResolution,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
   isSessionCreationCorrespondenceConflictSpawnErrorDetail,
   isSessionCreationOrganizationInvalidSpawnErrorDetail,
@@ -4226,6 +4227,16 @@ export function createCliActionDeps(params: Readonly<{
               providerError: detail.providerError,
             };
           }
+        }
+        const normalizedFailure = normalizeSpawnSessionNonceResolution({
+          status: 'error', errorCode: code, errorMessage: readRecord(error).message,
+          agentId: details.agentId ?? readRecord(details.spawnResponse).agentId,
+        });
+        if (normalizedFailure.status === 'error' && normalizedFailure.agentId
+          && (normalizedFailure.errorCode === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
+            || normalizedFailure.errorCode === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT)) {
+          return { type: 'error', code: normalizedFailure.errorCode,
+            agentId: normalizedFailure.agentId, retryable: false };
         }
         return { type: 'error', code: 'spawn_failed', retryable: true };
       }
