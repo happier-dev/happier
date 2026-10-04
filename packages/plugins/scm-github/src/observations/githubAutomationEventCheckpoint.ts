@@ -132,7 +132,7 @@ export type GithubAutomationEventCheckpointRowV1 = Readonly<{
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload]: GithubAutomationEventCheckpointPayloadV1;
 }>;
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+export function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

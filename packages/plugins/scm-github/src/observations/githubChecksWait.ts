@@ -2,7 +2,7 @@ import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-s
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { GITHUB_CHECKS_SNAPSHOT_SCHEMA } from '../githubAutomationEvents.js';
 import { requireGithubAccountStorage } from '../requiredAccountStorage.js';
-import { GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION, isGithubAutomationEventCheckpointRowV1 } from './githubAutomationEventCheckpoint.js';
+import { GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION, isGithubAutomationEventCheckpointRowV1, isRecord } from './githubAutomationEventCheckpoint.js';
 import { githubChecksSourceInstanceId, isGithubChecksEvent, readGithubChecksSnapshot } from './githubChecksSource.js';
 import { readCurrentGithubAutomationEventSource } from '../githubAutomationEventActions.js';
 import type { GithubChecksConditionSnapshotV1 } from '../triage/checksCondition.js';
@@ -79,8 +79,8 @@ export async function waitGithubChecksSource(input: unknown, context: PluginInvo
         || source.definition.sourceInstanceId !== row.value.payload.sourceInstanceId) return result('target_unavailable');
       const cursor = row.value.payload.cursor;
       const continuity = row.value.payload.continuity;
-      if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor) || cursor.kind !== 'pullRequestChecks' || cursor.v !== 1
-        || !continuity || typeof continuity !== 'object' || Array.isArray(continuity)
+      if (!isRecord(cursor) || cursor.kind !== 'pullRequestChecks' || cursor.v !== 1
+        || !isRecord(continuity)
         || continuity.endpointKind !== 'pullRequestChecks' || typeof continuity.repositoryId !== 'string') return result('target_unavailable');
       snapshot = readGithubChecksSnapshot(cursor.snapshot) ?? undefined;
       if (!snapshot || row.value.payload.sourceInstanceId !== githubChecksSourceInstanceId(continuity.repositoryId, snapshot)) return result('target_unavailable');

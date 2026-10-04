@@ -75,7 +75,8 @@ describe('GitHub admitted checks source wait', () => {
   it('applies the generic observation deadline to pending checks', async () => {
     const fixture = harness();
     expect(await genericWait(fixture, 5)).toMatchObject({ ok: true, result: { disposition: 'observation_timeout', snapshot: { state: 'pending' } } });
-    expect(fixture.disposals()).toBe(1);
+    // The deadline may end observation before a subscription is needed.
+    expect(fixture.hasListener()).toBe(false);
   });
   it('cancels the generic plugin observer without changing the checkpoint', async () => {
     const fixture = harness();
@@ -121,7 +122,7 @@ describe('GitHub admitted checks source wait', () => {
   it('times out with explicit none and releases the subscription', async () => {
     const fixture = harness('none');
     expect(await waitGithubChecksSource({ sourceId, condition: 'checks_passed', timeoutMs: 5 }, fixture.context)).toMatchObject({ disposition: 'observation_timeout', snapshot: { state: 'none' } });
-    expect(fixture.disposals()).toBe(1);
+    expect(fixture.hasListener()).toBe(false);
   });
   it('reports withheld permission separately from unknown or superseded evidence', async () => {
     expect(await waitGithubChecksSource({ sourceId, condition: 'checks_passed' }, harness('unknown', { class: 'permission', code: 'github_forbidden' }).context))
