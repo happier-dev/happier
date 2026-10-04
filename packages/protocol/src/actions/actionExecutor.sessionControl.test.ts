@@ -4,6 +4,7 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { buildSessionAwarenessListResultV1 } from '../sessions/awareness/action.js';
 import { bindHomeDomainActionHttpRequestV1 } from './homeDomainActionFamily.js';
 import { ActionIdSchema } from './actionIds.js';
+import { AgentStartSessionCallerV1Schema, type AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -47,7 +48,7 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 const canonicalSessionSpawnInput = {
   creationKey: 'session-control-spawn',
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-  directory: '/repo',
+  directory: { kind: 'path', path: '/repo' },
   agentTarget: {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -225,6 +226,15 @@ describe('createActionExecutor (session control)', () => {
       authority: 'present_user' as const,
       defaultSessionId: 'caller',
       callerPermissionMode: 'yolo',
+      agentStartContext: {
+        caller: AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: 'caller', starterDepth: 0, turnDepth: 0 }),
+        baseline: {
+          machineId: canonicalSessionSpawnInput.executionTarget.machineId,
+          directory: canonicalSessionSpawnInput.directory.path,
+          configuration: { agentTarget: canonicalSessionSpawnInput.agentTarget, permissionMode: 'read-only' },
+        },
+        ledSubtreeSessionIds: [], roles: {}, workDepthLimit: 4, callerPermissionCeiling: 'read-only',
+      } satisfies AgentStartContextV1,
       causalPermissionAuthority: {
         kind: 'admittedSessionInputV1' as const,
         admittedPermissionCeiling: 'read-only' as const,
@@ -271,7 +281,7 @@ describe('createActionExecutor (session control)', () => {
       agentContext,
     )).resolves.toMatchObject({
       ok: false,
-      errorCode: 'permission_escalation_denied',
+      errorCode: 'permission_exceeds_ceiling',
     });
     expect(sessionSpawnNew).not.toHaveBeenCalled();
   });
@@ -375,6 +385,14 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionPermissionModeSet).toHaveBeenCalledWith({
       sessionId: 'target',
       permissionMode: 'yolo',
+      context: {
+        surface: 'ui',
+        authority: 'present_user',
+        causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1',
+          admittedPermissionCeiling: 'not-a-permission-mode',
+        },
+      },
     });
   });
 
@@ -1044,6 +1062,7 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       permissionMode: 'read-only',
       serverId: 'server-a',
+      context: { surface: 'cli', defaultSessionId: null },
     });
   });
 
@@ -1061,7 +1080,10 @@ describe('createActionExecutor (session control)', () => {
     );
 
     expect(res).toEqual({ ok: true, result: { ok: true } });
-    expect(sessionModelSet).toHaveBeenCalledWith({ sessionId: 's1', modelId: 'default', serverId: 'server-a' });
+    expect(sessionModelSet).toHaveBeenCalledWith({
+      sessionId: 's1', modelId: 'default', serverId: 'server-a',
+      context: { surface: 'cli', defaultSessionId: null },
+    });
   });
 
   it('preserves provider connection identity through session.model.set', async () => {
@@ -1079,6 +1101,7 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       modelId: 'model-a',
       providerConnectionId: 'pc_work',
+      context: { surface: 'cli', defaultSessionId: null },
     });
   });
 
@@ -1110,6 +1133,7 @@ describe('createActionExecutor (session control)', () => {
       teamCredentialModel,
       teamVisibilityGrantConsent: { teamId: 'team-1' },
       serverId: 'server-team',
+      context: { surface: 'ui', defaultSessionId: 's1' },
     });
   });
 
@@ -1155,6 +1179,7 @@ describe('createActionExecutor (session control)', () => {
       sessionId: 's1',
       modelId: 'default',
       providerConnectionId: 'pc_work',
+      context: { surface: 'cli', defaultSessionId: null },
     });
   });
 
