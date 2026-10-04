@@ -269,7 +269,7 @@ export type HappierActions = ReturnType<typeof createGeneratedActions> & Readonl
   ) => Promise<PublicActionExecutionResult<'action.spec.search'>>;
   invoke: (
     action: ContributedActionId,
-    input: unknown,
+    input: PublicActionInputById['action.invoke']['input'],
     options?: ActionExecutionOptions,
   ) => Promise<PublicActionExecutionResult<'action.invoke'>>;
 }>;
@@ -307,7 +307,7 @@ export type HappierMachineActions = MachineBoundActionMethods<ReturnType<typeof 
   ) => Promise<PublicActionExecutionResult<'action.spec.search'>>;
   invoke: (
     action: ContributedActionId,
-    input: unknown,
+    input: PublicActionInputById['action.invoke']['input'],
     options?: HappierMachineActionExecutionOptions,
   ) => Promise<PublicActionExecutionResult<'action.invoke'>>;
 }>;
@@ -496,7 +496,7 @@ function createActions(execute: RawActionExecute): HappierActions {
     search: (input: PublicActionInputById['action.spec.search'], options?: ActionExecutionOptions) => (
       execute('action.spec.search', input, options)
     ),
-    invoke: async (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => {
+    invoke: async (action: ContributedActionId, input: PublicActionInputById['action.invoke']['input'], options?: ActionExecutionOptions) => {
       const identity = typeof action === 'string' ? parseQualifiedPluginActionId(action) : action;
       if (identity === null) {
         throw new TypeError(
