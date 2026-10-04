@@ -550,6 +550,7 @@ export function createHappierMcpServer(
   const localExecutor = scopedPluginRuntimeRegistryLease
     ? createPluginActionExecutor({
         base: harness.executor,
+        ...(boundCallerSessionId ? { startedBy: 'agent' as const } : {}),
         requestPluginActionExecution: async (request, options) => await executeContributedAction({
           runtimeRegistry: scopedPluginRuntimeRegistryLease.registry,
           actionId: request.actionId,
@@ -560,17 +561,14 @@ export function createHappierMcpServer(
             : {}),
           context: {
             surface: request.surface,
-            // The client is bound by the Session host; request targets and surfaces do not establish provenance.
-            ...(boundCallerSessionId ? {
-              initiatingActionCaller: { kind: 'session' as const, sessionId: boundCallerSessionId },
-            } : {}),
+            ...(request.startedBy ? { startedBy: request.startedBy } : {}),
             ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
             ...(options?.signal ? { signal: options.signal } : {}),
           },
         }),
       })
     : createDaemonPluginActionExecutor({ base: harness.executor,
-        ...(boundCallerSessionId ? { initiatingActionCaller: { kind: 'session', sessionId: boundCallerSessionId } } : {}),
+        ...(boundCallerSessionId ? { startedBy: 'agent' } : {}),
       });
   const executor = createSessionAccountActionExecutor({ base: localExecutor, client });
 

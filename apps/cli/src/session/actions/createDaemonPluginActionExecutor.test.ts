@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
+import { createDaemonPluginActionExecutor, createPluginActionExecutor, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 describe('createDaemonPluginActionExecutor', () => {
@@ -17,36 +17,36 @@ describe('createDaemonPluginActionExecutor', () => {
       condition: { kind: 'plugin', actionLocalId: 'observe/checks', condition: 'checks_passed' },
     }, { surface: 'mcp', serverId: 'home' })).toMatchObject({ ok: true, result: { disposition: 'target_unavailable' } });
   });
-  it('routes all contributed Action discovery operations to the daemon owner', async () => {
-    const baseExecute = vi.fn(async () => ({
-      ok: false as const,
-      errorCode: 'base_executor_reached',
-      error: 'base_executor_reached',
-    }));
-    const requestPluginActionExecution = vi.fn(async (request: Readonly<{ actionId: string }>) => ({
-      matched: true as const,
-      result: {
-        ok: true as const,
-        result: { actionId: request.actionId, source: 'daemon' },
-      },
-    }));
-    const executor = createDaemonPluginActionExecutor({
-      base: { execute: baseExecute },
+  it.each([
+    ['daemon', createDaemonPluginActionExecutor],
+    ['scoped', createPluginActionExecutor],
+  ] as const)('routes contributed Action discovery with descriptive starter provenance through the %s owner', async (_owner, createExecutor) => {
+    let expectedStarter: 'agent' | 'user' = 'agent';
+    const requestPluginActionExecution: PluginActionExecutionRequestOwner = async (request) => {
+      // Daemon IPC/HTTP is the system boundary. Assert its existing closed
+      // request contract; no internal dispatcher or authority service is mocked.
+      expect(request).toEqual({ actionId: request.actionId, input: {}, surface: 'agent', startedBy: expectedStarter });
+      return { matched: true, result: { ok: true, result: {
+        actionId: request.actionId, startedBy: request.startedBy, source: 'daemon',
+      } } };
+    };
+    const params = {
+      base: { execute: async () => { throw new Error('Contributed discovery must not reach the base executor'); } },
       requestPluginActionExecution,
-    });
+      startedBy: 'agent' as const,
+    };
+    const executor = createExecutor(params);
 
     for (const actionId of ['action.spec.search', 'action.spec.get', 'action.options.resolve'] as const) {
-      await expect(executor.execute(actionId, {}, { surface: 'mcp' })).resolves.toEqual({
+      await expect(executor.execute(actionId, {}, { surface: 'agent' })).resolves.toEqual({
         ok: true,
-        result: { actionId, source: 'daemon' },
+        result: { actionId, startedBy: 'agent', source: 'daemon' },
       });
     }
 
-    expect(requestPluginActionExecution.mock.calls.map(([request]) => request.actionId)).toEqual([
-      'action.spec.search',
-      'action.spec.get',
-      'action.options.resolve',
-    ]);
-    expect(baseExecute).not.toHaveBeenCalled();
+    expectedStarter = 'user';
+    await expect(executor.execute('action.spec.get', {}, { surface: 'agent', actionCaller: { kind: 'host' } })).resolves.toEqual({
+      ok: true, result: { actionId: 'action.spec.get', startedBy: 'user', source: 'daemon' },
+    });
   });
 });

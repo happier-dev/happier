@@ -3,7 +3,6 @@ import {
   type ActionExecuteResult,
   type ActionExecutorContext,
   type ActionId,
-  type ActionCaller,
   type ActionExecutorDeps,
   type WorkflowRunStartedByV1,
   resolveWorkflowRunStartedByForActionCallerV1,
@@ -44,14 +43,14 @@ const BUILT_IN_ACTION_IDS = new Set<string>(ACTION_IDS);
 export function createDaemonPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution?: PluginActionExecutionRequestOwner;
-  /** Exact caller bound by the host, never inferred from a requested target or surface. */
-  initiatingActionCaller?: ActionCaller;
+  /** Host-stamped descriptive starter; never an authorization principal. */
+  startedBy?: WorkflowRunStartedByV1;
 }>): PluginActionExecutor {
   return createPluginActionExecutor({
     base: params.base,
     requestPluginActionExecution: params.requestPluginActionExecution
       ?? requestDaemonPluginActionExecution,
-    ...(params.initiatingActionCaller ? { initiatingActionCaller: params.initiatingActionCaller } : {}),
+    ...(params.startedBy ? { startedBy: params.startedBy } : {}),
   });
 }
 
@@ -69,17 +68,20 @@ export type PluginActionExecutionRequestOwner = (request: Readonly<{
 export function createPluginActionExecutor(params: Readonly<{
   base: ActionExecutorLike;
   requestPluginActionExecution: PluginActionExecutionRequestOwner;
-  initiatingActionCaller?: ActionCaller;
+  /** Host-stamped descriptive fallback; an exact context caller takes precedence. */
+  startedBy?: WorkflowRunStartedByV1;
 }>): PluginActionExecutor {
   const requestContributed = async (
     actionId: string, input: unknown, context?: OccurrenceBoundActionExecutorContext,
   ) => {
     const surface: 'cli' | 'mcp' | 'agent' = context?.surface === 'mcp'
       ? 'mcp' : context?.surface === 'agent' ? 'agent' : 'cli';
-    const admittingCaller = context?.actionCaller ?? params.initiatingActionCaller;
+    const startedBy = context?.actionCaller
+      ? resolveWorkflowRunStartedByForActionCallerV1(context.actionCaller)
+      : params.startedBy;
     const request = {
       actionId, input, surface,
-      ...(admittingCaller ? { startedBy: resolveWorkflowRunStartedByForActionCallerV1(admittingCaller) } : {}),
+      ...(startedBy ? { startedBy } : {}),
       ...(typeof context?.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
       ...(typeof context?.expectedContributorOccurrenceId === 'string'
         && context.expectedContributorOccurrenceId.trim().length > 0
