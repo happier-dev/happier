@@ -1305,7 +1305,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                 },
             } : {}),
             fileFollow,
-            async reconcileSourceIdentities(request) {
+            async reconcileSourceIdentities(request: Parameters<AgentSessionHostServices['transcripts']['reconcileSourceIdentities']>[0]) {
                 assertSessionScopeAvailable('transcript-identity');
                 if (!reconcileSourceIdentities) throw new PluginError({ code: 'native_agent_transcript_identity_unsupported', message: 'Transcript identity reconciliation is unavailable' });
                 return await invokeNativeAgentSessionPublicService(async () => await reconcileSourceIdentities(request));

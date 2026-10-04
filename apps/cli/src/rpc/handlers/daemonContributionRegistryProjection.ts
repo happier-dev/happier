@@ -2465,6 +2465,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
         const request = parsed.data;
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if (!opts) return { ok: false, code: 'capture_source_unavailable' };
             const origin = await opts.resolvePluginProjectionExecutionOriginContext?.();
             if (!origin || origin.machineId !== request.machineId) return { ok: false, code: 'capture_source_denied' };
             if (!isExpectedPluginOccurrenceCurrent(lease.registry, request.callerPluginId, request.expectedCallerOccurrenceId)) {
