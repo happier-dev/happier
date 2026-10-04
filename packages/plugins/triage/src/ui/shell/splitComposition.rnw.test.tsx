@@ -450,10 +450,10 @@ describe('the Triage entry detail in the host details pane', () => {
         // The detail lives in the pane: its heading and its own Close, and the entry detail read it made from there
         // through the plugin's Host API — the context the pane carries across (a lost context throws instead).
         expect(pane?.textContent).toContain(ENTRY_TITLE);
-        expect(pane?.querySelector('[aria-label="Close"]')).not.toBeNull();
+        expect(pane?.querySelector('[aria-label="Close details"]')).not.toBeNull();
         expect(requestedActions).toContain(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1);
         // Nothing of it stays in the page: no in-page split, no second copy.
-        expect(document.querySelectorAll('[aria-label="Close"]')).toHaveLength(1);
+        expect(document.querySelectorAll('[aria-label="Close details"]')).toHaveLength(1);
         expect(document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`)?.textContent ?? '').toBe('');
         // The table stays on screen beside it, with the entry selected; the location names it.
         expect(listRegionNode().style.display).toBe('');

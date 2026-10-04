@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
+import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import {
+    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+    type TriageSourceDescriptorV1,
+} from '@happier-dev/triage-protocol/v1';
+
 import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { testkitEntryRef, testkitPresentOutcome, testkitSnapshot, TESTKIT_SOURCE_INSTANCE_ID } from '../../corpus/testkit/observations.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
+import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
 import { MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 } from './linkedEntriesQuery.js';
 import {
     projectTriageSessionLinkedEntries,
@@ -64,13 +74,48 @@ describe('the Session cockpit linked-entry projection', () => {
             lanes: [], activeSourceInstanceIds: [TESTKIT_SOURCE_INSTANCE_ID], configuredSourcesStatus: 'complete',
             lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 10,
         });
-        const view = projectTriageSessionLinkedEntries({
+        const protocol = {
+            id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+            version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+        };
+        const targetedContributions = {
+            target: {
+                pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+                occurrenceId: 'target-occurrence-1',
+                sourceCustody: { kind: 'managed', immutableGenerationId: 'target-generation-1', installSource: 'npm' },
+            },
+            points: [{
+                pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+                protocols: [{ protocol, contributions: [{
+                    contributor: {
+                        pluginId: ENTRY_REF.source.pluginId,
+                        contributionId: ENTRY_REF.source.localId,
+                        occurrenceId: 'source-occurrence-1',
+                        sourceCustody: { kind: 'managed', immutableGenerationId: 'source-generation-1', installSource: 'npm' },
+                    },
+                    protocol,
+                    descriptor: {
+                        v: 1,
+                        purpose: 'triage-source',
+                        displayName: 'Example forge',
+                        kinds: [{ id: ENTRY_REF.kindId, workflowSubject: 'pullRequest', displayName: 'Pull request' }],
+                    } satisfies TriageSourceDescriptorV1,
+                    operations: [],
+                    surfaces: [],
+                }] }],
+            }],
+        } satisfies PluginUiTargetedContributionsV1;
+        const input = {
             query: state({ rows: [queryRow('known', 10), queryRow('unknown', 9)] }),
             hydration: hydration([
                 ['known', { kind: 'ready', revision: 1, displayPath: 'old/path', entryRef: ENTRY_REF }],
                 ['unknown', { kind: 'ready', revision: 1, displayPath: 'other/path', entryRef: { ...ENTRY_REF, collisionScope: 'another/repo' } }],
             ]),
             entries: window.rows,
+        };
+        const view = projectTriageSessionLinkedEntries({
+            ...input,
+            workflowSubject: (entryRef) => resolveTriageSourceWorkflowSubjectV1(targetedContributions, entryRef),
         });
         if (view.kind !== 'linked') throw new Error('expected links');
         expect(view.rows[0]?.presentation).toMatchObject({ kind: 'linked', entry: {
@@ -79,6 +124,17 @@ describe('the Session cockpit linked-entry projection', () => {
             sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
         } });
         expect(view.rows[1]?.presentation).toMatchObject({ kind: 'linked', displayPath: 'other/path', entry: null });
+
+        const absentDeclaration = projectTriageSessionLinkedEntries({
+            ...input,
+            workflowSubject: (entryRef) => resolveTriageSourceWorkflowSubjectV1(
+                { ...targetedContributions, points: [] }, entryRef,
+            ),
+        });
+        if (absentDeclaration.kind !== 'linked') throw new Error('expected links');
+        expect(absentDeclaration.rows[0]?.presentation).toMatchObject({
+            kind: 'linked', displayPath: 'old/path', entryRef: ENTRY_REF, entry: null,
+        });
     });
     it('renders the link from its own frozen display path', () => {
         const view = projectTriageSessionLinkedEntries({

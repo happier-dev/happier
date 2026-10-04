@@ -29,7 +29,7 @@ const CANONICAL_CURSOR_PROJECTION = Object.freeze({
     type: 'string',
     minLength: 1,
     maxLength: 4096,
-    pattern: '^[A-Za-z0-9_-]+$',
+    pattern: ProtocolCollectionOpaqueCursorV1Schema.jsonSchema.pattern,
 });
 
 function triageSourceFiles(): readonly string[] {

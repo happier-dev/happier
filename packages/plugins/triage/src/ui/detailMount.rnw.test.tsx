@@ -769,7 +769,7 @@ type LayoutHandler = (event: Readonly<{
 }>) => void;
 
 async function measureFillRegion(width: number): Promise<void> {
-    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}"]`);
+    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}:stage"]`);
     if (node === null) throw new Error('The Triage shell rendered no measured fill region.');
     const handler = (node as unknown as Record<string, unknown>).__reactLayoutHandler;
     if (typeof handler !== 'function') throw new Error('The Triage shell installed no layout observer.');
