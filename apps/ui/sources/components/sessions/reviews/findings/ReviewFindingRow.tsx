@@ -18,7 +18,8 @@ import {
     type ReviewFindingThreadEntryView,
 } from '@/components/sessions/reviews/findings/ReviewFindingThread';
 import type { ReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
-import { formatReviewFindingLocation, isHighReviewSeverity, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
+import { useReviewSeverityColors } from '@/components/sessions/reviews/findings/useReviewSeverityColors';
 
 export type ReviewFindingDecision = 'accept' | 'reject' | 'defer';
 export const REVIEW_FINDING_DECISIONS: readonly ReviewFindingDecision[] = ['accept', 'reject', 'defer'];
@@ -36,6 +37,29 @@ function decisionLabel(decision: ReviewFindingDecision): string {
         case 'defer': return t('session.reviewFindings.status.defer');
     }
 }
+
+/** Accept · Defer · Reject: the one triage control wherever a finding is decided (transcript, Run page, walkthrough). */
+export const ReviewFindingDecisionControl = React.memo(function ReviewFindingDecisionControl(props: Readonly<{
+    testIDPrefix: string;
+    decision: ReviewFindingDecision | 'undecided';
+    disabled: boolean;
+    onDecide: (decision: ReviewFindingDecision) => void;
+}>) {
+    const tabs = React.useMemo(() => REVIEW_FINDING_DECISIONS.map((decision) => ({ id: decision, label: decisionLabel(decision) })), []);
+    return (
+        <SegmentedTabBar<ReviewFindingDecision>
+            role="radiogroup"
+            tabs={tabs}
+            activeTabId={props.decision as ReviewFindingDecision}
+            onSelectTab={props.onDecide}
+            disabled={props.disabled}
+            compact
+            segmentSizing="content"
+            accessibilityLabel={t('runPage.review.triageLabel')}
+            testIDPrefix={props.testIDPrefix}
+        />
+    );
+});
 
 /** One finding: severity, what and where, what changed after a question, your decision, its thread. */
 export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Readonly<{
@@ -68,31 +92,23 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     const { theme } = useUnistyles();
     const { finding, rowId, onAsk, onDecide, onToggleThread } = props;
     const location = formatReviewFindingLocation(finding);
-    const high = isHighReviewSeverity(finding.severity);
-    const severityColor = high ? theme.colors.state.danger.foreground : theme.colors.text.tertiary;
-    const severityTextColor = high ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
+    // One severity colour wherever a finding is drawn (Walkthrough lab WT5): high red, medium amber, low blue, nit quiet.
+    const severityColor = useReviewSeverityColors(finding.severity).foreground;
+    const severityTextColor = severityColor;
     const updated = props.original !== null;
     const severityChanged = props.original !== null && props.original.severity !== finding.severity;
     const replyCount = props.threadEntries.length;
     const askDisabled = props.followUp !== null && !props.followUp.available;
-    const decisionTabs = React.useMemo(
-        () => REVIEW_FINDING_DECISIONS.map((decision) => ({ id: decision, label: decisionLabel(decision) })),
-        [],
-    );
     const ask = React.useCallback((message: string) => onAsk(rowId, message), [onAsk, rowId]);
+    const decide = React.useCallback((next: ReviewFindingDecision) => onDecide(rowId, next), [onDecide, rowId]);
 
     const decisionControl = props.decision !== null ? (
         <View style={props.density === 'card' ? styles.decisionAside : styles.decision}>
-            <SegmentedTabBar<ReviewFindingDecision>
-                role="radiogroup"
-                tabs={decisionTabs}
-                activeTabId={props.decision as ReviewFindingDecision}
-                onSelectTab={(next) => onDecide(rowId, next)}
-                disabled={props.decisionDisabled}
-                compact
-                segmentSizing="content"
-                accessibilityLabel={t('runPage.review.triageLabel')}
+            <ReviewFindingDecisionControl
                 testIDPrefix={`review-finding-triage:${rowId}`}
+                decision={props.decision}
+                disabled={props.decisionDisabled}
+                onDecide={decide}
             />
         </View>
     ) : null;

@@ -24,7 +24,8 @@ export type ReviewGroupSibling = Readonly<{
 
 const NO_SIBLINGS: readonly ReviewGroupSibling[] = Object.freeze([]);
 
-function readReviewPayload(meta: unknown): ReviewFindingsV1 | ReviewFindingsV2 | null {
+/** A review Run's structured result (findings v1 or v2), or null while it has none. */
+export function readReviewPayload(meta: unknown): ReviewFindingsV1 | ReviewFindingsV2 | null {
     if (!meta || typeof meta !== 'object') return null;
     const { kind, payload } = meta as { kind?: unknown; payload?: unknown };
     if (kind === 'review_findings.v2') {

@@ -32,6 +32,7 @@ import {
     type PluginSurfaceHostApiRequestOptions,
 } from './createPluginSurfaceHostApi';
 import type { PluginSurfaceContributedActionDescriptorResolver } from './pluginSurfaceActionDispatch';
+import { ReviewStartInputSchema } from '@happier-dev/protocol';
 
 /**
  * The controller lifetime consumes the same exact daemon facts as target-scoped
@@ -201,7 +202,7 @@ async function composeDefaultSessionServerStartDraft(params: Parameters<PluginSe
  * opens the incumbent host form and returns only the selected input; it never
  * reaches the Action dispatcher or falls back to a global Action lookup.
  */
-export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
+type PluginActionInputSelectionBinding = Readonly<{
     pluginProjectionById?: Readonly<Record<string, PluginProjectionEntry>>;
     /** Exact mounted projection used only to resolve Action presentation text. */
     pluginUiProjection?: PluginUiProjectionModel | null;
@@ -218,7 +219,10 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
     present?: typeof presentActionInputForm;
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
     composeSessionServerStartDraft?: PluginSessionServerStartDraftComposer;
-}>): PluginSurfaceHostApiMethodHandler {
+}>;
+
+/** Semantic input-selection owner, also borrowed by unmounted client Actions. */
+export function createPluginActionInputSelector(input: PluginActionInputSelectionBinding) {
     const present = input.present ?? presentActionInputForm;
     const selectionFacts = projectPluginActionInputSelectionFacts({
         pluginProjectionById: input.pluginProjectionById,
@@ -226,11 +230,8 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
         targetedContributions: input.targetedContributions,
         targetPluginId: input.host.targetPluginId,
     });
-    return async (request, options?: PluginSurfaceHostApiRequestOptions) => {
-        if (request.method !== 'selectActionInput') {
-            return errorPayload('unsupported_method', 'select_action_input_method_mismatch');
-        }
-        const parsed = PluginUiSelectActionInputRequestV1Schema.safeParse(request.payload);
+    return async (payload: unknown, options?: PluginSurfaceHostApiRequestOptions) => {
+        const parsed = PluginUiSelectActionInputRequestV1Schema.safeParse(payload);
         if (!parsed.success) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
         const mergedSignal = mergeAbortSignals([input.host.signal, options?.signal]);
         const signal = mergedSignal.signal;
@@ -243,6 +244,31 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
         }
 
         if ('hostAction' in parsed.data) {
+            if (parsed.data.hostAction.action === 'review.start' && 'sessionId' in parsed.data) {
+                if (!input.host.accountLifetime?.isCurrent()) return errorPayload('unavailable', 'host_unavailable');
+                const serverId = parsed.data.serverId ?? input.host.accountLifetime?.scope.serverId;
+                if (!serverId) return errorPayload('unavailable', 'host_unavailable');
+                const { presentReviewExecutionRunLaunchSelection } = await import(
+                    '@/components/sessions/runs/launcher/reviewExecutionRunLaunchSelection'
+                );
+                if (signal?.aborted || !hostIsCurrent()) return errorPayload('stale_surface', 'select_action_input_aborted');
+                const presentation = presentReviewExecutionRunLaunchSelection({ sessionId: parsed.data.sessionId,
+                    serverId, draft: parsed.data.draft, isCurrent: hostIsCurrent });
+                const cancel = () => presentation.close();
+                signal?.addEventListener('abort', cancel, { once: true });
+                if (signal?.aborted) cancel();
+                try {
+                    const selected = await presentation.result;
+                    if (signal?.aborted || !hostIsCurrent()) return errorPayload('stale_surface', 'select_action_input_aborted');
+                    if (!selected) return { kind: 'cancelled' };
+                    const admitted = ReviewStartInputSchema.safeParse({ ...parsed.data.draft, ...selected.input,
+                        sessionId: parsed.data.sessionId });
+                    return admitted.success ? readBoundedSelectionResult(selected)
+                        : errorPayload('invalid_payload', 'select_action_input_result_invalid');
+                } finally {
+                    signal?.removeEventListener('abort', cancel);
+                }
+            }
             const target = readSessionServerStartDraftTarget(input.host);
             if (!target) return errorPayload('unavailable', 'host_unavailable');
             const composer = input.composeSessionServerStartDraft ?? composeDefaultSessionServerStartDraft;
@@ -333,4 +359,12 @@ export function createPluginActionInputSelectionHostApiHandler(input: Readonly<{
             mergedSignal.dispose();
         }
     };
+}
+
+/** The mounted transport borrows the same selector without creating an executor. */
+export function createPluginActionInputSelectionHostApiHandler(input: PluginActionInputSelectionBinding): PluginSurfaceHostApiMethodHandler {
+    const select = createPluginActionInputSelector(input);
+    return (request, options) => request.method === 'selectActionInput'
+        ? select(request.payload, options)
+        : errorPayload('unsupported_method', 'select_action_input_method_mismatch');
 }

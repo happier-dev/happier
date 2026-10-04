@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
-import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
   return createTextModuleMock({
@@ -32,14 +30,40 @@ const state: any = {
 };
 
 const getMachineCapabilitiesSnapshot = vi.fn();
-const machineContributionRegistryProjectionDescribeMock = vi.fn(async (..._args: unknown[]): Promise<any> => ({ supported: false, reason: 'not-supported' }));
+const machineContributionRegistryProjectionDescribeMock = vi.fn<typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe>(async () => ({ supported: false, reason: 'not-supported' }));
+
+function createReviewProjection() {
+  return PluginProjectionV2Schema.parse({
+    v: 2,
+    generation: 1,
+    agentsById: {
+      'plugin-review-bot': {
+        id: 'plugin-review-bot',
+        identity: { pluginId: 'acme.review', localId: 'review-bot' },
+        settingsBackendId: 'plugin-review-bot',
+        title: 'Review Bot Plugin',
+        channel: 'plugin',
+        isBuiltIn: false,
+        providerOwnedEnvironmentKeys: [],
+      },
+    },
+  });
+}
+
+function installReviewPluginCapabilities() {
+  getMachineCapabilitiesSnapshot.mockReturnValue({ response: { results: {
+    'tool.executionRuns': { ok: true, data: { backends: {
+      'plugin-review-bot': { available: true, intents: ['review'] },
+    } } },
+  } } });
+}
 
 installVoiceToolActionImplCommonModuleMocks({
   storage: async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
       storage: {
-        getState: () => state,
+        getState: () => ({ ...state }),
       } as typeof import('@/sync/domains/state/storage').storage,
     });
   },
@@ -50,7 +74,7 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
-  machineContributionRegistryProjectionDescribe: (...args: any[]) => machineContributionRegistryProjectionDescribeMock(...args),
+  machineContributionRegistryProjectionDescribe: (...args: Parameters<typeof machineContributionRegistryProjectionDescribeMock>) => machineContributionRegistryProjectionDescribeMock(...args),
     machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
     machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
     machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
@@ -64,6 +88,10 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
 }));
+
+// Initialize after the common fixture installer; its hoisted factory cannot
+// select this fixture before the installer has executed.
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 
 describe('review engine voice tool', () => {
   beforeEach(() => {
@@ -158,7 +186,46 @@ describe('review engine voice tool', () => {
       items: readonly { engineId: string; label: string; enabled: boolean }[];
     };
 
-    expect(result.items).toContainEqual({ engineId: targetKey, label: 'Review Bot', enabled: true });
+    expect(result.items).toContainEqual({ engineId: targetKey, label: 'Review Bot', enabled: true, capabilities: { structuredNarration: false } });
+  });
+
+  it('says which engines can narrate a walkthrough from the current Agent declaration, never from the engine id', async () => {
+    machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
+      supported: true,
+      projection: PluginProjectionV2Schema.parse({
+        v: 2,
+        generation: 1,
+        agentsById: {
+          codex: {
+            id: 'codex',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            isBuiltIn: true,
+            capabilities: {
+              executionRuns: { open: ['create'], checkpoint: false, stop: true },
+              structuredOutput: { formats: ['json'] },
+            },
+          },
+        },
+      }),
+    });
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    const res = await listReviewEnginesForVoiceTool({ sessionId: 's1', includeDisabled: true }) as {
+      items: readonly { engineId: string; capabilities?: { structuredNarration: boolean } }[];
+    };
+    const codex = res.items.find((item) => item.engineId === 'codex');
+    expect(codex?.capabilities).toEqual({ structuredNarration: true });
+    for (const item of res.items) {
+      expect(item.capabilities, item.engineId).toBeDefined();
+    }
+  });
+
+  it('does not infer narration from a bundled engine id when its current declaration is unavailable', async () => {
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    const result = await listReviewEnginesForVoiceTool({ sessionId: 's1' }) as {
+      items: readonly { engineId: string; capabilities: { structuredNarration: boolean } }[];
+    };
+    expect(result.items.find((item) => item.engineId === 'codex')?.capabilities)
+      .toEqual({ structuredNarration: false });
   });
 
   it('uses the resolved backend catalog title for built-in review engine labels', async () => {
@@ -171,78 +238,51 @@ describe('review engine voice tool', () => {
   });
 
   it('uses daemon merged projection titles for discovered/plugin review engine labels', async () => {
+    installReviewPluginCapabilities();
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
       supported: true,
-      projection: {
-        v: 1,
+      projection: PluginProjectionV2Schema.parse({
+        ...createReviewProjection(),
         agentsById: {
-          'plugin:coderabbit': {
-            id: 'plugin:coderabbit',
-            title: 'CodeRabbit Plugin',
-            subtitle: null,
-            channel: 'plugin',
-            isBuiltIn: false,
+          'plugin-review-bot': {
+            ...createReviewProjection().agentsById['plugin-review-bot'],
+            capabilities: {
+              executionRuns: { open: ['create'], checkpoint: false, stop: true },
+              structuredOutput: { formats: ['json'] },
+            },
           },
         },
-        backendsById: {
-          coderabbit: {
-            id: 'coderabbit',
-            agentId: 'plugin:coderabbit',
-            title: 'CodeRabbit (plugin)',
-            subtitle: null,
-            catalogAgentId: null,
-            iconAgentId: null,
-          },
-        },
-      },
+      }),
     });
 
     const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
     const res: any = await listReviewEnginesForVoiceTool({ sessionId: 's1', includeDisabled: true });
 
-    const coderabbit = (res.items ?? []).find((item: any) => item.engineId === 'coderabbit');
-    expect(coderabbit).toBeTruthy();
-    expect(coderabbit.label).toBe('CodeRabbit (plugin)');
+    expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m1', { serverId: 'server-a' });
+    const plugin = (res.items ?? []).find((item: any) => item.engineId === 'plugin-review-bot');
+    expect(plugin).toBeTruthy();
+    expect(plugin.label).toBe('Review Bot Plugin');
+    expect(plugin.capabilities).toEqual({ structuredNarration: true });
   });
 
   it('uses canonical backend keys when evaluating enabled state for discovered plugin review engines', async () => {
-    // The canonical formatter rekeys a bundled `backend:<id>` selection onto its qualified
-    // Agent contribution identity, so the disabled selection must be spelled by that owner.
+    installReviewPluginCapabilities();
+    // The current projection proves the external carrier's qualified Agent target.
     state.settings.backendEnabledByTargetKey = {
-      [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'coderabbit' })]: false,
+      'agent:acme.review/review-bot': false,
     };
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
       supported: true,
-      projection: {
-        v: 1,
-        agentsById: {
-          'plugin:coderabbit': {
-            id: 'plugin:coderabbit',
-            title: 'CodeRabbit Plugin',
-            subtitle: null,
-            channel: 'plugin',
-            isBuiltIn: false,
-          },
-        },
-        backendsById: {
-          coderabbit: {
-            id: 'coderabbit',
-            agentId: 'plugin:coderabbit',
-            title: 'CodeRabbit (plugin)',
-            subtitle: null,
-            catalogAgentId: null,
-            iconAgentId: null,
-          },
-        },
-      },
+      projection: createReviewProjection(),
     });
 
     const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
     const res: any = await listReviewEnginesForVoiceTool({ sessionId: 's1', includeDisabled: true });
 
-    const coderabbit = (res.items ?? []).find((item: any) => item.engineId === 'coderabbit');
-    expect(coderabbit).toBeTruthy();
-    expect(coderabbit.enabled).toBe(false);
+    expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('m1', { serverId: 'server-a' });
+    const plugin = (res.items ?? []).find((item: any) => item.engineId === 'plugin-review-bot');
+    expect(plugin).toBeTruthy();
+    expect(plugin.enabled).toBe(false);
   });
 
   it('includes disabled review engines when explicitly requested', async () => {
