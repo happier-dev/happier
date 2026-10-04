@@ -1,4 +1,5 @@
 import { RIGHT_SIDEBAR_BUILTIN_TABS, type RightSidebarBuiltInTabId } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
+import { ScmComparisonSourceSchema } from '@happier-dev/protocol/scm';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import {
     createPrimarySessionDetailsTerminalTab,
@@ -18,6 +19,10 @@ import {
     createSessionDiscussionDetailsTab,
     createSessionBoardDetailsTab,
     type SessionBoardDetailsFocusTarget,
+    type SessionScmReviewComparison,
+    type SessionScmReviewTarget,
+    type SessionScmReviewView,
+    SESSION_SCM_REVIEW_VIEWS,
     SESSION_DETAILS_SCM_REVIEW_TAB_KEY,
     SESSION_DETAILS_SCM_STASH_TAB_KEY,
     SESSION_DETAILS_SCM_PULL_REQUEST_TAB_KEY,
@@ -29,12 +34,22 @@ import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPa
 export type SessionPaneUrlDetailsTarget =
     | Readonly<{ kind: 'file'; path: string }>
     | Readonly<{ kind: 'commit'; sha: string }>
-    | Readonly<{ kind: 'scmReview' }>
+    | (Readonly<{ kind: 'scmReview' }> & SessionScmReviewTarget)
     | Readonly<{ kind: 'scmStash' }>
     | Readonly<{ kind: 'scmPullRequest' }>
     | Readonly<{ kind: 'terminal'; terminalInstanceId?: string }>
     | Readonly<{ kind: 'discussion'; discussionId: string }>
     | Readonly<{ kind: 'board'; focusTarget?: SessionBoardDetailsFocusTarget }>;
+
+/**
+ * Every param a Session pane link can carry. The pane-link sync, the browser history push and the
+ * route all read this one list, so a target's extra params (a review comparison) survive reload/back.
+ */
+export const SESSION_PANE_URL_PARAM_KEYS = [
+    'right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId',
+    'comparison', 'comparisonId', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'commit', 'parent', 'view', 'pullRequest',
+] as const;
+export type SessionPaneUrlParamKey = (typeof SESSION_PANE_URL_PARAM_KEYS)[number];
 
 export type SessionPaneUrlState = Readonly<{
     rightTabId?: RightSidebarBuiltInTabId;
@@ -58,6 +73,94 @@ function readSingleStringParam(params: Readonly<Record<string, unknown>>, key: s
     return null;
 }
 
+/**
+ * The review destination's comparison and view, read from link params. A selector missing a part it
+ * needs (a turn without its id, a branch without its base) is dropped rather than guessed.
+ */
+function parseScmReviewTarget(params: Readonly<Record<string, unknown>>): SessionScmReviewTarget {
+    const read = (key: string) => readSingleStringParam(params, key)?.trim() || null;
+    let comparison: SessionScmReviewComparison | null = null;
+    switch (read('comparison')) {
+        case 'workingTree':
+            comparison = { kind: 'workingTree' };
+            break;
+        case 'session':
+            comparison = { kind: 'session' };
+            break;
+        case 'turnCheckpoint': {
+            const turnId = read('turnId');
+            const checkpointReceiptId = read('checkpointReceiptId');
+            const evidenceRaw = read('evidence');
+            const evidence = evidenceRaw === 'agent_reported' || evidenceRaw === 'checkpoint' ? evidenceRaw : null;
+            if (turnId || checkpointReceiptId) comparison = { kind: 'turnCheckpoint', ...(turnId ? { turnId } : {}),
+                ...(checkpointReceiptId ? { checkpointReceiptId } : {}), ...(evidence ? { evidence } : {}) };
+            break;
+        }
+        case 'branch': {
+            const head = read('head');
+            const base = read('base');
+            if (head && base) comparison = { kind: 'branch', head, base };
+            break;
+        }
+        case 'commit': {
+            const commit = read('commit');
+            const parent = read('parent');
+            if (commit) comparison = parent ? { kind: 'commit', commit, parent } : { kind: 'commit', commit };
+            break;
+        }
+        case 'pullRequest': {
+            try {
+                const source = ScmComparisonSourceSchema.safeParse({ kind: 'pullRequest', locator: JSON.parse(read('pullRequest') ?? 'null') });
+                if (source.success && source.data.kind === 'pullRequest') comparison = source.data;
+            } catch { /* A malformed locator cannot select a comparison. */ }
+            break;
+        }
+    }
+    const viewRaw = read('view');
+    const comparisonId = read('comparisonId');
+    const view = SESSION_SCM_REVIEW_VIEWS.find((candidate) => candidate === viewRaw) ?? null;
+    return {
+        ...(comparison ? { comparison: comparisonId ? { ...comparison, comparisonId } : comparison } : null),
+        ...(view ? { view } : null),
+    };
+}
+
+function serializeScmReviewTarget(target: SessionScmReviewTarget): Record<string, string> {
+    const out: Record<string, string> = {};
+    const comparison = target.comparison;
+    if (comparison) {
+        out.comparison = comparison.kind;
+        if (comparison.comparisonId) out.comparisonId = comparison.comparisonId;
+        if (comparison.kind === 'turnCheckpoint') {
+            if (comparison.turnId) out.turnId = comparison.turnId;
+            if (comparison.checkpointReceiptId) out.checkpointReceiptId = comparison.checkpointReceiptId;
+            if (comparison.evidence) out.evidence = comparison.evidence;
+        }
+        if (comparison.kind === 'branch') {
+            out.head = comparison.head;
+            out.base = comparison.base;
+        }
+        if (comparison.kind === 'commit') {
+            out.commit = comparison.commit;
+            if (comparison.parent) out.parent = comparison.parent;
+        }
+        if (comparison.kind === 'pullRequest') out.pullRequest = JSON.stringify(comparison.locator);
+    }
+    if (target.view) out.view = target.view;
+    return out;
+}
+
+/** A stored tab's comparison and view, validated by the same reader a link goes through. */
+export function readSessionScmReviewTarget(resource: unknown): SessionScmReviewTarget {
+    const record = resource && typeof resource === 'object' ? resource as { comparison?: unknown; view?: unknown } : {};
+    const comparison = record.comparison && typeof record.comparison === 'object' ? record.comparison as SessionScmReviewComparison : undefined;
+    const view = typeof record.view === 'string' ? record.view as SessionScmReviewView : undefined;
+    return parseScmReviewTarget(serializeScmReviewTarget({
+        ...(comparison ? { comparison } : null),
+        ...(view ? { view } : null),
+    }));
+}
+
 export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown>>): SessionPaneUrlState | null {
     const rightRaw = readSingleStringParam(params, 'right')?.trim() ?? '';
     const rightTabId = RIGHT_SIDEBAR_BUILTIN_TABS.find((tab) => tab.id === rightRaw && tab.scopes.includes('session'))?.id ?? null;
@@ -79,7 +182,7 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
         details = { kind: 'commit', sha: shaRaw };
     }
     if (detailsRaw === 'scmReview') {
-        details = { kind: 'scmReview' };
+        details = { kind: 'scmReview', ...parseScmReviewTarget(params) };
     }
     if (detailsRaw === 'scmStash') {
         details = { kind: 'scmStash' };
@@ -127,6 +230,7 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
     }
     if (state.details?.kind === 'scmReview') {
         out.details = 'scmReview';
+        Object.assign(out, serializeScmReviewTarget(state.details));
     }
     if (state.details?.kind === 'scmStash') {
         out.details = 'scmStash';
@@ -178,7 +282,7 @@ export function buildActiveDetailsRouteParams(
     }
 
     if (activeTab.key === SESSION_DETAILS_SCM_REVIEW_TAB_KEY || activeTab.kind === 'scmReview') {
-        return serializeSessionPaneUrlState({ details: { kind: 'scmReview' } });
+        return serializeSessionPaneUrlState({ details: { kind: 'scmReview', ...readSessionScmReviewTarget(activeTab.resource) } });
     }
 
     if (activeTab.key === SESSION_DETAILS_SCM_STASH_TAB_KEY || activeTab.kind === 'scmStash') {
@@ -257,7 +361,7 @@ export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeSta
                 }
             }
         } else if (tab?.key === SESSION_DETAILS_SCM_REVIEW_TAB_KEY || tab?.kind === 'scmReview') {
-            details = { kind: 'scmReview' };
+            details = { kind: 'scmReview', ...readSessionScmReviewTarget(tab.resource) };
         } else if (tab?.key === SESSION_DETAILS_SCM_STASH_TAB_KEY || tab?.kind === 'scmStash') {
             details = { kind: 'scmStash' };
         } else if (tab?.key === SESSION_DETAILS_SCM_PULL_REQUEST_TAB_KEY || tab?.kind === 'scmPullRequest') {
@@ -313,7 +417,10 @@ export function createSessionPaneDetailsTab(
             tab = createSessionCommitDetailsTab(target.sha);
             break;
         case 'scmReview':
-            tab = createSessionScmReviewDetailsTab();
+            tab = createSessionScmReviewDetailsTab({
+                ...(target.comparison ? { comparison: target.comparison } : null),
+                ...(target.view ? { view: target.view } : null),
+            });
             break;
         case 'scmStash':
             tab = createSessionScmStashDetailsTab();
@@ -402,4 +509,21 @@ export function reconcileSessionPaneScopeFromUrlState(
     } else {
         pane.closeDetails();
     }
+}
+
+/**
+ * The link to one Session details destination (`/session/<id>/details?…`): the page a phone pushes and
+ * the destination a workspace tab opens, carrying the same params a pane link does.
+ */
+export function buildSessionDetailsHref(input: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    details: SessionPaneUrlDetailsTarget;
+}>): string {
+    const query = new URLSearchParams();
+    if (input.serverId) query.set('serverId', input.serverId);
+    for (const [key, value] of Object.entries(serializeSessionPaneUrlState({ details: input.details }))) {
+        query.set(key, value);
+    }
+    return `/session/${encodeURIComponent(input.sessionId)}/details?${query.toString()}`;
 }

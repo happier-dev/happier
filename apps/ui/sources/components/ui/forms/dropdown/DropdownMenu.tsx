@@ -101,6 +101,7 @@ export type DropdownMenuItemTriggerConfig = Readonly<{
 
 export type DropdownMenuProps = Readonly<{
     testID?: string;
+    footer?: React.ReactNode;
     /**
      * The trigger element.
      * Prefer the render-prop form so DropdownMenu can provide a consistent `toggle()` helper.
@@ -596,6 +597,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 >
                     {({ maxHeight, maxWidth, placement }) => (<>
                         <FloatingOverlay
+                            footer={props.footer}
                             maxHeight={maxHeight}
                             edgeFades={{ top: true, bottom: true }}
                             edgeIndicators={{ size: 14, opacity: 0.35 }}

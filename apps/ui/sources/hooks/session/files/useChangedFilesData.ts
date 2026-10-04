@@ -15,7 +15,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { selectScmChangedFiles, snapshotToScmStatusFiles, type ScmFileStatus, type ScmStatusFiles } from '@/scm/scmStatusFiles';
 import { deriveSessionWorkingTreeProjection } from '@/sync/domains/session/changes/derivation/deriveSessionWorkingTreeProjection';
-import { deriveFileChangeDiff } from '@/sync/domains/session/changes/derivation/deriveFileChangeDiff';
+import { buildScmFileStatusFromChangeEvidence } from '@/scm/scmEvidenceFileStatus';
 
 
 type UseChangedFilesDataInput = {
@@ -69,52 +69,6 @@ const EMPTY_SCOPE_RESULT = (allRepositoryChangedFiles: ScmFileStatus[]): ScopedP
     repositoryOnlyFiles: allRepositoryChangedFiles,
 });
 
-function mapEvidenceChangeKindToStatus(kind: FileChangeEvidence['changeKind']): ScmFileStatus['status'] {
-    if (kind === 'added') return 'added';
-    if (kind === 'deleted') return 'deleted';
-    if (kind === 'renamed') return 'renamed';
-    if (kind === 'copied') return 'copied';
-    return 'modified';
-}
-
-function countUnifiedDiffStats(diff: string | null | undefined): Pick<ScmFileStatus, 'linesAdded' | 'linesRemoved'> {
-    if (!diff) return { linesAdded: 0, linesRemoved: 0 };
-    let linesAdded = 0;
-    let linesRemoved = 0;
-    for (const line of diff.split('\n')) {
-        if (line.startsWith('+++') || line.startsWith('---')) continue;
-        if (line.startsWith('+')) {
-            linesAdded += 1;
-            continue;
-        }
-        if (line.startsWith('-')) {
-            linesRemoved += 1;
-        }
-    }
-    return { linesAdded, linesRemoved };
-}
-
-function buildEvidenceFileStatus(file: SessionChangeSetFile): ScmFileStatus {
-    const fullPath = file.filePath;
-    const segments = fullPath.split('/');
-    const fileName = segments[segments.length - 1] || fullPath;
-    const filePath = segments.slice(0, -1).join('/');
-    const diff = deriveFileChangeDiff(file);
-    const stats = countUnifiedDiffStats(diff);
-    return {
-        fileName,
-        filePath,
-        fullPath,
-        status: mapEvidenceChangeKindToStatus(file.changeKind),
-        isIncluded: false,
-        linesAdded: file.stats?.addedLines ?? stats.linesAdded,
-        linesRemoved: file.stats?.removedLines ?? stats.linesRemoved,
-        oldPath: file.previousFilePath ?? undefined,
-        isBinary: file.binary,
-        ...(diff === null && !file.stats ? { isComplete: false } : {}),
-    };
-}
-
 function mapScmStatusToChangeKind(file: ScmFileStatus): WorkspaceTouchedFileEvidence['changeKind'] {
     if (file.status === 'added' || file.status === 'untracked') return 'added';
     if (file.status === 'deleted' || file.status === 'renamed' || file.status === 'copied') return file.status;
@@ -160,7 +114,7 @@ function buildAttributedScope(params: Readonly<{
     const unmatchedAttributedFiles = params.includeUnmatchedEvidence === true
         ? params.projection.unmatchedSessionFiles
             .map((file) => ({
-                file: buildEvidenceFileStatus(file),
+                file: buildScmFileStatusFromChangeEvidence(file),
                 ...qualify(file),
             }))
             .filter((entry) => !matchedPaths.has(entry.file.fullPath))

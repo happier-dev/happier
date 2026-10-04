@@ -10,6 +10,8 @@ import { ReviewCommentLineAffordance } from '@/components/ui/code/reviewComments
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
+/** Shared base row metric for code display and pre-paint layout estimates. */
+export const CODE_LINE_BASE_HEIGHT = 22;
 
 export type CodeLinePressEvent = GestureResponderEvent & Readonly<{
     shiftKey?: boolean;
@@ -331,7 +333,7 @@ const stylesheet = StyleSheet.create({
         flexShrink: 0,
         alignItems: 'center',
         justifyContent: 'center',
-        minHeight: 22,
+        minHeight: CODE_LINE_BASE_HEIGHT,
     },
     codeContainer: {
         flexDirection: 'row',

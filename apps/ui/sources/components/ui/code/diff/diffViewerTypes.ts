@@ -1,9 +1,12 @@
 import type { CodeLinesViewProps } from '@/components/ui/code/view/CodeLinesView';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
+import type { ReactNode } from 'react';
 
 export type DiffViewerMode = 'unified' | 'text';
 
 export type DiffViewerBaseProps = Readonly<{
+    /** Surface-owned evidence state, used instead of raw patch bytes when rendering fails. */
+    errorFallback?: ReactNode;
     filePath?: string | null;
     wrapLines?: boolean;
     showLineNumbers?: boolean;

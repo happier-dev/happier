@@ -1,4 +1,5 @@
 import { useEffectiveDiffPresentation } from '../diffPresentationStyle';
+import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
 import * as React from 'react';
 import { PierreDiffScrollAnchor } from './PierreDiffScrollAnchor.web';
 import { useUnistyles } from 'react-native-unistyles';
@@ -298,7 +299,7 @@ function extractFirstDiffSegment(patch: string): string {
     if (indices.length >= 2) {
         const first = indices[0]!;
         const second = indices[1]!;
-        return text.slice(first, second).trimEnd() + '\n';
+        return text.slice(first, second).replace(/\n+$/, '') + '\n';
     }
 
     // Some SCMs emit unified diffs without `diff ...` headers. Fall back to splitting on `---` preludes.
@@ -313,7 +314,7 @@ function extractFirstDiffSegment(patch: string): string {
     if (preludeIndices.length >= 2) {
         const first = preludeIndices[0]!;
         const second = preludeIndices[1]!;
-        return text.slice(first, second).trimEnd() + '\n';
+        return text.slice(first, second).replace(/\n+$/, '') + '\n';
     }
 
     return patch;
@@ -327,13 +328,13 @@ function sanitizeUnifiedPatchForPierre(patch: string): string {
     // Preserve git-style `diff --git` headers when present. Some upstream logic (language inference,
     // selection id stability) relies on the canonical git prelude.
     if (/^diff --git[ \t]/m.test(firstSegment)) {
-        return firstSegment.trimEnd() + '\n';
+        return firstSegment.replace(/\n+$/, '') + '\n';
     }
 
     // For non-git diff headers (e.g. `diff -r ...`), strip to the unified `---/+++` prelude.
     const preludeIndex = firstSegment.search(/^---[ \t]/m);
     const withoutHeaders = preludeIndex > 0 ? firstSegment.slice(preludeIndex) : firstSegment;
-    return withoutHeaders.trimEnd() + '\n';
+    return withoutHeaders.replace(/\n+$/, '') + '\n';
 }
 
 function normalizeDiffPath(value: string): string {
@@ -375,7 +376,7 @@ function extractUnifiedPreludeDiffForSingleFile(params: Readonly<{ patch: string
 export function resolvePierreTypographyStyle(): React.CSSProperties {
     return {
         ['--diffs-font-size' as any]: `calc(12px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
-        ['--diffs-line-height' as any]: `calc(22px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
+        ['--diffs-line-height' as any]: `calc(${CODE_LINE_BASE_HEIGHT}px * var(${HAPPIER_UI_FONT_SCALE_CSS_VAR}, 1))`,
     };
 }
 
@@ -835,6 +836,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     }, [codeLines, props.filePath, props.scrollToLineId]);
 
     if (!parsedPatch) {
+        if (props.errorFallback !== undefined) return <>{props.errorFallback}</>;
         const raw = typeof patch === 'string' ? patch.trim() : '';
         const message = raw.length > 0 ? raw : t('files.noChanges');
         return (
@@ -858,6 +860,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     }
 
     const fallbackNode = (() => {
+        if (props.errorFallback !== undefined) return props.errorFallback;
         const raw = typeof sanitizedPatch === 'string' ? sanitizedPatch.trim() : '';
         const message = raw.length > 0 ? raw : t('files.noChanges');
         return (

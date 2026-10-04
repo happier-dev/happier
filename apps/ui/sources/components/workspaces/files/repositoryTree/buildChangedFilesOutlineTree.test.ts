@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildChangedFilesOutlineTree, buildChangedOnlyTreeNodes } from '@/components/workspaces/files/repositoryTree/buildChangedFilesOutlineTree';
+import {
+    buildChangedFilesOutlineTree,
+    buildChangedOnlyTreeNodes,
+    resolveChangedOnlyTreeInitiallyClosedPaths,
+} from '@/components/workspaces/files/repositoryTree/buildChangedFilesOutlineTree';
 
 describe('buildChangedFilesOutlineTree', () => {
     it('builds a directory-first, case-insensitive sorted outline tree', () => {
@@ -78,6 +82,53 @@ describe('buildChangedFilesOutlineTree', () => {
                 '  > components/settings/modal',
                 'AGENTS.md',
             ]);
+        });
+    });
+    describe('resolveChangedOnlyTreeInitiallyClosedPaths (a large change opens as far as one page of rows)', () => {
+        const toFiles = (paths: readonly string[]) => paths.map((fullPath) => ({ fullPath, fileName: fullPath.split('/').pop() })) as any[];
+        const many = (folder: string, count: number) => Array.from({ length: count }, (_, i) => `${folder}/File${String(i).padStart(3, '0')}.tsx`);
+        const rows = (nodes: ReturnType<typeof buildChangedOnlyTreeNodes>) =>
+            nodes.map((node) => `${'  '.repeat(node.depth)}${node.type === 'directory' ? (node.isExpanded ? 'v ' : '> ') : ''}${node.name}`);
+
+        it('keeps every folder open when the whole tree fits in the row budget', () => {
+            const files = toFiles(['apps/ui/sources/app/(app)/settings.tsx', 'apps/ui/sources/components/settings/SettingsModal.tsx', 'AGENTS.md']);
+            expect(resolveChangedOnlyTreeInitiallyClosedPaths(files, 12).size).toBe(0);
+        });
+
+        it('opens folders breadth first while the visible rows stay within the budget, so every folder is one tap away', () => {
+            const files = toFiles([
+                ...many('apps/ui/sources/components/settings/pages', 64),
+                ...many('apps/ui/sources/components/settings/sections', 21),
+                ...many('apps/ui/sources/components/ui', 41),
+                ...many('apps/ui/sources/text/translations', 27),
+                ...many('packages/protocol/src/settings', 12),
+                ...many('docs', 5),
+                'yarn.lock',
+            ]);
+            const closed = resolveChangedOnlyTreeInitiallyClosedPaths(files, 12);
+            const nodes = buildChangedOnlyTreeNodes(files, closed);
+            expect(rows(nodes)).toEqual([
+                'v apps/ui/sources',
+                '  > components',
+                '  > text/translations',
+                'v docs',
+                '  File000.tsx',
+                '  File001.tsx',
+                '  File002.tsx',
+                '  File003.tsx',
+                '  File004.tsx',
+                '> packages/protocol/src/settings',
+                'yarn.lock',
+            ]);
+            // Nothing is cut: every changed file sits beneath a row that is shown.
+            const shownFolders = nodes.filter((node) => node.type === 'directory').map((node) => node.path);
+            const reachable = files.every((file) => file.fullPath === 'yarn.lock' || shownFolders.some((folder) => file.fullPath.startsWith(`${folder}/`)));
+            expect(reachable).toBe(true);
+        });
+
+        it('closes every folder when even the top level exceeds the budget', () => {
+            const files = toFiles(['a/x.ts', 'b/x.ts', 'c/x.ts', 'd/x.ts']);
+            expect(rows(buildChangedOnlyTreeNodes(files, resolveChangedOnlyTreeInitiallyClosedPaths(files, 3)))).toEqual(['> a', '> b', '> c', '> d']);
         });
     });
 });

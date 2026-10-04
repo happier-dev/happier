@@ -18,6 +18,42 @@ describe('sessionPaneUrlState', () => {
         expect(createSessionPaneDetailsTab({ kind: 'board', focusTarget: { kind: 'item', itemId: 'board-item' } }, address)?.resource).toEqual({ kind: 'board', focusTarget: { kind: 'item', itemId: 'board-item' } });
     });
 
+    it('carries the Files comparison and view through the link and the tab, so a turn card opens that exact turn', () => {
+        const address = { serverId: 'home-a', sessionId: 'session-1' };
+        const parsed = parseSessionPaneUrlState({ details: 'scmReview', comparison: 'turnCheckpoint', turnId: 'turn-4', view: 'files' });
+        expect(parsed).toEqual({ details: { kind: 'scmReview', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4' }, view: 'files' } });
+        if (!parsed?.details) throw new Error('Expected the review destination to parse');
+        expect(serializeSessionPaneUrlState(parsed)).toEqual({ details: 'scmReview', comparison: 'turnCheckpoint', turnId: 'turn-4', view: 'files' });
+        const tab = createSessionPaneDetailsTab(parsed.details, address);
+        expect(tab?.key).toBe('scmReview:working');
+        expect(tab?.resource).toEqual({ kind: 'scmReview', scope: 'working', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4' }, view: 'files' });
+        // The tab says which view of which comparison it shows (lab WT8: "Files · This session").
+        expect(tab?.title).toBe('Files · Turn');
+        expect(createSessionPaneDetailsTab({ kind: 'scmReview', comparison: { kind: 'session' }, view: 'files' }, address)?.title).toBe('Files · This session');
+        expect(createSessionPaneDetailsTab({ kind: 'scmReview', comparison: { kind: 'workingTree' } }, address)?.title).toBe('Files · Pending changes');
+        expect(buildActiveDetailsRouteParams([tab], tab?.key ?? null)).toEqual({ details: 'scmReview', comparison: 'turnCheckpoint', turnId: 'turn-4', view: 'files' });
+        expect(deriveSessionPaneUrlStateFromScopeState({
+            right: { isOpen: false, activeTabId: null },
+            bottom: { isOpen: false, activeTabId: null },
+            details: { isOpen: true, tabs: [tab!], activeTabKey: tab!.key },
+        })).toEqual({ details: { kind: 'scmReview', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4' }, view: 'files' } });
+
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'branch', head: 'feature', base: 'main' })?.details)
+            .toEqual({ kind: 'scmReview', comparison: { kind: 'branch', head: 'feature', base: 'main' } });
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'commit', commit: 'abc1234' })?.details)
+            .toEqual({ kind: 'scmReview', comparison: { kind: 'commit', commit: 'abc1234' } });
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'turnCheckpoint', turnId: 'turn-4', evidence: 'checkpoint' })?.details)
+            .toEqual({ kind: 'scmReview', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4', evidence: 'checkpoint' } });
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'turnCheckpoint', turnId: 'turn-4', evidence: 'guess' })?.details)
+            .toEqual({ kind: 'scmReview', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4' } });
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'session' })?.details)
+            .toEqual({ kind: 'scmReview', comparison: { kind: 'session' } });
+        // An incomplete selector is not guessed: the link opens the default comparison instead of a wrong one.
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'turnCheckpoint' })?.details).toEqual({ kind: 'scmReview' });
+        expect(parseSessionPaneUrlState({ details: 'scmReview', comparison: 'branch', head: 'feature' })?.details).toEqual({ kind: 'scmReview' });
+        expect(parseSessionPaneUrlState({ details: 'scmReview', view: 'sideways' })?.details).toEqual({ kind: 'scmReview' });
+    });
+
     describe('parseSessionPaneUrlState', () => {
         it('returns null when no pane params are present', () => {
             expect(parseSessionPaneUrlState({})).toBeNull();

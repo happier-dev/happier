@@ -906,6 +906,74 @@ describe('useSessionPaneUrlSync', () => {
         });
     });
 
+    it('keeps the review comparison in the session link, so reload and back return to the same turn', async () => {
+        const setParams = vi.fn();
+        const pane = {
+            openRight: vi.fn(),
+            closeRight: vi.fn(),
+            setRightTab: vi.fn(),
+            openBottom: vi.fn(),
+            closeBottom: vi.fn(),
+            setBottomTab: vi.fn(),
+            openDetailsTab: vi.fn(),
+            closeDetails: vi.fn(),
+        };
+        const windowStub = ensurePaneUrlSyncWindow();
+        windowStub.location.href = 'http://localhost:19364/session/review-history?server=http%3A%2F%2Flocalhost%3A53288';
+        windowStub.history.state = { id: 'history-entry' };
+        const reviewTab = {
+            key: 'scmReview:working',
+            kind: 'scmReview',
+            title: 'Files · Turn',
+            resource: { kind: 'scmReview', scope: 'working', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4' }, view: 'files' },
+            isPinned: true,
+            isPreview: false,
+        };
+        const scopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
+            details: { isOpen: true, tabs: [reviewTab], activeTabKey: reviewTab.key },
+        };
+
+        const screen = await renderScreen(<Harness
+                    enabled={true}
+                    scopeKey="session:review-history"
+                    scopeState={scopeState}
+                    urlState={null}
+                    pane={pane}
+                    setParams={setParams}
+                />);
+        await flushDeferredSessionPaneHistoryStateWrite();
+        expect(setParams).toHaveBeenLastCalledWith(expect.objectContaining({
+            details: 'scmReview',
+            comparison: 'turnCheckpoint',
+            turnId: 'turn-4',
+            view: 'files',
+        }));
+
+        // Back to another turn's link: the pane follows that turn, not whichever turn it showed last.
+        await screen.update(<Harness
+                    enabled={true}
+                    scopeKey="session:review-history"
+                    scopeState={scopeState}
+                    urlState={{ details: { kind: 'scmReview', comparison: { kind: 'turnCheckpoint', turnId: 'turn-4' }, view: 'files' } }}
+                    pane={pane}
+                    setParams={setParams}
+                />);
+        await screen.update(<Harness
+                    enabled={true}
+                    scopeKey="session:review-history"
+                    scopeState={scopeState}
+                    urlState={{ details: { kind: 'scmReview', comparison: { kind: 'turnCheckpoint', turnId: 'turn-2' }, view: 'files' } }}
+                    pane={pane}
+                    setParams={setParams}
+                />);
+        expect(pane.openDetailsTab).toHaveBeenLastCalledWith(
+            expect.objectContaining({ resource: expect.objectContaining({ comparison: { kind: 'turnCheckpoint', turnId: 'turn-2' } }) }),
+            { intent: 'pinned' },
+        );
+    });
+
     it('does not reconcile (close panes) when switching to a different scope key', async () => {
         const setParams = vi.fn();
         const pane1 = {

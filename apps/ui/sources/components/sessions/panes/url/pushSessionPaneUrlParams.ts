@@ -1,14 +1,6 @@
-type SessionPaneUrlParamShape = Readonly<{
-    right?: unknown;
-    bottom?: unknown;
-    details?: unknown;
-    path?: unknown;
-    sha?: unknown;
-    terminalInstanceId?: unknown;
-    discussionId?: unknown;
-}>;
+import { SESSION_PANE_URL_PARAM_KEYS, type SessionPaneUrlParamKey } from './sessionPaneUrlState';
 
-const SESSION_PANE_URL_PARAM_KEYS = ['right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId'] as const;
+type SessionPaneUrlParamShape = Readonly<Partial<Record<SessionPaneUrlParamKey, unknown>>>;
 
 function normalizeSessionPaneUrlParamValue(value: unknown): string | null {
     return typeof value === 'string' && value.length > 0 ? value : null;

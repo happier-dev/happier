@@ -72,6 +72,18 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
         })
     ), [props.nodes.length, props.renderRow]);
 
+    if (props.presentation === 'inline') {
+        return (
+            <View style={props.style} {...(Platform.OS === 'web' && props.treeRole ? { role: 'tree' as const } : {})}>
+                {listHeaderComponent}
+                {props.nodes.map((node, index) => (
+                    <React.Fragment key={keyExtractor(node)}>{renderItem({ item: node, index })}</React.Fragment>
+                ))}
+                {props.listFooter ?? null}
+            </View>
+        );
+    }
+
     // The virtualized abstraction owns the platform/backend choice; `auto`
     // resolves to the canonical Legend backend on every platform.
     const list = (

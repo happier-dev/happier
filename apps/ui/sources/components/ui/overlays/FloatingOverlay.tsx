@@ -93,6 +93,7 @@ export type FloatingOverlayArrow =
 
 interface FloatingOverlayProps {
     children: React.ReactNode;
+    footer?: React.ReactNode;
     maxHeight?: number;
     scrollEnabled?: boolean;
     showScrollIndicator?: boolean;
@@ -242,6 +243,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 { maxHeight },
             ]}>
                 {content}
+                {props.footer}
                 {scrollEnabled && fadeCfg ? (
                     <ScrollEdgeFades
                         color={theme.colors.surface.base}

@@ -125,3 +125,54 @@ export function buildChangedOnlyTreeNodes(
     emit(buildChangedFilesOutlineTree(files), 0, '');
     return rows;
 }
+type MergedChangedFolder = Readonly<{ path: string; childRows: number; childFolders: readonly MergedChangedFolder[] }>;
+
+/** The folders as Changed only draws them: a single-child folder chain is one row standing for its deepest folder. */
+function mergeChangedFolders(nodes: readonly ChangedFilesOutlineNode[]): MergedChangedFolder[] {
+    const folders: MergedChangedFolder[] = [];
+    for (const node of nodes) {
+        if (node.kind !== 'dir') continue;
+        let folder = node;
+        while (folder.children.length === 1 && folder.children[0]!.kind === 'dir') {
+            folder = folder.children[0] as typeof folder;
+        }
+        folders.push({ path: folder.fullPath, childRows: folder.children.length, childFolders: mergeChangedFolders(folder.children) });
+    }
+    return folders;
+}
+
+/**
+ * Which folders a large changed-only tree starts closed: every folder starts closed, then folders open
+ * breadth first (top level, then their children) for as long as the visible rows stay within
+ * `rowBudget`. A small change therefore opens whole, and a large one reads as a page of folders with
+ * every file one tap away; nothing is left out, only folded.
+ */
+export function resolveChangedOnlyTreeInitiallyClosedPaths(
+    files: readonly Pick<ScmFileStatus, 'fullPath'>[],
+    rowBudget: number,
+): ReadonlySet<string> {
+    const outline = buildChangedFilesOutlineTree(files);
+    const topLevel = mergeChangedFolders(outline);
+    const closed = new Set<string>();
+    const collect = (folders: readonly MergedChangedFolder[]) => {
+        for (const folder of folders) {
+            closed.add(folder.path);
+            collect(folder.childFolders);
+        }
+    };
+    collect(topLevel);
+
+    let visibleRows = outline.length;
+    let level: readonly MergedChangedFolder[] = topLevel;
+    while (level.length > 0) {
+        const next: MergedChangedFolder[] = [];
+        for (const folder of level) {
+            if (visibleRows + folder.childRows > rowBudget) continue;
+            visibleRows += folder.childRows;
+            closed.delete(folder.path);
+            next.push(...folder.childFolders);
+        }
+        level = next;
+    }
+    return closed;
+}

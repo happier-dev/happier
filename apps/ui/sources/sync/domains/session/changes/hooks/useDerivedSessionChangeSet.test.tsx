@@ -272,6 +272,31 @@ describe('useDerivedSessionChangeSet', () => {
         expect(providerDiffMap.get('src/app.ts')).toContain('diff --git a/src/app.ts b/src/app.ts');
     });
 
+    it('presents the turn a link names, not whichever turn is latest, through the same derivation', async () => {
+        transcriptMessages = [
+            createTurnEvidenceMessage({ id: 'turn-1-diff', createdAt: 10, source: 'provider_native', confidence: 'exact', turnId: 'turn_1', filePath: 'src/first.ts', unifiedDiff: 'diff --git a/src/first.ts b/src/first.ts\n@@ first @@\n' }),
+            createTurnEvidenceMessage({ id: 'turn-2-diff', createdAt: 20, source: 'provider_native', confidence: 'exact', turnId: 'turn_2', filePath: 'src/second.ts', unifiedDiff: 'diff --git a/src/second.ts b/src/second.ts\n@@ second @@\n' }),
+        ];
+        session = { ...session, latestTurnId: 'turn_2', latestTurnStatus: 'completed' };
+        const { useDerivedSessionChangeSet } = await import('./useDerivedSessionChangeSet');
+        const presented = (await renderHook(() => useDerivedSessionChangeSet(
+            { serverId: 'home-b', sessionId: 'session_1' }, null, { presentedTurnId: 'turn_1' },
+        ))).getCurrent();
+        expect(presented.latestTurnId).toBe('turn_1');
+        expect(presented.latestTurnChangeSet?.turnId).toBe('turn_1');
+        expect([...(presented.latestTurnDiffByPath?.keys() ?? [])]).toEqual(['src/first.ts']);
+
+        const latest = (await renderHook(() => useDerivedSessionChangeSet({ serverId: 'home-b', sessionId: 'session_1' }))).getCurrent();
+        expect(latest.latestTurnChangeSet?.turnId).toBe('turn_2');
+
+        // A named turn with no published evidence presents nothing, never another turn's files.
+        const missing = (await renderHook(() => useDerivedSessionChangeSet(
+            { serverId: 'home-b', sessionId: 'session_1' }, null, { presentedTurnId: 'turn_9' },
+        ))).getCurrent();
+        expect(missing.latestTurnChangeSet).toBeNull();
+        expect(missing.latestTurnDiffByPath).toBeNull();
+    });
+
     it('fails closed when the retained bare-id transcript belongs to another Home', async () => {
         vi.resetModules();
         const { useDerivedSessionChangeSet } = await import('./useDerivedSessionChangeSet');

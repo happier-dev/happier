@@ -1,4 +1,4 @@
-import type { FileDiffOptions } from '@pierre/diffs';
+import type { BaseDiffOptions } from '@pierre/diffs';
 
 import { HAPPIER_PIERRE_THEME_IDS, type HappierPierreThemeIds } from './pierreThemeRegistry.web';
 import { countTextLinesUpTo } from '@/utils/strings/countTextLinesUpTo';
@@ -19,7 +19,7 @@ export type PierreDiffOptionsBaseParams = Readonly<{
     }>;
 }>;
 
-export function buildPierreDiffOptionsBase<TAnnotation = unknown>(params: PierreDiffOptionsBaseParams): FileDiffOptions<TAnnotation> {
+export function buildPierreDiffOptionsBase(params: PierreDiffOptionsBaseParams): BaseDiffOptions & Readonly<{ hunkSeparators: 'line-info' }> {
     const patchLineCount = countTextLinesUpTo(params.patchText, params.intraLineDiff.maxPatchLines + 1);
     const disableIntraLineDiff = params.intraLineDiff.enabled !== true || patchLineCount > params.intraLineDiff.maxPatchLines;
 
@@ -31,7 +31,7 @@ export function buildPierreDiffOptionsBase<TAnnotation = unknown>(params: Pierre
         themeType: params.isDark ? 'dark' : 'light',
         diffStyle: params.diffStyle,
         diffIndicators: params.showPrefix === true ? 'classic' : 'none',
-        hunkSeparators: 'line-info-basic',
+        hunkSeparators: 'line-info',
         overflow: params.wrapLines === false ? 'scroll' : 'wrap',
         disableLineNumbers: params.showLineNumbers === false,
         disableFileHeader: true,

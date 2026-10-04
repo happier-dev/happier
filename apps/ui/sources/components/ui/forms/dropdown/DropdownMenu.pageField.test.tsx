@@ -23,35 +23,10 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => (key === 'common.choose' ? 'Choose…' : key) });
-});
-
-// The menu body is not under test: the closed trigger is.
-vi.mock('@/components/ui/popover', () => ({
-    Popover: () => null,
-    PopoverScope: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroupSelectionContext: React.createContext(null),
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-}));
-
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
-
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => (key === 'uiFontScale' ? 1 : null),
-}));
 
 afterEach(() => {
     standardCleanup();
-    vi.resetModules();
     viewport.width = 1280;
     viewport.height = 900;
 });

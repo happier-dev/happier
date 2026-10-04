@@ -3,7 +3,7 @@ import * as React from 'react';
 
 import type { ChangedFilesReviewLineTarget } from './ChangedFilesReviewNavigation';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { ChangedFilesReviewDiffBlock } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock';
+import { ChangedFilesReviewDiffBlock, type ChangedFilesReviewDiffBlockProps } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock';
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
@@ -25,6 +25,10 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     onScrollToLine?: (windowY: number) => void;
     externalScrollView?: CodeLinesExternalScrollView;
     lineTarget?: ChangedFilesReviewLineTarget | null;
+    /** Diffs drawn edge to edge under their file header (the comparison stream), not as inset cards. */
+    flat?: boolean;
+    evidenceOnly?: boolean;
+    hunkNotes?: ChangedFilesReviewDiffBlockProps['hunkNotes'];
 }>): (path: string) => React.ReactNode {
     const {
         theme,
@@ -42,6 +46,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         lineTarget,
         getEstimatedChangedLines,
     } = input;
+    const flat = input.flat === true;
 
     const reviewCommentDraftsByDiffFilePath = React.useMemo(() => {
         if (reviewCommentsEnabled !== true || !reviewCommentDrafts || reviewCommentDrafts.length === 0) {
@@ -85,10 +90,16 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 onScrollToLine={onScrollToLine}
                 externalScrollView={externalScrollView}
                 scrollToLineId={lineTarget?.filePath === path ? lineTarget.lineId : undefined}
+                flat={flat}
+                evidenceOnly={input.evidenceOnly}
+                hunkNotes={input.hunkNotes}
             />
         );
     }, [
         diffStateSource,
+        flat,
+        input.evidenceOnly,
+        input.hunkNotes,
         getEstimatedChangedLines,
         onDeleteReviewCommentDraft,
         onReviewCommentError,

@@ -122,6 +122,51 @@ export function narrowScmSnapshotToPaths(snapshot: ScmWorkingSnapshot, paths: Re
     return entries.length === snapshot.entries.length ? snapshot : { ...snapshot, entries };
 }
 
+/**
+ * A fixed list of changed files (one turn's evidence) in the snapshot shape the changed-only tree reads,
+ * so a turn is drawn by the same tree, letters and counts as the working copy. It describes those files
+ * only: it carries no branch, capability or freshness fact and must never stand in for the working copy.
+ */
+export function projectChangedFilesAsScmSnapshot(
+    files: readonly ScmFileStatus[],
+    identity: Readonly<{ projectKey: string; rootPath: string | null }>,
+): ScmWorkingSnapshot {
+    const entries = files.map((file): ScmWorkingEntry => ({
+        path: file.fullPath,
+        previousPath: file.oldPath ?? null,
+        kind: file.status,
+        includeStatus: '',
+        pendingStatus: '',
+        hasIncludedDelta: false,
+        hasPendingDelta: true,
+        stats: {
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: Math.max(0, file.linesAdded),
+            pendingRemoved: Math.max(0, file.linesRemoved),
+            isBinary: file.isBinary === true,
+            ...(file.isComplete === false ? { isComplete: false } : {}),
+        },
+    }));
+    return {
+        projectKey: identity.projectKey,
+        fetchedAt: 0,
+        repo: { isRepo: true, rootPath: identity.rootPath },
+        branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: false },
+        hasConflicts: files.some((file) => file.status === 'conflicted'),
+        entries,
+        totals: {
+            includedFiles: 0,
+            pendingFiles: entries.length,
+            untrackedFiles: files.filter((file) => file.status === 'untracked').length,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: entries.reduce((sum, entry) => sum + entry.stats.pendingAdded, 0),
+            pendingRemoved: entries.reduce((sum, entry) => sum + entry.stats.pendingRemoved, 0),
+        },
+    };
+}
+
 /** Paths in conflict, ready for the existing file-open action in the Git and Review panes. */
 export function selectScmConflictFiles(snapshot: ScmWorkingSnapshot): readonly Readonly<{ path: string; openPath: string }>[] {
     return selectScmChangedFiles(snapshot)

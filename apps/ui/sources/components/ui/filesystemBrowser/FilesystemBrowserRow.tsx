@@ -36,6 +36,7 @@ export type FilesystemBrowserRowProps = Readonly<{
     node: FilesystemBrowserNode;
     treeItemProps?: Pick<ItemProps, 'webRole' | 'webTabIndex' | 'accessibilityLevel' | 'webKeyShortcuts' | 'accessibilityExpanded' | 'pressableRef' | 'onFocus' | 'onKeyDown'>;
     title: string;
+    titleAccessory?: React.ReactNode;
     subtitle?: React.ReactNode;
     icon: React.ReactNode;
     /** Tree rows: a disclosure chevron before the leading control (a spacer on files, so names align). */
@@ -177,6 +178,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                 testID={props.testID}
                 {...props.treeItemProps}
                 title={props.title}
+                titleAccessory={props.titleAccessory}
                 subtitle={props.subtitle}
                 icon={leading}
                 // A tree row is one line. A folder (or a merged chain) ellipsizes in the middle so its last

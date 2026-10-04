@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Platform, useWindowDimensions, View } from 'react-native';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -36,6 +37,7 @@ export type DiffReviewCommentsViewerProps = Readonly<{
     wrapLines?: boolean;
     showLineNumbers?: boolean;
     showPrefix?: boolean;
+    renderAfterLine?: (line: CodeLine) => React.ReactNode;
 }>;
 
 function areDraftArraysEquivalent(
@@ -53,6 +55,7 @@ function areDiffReviewCommentsViewerPropsEqual(
     return previous.scrollToLineId === next.scrollToLineId
         && previous.highlightLineId === next.highlightLineId
         && previous.onScrollToLine === next.onScrollToLine
+        && previous.renderAfterLine === next.renderAfterLine
         && previous.filePath === next.filePath
         && previous.unifiedDiff === next.unifiedDiff
         && previous.reviewCommentsEnabled === next.reviewCommentsEnabled
@@ -118,6 +121,11 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         onError: props.onReviewCommentError,
     });
     const showInactiveCommentAffordance = Platform.OS === 'web';
+    const renderAfterLine = React.useCallback((line: CodeLine) => {
+        const notes = props.renderAfterLine?.(line);
+        const comments = controls?.renderAfterLine?.(line);
+        return notes || comments ? <>{notes}{comments}</> : null;
+    }, [controls?.renderAfterLine, props.renderAfterLine]);
 
     return (
         <View style={virtualized ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight)) : undefined}>
@@ -135,7 +143,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
                 pressLineWhenNotSelectable={Boolean(controls?.onPressAddComment)}
                 onPressAddComment={controls?.onPressAddComment}
                 isCommentActive={controls?.isCommentActive}
-                renderAfterLine={controls?.renderAfterLine}
+                renderAfterLine={props.renderAfterLine ? renderAfterLine : controls?.renderAfterLine}
                 showInactiveCommentAffordance={showInactiveCommentAffordance}
                 virtualized={virtualized}
                 wrapLines={effectiveWrapLines}

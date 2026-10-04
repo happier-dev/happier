@@ -14,6 +14,8 @@ import {
     deriveSessionPaneUrlStateFromScopeState,
     reconcileSessionPaneScopeFromUrlState,
     serializeSessionPaneUrlState,
+    SESSION_PANE_URL_PARAM_KEYS,
+    type SessionPaneUrlParamKey,
 } from './sessionPaneUrlState';
 import { parseSessionPaneScopeId } from '../sessionPaneScopeId';
 
@@ -43,28 +45,27 @@ export type UseSessionPaneUrlSyncInput = Readonly<{
     setParams: ((params: Record<string, string | undefined>) => void) | null | undefined;
 }>;
 
-function signatureFromSerialized(
-    params: Readonly<{ right?: unknown; bottom?: unknown; details?: unknown; path?: unknown; sha?: unknown; terminalInstanceId?: unknown; discussionId?: unknown }>,
-): string {
-    const base = `${String(params.right ?? '')}|${String(params.bottom ?? '')}|${String(params.details ?? '')}|${String(params.path ?? '')}|${String(params.sha ?? '')}|${String(params.terminalInstanceId ?? '')}`;
-    return params.discussionId == null || params.discussionId === ''
+type SessionPaneUrlParamShape = Readonly<Partial<Record<SessionPaneUrlParamKey, string>>>;
+
+// The original keys keep their positional signature; later keys (a review comparison) append by name.
+const POSITIONAL_SIGNATURE_KEYS = ['right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId'] as const;
+
+function signatureFromSerialized(params: SessionPaneUrlParamShape): string {
+    const base = POSITIONAL_SIGNATURE_KEYS.map((key) => String(params[key] ?? '')).join('|');
+    const withDiscussion = params.discussionId == null || params.discussionId === ''
         ? base
         : `${base}|${String(params.discussionId)}`;
+    const named = SESSION_PANE_URL_PARAM_KEYS
+        .filter((key) => key !== 'discussionId' && !(POSITIONAL_SIGNATURE_KEYS as readonly string[]).includes(key))
+        .flatMap((key) => (params[key] ? [`${key}=${params[key]}`] : []));
+    return named.length > 0 ? `${withDiscussion}|${named.join('|')}` : withDiscussion;
 }
 
-function serializeToParamShape(
-    state: SessionPaneUrlState | null,
-): Readonly<{ right?: string; bottom?: string; details?: string; path?: string; sha?: string; terminalInstanceId?: string; discussionId?: string }> {
-    const serialized = state ? serializeSessionPaneUrlState(state) : {};
-    return {
-        right: serialized.right,
-        bottom: serialized.bottom,
-        details: serialized.details,
-        path: serialized.path,
-        sha: serialized.sha,
-        terminalInstanceId: serialized.terminalInstanceId,
-        discussionId: serialized.discussionId,
-    };
+function serializeToParamShape(state: SessionPaneUrlState | null): SessionPaneUrlParamShape {
+    const serialized: Record<string, string | undefined> = state ? serializeSessionPaneUrlState(state) : {};
+    const shape: Partial<Record<SessionPaneUrlParamKey, string>> = {};
+    for (const key of SESSION_PANE_URL_PARAM_KEYS) shape[key] = serialized[key];
+    return shape;
 }
 
 function readSessionIdFromScopeKey(scopeKey: string): string | null {
@@ -233,35 +234,13 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
         if (shouldReplaceHistoryEntry) {
             pendingStoredStateWriteSigRef.current = null;
         } else if (browserMirrorsEnabled) {
-            pushSessionPaneUrlParams({
-                right: derivedParams.right,
-                bottom: derivedParams.bottom,
-                details: derivedParams.details,
-                path: derivedParams.path,
-                sha: derivedParams.sha,
-                terminalInstanceId: derivedParams.terminalInstanceId,
-                discussionId: derivedParams.discussionId,
-            });
+            pushSessionPaneUrlParams(derivedParams);
         }
         pendingUrlWriteRef.current = { fromSig: urlSig, toSig: derivedSig };
-        input.setParams({
-            right: derivedParams.right,
-            bottom: derivedParams.bottom,
-            details: derivedParams.details,
-            path: derivedParams.path,
-            sha: derivedParams.sha,
-            terminalInstanceId: derivedParams.terminalInstanceId,
-            discussionId: derivedParams.discussionId,
-        });
+        input.setParams({ ...derivedParams });
         if (browserMirrorsEnabled) scheduleCurrentSessionPaneHistoryState({ scopeKey, urlSig: derivedSig });
     }, [
-        derivedParams.bottom,
-        derivedParams.details,
-        derivedParams.path,
-        derivedParams.right,
-        derivedParams.sha,
-        derivedParams.terminalInstanceId,
-        derivedParams.discussionId,
+        derivedParams,
         derivedSig,
         browserMirrorsEnabled,
         input.enabled,
