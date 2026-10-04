@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -55,9 +56,12 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_BUNDLED_HOST_APPS = ['cli'];
 const PLUGINS_WORKSPACE_PREFIX = 'plugins-';
-// v7 binds source-dev readiness to package input and output contents. Older
-// timestamp-based stamps cannot admit a current package after an input deletion.
-const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 7;
+// v8 keeps content identities, not copies of output bodies, across scope stamps.
+// Older readiness caches are reconstructible from the canonical package trees.
+const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 8;
+const SOURCE_DEV_SHARED_DEPS_STAMP_HEADER = new RegExp(
+  `^\\s*\\{\\s*"version"\\s*:\\s*${SOURCE_DEV_SHARED_DEPS_STAMP_VERSION}\\s*[,}]`, 'u',
+);
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_PROGRESS';
 const SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_MS';
 const SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_MS';
@@ -870,7 +874,7 @@ function resolveSourceDevWorkspaceNames({
 function readSmallFileSignature(path, { exists = existsSync, readFile = readFileSync } = {}) {
   if (!exists(path)) return { exists: false };
   try {
-    return { exists: true, contents: String(readFile(path, 'utf8')) };
+    return { exists: true, digest: createHash('sha256').update(readFile(path)).digest('hex') };
   } catch {
     return { exists: false };
   }
@@ -899,7 +903,7 @@ function readPublishedPackageRootTargetSignature(
     return {
       exists: true,
       type: 'file',
-      contents: String(readFile(path, 'utf8')),
+      digest: createHash('sha256').update(readFile(path)).digest('hex'),
     };
   } catch {
     return { exists: false };
@@ -1221,7 +1225,11 @@ function collectSourceDevWorkspaceNamesWithChangedBuildInputs(left, right, works
 
 function readSourceDevSharedDepsStamp(stampPath, readFile = readFileSync) {
   try {
-    return JSON.parse(readFile(stampPath, 'utf8'));
+    const raw = String(readFile(stampPath, 'utf8'));
+    // The canonical writer puts the version first. Check that header before
+    // parsing: v7 histories can contain hundreds of MB of repeated output bodies.
+    if (!SOURCE_DEV_SHARED_DEPS_STAMP_HEADER.test(raw)) return null;
+    return JSON.parse(raw);
   } catch {
     return null;
   }
@@ -1247,13 +1255,6 @@ function readSourceDevSharedDepsStampEntry({ stamp, signature }) {
     if (supersetEntry) {
       return supersetEntry;
     }
-  }
-
-  if (stamp?.version === 1 && JSON.stringify(stamp.signature) === JSON.stringify(signature)) {
-    return {
-      signature: stamp.signature,
-      syncedAtMs: stamp.syncedAtMs,
-    };
   }
 
   return null;
@@ -1331,11 +1332,6 @@ function createSourceDevSharedDepsStampPayload({ previousStamp, signature, synce
     !Array.isArray(previousStamp.entries)
   ) {
     Object.assign(entries, previousStamp.entries);
-  } else if (previousStamp?.version === 1 && previousStamp.signature) {
-    entries[createSourceDevSharedDepsStampKey(previousStamp.signature)] = {
-      signature: previousStamp.signature,
-      syncedAtMs: previousStamp.syncedAtMs,
-    };
   }
 
   entries[createSourceDevSharedDepsStampKey(signature)] = {
@@ -1456,11 +1452,8 @@ function sourceDevSharedDepsPackageOutputExists({
       BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH,
     );
     if (!exists(destPluginManifestPath)) return false;
-    try {
-      if (String(readFile(destPluginManifestPath, 'utf8')) !== pkg.pluginManifest.contents) return false;
-    } catch {
-      return false;
-    }
+    if (JSON.stringify(readSmallFileSignature(destPluginManifestPath, { exists, readFile }))
+      !== JSON.stringify(pkg.pluginManifest)) return false;
   }
   for (const target of pkg.rootRuntimeTargets ?? []) {
     const targetPath = resolve(destPackageDir, String(target?.relativePath ?? ''));

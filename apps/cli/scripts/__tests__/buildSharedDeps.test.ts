@@ -98,6 +98,54 @@ const cliScriptsSourceDir = resolve(dirname(fileURLToPath(import.meta.url)), '..
 const workspaceScriptsSourceDir = resolve(cliScriptsSourceDir, '..', '..', '..', 'scripts', 'workspaces');
 const sourceRepoRoot = resolve(cliScriptsSourceDir, '..', '..', '..');
 
+describe('source-dev readiness memory contract', () => {
+  it('stores content identities without retaining exported file bodies', () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-readiness-digests-');
+    try {
+      writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/agents'] });
+      const packageDir = writeWorkspacePackageFixture({
+        repoRoot, workspacePath: 'packages/agents', packageName: '@happier-dev/agents',
+        manifestOverrides: { exports: { '.': './dist/index.js', './data': './data.json' } },
+        files: {
+          'data.json': 'a',
+          'dist/.happier-build-inputs.json': '{}',
+          '.happier-plugin/plugin.json': '{}',
+        },
+      });
+      const readSignature = () => computeSourceDevSharedDepsSignature({ repoRoot, workspaceNames: ['agents'] });
+      const small = JSON.stringify(readSignature());
+      writeFileSync(join(packageDir, 'data.json'), 'a'.repeat(2 * 1024 * 1024));
+      for (const relativePath of ['dist/.happier-build-inputs.json', '.happier-plugin/plugin.json']) {
+        writeFileSync(join(packageDir, relativePath), JSON.stringify({ payload: 'a'.repeat(2 * 1024 * 1024) }));
+      }
+      const large = JSON.stringify(readSignature());
+      expect(large.length).toBe(small.length);
+      expect(large).not.toBe(small);
+      writeFileSync(join(packageDir, 'data.json'), 'b'.repeat(2 * 1024 * 1024));
+      expect(JSON.stringify(readSignature())).not.toBe(large);
+    } finally { cleanup(); }
+  });
+
+  it('rejects obsolete large readiness stamps before parsing their payload', () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-readiness-obsolete-');
+    try {
+      writeCliBundledHostPackage({ happyCliDir });
+      const stampPath = join(repoRoot, 'obsolete.json');
+      // The former cache stored repeated output bodies across historical scopes.
+      // A low-heap real process distinguishes header rejection from full parsing.
+      writeFileSync(stampPath, '{"version":7,"entries":{"old":[' + '{} ,'.repeat(4_000_000) + '{}]}}');
+      const result = spawnSync(process.execPath, ['--max-old-space-size=96', '--input-type=module', '-e', `
+        import { inspectUsableSourceDevSharedDepsLastGreen } from ${JSON.stringify(pathToFileURL(resolve(cliScriptsSourceDir, 'buildSharedDeps.mjs')).href)};
+        const [repoRoot, stampPath] = process.argv.slice(1);
+        const result = inspectUsableSourceDevSharedDepsLastGreen({ repoRoot, stampPath, workspaceNames: [] });
+        if (result.usable || result.reason !== 'readiness-unavailable') process.exitCode = 1;
+      `, repoRoot, stampPath], { encoding: 'utf8' });
+      expect({ status: result.status, signal: result.signal, error: result.error?.message, stderr: result.stderr })
+        .toMatchObject({ status: 0, signal: null });
+    } finally { cleanup(); }
+  });
+});
+
 describe('bundled plugin preparation', () => {
   it('selects missing and stale installed daemon runtimes even when compiler outputs are current', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-plugin-preparation-repair-');
@@ -487,7 +535,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 7,
+        version: signature.version,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -2629,7 +2677,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 7,
+        version: signature.version,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -2725,7 +2773,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 7,
+        version: signature.version,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -2805,7 +2853,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 7,
+        version: signature.version,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -3264,7 +3312,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 7,
+        version: signature.version,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,
@@ -3333,7 +3381,7 @@ describe('buildSharedDeps', () => {
       const stampPath = resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
       mkdirSync(dirname(stampPath), { recursive: true });
       writeFileSync(stampPath, JSON.stringify({
-        version: 7,
+        version: signature.version,
         entries: {
           [JSON.stringify(signature.workspaceNames)]: {
             signature,

@@ -303,6 +303,11 @@ const GENERATOR_STAGE_PREP_STAMP_PATH = resolve(
   CANONICAL_GENERATOR_REPO_ROOT,
   '.project/tmp/cli-generator-authoring-stage-prep.json',
 );
+const GENERATOR_PUBLICATION_STAMP_PATH = resolve(
+  CANONICAL_GENERATOR_REPO_ROOT,
+  // Completion admission never needs the readiness history's output inventory.
+  '.project/tmp/cli-generator-publication.json',
+);
 const PRIVATE_RUNTIME_CONSUMED_AGENT_FACTS_PHASE_ENV =
   'HAPPIER_PRIVATE_BUNDLED_RUNTIME_CONSUMED_AGENT_FACTS_PHASE';
 let activeGeneratorPreparationLease: WorkspaceBundleLockContext | undefined;
@@ -4999,7 +5004,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         includeShippedFiles: true,
       })),
     ]),
-    stampPath: GENERATOR_STAGE_PREP_STAMP_PATH,
+    stampPath: GENERATOR_PUBLICATION_STAMP_PATH,
     // Each preparation uses a fresh ESM process, also for the trailing pass.
     // The coordinator and waiters never retain a previous heavy authoring graph.
     run: (lease) => runGeneratorPrivateChild(
