@@ -115,6 +115,8 @@ export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
 
 const sessionDbMocks = createDbMocks({
+    homeSettings: ["findUnique"],
+    homeGovernancePolicy: ["findUnique"],
     account: ["findMany", "findUnique"],
     session: ["findMany", "findFirst", "findUnique", "update", "updateMany"],
     sessionPin: ["count", "findMany"],
@@ -137,6 +139,7 @@ const sessionDbMocks = createDbMocks({
 const txDbMocks = createDbMocks({
     automationRun: ["groupBy"],
     sessionReportsTo: ["findMany"],
+    homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
     teamMembership: ["findMany"],
@@ -563,6 +566,10 @@ export function resetSessionRouteMocks(): void {
     txDb.automationRun.groupBy.mockResolvedValue([]);
     txDb.sessionReportsTo.findMany.mockResolvedValue([]);
     txDb.teamMembership.findMany.mockResolvedValue([]);
+    // No persisted Home overrides: exercise the real deployment-inheriting overlay.
+    sessionDbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
+    sessionDbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
+    txDb.homeSettings.findUnique.mockResolvedValue(null);
     txDb.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     txDb.identityProviderInstance.findMany.mockResolvedValue([]);
     randomKeyNaked.mockReturnValue("upd-id");

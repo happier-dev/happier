@@ -48,6 +48,8 @@ vi.mock("@/storage/inTx", () => ({ afterTx: vi.fn(), inTx }));
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
 
 const dbMocks = createDbMocks({
+    homeSettings: ["findUnique"],
+    homeGovernancePolicy: ["findUnique"],
     publicSessionShare: ["findUnique"],
     session: ["findUnique"],
     sessionMessage: ["findMany"],
@@ -111,6 +113,9 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         verifyTokenDisposition.mockResolvedValue({ status: "invalid" });
         dbMocks.reset();
         txDbMocks.reset();
+        // The public route family's real feature gate inherits deployment settings.
+        dbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
+        dbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
         dbTransaction.transaction.mockClear();
         inTx.mockReset();
         inTx.mockImplementation(async (run: (tx: typeof txDbMocks.db) => Promise<unknown>) =>
@@ -169,6 +174,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         };
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: null,
@@ -180,6 +186,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         txDbMocks.db.publicSessionShare.updateMany.mockResolvedValue({ count: 1 });
         const session = {
             id: "s1",
+            accountId: "owner",
             seq: 1,
             encryptionMode: "plain",
             createdAt: new Date(1),
@@ -211,6 +218,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
 
         dbMocks.db.session.findUnique.mockResolvedValue({
             id: "s1",
+            accountId: "owner",
             seq: 1,
             encryptionMode: "plain",
             createdAt: new Date(1),
@@ -296,6 +304,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     it("refuses the released layout-zero public-share projection without consuming the share", async () => {
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: 1,
@@ -373,6 +382,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: 1,
@@ -432,6 +442,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         const expiresAt = new Date(4_102_444_800_000);
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt,
             maxUses: null,
@@ -453,6 +464,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 0,
             active: true,
             lastActiveAt: new Date(3),
+            accountId: "owner",
             account: { id: "owner" },
             currentStorageState: "snapshot_complete",
             acceptedThroughServerSeq: null,
@@ -474,6 +486,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 0,
             active: true,
             lastActiveAt: new Date(3),
+            accountId: "owner",
             account: { id: "owner" },
         });
         txDbMocks.db.publicSessionShare.update.mockResolvedValue({});
@@ -523,6 +536,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     it("returns the same admitted public session row instead of re-reading a newer unshareable state", async () => {
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: null,
@@ -544,6 +558,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 9,
             active: true,
             lastActiveAt: new Date(3),
+            accountId: "owner",
             account: { id: "owner" },
             currentStorageState: "hosted",
             acceptedThroughServerSeq: null,
@@ -563,6 +578,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 1,
             active: true,
             lastActiveAt: new Date(99),
+            accountId: "owner",
             account: { id: "owner" },
             currentStorageState: "machine_only",
             acceptedThroughServerSeq: null,
@@ -612,6 +628,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     it("returns consent owner data from the admitted transaction row without a stale second read", async () => {
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: null,
@@ -632,6 +649,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 0,
             active: true,
             lastActiveAt: new Date(3),
+            accountId: "admitted-owner",
             account: { id: "admitted-owner" },
             currentStorageState: "hosted",
             acceptedThroughServerSeq: null,
@@ -640,6 +658,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             publishedThroughServerSeq: null,
         });
         dbMocks.db.session.findUnique.mockResolvedValue({
+            accountId: "newer-owner",
             account: { id: "newer-owner" },
             currentStorageState: "machine_only",
         });
@@ -695,6 +714,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         verifyTokenDisposition.mockResolvedValueOnce({ status: "verified", credential: verified });
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: null,
@@ -718,6 +738,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 0,
             active: true,
             lastActiveAt: new Date(3),
+            accountId: "owner",
             account: { id: "owner" },
             currentStorageState: "snapshot_complete",
             acceptedThroughServerSeq: null,
@@ -739,6 +760,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
             agentStateVersion: 0,
             active: true,
             lastActiveAt: new Date(3),
+            accountId: "owner",
             account: { id: "owner" },
         });
 
@@ -773,6 +795,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
     it("does not call app.authenticate() for /v1/public-share/:token/messages and succeeds even with invalid bearer", async () => {
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
+            keyDerivation: "legacy_token_v1",
             sessionId: "s1",
             expiresAt: null,
             maxUses: null,
@@ -783,6 +806,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         txDbMocks.db.session.findUnique.mockResolvedValue({
+            accountId: "owner",
             seq: 1,
             encryptionMode: "plain",
             currentStorageState: "snapshot_complete",
@@ -793,7 +817,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         });
 
         txDbMocks.db.sessionMessage.findMany.mockResolvedValue([
-            { id: "m1", seq: 1, localId: "l1", content: "c", createdAt: new Date(1), updatedAt: new Date(2) },
+            { id: "m1", seq: 1, localId: "l1", content: { t: "plain", v: "c" }, createdAt: new Date(1), updatedAt: new Date(2) },
         ]);
 
         const { publicShareRoutes } = await import("./publicShareRoutes");
@@ -842,7 +866,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         }));
         expect(inTx).toHaveBeenCalledTimes(1);
         expect(payload).toEqual({
-            messages: [{ id: "m1", seq: 1, content: "c", localId: "l1", createdAt: 1, updatedAt: 2 }],
+            messages: [{ id: "m1", seq: 1, content: { t: "plain", v: "c" }, localId: "l1", createdAt: 1, updatedAt: 2 }],
             hasMore: false,
             nextBeforeSeq: null,
         });

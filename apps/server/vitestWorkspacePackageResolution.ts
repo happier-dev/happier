@@ -8,6 +8,14 @@ const repoRoot = resolve(here, '..', '..');
 
 export const serverWorkspacePackageSourcesPlugin = createWorkspacePackageSourcesPlugin([
     {
+        packageName: 'privacy-kit',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'privacy-kit', 'src'),
+    },
+    {
+        packageName: '@happier-dev/iroh-native',
+        packageSourceRoot: resolve(repoRoot, 'packages', 'iroh-native', 'src'),
+    },
+    {
         packageName: '@happier-dev/peer-mediation',
         packageSourceRoot: resolve(repoRoot, 'packages', 'peer-mediation', 'src'),
     },

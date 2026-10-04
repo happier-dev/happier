@@ -101,7 +101,7 @@ function resolveExportTargetSource(
         return null;
     }
 
-    if (!targetPath.startsWith('./dist/') || !targetPath.endsWith('.js')) {
+    if (!targetPath.startsWith('./dist/') || !/\.[cm]?js$/.test(targetPath)) {
         const packageRoot = resolve(packageSourceRoot, '..');
         const authoredTarget = resolve(packageRoot, targetPath);
         return isPathInsideDirectory(authoredTarget, packageRoot) && existsSync(authoredTarget)
@@ -109,7 +109,7 @@ function resolveExportTargetSource(
             : null;
     }
 
-    const sourceRelativePath = targetPath.slice('./dist/'.length).replace(/\.js$/, '');
+    const sourceRelativePath = targetPath.slice('./dist/'.length).replace(/\.[cm]?js$/, '');
     const candidates = [
         ...(sourceRelativePath === 'index' || sourceRelativePath.endsWith('/index')
             ? [
@@ -134,7 +134,11 @@ function resolveWorkspacePackageExportSource(
         return null;
     }
 
-    return resolveExportTargetSource(packageSourceRoot, exportsRecord[subpathSpecifier], options);
+    // A root conditional object is the package's "." export, not a subpath map.
+    const target = subpathSpecifier === '.' && !Object.keys(exportsRecord).some((key) => key.startsWith('.'))
+        ? exportsRecord
+        : exportsRecord[subpathSpecifier];
+    return resolveExportTargetSource(packageSourceRoot, target, options);
 }
 
 export function resolveWorkspacePackageSource(
