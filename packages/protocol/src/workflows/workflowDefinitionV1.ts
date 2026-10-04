@@ -135,6 +135,7 @@ export const WorkflowMaterializedLeafV1Schema = z.object({
 export type WorkflowMaterializedLeafV1 = z.infer<typeof WorkflowMaterializedLeafV1Schema>;
 export const WorkflowRunStartedByV1Schema = z.enum(['user', 'agent', 'trigger']);
 export type WorkflowRunStartedByV1 = z.infer<typeof WorkflowRunStartedByV1Schema>;
+export const WorkflowFrozenChildrenV1Schema = z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema);
 
 const workflowMaterializationFields = {
   startedBy: WorkflowRunStartedByV1Schema,
@@ -142,7 +143,7 @@ const workflowMaterializationFields = {
   roleOverrides: WorkflowRoleOverridesV1Schema.optional(),
   authoredDefinition: WorkflowDefinitionV1Schema,
   materializedLeaves: z.array(WorkflowMaterializedLeafV1Schema),
-  frozenChildren: z.record(WorkflowDefinitionRefV1StringSchema, WorkflowDefinitionV1Schema),
+  frozenChildren: WorkflowFrozenChildrenV1Schema,
 };
 
 const WorkflowAcceptedSnapshotAutomationV1Schema = z.object({

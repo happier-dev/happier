@@ -375,6 +375,7 @@ function projectAcceptedContext(accepted: ReturnType<typeof WorkflowAcceptedSnap
         workspaceTarget: accepted.workspaceTarget,
         ...(accepted.roleOverrides === undefined ? {} : { roleOverrides: accepted.roleOverrides }),
         materializedLeaves: accepted.materializedLeaves,
+        frozenChildren: accepted.frozenChildren,
         origin: accepted.origin,
       }
     : {
@@ -387,6 +388,7 @@ function projectAcceptedContext(accepted: ReturnType<typeof WorkflowAcceptedSnap
         workspaceTarget: accepted.workspaceTarget,
         ...(accepted.roleOverrides === undefined ? {} : { roleOverrides: accepted.roleOverrides }),
         materializedLeaves: accepted.materializedLeaves,
+        frozenChildren: accepted.frozenChildren,
       });
 }
 

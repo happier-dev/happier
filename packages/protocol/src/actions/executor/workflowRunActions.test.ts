@@ -240,7 +240,7 @@ describe('shared Account workflow run owner', () => {
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'catalog', workflow, pluginVersion: '1.2.3' } });
     const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const, callerPermissionMode: 'default',
       sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({}),
-      ...(surface === 'agent' ? { actionCaller: { kind: 'session' as const, sessionId: 'caller-session' }, defaultSessionId: 'caller-session' } : {}),
+      ...(surface === 'agent' ? { actionCaller: { kind: 'session' as const, sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'caller-session' } : {}),
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
     await expect(owner.execute({ actionId: 'workflow.run.start',
       input: { ...input, source: { kind: 'catalog', workflow, pluginVersion: '0.9.0' } }, context }))

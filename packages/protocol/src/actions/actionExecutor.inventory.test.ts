@@ -94,7 +94,7 @@ describe('machine Agent inventory execution', () => {
 const canonicalSessionSpawnInput = {
   creationKey: 'inventory:session-create-1',
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-  directory: '/repo/project',
+  directory: { kind: 'path', path: '/repo/project' },
   agentTarget: {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
