@@ -176,7 +176,7 @@ test('probeCliDistRuntimeImport rejects ESM link failures', async () => {
 
     await assert.rejects(
       () => probeCliDistRuntimeImport(entrypoint),
-      /does not provide an export named|runtime import probe failed/,
+      /does not provide an export named 'A'/,
     );
   } finally {
     await rm(tmp, { recursive: true, force: true });
@@ -189,14 +189,23 @@ test('probeCliDistRuntimeImport validates the daemon command lazy import closure
     const entrypoint = join(tmp, 'index.mjs');
     await writeFile(
       entrypoint,
-      "if (process.argv.includes('daemon')) await import('./daemon.mjs');\n",
+      [
+        "if (process.argv.includes('daemon')) {",
+        "  try { await import('./daemon.mjs'); }",
+        "  catch (error) {",
+        "    console.error(error.stack);",
+        "    for (let frame = 0; frame < 12; frame++) console.error('    at daemonLoader (runtime.mjs:1:1)');",
+        "    process.exit(1);",
+        "  }",
+        "}",
+      ].join('\n'),
       'utf-8',
     );
     await writeFile(join(tmp, 'daemon.mjs'), "import './missing-daemon-dependency.mjs';\n", 'utf-8');
 
     await assert.rejects(
       () => probeCliDistRuntimeImport(entrypoint),
-      /missing-daemon-dependency|runtime import probe failed/,
+      /missing-daemon-dependency/,
     );
   } finally {
     await rm(tmp, { recursive: true, force: true });

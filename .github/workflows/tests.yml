@@ -7,6 +7,7 @@ on:
       - dev
       - preview
       - main
+      - v0.3
   workflow_call:
     inputs:
       select_jobs_explicitly:
@@ -214,10 +215,8 @@ on:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  # Preserve the active collector so late lanes can report their failures. GitHub retains at most
-  # one pending run per group, so newer pushes replace stale pending work without discarding the
-  # evidence already being collected by the running workflow.
-  cancel-in-progress: false
+  # Push runs retain exact-SHA evidence; superseded PR runs release runner capacity.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).
@@ -225,7 +224,171 @@ env:
   HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
 
 jobs:
+  gate-packages:
+    name: Select affected gate packages
+    if: ${{ !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+      server_db_contract: ${{ steps.select.outputs.server_db_contract }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Select changed workspaces and their consumers
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$BASE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git hash-object -t tree /dev/null)"
+          fi
+          packages="$(git diff --no-renames --name-only -z "$base" HEAD | node scripts/ci/selectAffectedGatePackages.mjs)"
+          echo "Affected gate packages: $packages"
+
+  gate-typecheck:
+    name: Gate — compiler typecheck
+    needs: [gate-packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+      - name: Enable Corepack
+        run: corepack enable && corepack prepare yarn@1.22.22 --activate
+      - uses: ./.github/actions/install-yarn-dependencies
+      - name: Check compiler diagnostics without governance or test phases
+        run: yarn -s typecheck:compiler
+
+  gate-unit:
+    name: Gate — ${{ matrix.package }} unit
+    needs: [gate-packages]
+    if: ${{ needs.gate-packages.outputs.packages != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.gate-packages.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+      - name: Enable Corepack
+        run: corepack enable && corepack prepare yarn@1.22.22 --activate
+      - uses: ./.github/actions/install-yarn-dependencies
+      - name: Run affected package unit suite
+        env:
+          GATE_PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          case "$GATE_PACKAGE" in
+            cli) yarn workspace @happier-dev/cli test:unit ;;
+            ui) yarn workspace @happier-dev/app test:unit ;;
+            server) yarn --cwd apps/server test:unit ;;
+            protocol) yarn workspace @happier-dev/protocol test ;;
+            plugins) yarn test:plugin-workspaces ;;
+            *) echo "::error::Unknown gate package: $GATE_PACKAGE"; exit 1 ;;
+          esac
+
+  gate-build-artifacts:
+    name: Gate — build artifacts and staged import smoke
+    needs: [gate-packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.5
+      - name: Enable Corepack
+        run: corepack enable && corepack prepare yarn@1.22.22 --activate
+      - uses: ./.github/actions/install-yarn-dependencies
+      - name: Build the CLI distribution
+        run: yarn workspace @happier-dev/cli build
+      - name: Probe the staged CLI runtime through its canonical owner
+        run: |
+          node --input-type=module <<'NODE'
+          import { resolve } from 'node:path';
+          import { probeCliDistRuntimeImport } from './apps/stack/scripts/utils/cli/cliDistIntegrity.mjs';
+          await probeCliDistRuntimeImport(resolve('apps/cli/dist/index.mjs'));
+          NODE
+      - name: Build the server runtime
+        run: yarn --cwd apps/server build:runtime
+      - name: Build and smoke the HStack binary
+        run: ./apps/stack/bin/hstack-exec -- node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
+      - name: Setup pinned Rust and the browser target
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.94.1
+          targets: wasm32-unknown-unknown
+      - name: Install the pinned browser boundary generator
+        run: ./apps/stack/bin/hstack-exec -- cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Build the web artifact
+        run: ./apps/stack/bin/hstack-exec -- node scripts/pipeline/release/build-ui-web-bundle.mjs --channel preview --version 0.0.0-ci.${{ github.run_id }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gate-build-artifacts
+          path: |
+            apps/cli/dist
+            apps/server/dist/runtime
+            dist/release-assets/stack
+            dist/release-assets/ui-web
+          if-no-files-found: error
+
+  gate:
+    name: Gate
+    if: ${{ always() && !inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')) }}
+    needs: [gate-packages, gate-typecheck, gate-unit, gate-build-artifacts, server-db-contract]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every selected check to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const noUnits = needs['gate-packages'].outputs.packages === '[]';
+          for (const [id, job] of Object.entries(needs)) {
+            if (job.result === 'success' || (id === 'gate-unit' && noUnits && job.result === 'skipped')) continue;
+            if (id === 'server-db-contract' && needs['gate-packages'].outputs.server_db_contract === 'false' && job.result === 'skipped') continue;
+            console.error(`::error::${id}: ${job.result}`);
+            process.exitCode = 1;
+          }
+          NODE
+
   cliproxyapi-managed-runtime:
+    if: ${{ !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     needs: [trusted_ref_guard]
     name: CLIProxyAPI managed runtime (${{ matrix.platform_key }})
     runs-on: ${{ matrix.runner }}
@@ -307,7 +470,7 @@ jobs:
           node -e 'const fs=require("fs");if(!fs.statSync(process.argv[1]).isFile())process.exit(1)' "${RUNNER_TEMP}/${WRAPPER_NAME}"
 
   ui-e2e:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_ui_e2e) }}
     needs: [trusted_ref_guard]
     name: UI E2E (Playwright) / shard ${{ matrix.shard }}/18
     strategy:
@@ -450,7 +613,7 @@ jobs:
           if-no-files-found: ignore
 
   workspace-sync-real:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_workspace_sync_real || inputs.run_workspace_sync_performance }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_workspace_sync_real || inputs.run_workspace_sync_performance) }}
     needs: [trusted_ref_guard]
     name: Workspace sync (Mutagen + Iroh real)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -817,7 +980,7 @@ jobs:
 
   mobile-e2e-android:
     # Native E2E is intentionally opt-in for now (not a PR check).
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_mobile_e2e_android }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_mobile_e2e_android) }}
     name: Mobile E2E (Maestro) (android) (opt-in)
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -866,7 +1029,7 @@ jobs:
 
   mobile-e2e-ios:
     # Native E2E is intentionally opt-in for now (not a PR check).
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_mobile_e2e_ios }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_mobile_e2e_ios) }}
     name: Mobile E2E (Maestro) (ios) (opt-in)
     runs-on: macos-latest
     timeout-minutes: 45
@@ -913,7 +1076,7 @@ jobs:
           if-no-files-found: ignore
 
   ui-unit:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_ui) }}
     needs: [trusted_ref_guard]
     name: UI Unit Tests / part ${{ matrix.part }}/16
     strategy:
@@ -980,7 +1143,7 @@ jobs:
           fi
 
   ui-integration:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_ui) }}
     needs: [trusted_ref_guard]
     name: UI Integration Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -1020,7 +1183,7 @@ jobs:
         run: yarn workspace @happier-dev/app test:integration
 
   ui:
-    if: ${{ always() && (!inputs.select_jobs_explicitly || inputs.run_ui) }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (always() && (!inputs.select_jobs_explicitly || inputs.run_ui)) }}
     needs: [ui-unit, ui-integration]
     name: UI Tests (unit + integration)
     runs-on: ubuntu-22.04
@@ -1036,7 +1199,7 @@ jobs:
           fi
 
   action-map-drift:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui || inputs.run_typecheck || inputs.run_plugin_workspaces }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_ui || inputs.run_typecheck || inputs.run_plugin_workspaces) }}
     needs: [trusted_ref_guard]
     name: Generated Action DTO Drift
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -1086,7 +1249,7 @@ jobs:
         run: yarn turbo run generated:finite --filter=@happier-dev/plugin-sdk
 
   shared-packages-unit:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_shared_packages }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_shared_packages) }}
     needs: [trusted_ref_guard]
     name: Shared Package Unit Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -1170,7 +1333,7 @@ jobs:
         run: yarn workspace @happier-dev/tests test:plugin-platform:source
 
   plugin-workspaces-unit:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_plugin_workspaces }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_plugin_workspaces) }}
     needs: [trusted_ref_guard]
     name: Plugin Workspace Unit Tests
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -1213,7 +1376,7 @@ jobs:
         run: yarn typecheck:plugin-workspaces
 
   server:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_server) }}
     needs: [trusted_ref_guard]
     name: Server Tests (unit + integration)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
@@ -1257,7 +1420,7 @@ jobs:
         run: yarn --cwd apps/server test:integration
 
   home-iroh-real:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_home_iroh_real }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_home_iroh_real) }}
     needs: [trusted_ref_guard]
     name: Iroh real transport (native + Chromium + Docker relay)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
@@ -1315,10 +1478,10 @@ jobs:
         run: yarn workspace @happier-dev/iroh-native test:home-iroh:docker
 
   server-db-contract:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_server_db_contract }}
-    needs: [trusted_ref_guard]
+    if: ${{ !cancelled() && ((needs.trusted_ref_guard.result == 'success' && (!inputs.select_jobs_explicitly || inputs.run_server_db_contract)) || (needs.gate-packages.result == 'success' && needs.gate-packages.outputs.server_db_contract == 'true')) }}
+    needs: [trusted_ref_guard, gate-packages]
     name: Server DB Contract (Postgres + SQLite lineage)
-    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 || 'ubuntu-22.04' }}
     timeout-minutes: 25
     services:
       postgres:
@@ -1374,18 +1537,18 @@ jobs:
       - name: Migrate (Postgres)
         env:
           HAPPIER_DB_PROVIDER: postgres
-          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/happier?sslmode=disable
         run: yarn --cwd apps/server -s migrate:full:deploy
 
       - name: Run db contract suite (Postgres)
         env:
           HAPPIER_DB_PROVIDER: postgres
-          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
-          HAPPIER_TEST_POSTGRES_DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/happier?sslmode=disable
+          HAPPIER_TEST_POSTGRES_DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/happier?sslmode=disable
         run: yarn --cwd apps/server test:server:db-contract
 
   cli:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_cli) }}
     needs: [trusted_ref_guard]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
     permissions:
@@ -1490,7 +1653,7 @@ jobs:
         run: yarn workspace @happier-dev/cli test:slow
 
   stack:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_stack) }}
     needs: [trusted_ref_guard]
     name: Stack Tests (unit + integration)
     permissions:
@@ -1529,7 +1692,7 @@ jobs:
         run: yarn --cwd apps/stack test:integration
 
   release-contracts:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_release_contracts }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_release_contracts) }}
     name: Release Contracts
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1564,7 +1727,7 @@ jobs:
           node scripts/pipeline/run.mjs release-sync-installers --check
 
   installers-smoke-linux:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_installers_smoke) }}
     name: Installer Smoke (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1616,7 +1779,7 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-macos:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_installers_smoke) }}
     name: Installer Smoke (macOS)
     runs-on: macos-latest
     timeout-minutes: 25
@@ -1668,7 +1831,7 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-windows:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_installers_smoke }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_installers_smoke) }}
     name: Installer Smoke (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -1722,7 +1885,7 @@ jobs:
             --release-channel "$env:INSTALLERS_RELEASE_CHANNEL"
 
   artifact-verify:
-    if: ${{ inputs.run_artifact_verify }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_artifact_verify) }}
     name: Candidate Artifact Verify (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -1787,7 +1950,7 @@ jobs:
             --ref dist/release-assets/cli
 
   binary-smoke:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_binary_smoke }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_binary_smoke) }}
     needs: [trusted_ref_guard]
     name: Binary Smoke (isolated cwd)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
@@ -1847,7 +2010,7 @@ jobs:
             --ref "$CHECKOUT_SHA"
 
   build-smoke:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_build_smoke }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_build_smoke) }}
     needs: [trusted_ref_guard]
     name: Release Build Smoke (Linux)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
@@ -1915,7 +2078,7 @@ jobs:
         run: yarn workspace docs build
 
   cli-update-continuity:
-    if: ${{ inputs.run_cli_update_continuity }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_cli_update_continuity) }}
     name: Release Validation — CLI Update Continuity (Linux)
     permissions:
       contents: read
@@ -1989,7 +2152,7 @@ jobs:
           if-no-files-found: ignore
 
   daemon-continuity:
-    if: ${{ inputs.run_daemon_continuity }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_daemon_continuity) }}
     name: Release Validation — Daemon Continuity (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -2050,7 +2213,7 @@ jobs:
           if-no-files-found: ignore
 
   session-continuity:
-    if: ${{ inputs.run_session_continuity }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_session_continuity) }}
     name: Release Validation — Session Continuity (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -2111,7 +2274,7 @@ jobs:
           if-no-files-found: ignore
 
   release-assets-docker:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_release_assets_docker }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_release_assets_docker) }}
     name: Release Assets Docker (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -2171,7 +2334,7 @@ jobs:
             --to-ref "${RELAY_UPGRADE_TO_REF}"
 
   self-host-systemd-e2e:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_systemd }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_systemd) }}
     name: Self-Host E2E (Linux systemd)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -2212,7 +2375,7 @@ jobs:
           node --test apps/stack/scripts/self_host_systemd.real.integration.test.mjs
 
   self-host-launchd-e2e:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_launchd }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_launchd) }}
     name: Self-Host E2E (macOS launchd)
     runs-on: macos-latest
     timeout-minutes: 120
@@ -2253,7 +2416,7 @@ jobs:
           node --test apps/stack/scripts/self_host_launchd.real.integration.test.mjs
 
   self-host-schtasks-e2e:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_schtasks }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_schtasks) }}
     name: Self-Host E2E (Windows schtasks)
     runs-on: windows-latest
     timeout-minutes: 120
@@ -2292,7 +2455,7 @@ jobs:
         run: node --test apps/stack/scripts/self_host_schtasks.real.integration.test.mjs
 
   self-host-daemon-e2e:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_self_host_daemon }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_self_host_daemon) }}
     name: Self-Host + Daemon E2E
     strategy:
       fail-fast: false
@@ -2335,7 +2498,7 @@ jobs:
         run: node --test apps/stack/scripts/self_host_daemon.real.integration.test.mjs
 
   typecheck:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_typecheck }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_typecheck) }}
     needs: [trusted_ref_guard]
     name: Typecheck
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
@@ -2397,7 +2560,7 @@ jobs:
         run: yarn typecheck
 
   cli-daemon-e2e:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli_daemon_e2e }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_cli_daemon_e2e) }}
     name: CLI + Server (light/sqlite) E2E
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -2639,7 +2802,7 @@ jobs:
           done
 
   e2e-core:
-    if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_core }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (!inputs.select_jobs_explicitly || inputs.run_e2e_core) }}
     needs: [trusted_ref_guard]
     name: Core E2E (fast, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -2697,7 +2860,7 @@ jobs:
           path: .project/logs/e2e
 
   e2e-core-slow:
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_e2e_core_slow }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_e2e_core_slow) }}
     needs: [trusted_ref_guard]
     name: Core E2E (slow, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
@@ -2763,6 +2926,7 @@ jobs:
           path: .project/logs/e2e
 
   trusted_ref_guard:
+    if: ${{ !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     name: Trusted workflow ref guard
     permissions:
       contents: read
@@ -2818,7 +2982,7 @@ jobs:
 
   release_actor_guard:
     needs: [trusted_ref_guard]
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_providers }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_providers) }}
     name: Release actor guard
     permissions:
       contents: read
@@ -2839,7 +3003,7 @@ jobs:
 
   providers:
     needs: [release_actor_guard]
-    if: ${{ inputs.select_jobs_explicitly && inputs.run_providers }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_providers) }}
     name: Providers (contract matrix)
     runs-on: ubuntu-latest
     environment: providers-ci
@@ -2987,7 +3151,7 @@ jobs:
           path: .project/logs/e2e
 
   stress:
-    if: ${{ inputs.run_stress }}
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.run_stress) }}
     name: Stress (repeat/chaos)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -3067,8 +3231,8 @@ jobs:
           if-no-files-found: ignore
 
   ci_summary:
+    if: ${{ always() && !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     name: CI result summary (all lanes)
-    if: always()
     needs: [cliproxyapi-managed-runtime, ui-e2e, workspace-sync-real, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, plugin-workspaces-unit, server, home-iroh-real, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, artifact-verify, binary-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
     runs-on: ubuntu-latest
     permissions:

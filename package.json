@@ -158,6 +158,8 @@
     "typecheck:plugin-workspaces": "apps/stack/bin/hstack-exec --script=typecheck:plugin-workspaces:local",
     "typecheck:plugin-workspaces:local": "node --experimental-strip-types scripts/testing/runPluginWorkspaceTests.ts typecheck",
     "typecheck": "apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:compiler": "apps/stack/bin/hstack-exec --script=typecheck:compiler:local",
+    "typecheck:compiler:local": "node scripts/runWithHeartbeat.mjs --label typecheck -- node --experimental-strip-types scripts/testing/runTypecheck.ts --compiler-only",
     "typecheck:local": "node scripts/runWithHeartbeat.mjs --label typecheck -- yarn -s typecheck:inner",
     "ui": "yarn workspace @happier-dev/app start",
     "ui:web": "yarn workspace @happier-dev/app web",

@@ -77,3 +77,19 @@ test('root typecheck attempts every phase sequentially before reporting complete
   assert.deepEqual(executed, ['build-packages', 'public-sdk', 'source-workspaces']);
   assert.equal(maximumActive, 1);
 });
+
+test('compiler-only typecheck executes compilers after preparation and reports compiler failures', async () => {
+  const executed: string[][] = [];
+  await assert.rejects(runRootTypecheck({
+    compilerOnly: true,
+    runCommand: async ({ args }) => {
+      executed.push([...args]);
+      if (args.includes('--noEmit')) throw new Error('compiler rejected source');
+    },
+  }), /compiler rejected source/u);
+  assert.ok(executed.length > 2);
+  for (const args of executed.slice(2)) {
+    assert.ok(args.includes('--noEmit'));
+    assert.equal(args[0], 'tsc');
+  }
+});

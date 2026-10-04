@@ -35,9 +35,25 @@ export const ROOT_TYPECHECK_COMMANDS = [
   },
 ] as const satisfies readonly CommandSuiteEntry[];
 
+const ROOT_COMPILER_TYPECHECK_COMMANDS: readonly CommandSuiteEntry[] = [
+  ...ROOT_TYPECHECK_COMMANDS.slice(0, 2),
+  ...[
+    'packages/plugin-sdk/tsconfig.json',
+    'packages/plugin-sdk/tsconfig.tests.json',
+    'packages/sdk/tsconfig.tests.json',
+    'packages/terminal-native/tsconfig.json',
+    'packages/plugin-ui/tsconfig.json',
+    'apps/ui/tsconfig.json',
+    'apps/cli/tsconfig.json',
+    'apps/server/tsconfig.json',
+    'packages/tests/tsconfig.json',
+  ].map((project) => ({ id: project, args: ['tsc', '-p', project, '--noEmit'] })),
+];
+
 export interface RunRootTypecheckOptions {
   rootDir?: string;
   commands?: readonly CommandSuiteEntry[];
+  compilerOnly?: boolean;
   runCommand?: (command: CommandSuiteEntry) => Promise<void>;
 }
 
@@ -45,7 +61,7 @@ export async function runRootTypecheck(
   options: RunRootTypecheckOptions = {},
 ): Promise<readonly CommandSuiteEntry[]> {
   const rootDir = options.rootDir ?? process.cwd();
-  const commands = options.commands ?? ROOT_TYPECHECK_COMMANDS;
+  const commands = options.commands ?? (options.compilerOnly ? ROOT_COMPILER_TYPECHECK_COMMANDS : ROOT_TYPECHECK_COMMANDS);
   return runCommandSuite({
     commands,
     maxConcurrent: 1,
@@ -55,7 +71,7 @@ export async function runRootTypecheck(
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  void runRootTypecheck().catch((error: unknown) => {
+  void runRootTypecheck({ compilerOnly: process.argv.includes('--compiler-only') }).catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

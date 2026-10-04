@@ -109,7 +109,7 @@ export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
         resolve();
         return;
       }
-      const suffix = stderr.trim() ? `\n${stderr.trim().split('\n').slice(-8).join('\n')}` : '';
+      const suffix = stderr.trim() ? `\n${stderr.trim()}` : '';
       reject(new Error(`[cli-dist] runtime import probe failed for ${entry} (code=${code}, signal=${signal ?? 'none'}).${suffix}`));
     });
   });
