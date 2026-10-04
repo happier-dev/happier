@@ -19,7 +19,7 @@ export type TerminalHostDispositionIntent =
       reason: 'planned_runner_refresh' | 'wrapper_exit' | 'controller_failure' | 'auth_switch_handoff';
       runtimePhase: 'transfer_pending' | 'blocked';
     }>
-  | Readonly<{ kind: 'destroy_owned_host'; reason: 'explicit_user_stop' | 'session_closed' }>
+  | Readonly<{ kind: 'destroy_owned_host'; reason: 'explicit_user_stop' | 'session_closed' | 'unrecoverable_control_recovery' }>
   | Readonly<{ kind: 'retire_confirmed_dead_attachment'; reason: 'positive_dead_recovery' }>
   | Readonly<{ kind: 'release_borrowed_host'; reason: 'provider_exit' | 'explicit_user_stop' | 'wrapper_exit' }>;
 
