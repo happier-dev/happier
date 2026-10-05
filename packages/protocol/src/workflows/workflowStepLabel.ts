@@ -1,4 +1,19 @@
-import type { WorkflowStep } from './workflowV1.js';
+import type { WorkflowBlock, WorkflowStep } from './workflowV1.js';
+import { walkWorkflowBlocks } from './workflowDefinitionEditV1.js';
+
+/** Authored labels for a static Artifact preview; containers and runtime occurrences are omitted. */
+export function workflowDefinitionPreviewStepsV1(blocks: readonly WorkflowBlock[]): readonly string[] {
+  return walkWorkflowBlocks(blocks).flatMap((block) => {
+    if (block.kind === 'step' || block.kind === 'wait' || block.kind === 'action' || block.kind === 'workflow') return [workflowBlockReferenceLabel(block)];
+    return [];
+  });
+}
+
+/** Exact ids remain the fallback for reference pickers, where identity matters. */
+export function workflowBlockReferenceLabel(block: WorkflowBlock): string {
+  if (block.kind === 'step' || block.kind === 'wait') return workflowStepPromptLabel(block) ?? block.id;
+  return block.id;
+}
 
 /** Content-derived label shared by private authoring, Run detail and Session creation. */
 export function workflowStepPromptLabel(step: Pick<WorkflowStep, 'document'>): string | null {

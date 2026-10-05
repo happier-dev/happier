@@ -114,11 +114,17 @@ describe('shared workflow definition create', () => {
     const input = { definitionId, definition, metadata: { title: 'Review' } };
     const created = await actions.create(input, undefined, { surface: 'ui_button', runtimeAccountId: 'account-person' });
     expect(created).toMatchObject({ savedBy: { kind: 'person', accountId: 'account-person' } });
+    expect(await store.read(definitionId)).toMatchObject({ savedBy: { kind: 'person', accountId: 'account-person' } });
+    expect((await store.read(definitionId))?.header).toMatchObject({ previewSteps: ['Review'] });
     await expect(actions.create(input, undefined, { surface: 'agent', runtimeAccountId: 'account-agent' }))
       .resolves.toMatchObject({ savedBy: { kind: 'person', accountId: 'account-person' } });
-    await expect(actions.update({ ...input, expectedRevision: created.revision }, undefined,
+    const revised = { ...definition, blocks: [{ kind: 'step' as const, id: 'review',
+      document: { text: 'Revised review', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } }] };
+    await expect(actions.update({ ...input, definition: revised, expectedRevision: created.revision }, undefined,
       { surface: 'agent', runtimeAccountId: 'account-agent', defaultSessionId: 'session-agent' }))
       .resolves.toMatchObject({ savedBy: { kind: 'agent', accountId: 'account-agent', sessionId: 'session-agent' } });
+    expect(await store.read(definitionId)).toMatchObject({ savedBy: { kind: 'agent', accountId: 'account-agent', sessionId: 'session-agent' } });
+    expect((await store.read(definitionId))?.header).toMatchObject({ previewSteps: ['Revised review'] });
     await expect(actions.update({ ...input, expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, undefined,
       { surface: 'agent', runtimeAccountId: 'account-agent' }))
       .resolves.toMatchObject({ savedBy: { kind: 'agent', accountId: 'account-agent' } });
@@ -127,6 +133,7 @@ describe('shared workflow definition create', () => {
     { surface: 'ui_button', runtimeAccountId: 'account-person' });
     await expect(actions.get({ definitionId }))
       .resolves.toMatchObject({ metadata: { title: 'Reviewed' }, savedBy: { kind: 'person', accountId: 'account-person' } });
+    expect((await store.read(definitionId))?.header).toMatchObject({ previewSteps: ['Review'] });
   });
 
   it('lists grant-reachable workflows with their owner/access and filters other opened kinds', async () => {

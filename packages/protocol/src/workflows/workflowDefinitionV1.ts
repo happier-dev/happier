@@ -21,6 +21,7 @@ import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import { RoleOverrideV1Schema, ResolvedRoleV1Schema } from '../prompts/roles/rolesV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.js';
 import { ARTIFACT_EXCERPT_MAX_CHARS_V1 } from '../artifacts/artifactExcerptV1.js';
+import { ArtifactSavedByV1Schema } from '../artifacts/artifactBinaryV1.js';
 
 /** One deliberate engine edit; replay retains every other accepted leaf fact. */
 export const WorkflowReplayAgentOverrideV1Schema = z.object({
@@ -53,11 +54,7 @@ export const WorkflowDefinitionMetadataV1Schema = z.object({
 }).strict();
 export type WorkflowDefinitionMetadataV1 = z.infer<typeof WorkflowDefinitionMetadataV1Schema>;
 
-export const WorkflowDefinitionSavedByV1Schema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('person'), accountId: preservedBoundedNfcString(191, 'Account ids') }).strict(),
-  z.object({ kind: z.literal('agent'), accountId: preservedBoundedNfcString(191, 'Account ids'),
-    sessionId: preservedBoundedNfcString(191, 'Session ids').optional() }).strict(),
-]);
+export const WorkflowDefinitionSavedByV1Schema = ArtifactSavedByV1Schema;
 export type WorkflowDefinitionSavedByV1 = z.infer<typeof WorkflowDefinitionSavedByV1Schema>;
 
 export const WorkflowDefinitionArtifactHeaderV1Schema = z.object({
@@ -66,6 +63,8 @@ export const WorkflowDefinitionArtifactHeaderV1Schema = z.object({
   revision: WorkflowArtifactRevisionV1Schema,
   metadata: WorkflowDefinitionMetadataV1Schema,
   savedBy: WorkflowDefinitionSavedByV1Schema.optional(),
+  /** Static authored step labels, written atomically with the definition for header-only cards. */
+  previewSteps: z.array(z.string()).optional(),
   excerpt: z.string().max(ARTIFACT_EXCERPT_MAX_CHARS_V1).optional(),
 }).strict();
 export type WorkflowDefinitionArtifactHeaderV1 = z.infer<typeof WorkflowDefinitionArtifactHeaderV1Schema>;

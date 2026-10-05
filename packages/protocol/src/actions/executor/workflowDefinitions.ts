@@ -8,6 +8,7 @@ import {
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema,
   type WorkflowDefinitionListResultV1 } from '../../workflows/actionsV1.js';
 import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, type WorkflowDefinitionEditRequestV1 } from '../../workflows/workflowDefinitionEditV1.js';
+import { workflowDefinitionPreviewStepsV1 } from '../../workflows/workflowStepLabel.js';
 import type { createWorkflowTriggerActions } from './workflowTriggerActions.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
@@ -15,11 +16,10 @@ import type { WorkflowDefinitionV1, WorkflowIngressContextV1 } from '../../workf
 import type { WorkflowActionExecuteArgs } from './types.js';
 import type { z } from 'zod';
 import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
-import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
+import { artifactSavedByFromActionContextV1, type ArtifactBodyV1, type ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/artifactSharingV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';
-import type { ArtifactBodyV1 } from '../../artifacts/artifactBinaryV1.js';
 
 export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number; updatedAt: number;
@@ -34,8 +34,8 @@ export type WorkflowDefinitionArtifactOperations = Readonly<{
   list: (options: Readonly<{ limit?: number; cursor?: string; includeBody?: boolean; signal?: AbortSignal }>) => Promise<Readonly<{
     items: readonly WorkflowDefinitionArtifactHeaderRow[]; nextCursor?: string;
   }>>;
-  create: (input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; signal?: AbortSignal }>) => Promise<unknown>;
-  update: (input: Readonly<{ artifactId: string; expectedRevision: WorkflowArtifactRevisionV1; header: Readonly<Record<string, unknown>>; body: string; signal?: AbortSignal }>) => Promise<
+  create: (input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>) => Promise<unknown>;
+  update: (input: Readonly<{ artifactId: string; expectedRevision: WorkflowArtifactRevisionV1; header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>) => Promise<
     Readonly<{ ok: true; revision: WorkflowArtifactRevisionV1 }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
   delete: (artifactId: string, options?: Readonly<{ expectedRevision?: WorkflowArtifactRevisionV1; signal?: AbortSignal }>) => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
 }>;
@@ -59,16 +59,13 @@ function normalize(definition: unknown, context?: WorkflowIngressContextV1) {
 }
 
 function savedBy(caller?: DefinitionCaller): WorkflowDefinitionSavedByV1 | undefined {
-  if (!caller?.runtimeAccountId) return undefined;
-  return caller.surface === 'agent'
-    ? { kind: 'agent', accountId: caller.runtimeAccountId, ...(caller.defaultSessionId ? { sessionId: caller.defaultSessionId } : {}) }
-    : { kind: 'person', accountId: caller.runtimeAccountId };
+  return artifactSavedByFromActionContextV1(caller);
 }
 
-function header(definitionId: string, revision: WorkflowArtifactRevisionV1, metadata: Metadata, caller?: DefinitionCaller) {
+function header(definitionId: string, revision: WorkflowArtifactRevisionV1, metadata: Metadata, definition: WorkflowDefinitionV1, caller?: DefinitionCaller) {
   const actor = savedBy(caller);
   return WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1', definitionId, revision, metadata,
-    ...(actor ? { savedBy: actor } : {}) });
+    previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks), ...(actor ? { savedBy: actor } : {}) });
 }
 
 function assertRevisionMatches(actual: WorkflowArtifactRevisionV1, expected: WorkflowArtifactRevisionV1) {
@@ -125,8 +122,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   const save = async (input: Pick<UpdateInput, 'definitionId' | 'expectedRevision' | 'metadata'>, definition: WorkflowDefinitionV1, access: ArtifactCallerAccessV1, caller?: DefinitionCaller) => {
     const nextRevision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
     const result = await params.artifactStore.update({ artifactId: input.definitionId,
-      expectedRevision: input.expectedRevision, header: header(input.definitionId, nextRevision, input.metadata, caller),
-      body: JSON.stringify({ kind: 'workflow-definition.v1', definition }) });
+      expectedRevision: input.expectedRevision, header: header(input.definitionId, nextRevision, input.metadata, definition, caller),
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), savedBy: savedBy(caller) });
     if (!result.ok) throw Object.assign(new Error(result.error), {
       code: result.errorCode === 'version_mismatch' ? 'currentness_conflict' : 'content_unavailable',
     });
@@ -240,8 +237,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       const initialRevision = { headerVersion: 1, bodyVersion: 1 };
       try {
         await params.artifactStore.create({ artifactId: input.definitionId,
-          header: header(input.definitionId, initialRevision, input.metadata, caller),
-          body: JSON.stringify({ kind: 'workflow-definition.v1', definition }) });
+          header: header(input.definitionId, initialRevision, input.metadata, definition, caller),
+          body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), savedBy: savedBy(caller) });
       } catch (error) {
         // A lost response or same-id race may have committed the Artifact.
         // Rejoin only its exact normalized semantic content; an absent row
