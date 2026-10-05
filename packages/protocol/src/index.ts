@@ -2366,6 +2366,7 @@ export {
   ConnectedServiceAuthGroupPatchRequestV1Schema,
   ConnectedServiceAuthGroupPolicyPatchV1Schema,
   ConnectedServiceAuthGroupPolicyV1Schema,
+  ConnectedServiceAuthGroupStrategyV1Schema,
   ConnectedServiceQuotaLimitSelectionV1Schema,
   ConnectedServiceAuthGroupResponseV1Schema,
   ConnectedServiceAuthGroupRouteParamsV1Schema,

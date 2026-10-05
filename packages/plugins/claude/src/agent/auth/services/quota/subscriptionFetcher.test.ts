@@ -82,6 +82,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
         });
 
         expect(snapshot?.meters.some((meter) => meter.meterId === 'five_hour')).toBe(true);
+        expect(snapshot?.meters.find((meter) => meter.meterId === 'five_hour')?.windowDurationMs).toBe(18_000_000);
         expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/api/oauth/usage');
     });
 

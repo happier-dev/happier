@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol';
+import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
+import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../quotas/projection';
 
 import {
   DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
@@ -14,6 +16,66 @@ import {
 } from './selectConnectedServiceAuthGroupCandidate';
 
 const basePolicy = DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1;
+
+describe('expiry-first selection', () => {
+  function state(left: number, reset: number | null, subscription?: ProviderAccountSubscriptionV1) {
+    return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
+      capturedAtMs: 1_000,
+      subscription,
+      meters: [{ meterId: 'weekly', label: 'Weekly', used: null, limit: null, unit: 'unknown',
+        remainingPct: left, utilizationPct: 100 - left, resetsAt: reset, status: 'ok', details: {},
+        windowDurationMs: 604_800_000 }],
+    });
+  }
+
+  it.each([
+    { name: 'earlier long allowance reset', left: 40, reset: 10_000, expected: 'early' },
+    { name: 'adequate headroom before urgency', left: 14, reset: 10_000, expected: 'fresh' },
+    { name: 'least-limited recovery below the threshold', left: 5, reset: 10_000, otherLeft: 10, expected: 'fresh' },
+    { name: 'fresh nonrenewing subscription', left: 40, reset: 30_000, renewal: 'off', end: 5_000, expected: 'early' },
+    { name: 'renewing periods are not expiry', left: 40, reset: 30_000, renewal: 'on', end: 5_000, expected: 'fresh' },
+    { name: 'independently stale subscription', left: 40, reset: 30_000, renewal: 'off', end: 5_000, stale: true, expected: 'fresh' },
+    { name: 'passed subscription date', left: 40, reset: 30_000, renewal: 'off', end: 900, expected: 'fresh' },
+    { name: 'missing reset', left: 40, reset: null, expected: 'fresh' },
+    { name: 'passed reset', left: 40, reset: 900, expected: 'fresh' },
+  ] as const)('default uses $name', (scenario) => {
+    const subscription: ProviderAccountSubscriptionV1 | undefined = 'renewal' in scenario && scenario.renewal !== undefined
+      ? { status: 'subscribed', renewal: scenario.renewal, observedAtMs: 'stale' in scenario ? 0 : 1_000,
+        staleAfterMs: 'stale' in scenario ? 500 : 300_000, currentPeriodEndAtMs: scenario.end } : undefined;
+    const result = selectConnectedServiceAuthGroupCandidate({
+      nowMs: 1_000, quotaFreshnessMs: 300_000, activeProfileId: null, policy: basePolicy,
+      members: [member('early', 2, 2), member('fresh', 1, 1)],
+      memberStatesByProfileId: new Map([
+        ['early', state(scenario.left, scenario.reset, subscription)],
+        ['fresh', state('otherLeft' in scenario ? scenario.otherLeft ?? 95 : 95, 20_000)],
+      ]),
+    });
+    expect(result.selected?.profileId).toBe(scenario.expected);
+  });
+
+  it('keeps a healthy current account and ranks only the pool-selected allowance on a swap', () => {
+    const early = state(40, 10_000);
+    const fresh = state(95, 20_000);
+    const shortMeter = { meterId: 'session', limitCategory: 'usage_limit' as const, remainingPct: 95,
+      resetAtMs: 2_000, providerLimitId: 'short', windowDurationMs: 18_000_000 };
+    const states = new Map([
+      ['early', { ...early, quotaSnapshot: { ...early.quotaSnapshot!, meters: [
+        { ...early.quotaSnapshot!.meters![0]!, providerLimitId: 'long' }, { ...shortMeter, resetAtMs: 15_000 },
+      ] } }],
+      ['fresh', { ...fresh, quotaSnapshot: { ...fresh.quotaSnapshot!, meters: [
+        { ...fresh.quotaSnapshot!.meters![0]!, providerLimitId: 'long' }, shortMeter,
+      ] } }],
+    ]);
+    const input = { nowMs: 1_000, quotaFreshnessMs: 300_000, activeProfileId: null,
+      policy: basePolicy, members: [member('early', 2, 2), member('fresh', 1, 1)], memberStatesByProfileId: states };
+    expect(selectConnectedServiceAuthGroupCandidate(input).selected?.profileId).toBe('early');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, activeProfileId: 'fresh', allowCurrentProfileRetry: true }).selected?.profileId).toBe('fresh');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, policy: { ...basePolicy,
+      quotaLimitSelection: { mode: 'selected', providerLimitIds: ['short'] },
+    } }).selected?.profileId).toBe('fresh');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, policy: { ...basePolicy, strategy: 'least_limited' } }).selected?.profileId).toBe('fresh');
+  });
+});
 
 describe('quota reset admission', () => {
   const exhausted: ConnectedServiceAuthGroupMemberRuntimeState = {
