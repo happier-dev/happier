@@ -37,10 +37,13 @@ export async function isPidSafeHappySessionProcess(params: {
 
   if (!/^[a-f0-9]{64}$/.test(expectedProcessCommandHash)) return false;
 
-  const proc = await (
-    dependencies.findHappyProcessByPidFn ?? findHappyProcessByPid
-  )(params.pid);
+  const [proc, identity] = await Promise.all([
+    (dependencies.findHappyProcessByPidFn ?? findHappyProcessByPid)(params.pid),
+    (dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid)(params.pid),
+  ]);
   return !!proc
     && ALLOWED_HAPPY_SESSION_PROCESS_TYPES.has(proc.type)
-    && hashProcessCommand(proc.command) === expectedProcessCommandHash;
+    && identity?.pid === params.pid
+    && Boolean(identity.command)
+    && hashProcessCommand(identity.command) === expectedProcessCommandHash;
 }

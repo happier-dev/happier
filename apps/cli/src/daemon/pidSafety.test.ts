@@ -129,10 +129,22 @@ describe('isPidSafeHappySessionProcess', () => {
     await expect(isPidSafeHappySessionProcess({
       pid,
       expectedProcessCommandHash: hashProcessCommand(command),
-    }, { findHappyProcessByPidFn })).resolves.toBe(true);
+    }, { findHappyProcessByPidFn, readProcessIdentityByPidFn: async () => ({ pid, command, processStartTimeMs: 1_000 }) })).resolves.toBe(true);
     await expect(isPidSafeHappySessionProcess({
       pid,
       expectedProcessCommandHash: hashProcessCommand('different command'),
-    }, { findHappyProcessByPidFn })).resolves.toBe(false);
+    }, { findHappyProcessByPidFn, readProcessIdentityByPidFn: async () => ({ pid, command, processStartTimeMs: 1_000 }) })).resolves.toBe(false);
+  });
+
+  it('compares a legacy hash only with the canonical reader, not unbounded discovery text', async () => {
+    const pid = 42;
+    const discoveryCommand = 'happier session --started-by daemon ' + 'x'.repeat(1100);
+    const observedCommand = discoveryCommand.slice(0, 1000);
+    const dependencies = {
+      findHappyProcessByPidFn: async () => ({ pid, command: discoveryCommand, type: 'daemon-spawned-session' }),
+      readProcessIdentityByPidFn: async () => ({ pid, command: observedCommand, processStartTimeMs: 1_000 }),
+    };
+    await expect(isPidSafeHappySessionProcess({ pid, expectedProcessCommandHash: hashProcessCommand(observedCommand) }, dependencies)).resolves.toBe(true);
+    await expect(isPidSafeHappySessionProcess({ pid, expectedProcessCommandHash: hashProcessCommand(discoveryCommand) }, dependencies)).resolves.toBe(false);
   });
 });
