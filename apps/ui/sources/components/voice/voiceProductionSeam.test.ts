@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 /**
  * Production Voice code must not depend on the design lab.
  *
- * The lab (`components/dev/voiceLab/**`) is a mutable exploration surface reached
+ * The specimen (`components/dev/voicePresence/**`) is a dev-only fixture surface reached
  * only through `isDevRouteEnabled()`. Production importing from it would drag
  * fixtures, lab-only state vocabulary and design scaffolding into the shipped
  * bundle, and would invert the authority order the spec sets out: the lab
@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
  * because someone re-exported a lab type.
  */
 
-const LAB_SPECIFIER = 'components/dev/voiceLab';
+const LAB_SPECIFIER = 'components/dev/voicePresence';
 
 function sourcesRoot(): string {
     return join(dirname(fileURLToPath(import.meta.url)), '..', '..');

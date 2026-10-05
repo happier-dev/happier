@@ -103,14 +103,6 @@ vi.mock('./client', () => ({
 vi.mock('@/voice/credentials/useExecutionMachinePresentation', () => ({
   useVoiceExecutionMachinePresentation: () => ({ machineId: machineState.machineId, machineLabel: machineState.machineId }),
 }));
-vi.mock('@/sync/domains/settings/voiceSettings', () => ({
-  voiceSettingsDefaults: { credentialBindings: [] },
-  voiceSettingsParse: (value: unknown) => ({
-    credentialBindings: [],
-    ...(value && typeof value === 'object' && !Array.isArray(value) ? value : {}),
-  }),
-  projectVoiceSettingsAnalytics: () => ({}),
-}));
 
 import { useVoiceDiagnosticsRuntimeSync } from './useVoiceDiagnosticsRuntimeSync';
 import {

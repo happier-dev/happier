@@ -10,8 +10,13 @@ import {
 } from '@/dev/testkit/mocks/reanimated';
 import { VoiceEnergyProvider, type VoiceEnergyState } from '@/components/voice/light/useVoiceEnergy';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { voiceRuntimeLevelStore, type VoiceRuntimeLevelWriter } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
-import { VOICE_COMPOSER_PLANET_SLOT, VoiceComposerPlanet } from './VoiceComposerPlanet';
+import { VoiceComposerPlanet } from './VoiceComposerPlanet';
+import { createVoiceConversationController } from '@/voice/runtime/controller/VoiceConversationController';
+import { createSdkHandleConnection } from '@/voice/runtime/connection/VoiceRealtimeConnection';
+import { createOpenAiRealtimeProtocolAdapter } from '../../../../../../packages/plugins/openai/src/ui/voice/protocol';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,49 +25,35 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
 }));
 
 const LISTENING: VoiceEnergyState = { luminosity: 0.62, energized: true, direction: 'inward' };
-
 const TEST_ID = 'session-composer-voice';
 
 /** Module-level so a parent re-render passes the *same* handler identity. */
 const onPress = vi.fn();
 
-type StyleBag = Record<string, unknown>;
-
-function flattenStyle(style: unknown, into: StyleBag = {}): StyleBag {
-    if (Array.isArray(style)) {
-        for (const entry of style) flattenStyle(entry, into);
-        return into;
-    }
-    if (style && typeof style === 'object') Object.assign(into, style);
-    return into;
-}
-
 /**
- * The box a pointer can actually hit.
- *
- * Deliberately does **not** count `hitSlop`: react-native-web 0.21 implements it
- * only in the legacy `Touchable` export — `Pressable` and `View` never read it —
- * and the desktop app is the web bundle. Summing it here is what let a 32pt
- * control be reported as a 48pt target for two lanes running.
+ * The composer's Voice control (VE-02): the dot microphone at rest, the planet while live, before
+ * Send. It is drawn compact but pressed through a real platform-size frame, it asks the shared
+ * energy clock to run only while a conversation is live, and it never re-renders with the composer.
  */
-function readPressBox(node: ReactTestInstance): Readonly<{ width: number; height: number }> {
-    const style = flattenStyle(node.props.style);
-    return { width: Number(style.width), height: Number(style.height) };
-}
-
 describe('VoiceComposerPlanet', () => {
     let tree: renderer.ReactTestRenderer | null = null;
+    let input: VoiceRuntimeLevelWriter | null = null;
 
     beforeEach(() => {
         resetReanimatedFrameCallbacks();
         onPress.mockClear();
+        // Real microphone audio at the level store, so only consumer presence decides the clock.
+        input = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'composer-mark-test' });
+        input.write(1);
     });
 
     afterEach(() => {
         act(() => {
             tree?.unmount();
+            input?.close();
         });
         tree = null;
+        input = null;
     });
 
     function scene(
@@ -77,11 +68,10 @@ describe('VoiceComposerPlanet', () => {
             >
                 {mounted ? (
                     <VoiceComposerPlanet
-                        live
+                        pose="ready"
                         muted={false}
-                        stop="cool"
-                        accessibilityLabel="Listening. End the conversation"
-                        accessibilityHint="Stops the spoken conversation. The coding turn keeps running."
+                        accessibilityLabel="End Voice"
+                        accessibilityHint="Ends the spoken conversation. Coding work already started keeps running."
                         onPress={onPress}
                         {...overrides}
                     />
@@ -102,138 +92,104 @@ describe('VoiceComposerPlanet', () => {
         });
     }
 
-    function root(): ReactTestInstance {
-        return tree!.root;
-    }
-
-    /** The rendered Pressable, not the composite that produced it. */
+    /** The rendered press target, not the composite that produced it. */
     function control(): ReactTestInstance {
-        const hosts = root().findAll(
+        const hosts = tree!.root.findAll(
             (node) => typeof node.type === 'string' && node.props?.testID === TEST_ID,
         );
         expect(hosts).toHaveLength(1);
         return hosts[0]!;
     }
 
-    function clippingNodes(): ReactTestInstance[] {
-        return root().findAll(
-            (node) => typeof node.type === 'string'
-                && flattenStyle(node.props?.style).overflow === 'hidden',
-        );
-    }
-
-    it('fills the composer slot, so it reads as the submit button’s peer', () => {
+    it('presses through a real platform-size frame rather than web-inert slop', () => {
         render(scene());
 
-        // The drawn body fills the visual slot. Drawn under-size the planet reads as a
-        // smaller, weaker sibling of the submit rather than its peer (§2.3).
-        const disc = root().findByType('Svg' as never);
-        expect(disc.props.width).toBe(VOICE_COMPOSER_PLANET_SLOT);
-        expect(disc.props.height).toBe(VOICE_COMPOSER_PLANET_SLOT);
-        expect(VOICE_COMPOSER_PLANET_SLOT).toBe(32);
-    });
-
-    it('keeps the 32pt visual inside a real platform-size target, with no phantom slop', () => {
-        render(scene());
-
-        const target = control();
+        const button = tree!.root.findByType(IconButton);
         const targetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-        // A declared `hitSlop` here would be a target that does not exist on the
-        // surface this ships on. The real Pressable frame owns the platform target;
-        // the visual remains intentionally compact inside it.
-        expect(target.props.hitSlop).toBeUndefined();
-        expect(readPressBox(target)).toEqual({
-            width: targetSize,
-            height: targetSize,
-        });
-        expect(targetSize).toBeGreaterThanOrEqual(44);
-
-        const disc = root().findByType('Svg' as never);
-        expect({ width: disc.props.width, height: disc.props.height }).toEqual({
-            width: VOICE_COMPOSER_PLANET_SLOT,
-            height: VOICE_COMPOSER_PLANET_SLOT,
-        });
+        expect(button.props.minimumInteractiveTargetSize).toBeGreaterThanOrEqual(targetSize);
+        expect(button.props.size).toBeLessThan(targetSize);
     });
 
-    it('never clips the breath', () => {
-        render(scene());
+    it('asks the shared energy clock to run only while the planet is live', () => {
+        render(scene({ pose: 'mic' }));
+        const activations = (): readonly boolean[] => readReanimatedFrameCallbacks()[0]?.setActiveCalls ?? [];
+        // At rest the microphone is still art: it never registers as an energy consumer.
+        expect(activations().includes(true)).toBe(false);
 
-        // A 12% inhale overshoots ~2pt per edge; the row's 8pt gap absorbs it.
-        // The ONLY clip in this tree is the planet's own disc — anything else
-        // eats the inhale and the body looks static (§2.3).
-        const clipped = clippingNodes();
-        expect(clipped).toHaveLength(1);
-        expect(flattenStyle(clipped[0]!.props.style)).toMatchObject({
-            width: VOICE_COMPOSER_PLANET_SLOT,
-            borderRadius: VOICE_COMPOSER_PLANET_SLOT,
-        });
-    });
+        update(scene({ pose: 'ready' }));
+        expect(activations().at(-1)).toBe(true);
 
-    it('is a visible energy consumer for exactly as long as it is mounted', () => {
-        render(scene({}, { mounted: false }));
-        const activations = (): readonly boolean[] => {
-            const records = readReanimatedFrameCallbacks();
-            expect(records).toHaveLength(1);
-            return records[0]!.setActiveCalls;
-        };
-        expect(activations()).toEqual([false]);
-
-        update(scene());
-        expect(activations()).toEqual([false, true]);
-
-        update(scene({}, { mounted: false }));
-        expect(activations()).toEqual([false, true, false]);
+        update(scene({ pose: 'mic' }));
+        expect(activations().at(-1)).toBe(false);
     });
 
     it('does not re-render when the composer around it does', () => {
         render(scene());
         const before = control().props;
 
-        // The composer body re-renders on every keystroke. A leaf whose props are
-        // primitives plus one stable handler must not re-run with it — same
-        // element, same style objects (§16.2).
+        // The composer body re-renders on every keystroke; a leaf over primitives and one stable
+        // handler must keep the same element (§16.2).
         update(scene());
-        const after = control().props;
-        expect(after.style).toBe(before.style);
-        expect(after).toBe(before);
+        expect(control().props).toBe(before);
     });
 
     it('carries the caller’s label and hint, and routes the press out', async () => {
         render(scene());
 
         const target = control();
-        expect(target.props.accessibilityLabel).toBe('Listening. End the conversation');
+        expect(target.props.accessibilityLabel).toBe('End Voice');
         expect(target.props.accessibilityHint)
-            .toBe('Stops the spoken conversation. The coding turn keeps running.');
-        expect(target.props.accessibilityRole).toBe('button');
+            .toBe('Ends the spoken conversation. Coding work already started keeps running.');
 
         await act(async () => {
-            target.props.onPress();
+            target.props.onClick?.({}) ?? target.props.onPress?.();
         });
         expect(onPress).toHaveBeenCalledTimes(1);
     });
 
-    it('shows the meter only while the conversation is live', () => {
-        render(scene({ live: false }));
-        // The idle planet is luminous but has nothing to meter (§2.4a row 1).
-        expect(root().findAllByType('Svg' as never).length).toBeGreaterThan(0);
-        const idleBars = root().findAll((node) => node.props?.testID === 'voice-composer-planet-meter');
-        expect(idleBars).toHaveLength(0);
-
-        update(scene({ live: true }));
-        expect(root().findAll((node) => node.props?.testID === 'voice-composer-planet-meter'))
-            .toHaveLength(1);
-    });
-
-    it('marks a muted conversation without adding a second control', () => {
-        render(scene({ live: true, muted: false }));
-        expect(root().findAll((node) => node.props?.testID === 'voice-composer-planet-muted'))
-            .toHaveLength(0);
-
-        update(scene({ live: true, muted: true }));
-        const marks = root().findAll((node) => node.props?.testID === 'voice-composer-planet-muted');
-        expect(marks).toHaveLength(1);
-        // §3.3: a control must never be a child of another control.
-        expect(marks[0]!.props.accessibilityRole).toBeUndefined();
+    it.each(['release', 'jitter', 'drag', 'cancel', 'blur', 'background'] as const)('admits a held turn through the real input owner (%s)', async (outcome) => {
+        const sent: unknown[] = [];
+        let captureOpen = false;
+        const adapter = createOpenAiRealtimeProtocolAdapter({
+            prepare: async () => ({ kind: 'prepared', session: { config: {}, safeMetadata: null, inputCommitRequired: true } }),
+        });
+        const connection = createSdkHandleConnection({ driver: {
+            open: async () => {}, close: async () => {}, sendControl: async (event) => { sent.push(event); },
+        } });
+        const controller = createVoiceConversationController({
+            adapter: { ...adapter, id: 'composer-hold', turnControls: {
+                cancelResponse: 'immediate', truncatePlayback: 'unsupported', clearInput: true,
+                stopSession: true, resumption: 'none', replay: 'none', exactMessage: false,
+            } }, createConnection: async () => connection,
+            machine: { connecting() {}, connected() {}, ending() {}, disconnected() {}, failed() {} },
+            isSelectionCurrent: () => true, onCanonicalEvent: async () => {},
+            holdCapture: { async setOpen({ open }) { captureOpen = open === true; } },
+        });
+        expect(await controller.start({ controlSessionId: 'composer-hold' })).toEqual({ status: 'connected' });
+        try {
+            render(scene({ beginHoldToTalk: controller.beginHoldToTalk }));
+            await act(async () => { control().props.onLongPress(); });
+            expect(captureOpen).toBe(true);
+            const gesture = tree!.root.findAll((node) => typeof node.type === 'string'
+                && node.props.testID === 'session-composer-voice-gesture')[0]!;
+            if (outcome === 'background') await act(async () => {
+                update(scene({ beginHoldToTalk: controller.beginHoldToTalk, isActivelyFocused: false }));
+            });
+            await act(async () => {
+                if (outcome === 'jitter') gesture.props.onTouchMove?.();
+                if (outcome === 'drag') tree!.root.findByType(IconButton).props.onPressOut({ type: 'touchmove' });
+                if (outcome === 'cancel') gesture.props.onTouchCancel();
+                if (outcome === 'blur') tree!.root.findByType(IconButton).props.onFocusChange(false);
+                gesture.props.onTouchEnd();
+                gesture.props.onPointerUp();
+            });
+            expect(captureOpen).toBe(false);
+            expect(sent).toEqual(outcome === 'release' || outcome === 'jitter' ? [
+                { type: 'input_audio_buffer.clear' }, { type: 'input_audio_buffer.commit' }, { type: 'response.create' },
+            ] : [{ type: 'input_audio_buffer.clear' }, { type: 'input_audio_buffer.clear' }]);
+            expect(onPress).not.toHaveBeenCalled();
+        } finally {
+            await controller.stop();
+        }
     });
 });

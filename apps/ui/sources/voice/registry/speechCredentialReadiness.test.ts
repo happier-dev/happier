@@ -352,6 +352,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
         settingsSectionId: 'voice.fixture.future_builtin_speech',
         roles: ['dictation_stt', 'conversation_stt'],
         requirements: ['credential'],
+        supportedPlatforms: ['web'],
       }],
     });
 

@@ -223,6 +223,27 @@ describe('createDeviceSttController', () => {
     }
   });
 
+  it.each(['ios', 'web'])('keeps %s conversation recognition on the device default independently of Reply in', async (platformOs) => {
+    platformOsMock.value = platformOs;
+    const settings = { voice: { ...baseSettings(false).voice, assistantLanguage: 'es', dictation: { language: 'de' } } };
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => settings });
+    await controller.start({ capturePurpose: 'conversation', micSession: createMicSession(), sink: createSink() });
+    expect(start.mock.calls[0]?.[0]).not.toHaveProperty('lang');
+    stop.mockImplementationOnce(() => listeners.end?.({}));
+    await controller.stop();
+  });
+
+  it('uses the independent Dictation language at the device recognition boundary', async () => {
+    const settings = { voice: { ...baseSettings(false).voice, assistantLanguage: 'es', dictation: { language: ' de ' } } };
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => settings });
+    await controller.start({ capturePurpose: 'dictation', micSession: createMicSession(), sink: createSink() });
+    expect(start.mock.calls[0]?.[0]).toMatchObject({ lang: 'de' });
+    stop.mockImplementationOnce(() => listeners.end?.({}));
+    await controller.stop();
+  });
+
   it('demotes web speech recognition to single-utterance (non-continuous) mode', async () => {
     platformOsMock.value = 'web';
     start.mockClear();
@@ -666,7 +687,7 @@ describe('createDeviceSttController', () => {
 
   it('presents the canonical recovery once when native speech recognition denies its secondary permission', async () => {
     requestMicrophonePermission.mockResolvedValueOnce({ granted: true, canAskAgain: true });
-    requestPermissionsAsync.mockResolvedValueOnce({ granted: false });
+    requestPermissionsAsync.mockResolvedValueOnce({ granted: false, canAskAgain: false });
     showMicrophonePermissionDeniedAlert.mockClear();
 
     const { createDeviceSttController } = await import('./DeviceSttController');

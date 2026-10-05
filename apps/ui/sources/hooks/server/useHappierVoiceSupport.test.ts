@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
+import { getStorage } from '@/sync/domains/state/storage';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { useHappierVoiceSupport } from './useHappierVoiceSupport';
 
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 
@@ -7,26 +10,20 @@ import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serve
 
 afterEach(() => {
     vi.unstubAllGlobals();
-    vi.resetModules();
 });
 
 describe('useHappierVoiceSupport', () => {
     it('returns true when voice is enabled', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ voiceEnabled: true });
 
-        const { getStorage } = await import('@/sync/domains/state/storage');
         const storage = getStorage();
         storage.getState().applySettingsLocal({
             experiments: true,
             featureToggles: { voice: true },
         });
 
-        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
         await getServerFeaturesSnapshot({ force: true });
-
-        const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
 
         const hook = await renderHook(() => useHappierVoiceSupport(), {
             flushOptions: { cycles: 6, turns: 2 },
@@ -37,13 +34,10 @@ describe('useHappierVoiceSupport', () => {
     });
 
     it('returns false when voice is enabled but Happier Voice is disabled', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ voiceEnabled: true, happierVoiceEnabled: false });
 
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
         const hook = await renderHook(() => useHappierVoiceSupport(), {
             flushOptions: { cycles: 6, turns: 2 },
         });
@@ -53,13 +47,10 @@ describe('useHappierVoiceSupport', () => {
     });
 
     it('returns false when voice is disabled', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ voiceEnabled: false });
 
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
         const hook = await renderHook(() => useHappierVoiceSupport(), {
             flushOptions: { cycles: 6, turns: 2 },
         });
@@ -69,13 +60,10 @@ describe('useHappierVoiceSupport', () => {
     });
 
     it('fails closed when the request fails', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetchFailure();
 
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        const { useHappierVoiceSupport } = await import('./useHappierVoiceSupport');
         const hook = await renderHook(() => useHappierVoiceSupport(), {
             flushOptions: { cycles: 6, turns: 2 },
         });

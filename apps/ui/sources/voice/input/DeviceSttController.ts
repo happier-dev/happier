@@ -4,7 +4,7 @@ import {
   showMicrophonePermissionDeniedAlert,
 } from '@/utils/platform/microphonePermissions';
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
-import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
+import { resolveLocalVoiceAdapterSettings, resolveLocalVoiceRecognitionLanguage } from '@/voice/local/localVoiceSettings';
 import { normalizeTurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
 import {
   createTurnEndpointController, type TurnEndpointController, type TurnEndpointSignal, } from '@/voice/runtime/input/TurnEndpointController';
@@ -716,9 +716,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     }
 
     const settings = deps.getSettings();
-    const language = typeof settings?.voice?.assistantLanguage === 'string' && settings.voice.assistantLanguage.trim()
-      ? settings.voice.assistantLanguage.trim()
-      : undefined;
+    const language = resolveLocalVoiceRecognitionLanguage(settings, capturePurpose);
 
     const recognizerStartOptions = {
       ...(language ? { lang: language } : {}),

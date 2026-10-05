@@ -221,10 +221,11 @@ describe('localVoiceTtsController', () => {
             expect(bundledSpeechSynthesizeSpy).toHaveBeenCalledWith(expect.objectContaining({
                 entry: expect.objectContaining({ providerId, role: 'both' }),
                 input: 'speak through both roles',
-                model: 'external-model',
-                voiceName: 'external-voice',
-                format: 'wav',
             }));
+            const dispatch = bundledSpeechSynthesizeSpy.mock.calls[0]?.[0];
+            expect(dispatch).not.toHaveProperty('model');
+            expect(dispatch).not.toHaveProperty('voiceName');
+            expect(dispatch).not.toHaveProperty('format');
             expect(playAudioBytesWithStopperSpy).toHaveBeenCalledTimes(1);
             expect(onSpeaking).toHaveBeenCalledTimes(1);
 

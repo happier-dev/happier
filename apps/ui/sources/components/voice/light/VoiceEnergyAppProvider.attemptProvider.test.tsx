@@ -7,8 +7,10 @@ import {
     resetReanimatedFrameCallbacks,
 } from '@/dev/testkit/mocks/reanimated';
 import type { VoiceSessionSnapshot } from '@/voice/session/types';
+import { voiceRuntimeLevelStore, type VoiceRuntimeLevelWriter } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
 import { useVoiceEnergyPresence } from './useVoiceEnergy';
+import { VoiceEnergyAppProvider } from './VoiceEnergyAppProvider';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,10 +67,11 @@ function latestFrameActivation(): boolean | null {
  * §2.4a's activation gate reads "a provider is resolved". That fact must come from the attempt
  * that is running, not from the selection: the selection names the *next* idle admission, so a
  * user who picks Off mid-conversation would otherwise freeze the light — the presence would stop
- * breathing, stop showing amplitude and stop settling while the microphone stayed open.
+ * showing amplitude and settling while the microphone stayed open.
  */
 describe('VoiceEnergyAppProvider attempt provider', () => {
     let tree: renderer.ReactTestRenderer | null = null;
+    let input: VoiceRuntimeLevelWriter | null = null;
 
     beforeEach(() => {
         resetReanimatedFrameCallbacks();
@@ -85,12 +88,12 @@ describe('VoiceEnergyAppProvider attempt provider', () => {
     });
 
     afterEach(() => {
-        act(() => tree?.unmount());
+        act(() => { tree?.unmount(); input?.close(); });
         tree = null;
+        input = null;
     });
 
     async function renderProvider(): Promise<void> {
-        const { VoiceEnergyAppProvider } = await import('./VoiceEnergyAppProvider');
         await act(async () => {
             tree = renderer.create(
                 <VoiceEnergyAppProvider>
@@ -110,7 +113,10 @@ describe('VoiceEnergyAppProvider attempt provider', () => {
             canStop: true,
         };
 
+        input = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'attempt-provider-test' });
+
         await renderProvider();
+        act(() => input!.write(1));
 
         expect(latestFrameActivation()).toBe(true);
     });

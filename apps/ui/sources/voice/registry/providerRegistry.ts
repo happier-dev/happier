@@ -11,6 +11,7 @@ import {
   type VoiceReadinessRole,
   type VoiceRuntimePlatform,
 } from '@happier-dev/protocol';
+import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
 import { z } from 'zod';
 
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
@@ -103,6 +104,8 @@ type VoiceUiRuntimeContributionBase = Readonly<{
   requirementsByMode?: Readonly<Record<string, readonly VoiceReadinessRequirement[]>>;
   supportedPlatforms?: readonly VoiceRuntimePlatform[];
   selectionOptions?: readonly VoiceProviderSelectionOption[];
+  presentation?: VoiceProviderPresentation;
+  mark?: VoiceServiceMark;
   projectSettings?: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => VoiceProviderSettingsProjection;
   /** Trusted host-only readiness source; never projected from public plugin manifests. */
   localReadiness?: Readonly<{
@@ -112,6 +115,7 @@ type VoiceUiRuntimeContributionBase = Readonly<{
   processingDisclosures?: Readonly<Partial<Record<'stt' | 'tts', Readonly<{
     titleKey: string;
     disclosureKey: string;
+    facts?: NonNullable<ExternalVoiceProviderSettingsDescriptor['privacyFacts']>;
   }>>>>;
 }>;
 
@@ -119,7 +123,6 @@ export type VoiceUiRuntimeContribution =
   | (VoiceUiRuntimeContributionBase & Readonly<{
       kind: 'voice.conversation-provider.v1';
       declaration?: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>;
-      presentation?: VoiceProviderPresentation;
     }>)
   | (VoiceUiRuntimeContributionBase & Readonly<{
       kind: 'voice.speech-engine.v1';
@@ -127,7 +130,6 @@ export type VoiceUiRuntimeContribution =
       declaration?: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>;
       catalogs?: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>['catalogs'];
       limits?: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>['limits'];
-      presentation?: VoiceProviderPresentation;
     }>)
   | (VoiceUiRuntimeContributionBase & Readonly<{
       kind: 'voice.turn-support.v1';
@@ -136,6 +138,7 @@ export type VoiceUiRuntimeContribution =
 
 export type VoiceProviderRegistryEntry = VoiceUiRuntimeContribution & Readonly<{
   supportedPlatforms: readonly VoiceRuntimePlatform[];
+  mark?: VoiceServiceMark;
   source:
     | Readonly<{ kind: 'built_in' }>
     | Readonly<{ kind: 'bundled'; pluginId: string }>
@@ -354,6 +357,7 @@ export function projectVoiceProviderDeclarationRegistryBase(input: Readonly<{
   supportedPlatforms: readonly VoiceRuntimePlatform[];
   selectionOptions?: readonly VoiceProviderSelectionOption[];
   providerSettings?: ExternalVoiceProviderSettingsDescriptor;
+  mark?: VoiceServiceMark;
   projectSettings?: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => VoiceProviderSettingsProjection;
 }> {
   const selectionOptions = deepFreeze([...(input.selectionOptions ?? [])]);
@@ -362,6 +366,7 @@ export function projectVoiceProviderDeclarationRegistryBase(input: Readonly<{
     : undefined;
   return deepFreeze({
     roles: [...input.declaration.roles],
+    ...(input.declaration.mark ? { mark: input.declaration.mark } : {}),
     requirements: projectVoiceProviderDeclarationRequirements(input.declaration),
     supportedPlatforms: [...input.declaration.platforms],
     ...(selectionOptions.length > 0 ? { selectionOptions } : {}),

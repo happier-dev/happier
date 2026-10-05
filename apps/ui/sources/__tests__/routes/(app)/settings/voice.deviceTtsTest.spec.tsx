@@ -20,16 +20,13 @@ const modalMockRef = getVoiceSettingsRouteModalMockRef();
 
 installVoiceSettingsRouteModuleMocks({
     storageModule: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        const defaults = settingsParse({});
         return createStorageModuleStub({
-            useSetting: (key: string) => {
-                if (key === 'voice') return voiceSetting;
-                if (key === 'backendEnabledById') return {};
-                if (key === 'backendEnabledByTargetKey') return {};
-                if (key === 'recentMachinePaths') return [];
-                throw new Error(`unexpected useSetting(${key})`);
-            },
-            useSettings: () => settingsParse({}),
+            useSetting: createUseSettingMock({
+                fallback: (key) => key === 'voice' ? voiceSetting : defaults[key],
+            }),
+            useSettings: () => ({ ...defaults, voice: voiceSetting }),
         });
     },
 });
@@ -103,6 +100,9 @@ vi.mock('@/constants/Languages', () => ({
     LANGUAGES: [{ code: 'en', name: 'English' }],
     findLanguageByCode: () => ({ code: 'en', name: 'English' }),
 }));
+
+// Prepare the real screen graph during collection so cold compilation is outside the interaction budget.
+await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
 
 describe('VoiceSettingsScreen (device TTS)', () => {
     beforeEach(() => {

@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedRef, type AnimatedRef } from 'react-native-reanimated';
 
 /**
  * A shared registry of rectangles a floating companion must not start a drag from.
  *
- * The registry is fully generic — it only ever holds measured rects — and there is exactly **one**
+ * The registry holds rectangles and native measurement refs, and there is exactly **one**
  * provider for the whole app shell so the pet and the Voice orb agree on the same regions. A second
  * provider would mean each companion sees only its own subtree's rects, which is how a drag starts
  * on top of another companion's action row.
@@ -16,6 +17,8 @@ export type CompanionNoDragRegionRect = Readonly<{
     y: number;
     width: number;
     height: number;
+    /** Native controls are measured at touch admission, including their ancestors' transforms. */
+    nativeRef?: AnimatedRef<View>;
 }>;
 
 type CompanionNoDragRegionRegistry = Readonly<{
@@ -81,6 +84,7 @@ export function pointIntersectsCompanionNoDragRegions(
     point: Readonly<{ x: number; y: number }>,
     regions: readonly CompanionNoDragRegionRect[],
 ): boolean {
+    'worklet';
     return regions.some((region) => (
         point.x >= region.x
         && point.x <= region.x + region.width
@@ -93,9 +97,11 @@ export function CompanionNoDragRegion(props: Readonly<{
     children?: React.ReactNode;
     style?: StyleProp<ViewStyle>;
     testID?: string;
+    dataSet?: Readonly<Record<string, string>>;
 }>): React.ReactElement {
     const id = React.useId();
     const { registerRegion, unregisterRegion } = React.useContext(CompanionNoDragRegionContext);
+    const nativeRef = useAnimatedRef<View>();
 
     React.useEffect(() => () => {
         unregisterRegion(id);
@@ -109,16 +115,20 @@ export function CompanionNoDragRegion(props: Readonly<{
             y: layout.y,
             width: layout.width,
             height: layout.height,
+            ...(Platform.OS !== 'web' ? { nativeRef } : {}),
         });
-    }, [id, registerRegion]);
+    }, [id, nativeRef, registerRegion]);
 
     return (
-        <View
+        <Animated.View
+            ref={nativeRef}
+            collapsable={false}
             testID={props.testID}
             style={props.style}
             onLayout={handleLayout}
+            {...(Platform.OS === 'web' ? { dataSet: props.dataSet } : {})}
         >
             {props.children}
-        </View>
+        </Animated.View>
     );
 }

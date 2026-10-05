@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { VOICE_TRANSCRIPT_ACTIVE_RENDER_WINDOW, VOICE_TRANSCRIPT_SELECTOR_CACHE_MAX } from './voiceTranscriptBounds';
 import { selectVoiceTranscriptEntriesForConversationSession } from './voiceTranscriptSelectors';
+import { voiceMomentsTranslations } from '@/text/translations/voiceMomentsTranslations';
 
 function buildUserMessage(seq: number) {
     return {
@@ -59,6 +60,24 @@ function buildCanonicalCountingSession(
 }
 
 describe('voiceTranscriptSelectors', () => {
+    it('renders a persisted continuation relative to each viewer, never its author’s first-person body', () => {
+        const state = { sessionMessages: { conversation: { messages: [{
+            kind: 'agent-text', id: 'continuation', createdAt: 1, text: 'Voice continued on this device.',
+            meta: { happier: { kind: 'voice_note.v1', payload: { v: 1, continuation: {
+                v: 1, deviceId: 'new-device', deviceDisplayName: 'Alice’s phone',
+                conversation: { serverId: 'home', sessionId: 'conversation' },
+            } } } },
+        }] } } };
+        const oldViewer = selectVoiceTranscriptEntriesForConversationSession(state, 'conversation', { viewerDeviceId: 'old-device' });
+        expect(oldViewer[0]?.text).toBe(voiceMomentsTranslations.en.continuedOn({ device: 'Alice’s phone' }));
+        const authorViewer = selectVoiceTranscriptEntriesForConversationSession(state, 'conversation', { viewerDeviceId: 'new-device' });
+        expect(authorViewer[0]?.text).not.toBe(oldViewer[0]?.text);
+        expect(selectVoiceTranscriptEntriesForConversationSession(state, 'conversation', { viewerDeviceId: 'new-device' })).toBe(authorViewer);
+        const legacy = { sessionMessages: { conversation: { messages: [{ ...state.sessionMessages.conversation.messages[0],
+            meta: { happier: { kind: 'voice_note.v1', payload: { v: 1 } } }, text: 'An ordinary old note',
+        }] } } };
+        expect(selectVoiceTranscriptEntriesForConversationSession(legacy, 'conversation')[0]?.text).toBe('An ordinary old note');
+    });
     it('uses the canonical local id when a persisted acknowledgement also has a server id', () => {
         const entries = selectVoiceTranscriptEntriesForConversationSession({
             sessionMessages: {

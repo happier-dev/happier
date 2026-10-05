@@ -10,21 +10,67 @@ import { OPENAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../packages/plugin
 import { XAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../packages/plugins/xai/src/protocol/voice/settings';
 import { tLoose } from '@/text';
 import { projectVoiceProcessingDisclosures } from './projectVoiceProcessingDisclosures';
+import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { PLUGIN_MANIFEST as openaiManifest } from '../../../../../packages/plugins/openai/src/manifest';
+import { projectBundledVoiceManifestContributions } from '@/voice/registry/bundledVoiceManifestProjection';
+import { VoiceProviderSettingsPresentationFieldSchema, VoiceProviderSettingsSchema } from '../../../../../packages/protocol/src/plugins/contributions/voiceProviders';
 
 /**
  * Resolves a projected disclosure exactly the way the Privacy view does, so the
  * assertions below read the copy a user actually sees rather than a key.
  */
 function disclosureText(
-  disclosure: string | Readonly<{ key: string; fallback: string }> | undefined,
+  disclosure: string | Readonly<{ key: string; fallback: string }> | null | undefined,
 ): string {
-  if (disclosure === undefined) return '';
+  if (disclosure == null) return '';
   if (typeof disclosure === 'string') return disclosure;
   const translated = tLoose(disclosure.key);
   return translated === disclosure.key ? disclosure.fallback : translated;
 }
 
 describe('projectVoiceProcessingDisclosures', () => {
+  it('includes selected local speech models instead of omitting their processing facts', () => {
+    const config = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const voice = writeLocalConversationVoiceSettings({ ...voiceSettingsDefaults, providerId: 'local_conversation' }, {
+      ...config, stt: { ...config.stt, provider: 'local_neural' }, tts: { ...config.tts, provider: 'local_neural' },
+    });
+    const entries = projectVoiceProcessingDisclosures(voice).filter((entry) => entry.providerIds.includes('local_neural'));
+    expect(entries).toHaveLength(2);
+    expect(entries.every((entry) => entry.facts?.audioDestination && entry.facts.processor && entry.facts.retention)).toBe(true);
+  });
+  it('admits complete privacy facts and explicit numeric stepper presentation at the contribution boundary', () => {
+    const facts = { audioDestination: 'Endpoint', processor: 'Operator', retention: 'Account policy' };
+    expect(VoiceProviderSettingsSchema.parse({ schemaVersion: 1, fields: [], privacyFacts: facts }).privacyFacts).toEqual(facts);
+    expect(VoiceProviderSettingsSchema.safeParse({ schemaVersion: 1, fields: [], privacyFacts: { processor: 'Operator' } }).success).toBe(false);
+    const field = { kind: 'number', path: 'messages', numericControl: 'stepper', step: 1, min: 0, max: 50, unitKey: 'messages' };
+    expect(VoiceProviderSettingsPresentationFieldSchema.safeParse(field).success).toBe(true);
+    expect(VoiceProviderSettingsPresentationFieldSchema.safeParse({ ...field, step: undefined }).success).toBe(false);
+  });
+  it('projects plugin-declared compact facts without inferring a vendor policy from its id', () => {
+    const declaration = projectBundledVoiceManifestContributions(openaiManifest)[0]!.declaration;
+    const registry = createVoiceProviderRegistry({
+      bundledContributions: projectBundledVoiceManifestContributions(openaiManifest),
+      bundledPresentations: [{ providerId: 'happier.voice.openai/realtime-openai', settingsSectionId: 'openai' }],
+    });
+    const entries = projectVoiceProcessingDisclosures(voiceSettingsParse({
+      providerId: 'happier.voice.openai/realtime-openai',
+    }), registry);
+    expect(entries[0]?.facts).toEqual(declaration.settings?.privacyFacts);
+    expect(entries[0]?.facts?.audioDestination).toBeDefined();
+    expect(entries[0]?.facts?.processor).toBeDefined();
+    expect(entries[0]?.facts?.retention).toBeDefined();
+    const factsOnly = createVoiceProviderRegistry({
+      bundledContributions: projectBundledVoiceManifestContributions({
+        ...openaiManifest,
+        contributes: { ...openaiManifest.contributes, voiceProviders: [{
+          ...declaration,
+          settings: { ...declaration.settings, privacyDisclosure: undefined },
+        }] },
+      }),
+      bundledPresentations: [{ providerId: 'happier.voice.openai/realtime-openai', settingsSectionId: 'openai' }],
+    });
+    expect(projectVoiceProcessingDisclosures(voiceSettingsParse({ providerId: 'happier.voice.openai/realtime-openai' }), factsOnly)[0]?.facts).toEqual(declaration.settings?.privacyFacts);
+  });
   it('projects the selected conversation and explicit Dictation providers from their registries', () => {
     const voice = voiceSettingsParse({
       ...voiceSettingsDefaults,
@@ -61,7 +107,7 @@ describe('projectVoiceProcessingDisclosures', () => {
     const disclosure = disclosures.find((entry) => entry.providerIds.includes(providerId));
     const text = typeof disclosure?.disclosure === 'string'
       ? disclosure.disclosure
-      : disclosure?.disclosure.fallback;
+      : disclosure?.disclosure?.fallback;
     expect(text).toMatch(/audio/iu);
     expect(text).toMatch(/context/iu);
     expect(text).toMatch(/client-tool definitions/iu);

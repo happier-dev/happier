@@ -67,12 +67,6 @@ vi.mock('@/sync/domains/state/storage', () => ({
   },
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-  getStorage: () => ({
-    getState: () => ({ localSettings: { uiContentWidthMode: undefined } }),
-  }),
-}));
-
 vi.mock('@/sync/store/hooks', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useActiveServerAccountScope: () => null,

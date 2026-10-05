@@ -47,6 +47,13 @@ export type RealtimeSettingsDescriptor = Readonly<{
   }>;
   links: Readonly<Record<string, unknown>>;
   fields: readonly RealtimeSettingsFieldDescriptor[];
+  groups?: readonly Readonly<{
+    id: string;
+    titleKey: unknown;
+    descriptionKey?: unknown;
+    fieldPaths: readonly string[];
+    includeCredentials?: boolean;
+  }>[];
 }>;
 
 export type RealtimeProviderSettingsOwner = Readonly<{
@@ -56,6 +63,15 @@ export type RealtimeProviderSettingsOwner = Readonly<{
   readLegacySecret?(value: unknown): unknown | null;
   migrateLegacy?(value: unknown): Readonly<{ config: Readonly<Record<string, unknown>>; root?: unknown }> | null;
 }>;
+
+/** Billing only hides BYO controls; search consumes the same visibility as the rendered form. */
+export function resolveVisibleRealtimeSettingsDescriptor(
+  descriptor: RealtimeSettingsDescriptor,
+  config: Readonly<Record<string, unknown>> | null,
+): RealtimeSettingsDescriptor {
+  if (descriptor.mode === 'byo' || config?.billingMode === 'byo' || !descriptor.modes.includes('byo')) return descriptor;
+  return { ...descriptor, fields: descriptor.fields.filter((field) => field.kind === 'welcome') };
+}
 
 export function readRealtimeSavedSecretCredentialPurpose(
   descriptor: RealtimeSettingsDescriptor | null | undefined,
@@ -99,6 +115,7 @@ export function parseRealtimeSettingsDescriptor(
     credential: Object.freeze({ ...presentation.credential }),
     links: Object.freeze({ ...presentation.links }),
     fields: Object.freeze(fields),
+    ...(presentation.groups ? { groups: Object.freeze(presentation.groups.map((group) => Object.freeze({ ...group, fieldPaths: Object.freeze([...group.fieldPaths]) }))) } : {}),
   });
 }
 

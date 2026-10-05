@@ -40,10 +40,12 @@ describe('realtime settings descriptor boundary', () => {
         titleKey: 'settingsVoice.realtimeProviders.speed.title',
         subtitleKey: 'settingsVoice.realtimeProviders.speed.subtitle',
       }],
+      groups: [{ id: 'voice', titleKey: 'voice.output', fieldPaths: ['nested.value'] }],
     });
 
     expect(descriptor).toMatchObject({ providerId: 'acme_realtime', mode: 'byo' });
     expect(descriptor?.fields).toHaveLength(1);
+    expect(descriptor?.groups).toEqual([{ id: 'voice', titleKey: 'voice.output', fieldPaths: ['nested.value'] }]);
   });
 
   it('projects the canonical provider-conversation retention into privacy copy metadata', () => {

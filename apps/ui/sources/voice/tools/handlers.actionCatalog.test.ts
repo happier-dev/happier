@@ -52,7 +52,7 @@ describe('Voice Action reference catalog', () => {
 
     const result = JSON.parse(await handlers[searchToolName]!({ query: 'file ticket' }));
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(result.actionSpecs).toContainEqual(expect.objectContaining({
       id: contributedAction.id,
       title: contributedAction.title,

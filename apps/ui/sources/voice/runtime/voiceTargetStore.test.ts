@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('voiceTargetStore', () => {
+  it('shares default scope/capability policy while preserving explicit composer and Home intents', async () => {
+    const { resolveVoiceIdleTarget } = await import('./voiceTargetStore');
+    const focusedSessionAddress = { serverId: 'home-b', sessionId: 'open' };
+    const lastFocusedSessionAddress = { serverId: 'home-a', sessionId: 'previous' };
+    const facts = { scopeDefault: 'global' as const, allowsGlobalStart: true, focusedSessionAddress, lastFocusedSessionAddress };
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'default' } })).toEqual({ kind: 'global' });
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'default' }, scopeDefault: 'session' })).toEqual({ kind: 'session', sessionAddress: focusedSessionAddress });
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'default' }, allowsGlobalStart: false })).toEqual({ kind: 'session', sessionAddress: focusedSessionAddress });
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'default' }, allowsGlobalStart: false, focusedSessionAddress: null })).toEqual({ kind: 'session', sessionAddress: lastFocusedSessionAddress });
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'default' }, scopeDefault: 'session', focusedSessionAddress: null, lastFocusedSessionAddress: null })).toEqual({ kind: 'session', sessionAddress: null });
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'session', sessionAddress: null } })).toEqual({ kind: 'session', sessionAddress: null });
+    expect(resolveVoiceIdleTarget({ ...facts, intent: { kind: 'global' }, scopeDefault: 'session', allowsGlobalStart: false })).toEqual({ kind: 'global' });
+  });
   it('stores primary, focused, and tracked targets by qualified address', async () => {
     vi.resetModules();
     const { useVoiceTargetStore } = await import('./voiceTargetStore');

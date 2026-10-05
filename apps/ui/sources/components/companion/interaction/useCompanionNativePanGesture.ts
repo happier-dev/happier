@@ -2,6 +2,8 @@ import * as React from 'react';
 import type { ViewStyle } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import Animated, {
+    cancelAnimation,
+    measure,
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
@@ -10,7 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { COMPANION_DRAG_THRESHOLD_PX } from './companionPointerDragConfig';
-import type { CompanionNoDragRegionRect } from './CompanionNoDragRegion';
+import { pointIntersectsCompanionNoDragRegions, type CompanionNoDragRegionRect } from './CompanionNoDragRegion';
 import {
     projectCompanionRelease,
     resolveCompanionReleaseSpringConfig,
@@ -88,6 +90,8 @@ export type UseCompanionNativePanGestureParams<TDragState> = Readonly<{
     releaseMotion: CompanionReleaseMotion;
     /** Defaults to the pet-compatible animated behavior. */
     motionPolicy?: CompanionDragMotionPolicy;
+    /** Shared-value consumers publish only the final position; the pet keeps its continuous point. */
+    positionPublication?: 'continuous' | 'release';
     resolveReleaseTarget?: CompanionReleaseTargetResolver;
     /** Horizontal drag distance → the companion's own drag state. Omitted when it has none. */
     resolveDragState?: (translationX: number) => TDragState | null;
@@ -118,15 +122,17 @@ function eventStartedInNoDragRegion(
     regions: readonly CompanionNoDragRegionRect[],
 ): boolean {
     'worklet';
-    const x = readFinite(event.x, readFinite(event.absoluteX));
-    const y = readFinite(event.y, readFinite(event.absoluteY));
+    const x = readFinite(event.absoluteX, readFinite(event.x));
+    const y = readFinite(event.absoluteY, readFinite(event.y));
     for (const region of regions) {
-        if (
-            x >= region.x
-            && x <= region.x + region.width
-            && y >= region.y
-            && y <= region.y + region.height
-        ) {
+        // Read screen coordinates on the UI thread at admission: onLayout is parent-relative and
+        // doesn't run as an ancestor's spring/transform moves the control.
+        const measured = region.nativeRef ? measure(region.nativeRef) : null;
+        if (region.nativeRef && !measured) continue;
+        const rect = measured
+            ? { id: region.id, x: measured.pageX, y: measured.pageY, width: measured.width, height: measured.height }
+            : region;
+        if (pointIntersectsCompanionNoDragRegions({ x, y }, [rect])) {
             return true;
         }
     }
@@ -199,16 +205,26 @@ export function useCompanionNativePanGesture<TDragState = never>(
     const snapMotion = params.motionPolicy === 'snap';
     const resolveReleaseTarget = params.resolveReleaseTarget;
     const resolveDragState = params.resolveDragState;
+    const continuousPosition = params.positionPublication !== 'release';
 
     const gesture = React.useMemo(() => Gesture.Pan()
         .minDistance(COMPANION_NATIVE_PAN_DRAG_THRESHOLD_PT)
         .withTestId('companion-native-pan-gesture')
+        .onTouchesDown((event, manager) => {
+            const touch = event.allTouches[0];
+            ignored.value = touch ? eventStartedInNoDragRegion(touch, params.noDragRegions) : false;
+            // Fail before recognition, rather than recognizing a pan that only ignores updates:
+            // recognition itself cancels the nested native control's press.
+            if (ignored.value) manager.fail();
+        })
         .onBegin((event: NativePanEvent) => {
             ignored.value = eventStartedInNoDragRegion(event, params.noDragRegions);
             moved.value = false;
             startX.value = translateX.value;
             startY.value = translateY.value;
             if (!ignored.value) {
+                cancelAnimation(translateX);
+                cancelAnimation(translateY);
                 dragProgress.value = snapMotion
                     ? 1
                     : withTiming(1, { duration: COMPANION_DRAG_LIFT_IN_MS });
@@ -230,7 +246,7 @@ export function useCompanionNativePanGesture<TDragState = never>(
             }, params.bounds);
             translateX.value = nextPoint.x;
             translateY.value = nextPoint.y;
-            runOnJS(publishPoint)(nextPoint);
+            if (continuousPosition) runOnJS(publishPoint)(nextPoint);
 
             if (
                 resolveDragState
@@ -282,8 +298,9 @@ export function useCompanionNativePanGesture<TDragState = never>(
             dragProgress.value = snapMotion
                 ? 0
                 : withTiming(0, { duration: COMPANION_DRAG_LIFT_OUT_MS });
-            runOnJS(publishDragState)(null);
+            if (resolveDragState) runOnJS(publishDragState)(null);
         }), [
+            continuousPosition,
             commitPosition,
             dragProgress,
             ignored,

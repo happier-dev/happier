@@ -64,7 +64,7 @@ describe('LocalVoiceTtsGroup', () => {
     primeWebAudioPlaybackSpy.mockReset();
   });
 
-  it('uses the localized row titles as the accessible names for both switches', async () => {
+  it('uses the localized row title as the accessible name of its switch', async () => {
     const { LocalVoiceTtsGroup } = await import('./LocalVoiceTtsGroup');
     const screen = await renderScreen(React.createElement(LocalVoiceTtsGroup, {
       cfgTts: {
@@ -91,10 +91,6 @@ describe('LocalVoiceTtsGroup', () => {
       {
         title: 'settingsVoice.local.autoSpeak',
         accessibilityLabel: 'settingsVoice.local.autoSpeak',
-      },
-      {
-        title: 'settingsVoice.local.bargeIn',
-        accessibilityLabel: 'settingsVoice.local.bargeIn',
       },
     ]);
   });

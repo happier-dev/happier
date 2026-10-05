@@ -11,6 +11,7 @@ import { renderHook } from '@/dev/testkit';
  */
 const springCalls = vi.hoisted(() => [] as Array<Readonly<Record<string, unknown>>>);
 const timingCalls = vi.hoisted(() => [] as Array<Readonly<Record<string, unknown>>>);
+const measurements = vi.hoisted(() => new Map<unknown, { pageX: number; pageY: number; width: number; height: number }>());
 
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
@@ -18,6 +19,7 @@ vi.mock('react-native-reanimated', async () => {
     return {
         ...base,
         default: (base as { default?: unknown }).default,
+        measure: (ref: unknown) => measurements.get(ref) ?? null,
         withSpring: <T,>(value: T, config?: Readonly<Record<string, unknown>>): T => {
             springCalls.push(config ?? {});
             return value;
@@ -37,7 +39,7 @@ import {
 import { resolveCompanionReleaseSpringConfig } from './companionReleaseMotion';
 import { PET_COMPANION_RELEASE_MOTION } from '@/components/pets/interaction/petPointerDragBindings';
 import { resolvePetNativeDragAnimationState } from '@/components/pets/interaction/resolvePetDragAnimationState';
-import { VOICE_ORB_RELEASE_MOTION } from '@/components/voice/orb/voiceOrbGeometry';
+import { VOICE_ORB_RELEASE_MOTION } from '@/components/voice/presence/voicePresenceGeometry';
 
 type TestGesture = Readonly<{
     __config: Readonly<{ minDistance?: number; testId?: string }>;
@@ -49,6 +51,7 @@ const bounds = { minX: 12, maxX: 282, minY: 71, maxY: 394 } as const;
 beforeEach(() => {
     springCalls.length = 0;
     timingCalls.length = 0;
+    measurements.clear();
 });
 
 function flick(gesture: TestGesture, event: Readonly<{
@@ -63,6 +66,83 @@ function flick(gesture: TestGesture, event: Readonly<{
 }
 
 describe('useCompanionNativePanGesture', () => {
+    it('measures exclusions at touch admission after their host moves, in absolute screen coordinates', async () => {
+        // A native ref is opaque outside Reanimated; this boundary supplies its current OS measurement.
+        const nativeRef = (() => 1) as unknown as import('react-native-reanimated').AnimatedRef<import('react-native').View>;
+        const hook = await renderHook(() => useCompanionNativePanGesture({
+            bounds, initialPoint: { x: 120, y: 200 },
+            noDragRegions: [{ id: 'transport', x: 10, y: 15, width: 80, height: 60, nativeRef }],
+            releaseMotion: VOICE_ORB_RELEASE_MOTION,
+        }));
+        const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+        const fail = vi.fn();
+        measurements.set(nativeRef, { pageX: 320, pageY: 480, width: 80, height: 60 });
+        await act(async () => {
+            gesture.__handlers.onTouchesDown?.({ allTouches: [{ x: 10, y: 15, absoluteX: 335, absoluteY: 495 }] }, { fail });
+            gesture.__handlers.onBegin?.({ x: 10, y: 15, absoluteX: 335, absoluteY: 495 });
+            gesture.__handlers.onUpdate?.({ translationX: 60, translationY: 45 });
+        });
+        expect(fail).toHaveBeenCalledOnce();
+        expect(hook.getCurrent().translateX.value).toBe(120);
+        // The same region moved with its parent spring: no JS re-layout or stale rect needed.
+        measurements.set(nativeRef, { pageX: 400, pageY: 550, width: 80, height: 60 });
+        fail.mockClear();
+        await act(async () => {
+            gesture.__handlers.onTouchesDown?.({ allTouches: [{ absoluteX: 335, absoluteY: 495 }] }, { fail });
+            gesture.__handlers.onBegin?.({ absoluteX: 335, absoluteY: 495 });
+            gesture.__handlers.onUpdate?.({ translationX: 60, translationY: 45 });
+        });
+        expect(fail).not.toHaveBeenCalled();
+        expect(hook.getCurrent().translateX.value).toBe(180);
+        expect(hook.getCurrent().translateY.value).toBe(245);
+        await hook.unmount();
+    });
+    it('fails recognition for a screen-space control before pan can cancel its tap', async () => {
+        const hook = await renderHook(() => useCompanionNativePanGesture({
+            bounds, initialPoint: { x: 120, y: 200 },
+            noDragRegions: [{ id: 'transport', x: 220, y: 280, width: 80, height: 60 }],
+            releaseMotion: VOICE_ORB_RELEASE_MOTION,
+        }));
+        const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+        const fail = vi.fn();
+        await act(async () => {
+            gesture.__handlers.onTouchesDown?.({ allTouches: [{ x: 12, y: 15, absoluteX: 230, absoluteY: 290 }] }, { fail });
+            gesture.__handlers.onBegin?.({ x: 12, y: 15, absoluteX: 230, absoluteY: 290 });
+            gesture.__handlers.onUpdate?.({ translationX: 70, translationY: 60 });
+            gesture.__handlers.onEnd?.({ translationX: 70, translationY: 60 });
+        });
+        expect(fail).toHaveBeenCalledOnce();
+        expect(hook.getCurrent().translateX.value).toBe(120);
+        expect(hook.getCurrent().translateY.value).toBe(200);
+        expect(hook.getCurrent().shouldSuppressPress()).toBe(false);
+        await hook.unmount();
+    });
+
+    it('keeps shared-only motion off React while publishing the final release position', async () => {
+        let renders = 0;
+        const onDragRelease = vi.fn();
+        const hook = await renderHook(() => {
+            renders++;
+            return useCompanionNativePanGesture({
+                bounds, initialPoint: { x: 120, y: 200 }, noDragRegions: [],
+                releaseMotion: VOICE_ORB_RELEASE_MOTION,
+                positionPublication: 'release', onDragRelease,
+            });
+        });
+        const before = renders;
+        const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+        await act(async () => { gesture.__handlers.onBegin?.({ absoluteX: 120, absoluteY: 200 }); });
+        for (let i = 1; i <= 20; i++) {
+            await act(async () => { gesture.__handlers.onUpdate?.({ translationX: i, translationY: -i }); });
+        }
+        expect(hook.getCurrent().translateX.value).toBe(140);
+        expect(hook.getCurrent().translateY.value).toBe(180);
+        expect(renders).toBe(before);
+        await act(async () => { gesture.__handlers.onEnd?.({ translationX: 20, translationY: -20 }); });
+        expect(onDragRelease).toHaveBeenCalledWith({ velocityX: 0, velocityY: 0, target: { x: 140, y: 180 } });
+        expect(hook.getCurrent().point).toEqual({ x: 140, y: 180 });
+        await hook.unmount();
+    });
     it('uses a 4 pt Pan gesture threshold and ignores starts inside no-drag regions', async () => {
         const onPositionChange = vi.fn();
         const hook = await renderHook(() => useCompanionNativePanGesture({

@@ -3,7 +3,7 @@ import {
     describeEffectiveModelMode,
 } from '@/sync/domains/models/describeEffectiveModelMode';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { Metadata } from '@happier-dev/session-core/state';
 
 export type DaemonVoiceAgentModelIds = Readonly<{
     chatModelId: string;
@@ -21,7 +21,8 @@ export type DaemonVoiceAgentModelIds = Readonly<{
  * unavailable case explicitly.
  */
 export function resolveDaemonVoiceAgentModelIds(params: {
-    session: Session;
+    modelMode: Session['modelMode'];
+    metadata: Metadata | null;
     agent: {
         chatModelSource?: 'session' | 'custom';
         chatModelId?: string;
@@ -29,11 +30,11 @@ export function resolveDaemonVoiceAgentModelIds(params: {
         commitModelId?: string;
     };
 }): DaemonVoiceAgentModelIds | null {
-    const metadata = readSessionOwnerMetadataView(params.session);
+    const metadata = params.metadata;
     const agentId = resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return null;
 
-    const sessionSelected = (params.session.modelMode ?? 'default') as any;
+    const sessionSelected = params.modelMode ?? 'default';
 
     const chatSelected =
         params.agent.chatModelSource === 'session'

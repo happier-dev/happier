@@ -4,7 +4,7 @@ import {
   createVoiceNativeWebRtcBootstrap,
   loadVoiceNativeWebRtcRuntime,
   VOICE_NATIVE_WEBRTC_INCOMPATIBLE,
-} from './nativeWebRtcRuntime';
+} from './nativeWebRtcRuntime.shared';
 
 const CURRENT_IOS_WEBRTC_AUDIO_LIFECYCLE = Object.freeze({
   audioDeviceModuleSetAutomaticAudioSessionConfiguration() {},

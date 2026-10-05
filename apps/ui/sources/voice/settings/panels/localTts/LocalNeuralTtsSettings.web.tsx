@@ -1,8 +1,5 @@
 import * as React from 'react';
 
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { t } from '@/text';
@@ -11,9 +8,11 @@ import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInferen
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
-import { Icon } from '@/components/ui/icons/Icon';
 import { useDaemonVoiceModelCatalogController } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 import { resolveDaemonTtsVoiceSelection } from './resolveDaemonTtsVoiceSelection';
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
+import { LocalNeuralTtsSpeedItem } from './LocalNeuralTtsSpeedItem';
 
 export function LocalNeuralTtsSettings(props: {
     cfgKokoro: VoiceLocalTtsSettings['localNeural'];
@@ -22,7 +21,6 @@ export function LocalNeuralTtsSettings(props: {
     popoverBoundaryRef?: React.RefObject<any> | null;
     daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
-    const { theme } = useUnistyles();
     const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'speed'>(null);
 
     const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
@@ -62,18 +60,22 @@ export function LocalNeuralTtsSettings(props: {
 
     return (
         <>
+            <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsExecution}>
             <DaemonVoiceInferenceExecutionDropdown
                 execution={execution}
                 setExecution={(nextExecution) => applyKokoroUpdate({ execution: nextExecution })}
                 popoverBoundaryRef={props.popoverBoundaryRef}
                 allowDeviceSelection={executionPolicy.allowDeviceSelection}
             />
+            </SettingAnchor>
 
             <SelectedDaemonModelPackRow
                 packId={daemonPackId}
                 kind="tts_sherpa"
+                setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId}
             />
 
+            <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsVoiceId}>
             <DropdownMenu
                 open={openMenu === 'voiceId'}
                 onOpenChange={(next) => setOpenMenu(next ? 'voiceId' : null)}
@@ -102,37 +104,14 @@ export function LocalNeuralTtsSettings(props: {
                     setOpenMenu(null);
                 }}
             />
+            </SettingAnchor>
 
-            <DropdownMenu
+            <LocalNeuralTtsSpeedItem
                 open={openMenu === 'speed'}
                 onOpenChange={(next) => setOpenMenu(next ? 'speed' : null)}
-                variant="selectable"
-                search={false}
-                selectedId={String(effectiveSpeed)}
-                showCategoryTitles={false}
-                matchTriggerWidth={true}
-                connectToTrigger={true}
-                rowKind="item"
+                speed={effectiveSpeed}
                 popoverBoundaryRef={props.popoverBoundaryRef}
-                itemTrigger={{
-                    title: t('settingsVoice.local.kokoro.speed.title'),
-                    subtitle: t('settingsVoice.local.kokoro.speed.subtitle'),
-                    showSelectedSubtitle: false,
-                }}
-                items={[0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 2].map((speed) => ({
-                    id: String(speed),
-                    title: String(speed),
-                    icon: (
-                        <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                            <Icon name="speedometer" size={20} color={theme.colors.text.secondary} />
-                        </View>
-                    ),
-                }))}
-                onSelect={(id) => {
-                    const parsed = Number(id);
-                    applyKokoroUpdate({ speed: Number.isFinite(parsed) ? parsed : null });
-                    setOpenMenu(null);
-                }}
+                onSelect={(speed) => applyKokoroUpdate({ speed })}
             />
         </>
     );

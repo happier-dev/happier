@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
+import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -14,7 +15,7 @@ function setCurrentConversationSession(conversationSessionId: string): void {
     getStorage().setState((state) => ({
         sessions: {
             ...state.sessions,
-            [conversationSessionId]: createSessionFixture({ id: conversationSessionId }),
+            [conversationSessionId]: createSessionFixture({ id: conversationSessionId, serverId: 'server-a' }),
         },
     }));
 }
@@ -76,11 +77,6 @@ describe('sendVoiceSessionComposerText', () => {
         });
 
         expect(enqueuePendingMessage).toHaveBeenCalledWith('carrier-s1', 'hello', undefined, {
-            happierProvenanceV1: {
-                v: 1,
-                kind: 'host',
-                producer: 'executionRunVoice',
-            },
             happier: {
                 kind: 'conversation_turn.v1',
                 payload: { v: 1 },

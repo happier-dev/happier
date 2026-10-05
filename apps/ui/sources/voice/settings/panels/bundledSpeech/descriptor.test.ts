@@ -5,11 +5,48 @@ import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { readBundledSpeechSettingsDescriptorFromEntry } from './descriptor';
+import { PLUGIN_MANIFEST as OPENAI_COMPAT_MANIFEST } from '../../../../../../../packages/plugins/openai-compat/src/manifest.js';
+import { VOICE_PROVIDER_PRESENTATIONS as OPENAI_COMPAT_PRESENTATIONS } from '../../../../../../../packages/plugins/openai-compat/src/ui/voice/entries.js';
 
 const GOOGLE_GEMINI_STT_ID = 'happier.voice.google/gemini-stt';
 const GOOGLE_CLOUD_TTS_ID = 'happier.voice.google/google-cloud-tts';
 
 describe('bundled speech settings descriptor projection', () => {
+  it('keeps the source OpenAI-compatible TTS panel available with its declared endpoint input limit', () => {
+    const sourceDeclarations = OPENAI_COMPAT_MANIFEST.contributes.voiceProviders;
+    if (!sourceDeclarations) throw new Error('Expected source Voice contributions');
+    const registry = createVoiceProviderRegistry({
+      bundledContributions: sourceDeclarations.map((declaration) => ({
+        pluginId: OPENAI_COMPAT_MANIFEST.id,
+        providerId: `${OPENAI_COMPAT_MANIFEST.id}/${declaration.id}`,
+        declaration: VoiceProviderContributionSchema.parse(declaration),
+      })),
+      bundledPresentations: OPENAI_COMPAT_PRESENTATIONS,
+    });
+    const providerId = `${OPENAI_COMPAT_MANIFEST.id}/tts`;
+    const entry = registry.get(providerId);
+    const descriptor = readBundledSpeechSettingsDescriptorFromEntry(providerId, entry);
+    expect(descriptor).not.toBeNull();
+    const declaration = entry?.kind === 'voice.speech-engine.v1' ? entry.declaration : null;
+    if (declaration?.kind !== 'speech') throw new Error('Expected source TTS declaration');
+    const declaredLimit = declaration.settings.fields.find((field) => field.id === 'maxInputCharacters');
+    expect(declaredLimit?.schema).toMatchObject({ type: 'integer', minimum: 1, maximum: 200_000 });
+    expect(descriptor?.fields.find((field) => field.key === 'maxInputCharacters')).toMatchObject({
+      kind: 'number',
+      titleKey: declaredLimit?.title,
+      subtitleKey: declaredLimit?.description,
+      min: 1,
+      max: 200_000,
+      step: 1,
+      nullable: false,
+    });
+    expect(descriptor?.fields.map((field) => field.key)).toEqual(
+      declaration.settings.fields.filter((field) => !field.presentation?.hidden).map((field) => field.id),
+    );
+    const invalid = { ...descriptor?.defaultConfig, maxInputCharacters: 200_001 };
+    expect(descriptor?.parseConfig(invalid)).toBeNull();
+  });
+
   it('derives independent Google STT settings, credential, and catalog facts from its manifest declaration', () => {
     const entry = createDefaultVoiceProviderRegistry().get(GOOGLE_GEMINI_STT_ID);
     const descriptor = readBundledSpeechSettingsDescriptorFromEntry(GOOGLE_GEMINI_STT_ID, entry);

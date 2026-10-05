@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDaemonVoiceAgentModelIds } from './resolveDaemonVoiceAgentModels';
 import { getAgentCore } from '@/agents/catalog/catalog';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+
+const baseMetadata = (() => {
+    const metadata = createSessionFixture().metadata;
+    if (!metadata) throw new Error('The canonical Session fixture requires readable metadata');
+    return metadata;
+})();
 
 describe('resolveDaemonVoiceAgentModelIds', () => {
     it('uses custom chat model and commit=chat when configured', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: { id: 's1', metadata: { flavor: 'claude' }, modelMode: 'default' } as any,
+            metadata: { ...baseMetadata, flavor: 'claude' }, modelMode: 'default',
             agent: {
                 chatModelSource: 'custom',
                 chatModelId: 'fast-model',
@@ -18,7 +25,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
 
     it('uses session model when chat source=session', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: { id: 's1', metadata: { flavor: 'claude' }, modelMode: 'session-model' } as any,
+            metadata: { ...baseMetadata, flavor: 'claude' }, modelMode: 'session-model',
             agent: {
                 chatModelSource: 'session',
                 chatModelId: 'ignored',
@@ -31,7 +38,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
 
     it('uses commit source=session even when chat is custom', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: { id: 's1', metadata: { flavor: 'claude' }, modelMode: 'session-model' } as any,
+            metadata: { ...baseMetadata, flavor: 'claude' }, modelMode: 'session-model',
             agent: {
                 chatModelSource: 'custom',
                 chatModelId: 'fast-model',
@@ -44,7 +51,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
 
     it('uses commit custom model when commit source=custom', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: { id: 's1', metadata: { flavor: 'claude' }, modelMode: 'session-model' } as any,
+            metadata: { ...baseMetadata, flavor: 'claude' }, modelMode: 'session-model',
             agent: {
                 chatModelSource: 'session',
                 chatModelId: 'ignored',
@@ -57,7 +64,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
 
     it('reports the typed unavailable when the session Agent identity is unreadable', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: { id: 's1', metadata: { flavor: 'unknown-agent' }, modelMode: 'default' } as any,
+            metadata: { ...baseMetadata, flavor: 'unknown-agent' }, modelMode: 'default',
             agent: {
                 chatModelSource: 'session',
                 commitModelSource: 'chat',
@@ -69,13 +76,10 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
 
     it('resolves models for an externally installed Agent declared by the session runtime', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: {
-                id: 's1',
-                modelMode: 'default',
-                metadata: {
-                    runtimeDescriptorV1: { v: 1, agentId: 'acme-external-agent', agent: {} },
-                },
-            } as any,
+            modelMode: 'default',
+            metadata: { ...baseMetadata,
+                runtimeDescriptorV1: { v: 1, agentId: 'acme-external-agent', agent: {} },
+            },
             agent: {
                 chatModelSource: 'custom',
                 chatModelId: 'acme-fast',
@@ -88,7 +92,7 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
 
     it('uses the target session flavor defaults for default sentinel values', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: { id: 's1', metadata: { flavor: 'codex' }, modelMode: 'default' } as any,
+            metadata: { ...baseMetadata, flavor: 'codex' }, modelMode: 'default',
             agent: {
                 chatModelSource: 'custom',
                 chatModelId: 'default',
@@ -103,15 +107,10 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
         });
     });
 
-    it('uses raw session flavor even when other metadata is missing', () => {
+    it('uses the resolved Agent flavor for session-default models', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: {
-                id: 's1',
-                modelMode: 'default',
-                metadata: {
-                    flavor: 'codex',
-                },
-            } as any,
+            modelMode: 'default',
+            metadata: { ...baseMetadata, flavor: 'codex' },
             agent: {
                 chatModelSource: 'session',
                 commitModelSource: 'session',
@@ -124,20 +123,10 @@ describe('resolveDaemonVoiceAgentModelIds', () => {
         });
     });
 
-    it('uses layout-v1 owner metadata for Agent and model facts', () => {
+    it('uses the already-resolved owner Agent identity for default session models', () => {
         const result = resolveDaemonVoiceAgentModelIds({
-            session: {
-                id: 's1',
-                modelMode: '',
-                metadataLayoutVersion: 1,
-                metadata: {
-                    v: 1,
-                    flavor: 'codex',
-                },
-                ownerMetadataView: {
-                    flavor: 'gemini',
-                },
-            } as any,
+            modelMode: '',
+            metadata: { ...baseMetadata, flavor: 'gemini' },
             agent: {
                 chatModelSource: 'session',
                 commitModelSource: 'session',

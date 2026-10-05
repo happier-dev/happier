@@ -22,9 +22,14 @@ import {
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
-    useReducedMotionPreference: () => false,
-}));
+const visibility = vi.hoisted(() => ({ reduced: false, focused: true }));
+// Native Reanimated reacts to SharedValue changes even when React and the frame clock are paused.
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock({ reactiveDerivedValues: true });
+});
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => visibility.reduced }));
+vi.mock('@/utils/runtime/useHostActivelyViewed', () => ({ useHostActivelyFocused: () => visibility.focused }));
 
 const LISTENING: VoiceEnergyState = { luminosity: 0.62, energized: true, direction: 'inward' };
 const ENDED: VoiceEnergyState = { luminosity: 0.18, energized: false, direction: 'none' };
@@ -66,6 +71,8 @@ describe('VoiceEnergyProvider audio bridge', () => {
         resetReanimatedFrameCallbacks();
         energy = null;
         elapsedMs = 0;
+        visibility.reduced = false;
+        visibility.focused = true;
     });
 
     afterEach(() => {
@@ -87,7 +94,6 @@ describe('VoiceEnergyProvider audio bridge', () => {
             <VoiceEnergyProvider
                 state={attemptActive ? LISTENING : ENDED}
                 activation={{ providerReady: true, attemptActive, micCaptureActive: attemptActive }}
-                sourceActivity={voiceRuntimeLevelStore.getSourceActivitySnapshot()}
             >
                 <EnergyProbe />
             </VoiceEnergyProvider>
@@ -145,6 +151,95 @@ describe('VoiceEnergyProvider audio bridge', () => {
         runFrames(180);
 
         expect(energy!.level.get()).toBe(0);
+        expect(frameRecord().handle.isActive).toBe(false);
+    });
+
+    it('keeps a silent open mic still and wakes for actual audio without timer breath', () => {
+        const input = openWriter('input');
+        mount();
+        expect(frameRecord().handle.isActive).toBe(false);
+        drive(input, 1);
+        expect(frameRecord().handle.isActive).toBe(true);
+        runFrames(90);
+        expect(energy!.level.get()).toBeGreaterThan(0.95);
+        expect(energy!.respiration.get()).toBe(0);
+        expect(energy!.arrival.get()).toBe(0);
+    });
+
+    it('reflects silent microphone ownership changes without waking the audio clock', () => {
+        mount();
+        expect(energy!.sourceActive.get()).toBe(0);
+        const input = openWriter('input');
+        expect(energy!.sourceActive.get()).toBe(1);
+        expect(frameRecord().handle.isActive).toBe(false);
+        act(() => { input.close(); });
+        expect(energy!.sourceActive.get()).toBe(0);
+    });
+
+    it('does not fabricate a reduced-motion amplitude or hidden presentation work', () => {
+        const input = openWriter('input');
+        visibility.reduced = true;
+        mount();
+        expect(energy!.level.get()).toBe(0);
+        expect(frameRecord().handle.isActive).toBe(false);
+        visibility.reduced = false;
+        visibility.focused = false;
+        act(() => { tree!.update(scene(true)); });
+        drive(input, 1);
+        expect(frameRecord().handle.isActive).toBe(false);
+        expect(energy!.level.get()).toBe(0);
+    });
+
+    it('wakes again after silence without a new attempt and keeps muted playback independent', () => {
+        const input = openWriter('input');
+        const output = openWriter('output');
+        mount();
+        drive(input, 1);
+        runFrames(90);
+        act(() => { input.reset(); });
+        runFrames(180);
+        expect(frameRecord().handle.isActive).toBe(false);
+
+        drive(input, 1);
+        expect(frameRecord().handle.isActive).toBe(true);
+        runFrames(90);
+        expect(energy!.level.get()).toBeGreaterThan(0.95);
+        act(() => { input.close(); });
+        drive(output, 1);
+        runFrames(90);
+        expect(energy!.flow.get()).toBeGreaterThan(0.9);
+        expect(energy!.level.get()).toBeGreaterThan(0.95);
+    });
+
+    it('pauses ongoing presentation when hidden and resumes the same real audio', () => {
+        const input = openWriter('input');
+        mount();
+        drive(input, 1);
+        runFrames(90);
+        const lastVisibleClock = energy!.clock.get();
+        visibility.focused = false;
+        act(() => { tree!.update(scene(true)); });
+        expect(frameRecord().handle.isActive).toBe(false);
+        expect(energy!.level.get()).toBe(0);
+        runFrames(60);
+        expect(energy!.clock.get()).toBe(lastVisibleClock);
+        expect(voiceRuntimeLevelStore.getSnapshot().inputLevel).toBeGreaterThan(0.99);
+
+        visibility.focused = true;
+        act(() => { tree!.update(scene(true)); });
+        expect(frameRecord().handle.isActive).toBe(true);
+        runFrames(90);
+        expect(energy!.level.get()).toBeGreaterThan(0.95);
+    });
+
+    it('does not synthesize energy merely because no runtime is attached', () => {
+        act(() => {
+            tree = renderer.create(<VoiceEnergyProvider state={LISTENING}><EnergyProbe /></VoiceEnergyProvider>);
+        });
+        expect(frameRecord().handle.isActive).toBe(false);
+        expect(energy!.level.get()).toBe(0);
+        expect(energy!.respiration.get()).toBe(0);
+        expect(energy!.arrival.get()).toBe(0);
     });
 
     it('does not commit a React update per audio write', () => {
@@ -161,7 +256,6 @@ describe('VoiceEnergyProvider audio bridge', () => {
                     <VoiceEnergyProvider
                         state={LISTENING}
                         activation={{ providerReady: true, attemptActive: true, micCaptureActive: true }}
-                        sourceActivity={voiceRuntimeLevelStore.getSourceActivitySnapshot()}
                     >
                         <EnergyProbe />
                     </VoiceEnergyProvider>
@@ -169,20 +263,18 @@ describe('VoiceEnergyProvider audio bridge', () => {
             );
         });
 
+        // Audio↔silence crossings legitimately wake/pause the shared owner.
+        // Keep this passage nonzero so only sample-by-sample churn is measured.
+        drive(input, 1);
         const baseline = commits;
         expect(baseline).toBeGreaterThan(0);
         for (let i = 0; i < 100; i += 1) {
             act(() => {
-                input.write((i % 50) / 50);
+                input.write((i % 50 + 1) / 50);
             });
         }
 
-        // At most one, and it is React's own: a state setter that returns the
-        // previous value bails out, but React may still re-render that one
-        // component once before it does. Observed exactly once, on the first
-        // write that moved the level. A provider actually subscribed to the
-        // amplitude would land ~99 here.
-        expect(commits - baseline).toBeLessThanOrEqual(1);
+        expect(commits - baseline).toBe(0);
     });
 
     it('settles back to still when the attempt ends', () => {

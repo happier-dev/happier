@@ -50,8 +50,15 @@ describe('bundled conversation account credential client', () => {
     expect(createBundledConversationUi('realtime_openai')).toBeNull();
   });
 
-  it('does not construct a private OpenAI settings surface beside its public declaration', () => {
-    expect(createBundledConversationUi(openAiProviderId)).toBeNull();
+  it('projects OpenAI public settings without recreating a private credential-action bridge', () => {
+    const openAi = createBundledConversationUi(openAiProviderId);
+    expect(openAi).not.toBeNull();
+    expect(openAi?.settingsDescriptor).toEqual(expect.objectContaining({
+      kind: 'voice.provider-settings.v1',
+      credential: expect.objectContaining({ kind: 'api_key', credentialPurpose: 'voice.client-auth' }),
+    }));
+    expect(openAi?.client).toBeNull();
+    expect(openAi).not.toHaveProperty('autoprovision');
   });
 
   it('does not construct a private Codex settings surface beside its public declaration', () => {

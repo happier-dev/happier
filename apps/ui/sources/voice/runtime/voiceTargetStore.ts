@@ -9,6 +9,25 @@ import {
 
 export type VoiceAssistantScope = 'session' | 'global';
 
+export type VoiceIdleTarget =
+  | Readonly<{ kind: 'global' }>
+  | Readonly<{ kind: 'session'; sessionAddress: SessionAddress | null }>;
+export type VoiceStartIntent = VoiceIdleTarget | Readonly<{ kind: 'default' }>;
+
+/** One idle policy for shell, shortcut and glance. Explicit composer/Home intents stay explicit. */
+export function resolveVoiceIdleTarget(input: Readonly<{
+  intent: VoiceStartIntent;
+  scopeDefault: VoiceAssistantScope;
+  allowsGlobalStart: boolean;
+  focusedSessionAddress: SessionAddress | null;
+  lastFocusedSessionAddress: SessionAddress | null;
+}>): VoiceIdleTarget {
+  if (input.intent.kind === 'global') return input.intent;
+  if (input.intent.kind === 'session') return { kind: 'session', sessionAddress: normalizeAddress(input.intent.sessionAddress) };
+  if (input.scopeDefault === 'global' && input.allowsGlobalStart) return { kind: 'global' };
+  return { kind: 'session', sessionAddress: normalizeAddress(input.focusedSessionAddress) ?? normalizeAddress(input.lastFocusedSessionAddress) };
+}
+
 export type VoiceTargetState = Readonly<{
   scope: VoiceAssistantScope;
   primaryActionSessionAddress: SessionAddress | null;

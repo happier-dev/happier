@@ -176,6 +176,9 @@ function currentWriterPredecessorVoice(
         voice: {
             providerId: 'realtime_elevenlabs',
             assistantLanguage: 'de',
+            // Compare the captured predecessor selections, rather than today's
+            // fresh-account speech defaults, against the historical golden.
+            adapters: capturedPredecessorVoice(mode).adapters,
             credentialBindings: [{
                 providerId: 'realtime_elevenlabs',
                 credentialBindings: { account: { api_key: 'voice-elevenlabs-secret' } },
@@ -948,6 +951,10 @@ describe('Voice provider selection persistence compatibility', () => {
                     'happier.voice.openai-compat/tts': {
                         schemaVersion: 2,
                         config: {
+                            ...readRequiredRecord(
+                                voiceSettingsDefaults.providers['happier.voice.openai-compat/tts']?.config,
+                                'current OpenAI-compatible TTS defaults',
+                            ),
                             baseUrl: 'http://localhost:8102/v1',
                             insecureLocalOriginConsent: 'http://localhost:8102',
                             insecureLocalConsentMachineId: 'machine-a',
@@ -1556,6 +1563,10 @@ describe('Voice provider selection persistence compatibility', () => {
                     'happier.voice.openai-compat/tts': {
                         schemaVersion: 2,
                         config: {
+                            ...readRequiredRecord(
+                                voiceSettingsDefaults.providers['happier.voice.openai-compat/tts']?.config,
+                                'current OpenAI-compatible TTS defaults',
+                            ),
                             baseUrl: 'https://credentialless-tts.test/v1',
                             insecureLocalOriginConsent: '',
                             insecureLocalConsentMachineId: '',
@@ -1725,6 +1736,10 @@ describe('Voice provider selection persistence compatibility', () => {
                         'happier.voice.openai-compat/tts': {
                             schemaVersion: 2,
                             config: {
+                                ...readRequiredRecord(
+                                    voiceSettingsDefaults.providers['happier.voice.openai-compat/tts']?.config,
+                                    'current OpenAI-compatible TTS defaults',
+                                ),
                                 baseUrl: 'https://tts.initial.test/v1',
                                 insecureLocalOriginConsent: 'http://localhost:8102',
                                 insecureLocalConsentMachineId: 'machine-oai',

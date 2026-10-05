@@ -170,6 +170,7 @@ describe('bundled speech selected-daemon client', () => {
           requestId: expect.any(String),
           uploadId: 'upload-1',
           mimeType: 'audio/wav',
+          capturePurpose: 'dictation',
         });
         return { ok: true, requestId: request.payload.requestId, text: 'acme transcript' };
       }
@@ -199,6 +200,7 @@ describe('bundled speech selected-daemon client', () => {
       source: { kind: 'native', uri: 'file:///recording.wav' },
       mimeType: 'audio/wav',
       fileName: 'recording.wav',
+      capturePurpose: 'dictation',
     })).resolves.toBe('acme transcript');
     await expect(client.synthesize({
       entry: contribution,

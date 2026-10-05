@@ -6,6 +6,7 @@ import {
     readReanimatedFrameCallbacks,
     resetReanimatedFrameCallbacks,
 } from '@/dev/testkit/mocks/reanimated';
+import { voiceRuntimeLevelStore, type VoiceRuntimeLevelWriter } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
 import {
     VoiceEnergyProvider,
@@ -63,18 +64,25 @@ function frameActivations(): readonly boolean[] {
 
 describe('VoiceEnergyProvider activation', () => {
     let tree: renderer.ReactTestRenderer | null = null;
+    let input: VoiceRuntimeLevelWriter | null = null;
 
     beforeEach(() => {
+        vi.useFakeTimers();
         resetReanimatedFrameCallbacks();
         probe.renders = 0;
         extraPresence = null;
+        input = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'activation-test' });
+        input.write(1);
     });
 
     afterEach(() => {
         act(() => {
             tree?.unmount();
+            input?.close();
         });
         tree = null;
+        input = null;
+        vi.useRealTimers();
     });
 
     function render(node: React.ReactElement): void {
@@ -106,6 +114,7 @@ describe('VoiceEnergyProvider activation', () => {
         // §2.4a: enabled but idle is *motionless*. Without the liveness clause a
         // mounted, visible, motion-allowed surface would drive a 60 Hz loop all
         // day, and no screenshot would ever show it.
+        input!.reset();
         render(scene(1, false));
         expect(frameActivations()).toEqual([false]);
     });
@@ -227,6 +236,7 @@ describe('VoiceEnergyProvider activation', () => {
         render(terminalScene(LISTENING, true));
         expect(observed!.luminosity.get()).toBe(LISTENING.luminosity);
 
+        act(() => { input!.close(); });
         update(terminalScene(ERROR, false));
         expect(frameActivations().at(-1)).toBe(false);
         // Stopping the single frame callback must not freeze the last live

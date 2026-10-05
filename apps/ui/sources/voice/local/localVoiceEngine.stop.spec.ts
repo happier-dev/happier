@@ -1,3 +1,5 @@
+import { afterAll, beforeEach as beforeAccountCase, afterEach as afterAccountCase } from 'vitest';
+import { installLocalVoiceAccountHarness, localVoiceHomeId, warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
@@ -11,14 +13,29 @@ import {
   flushMicrotasks,
   getStorage,
   loadLocalVoiceEngineWithCompatState,
+  localVoicePendingEnqueue,
   registerLocalVoiceEngineHarnessHooks,
-  submitMessage,
   speechRecStart,
   speechRecStop,
 } from './localVoiceEngine.testHarness';
 
+const accountHarness = await installLocalVoiceAccountHarness();
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
+
 describe('local voice engine stop', () => {
   registerLocalVoiceEngineHarnessHooks();
+    beforeAccountCase(async () => {
+      await accountHarness.setup();
+      const storage = await getStorage();
+      // Direct-session submission now reaches real Sync, so its target must
+      // exist in the admitting Home rather than only in an old transport stub.
+      storage.__setState({ sessions: {
+        ...storage.getState().sessions,
+        s1: { id: 's1', serverId: localVoiceHomeId, active: true, activeAt: Date.now(), presence: 'online', metadata: { flavor: 'claude' } },
+      } });
+    });
+    afterAccountCase(() => accountHarness.dispose());
 
   it('stops an in-progress recording turn without sending', async () => {
     const { toggleLocalVoiceTurn, getLocalVoiceState, stopLocalVoiceSession } = await loadLocalVoiceEngineWithCompatState();
@@ -31,11 +48,12 @@ describe('local voice engine stop', () => {
       status: 'idle',
       error: null,
     });
-    expect(submitMessage).not.toHaveBeenCalled();
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
     expect((globalThis.fetch as any).mock.calls.length).toBe(0);
   });
 
   it('does not send a recorded-audio transcript that resolves after End Voice', async () => {
+    const storage = await getStorage();
     let resolveTranscription!: (response: { ok: true; json: () => Promise<{ text: string }> }) => void;
     (globalThis.fetch as any).mockImplementationOnce(() => new Promise((resolve) => {
       resolveTranscription = resolve;
@@ -45,7 +63,11 @@ describe('local voice engine stop', () => {
 
     await toggleLocalVoiceTurn('s1');
     const stopAndTranscribe = toggleLocalVoiceTurn('s1');
-    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
+    const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+    await vi.waitFor(() => expect(globalThis.fetch, JSON.stringify({
+      snapshot: getVoiceConversationRuntimeSnapshot(),
+      providerId: storage.getState().settings.voice.providerId,
+    })).toHaveBeenCalledOnce());
 
     await stopLocalVoiceSession();
     resolveTranscription({
@@ -54,7 +76,7 @@ describe('local voice engine stop', () => {
     });
     await stopAndTranscribe;
 
-    expect(submitMessage).not.toHaveBeenCalled();
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
   });
 
   it('still releases Local Agent execution and effect custody when finalized-recording cleanup fails during End Voice', async () => {
@@ -115,7 +137,7 @@ describe('local voice engine stop', () => {
     } = await loadLocalVoiceEngineWithCompatState();
 
     await toggleLocalVoiceTurn('s1');
-    await vi.waitFor(() => expect(daemonVoiceAgentStart).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(daemonVoiceAgentStart, JSON.stringify(getVoiceConversationRuntimeSnapshot())).toHaveBeenCalledOnce());
     await flushMicrotasks(4_000);
     expect(isLocalVoiceAgentActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(true);
     expect(voiceRuntimeLevelStore.getSnapshot().inputSourceActive).toBe(true);
@@ -152,7 +174,7 @@ describe('local voice engine stop', () => {
       status: 'idle',
       error: 'recording_cleanup_failed',
     });
-    expect(submitMessage).not.toHaveBeenCalled();
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
   });
 
   it('stops device STT recording without sending', async () => {
@@ -197,7 +219,7 @@ describe('local voice engine stop', () => {
     emitSpeechRecEvent('end', {});
     await stopPromise;
 
-    expect(submitMessage).not.toHaveBeenCalled();
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
     expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
       controlSessionId: 's1',
       state: 'disconnected',
@@ -240,12 +262,15 @@ describe('local voice engine stop', () => {
     const stopPromise = toggleLocalVoiceTurn('s1');
 
     await vi.waitFor(() => {
-      expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      expect(getVoiceConversationRuntimeSnapshot(), JSON.stringify({ providerId: storage.getState().settings.voice.providerId })).toMatchObject({
         controlSessionId: 's1',
         state: 'thinking',
         error: null,
       });
     });
+    // This admitted turn proves that the same real outbound boundary observed
+    // by the End negatives actually receives direct-session submissions.
+    await vi.waitFor(() => expect(localVoicePendingEnqueue).toHaveBeenCalledOnce());
 
     const abortPromise = abortLocalVoiceTurn('s1');
     expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({

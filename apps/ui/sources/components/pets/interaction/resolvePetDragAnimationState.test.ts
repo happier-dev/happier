@@ -30,7 +30,7 @@ describe('resolvePetDragAnimationState', () => {
      * only checkable form of the contract, exactly as `useComposerKeyboardLayout.native.ts` records
      * it for its own worklet helper.
      *
-     * The Voice orb is the positive control: `useVoiceOrbDrag` marks the arrow it hands to the
+     * The Voice orb is the positive control: `useVoicePresenceDrag` marks the arrow it hands to the
      * sibling `resolveReleaseTarget` slot.
      */
     it('marks both pet drag-state resolvers as worklets', () => {

@@ -4,6 +4,14 @@ import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/Voi
 
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import type { VoiceAdapterController, VoiceSessionSnapshot } from './types';
+import { createVoiceConversationController } from '@/voice/runtime/controller/VoiceConversationController';
+import { createSdkHandleConnection } from '@/voice/runtime/connection/VoiceRealtimeConnection';
+import { createOpenAiRealtimeProtocolAdapter } from '../../../../../packages/plugins/openai/src/ui/voice/protocol';
+import { executeVoiceConversationAction } from '@/sync/ops/actions/voiceConversationAction';
+import { registerVoiceAdapters } from './voiceAdapterRegistry';
+import { setVoiceSessionLifecycleController } from './voiceSessionLifecycleControllerStore';
+import { getVoiceSessionAttemptId, setVoiceSessionSnapshot, resetVoiceSessionRuntimeStateForTests } from './voiceSessionStore';
+import { storage } from '@/sync/domains/state/storage';
 
 const logSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/log', () => ({ log: { log: logSpy } }));
@@ -85,6 +93,74 @@ function createHarness(adapter = createRealtimeAdapter()) {
 }
 
 describe('Voice session lifecycle capture admission', () => {
+    it('cancels held input when a suspension arrives while user Mute is already applied', async () => {
+        const sent: unknown[] = [];
+        const connection = createSdkHandleConnection({ driver: {
+            open: async () => {}, close: async () => {}, sendControl: async (event) => { sent.push(event); },
+        } });
+        let userMuted = false;
+        let captureOpen = false;
+        let snapshot: VoiceSessionSnapshot = { adapterId: 'held', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false };
+        const listeners = new Set<() => void>();
+        const publish = (next: VoiceSessionSnapshot) => { snapshot = next; listeners.forEach((listener) => listener()); };
+        const controller = createVoiceConversationController({
+            adapter: { ...createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'prepared', session: {
+                config: {}, safeMetadata: null, inputCommitRequired: true,
+            } }) }), id: 'held', turnControls: {
+                cancelResponse: 'immediate', truncatePlayback: 'unsupported', clearInput: true,
+                stopSession: true, resumption: 'none', replay: 'none', exactMessage: false,
+            } },
+            createConnection: async () => connection, isSelectionCurrent: () => true, onCanonicalEvent: async () => {},
+            holdCapture: { async setOpen({ open }) { captureOpen = open === null ? !userMuted : open; } },
+            machine: {
+                connecting() {}, ending() {}, failed() {},
+                connected({ controlSessionId }) { publish({ adapterId: 'held', sessionId: controlSessionId, status: 'connected', mode: 'listening', canStop: true }); },
+                disconnected() { publish({ ...snapshot, status: 'disconnected', canStop: false }); },
+            },
+        });
+        // A concrete plugin adapter over the real turn controller; only the media/transport boundary is simulated.
+        const adapter: VoiceAdapterController = {
+            id: 'held', engineKind: 'realtime',
+            start: async ({ sessionId }) => { await controller.start({ controlSessionId: sessionId }); },
+            stop: async () => { await controller.stop(); }, toggle: async () => {}, interrupt: async () => {},
+            getSnapshot: () => ({ ...snapshot, micMuted: userMuted, canHoldToTalk: controller.canHoldToTalk() }),
+            subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            beginHoldToTalk: controller.beginHoldToTalk,
+            cancelHoldToTalk: async () => { await controller.cancelHoldToTalk(); },
+            setMuted: async ({ muted }) => { if (muted) await controller.cancelHoldToTalk(); userMuted = muted; captureOpen = !muted; },
+            sendContextUpdate() {},
+        };
+        const lifecycle = createVoiceSessionLifecycleController({
+            captureAdmission: createVoiceCaptureAdmissionController(),
+            getRegistry: () => ({ get: (id) => id === adapter.id ? adapter : null, list: () => [adapter] }),
+        });
+        lifecycle.setConfiguredProviderId(adapter.id);
+        registerVoiceAdapters([adapter]);
+        setVoiceSessionLifecycleController(lifecycle);
+        const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
+        const previousHoldEnabled = storage.getState().localSettings.voiceHoldToTalkEnabled;
+        storage.setState((state) => ({ localSettings: { ...state.localSettings, voiceHoldToTalkEnabled: true } }));
+        try {
+            await lifecycle.toggle(sessionAddress('held-session'));
+            const expectedAttempt = getVoiceSessionAttemptId()!;
+            const invoke = (action: Parameters<typeof executeVoiceConversationAction>[0]) => executeVoiceConversationAction(action, { expectedAttempt }, { navigate() {} });
+            expect((await executeVoiceConversationAction('ui.voice_global.set_muted', { expectedAttempt, muted: true }, { navigate() {} })).status).toBe('completed');
+            expect((await invoke('ui.voice_global.hold_begin')).status).toBe('completed');
+            expect(captureOpen).toBe(true);
+            const suspension = await lifecycle.suspendInput('held-session');
+            expect(suspension).not.toBeNull();
+            expect(captureOpen).toBe(false);
+            expect(lifecycle.beginHoldToTalk('held-session')).toBeNull();
+            await invoke('ui.voice_global.hold_release');
+            await suspension!.release();
+            expect(captureOpen).toBe(false);
+            expect(userMuted).toBe(true);
+            expect(sent.filter((event) => JSON.stringify(event) === JSON.stringify({ type: 'input_audio_buffer.commit' }))).toHaveLength(0);
+        } finally {
+            storage.setState((state) => ({ localSettings: { ...state.localSettings, voiceHoldToTalkEnabled: previousHoldEnabled } }));
+            unsubscribe(); await lifecycle.dispose(); await resetVoiceSessionRuntimeStateForTests();
+        }
+    });
     it('rejects conversational Voice before its realtime mic owner starts when Dictation started first', async () => {
         const { adapter, captureAdmission, lifecycle } = createHarness();
         const dictation = captureAdmission.acquire('dictation');

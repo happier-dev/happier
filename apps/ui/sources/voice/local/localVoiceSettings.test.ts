@@ -7,8 +7,18 @@ import {
   resolveLocalSttProvider,
   resolveLocalVoiceAdapterSettings,
 } from './localVoiceSettings';
+import { createVoiceDictationRuntimeSettingsSnapshot } from '@/voice/dictation/voiceDictationRuntimeSettings';
 
 describe('localVoiceSettings', () => {
+  it('preserves Reply in while preparing the independent Dictation recognition snapshot', () => {
+    const snapshot = createVoiceDictationRuntimeSettingsSnapshot({ voice: {
+      providerId: 'local_direct', assistantLanguage: 'es',
+      dictation: { sttBinding: 'explicit', language: 'de', stt: { provider: 'local_neural', localNeural: { language: 'fr' } } },
+    } });
+    expect(snapshot.voice.assistantLanguage).toBe('es');
+    expect(snapshot.voice.dictation.language).toBe('de');
+    expect(resolveLocalSttProvider(snapshot)).toBe('local_neural');
+  });
   it('trims the provider id before selecting the local voice adapter', () => {
     expect(
       resolveLocalVoiceAdapterSettings({

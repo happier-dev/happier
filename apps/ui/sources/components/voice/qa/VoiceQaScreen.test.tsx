@@ -466,12 +466,14 @@ describe('VoiceQaScreen', () => {
             ...((storage.getState() as any).sessions ?? {}),
             target_s1: {
                 id: 'target_s1',
+                serverId: getActiveServerSnapshot().serverId,
                 metadata: {
                     name: 'target_s1',
                 },
             },
             voice_session_1: {
                 id: 'voice_session_1',
+                serverId: getActiveServerSnapshot().serverId,
                 metadata: {
                     name: 'voice_session_1',
                 },
@@ -998,6 +1000,7 @@ describe('VoiceQaScreen', () => {
         ...state.sessions,
         voice_session_qa_open: {
           id: 'voice_session_qa_open',
+          serverId: getActiveServerSnapshot().serverId,
           metadata: {},
         },
       },
@@ -1019,7 +1022,9 @@ describe('VoiceQaScreen', () => {
       await pressTestInstanceAsync(openConversationButton);
     });
 
-    expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/session/voice_session_qa_open');
+    expect(expoRouterMock.spies.push).toHaveBeenCalledWith(
+      `/session/voice_session_qa_open?serverId=${encodeURIComponent(getActiveServerSnapshot().serverId)}`,
+    );
   });
 
   it('renders transcript and projected conversation entries from the QA stores', async () => {

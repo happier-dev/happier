@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { VoiceEncodedAudioPlayback } from '@happier-dev/audio-stream-native';
 
-const platformOsMock = vi.hoisted(() => ({ value: 'web' as 'web' | 'ios' }));
+const platformOsMock = vi.hoisted(() => ({ value: 'web' as 'web' | 'ios' | 'android' }));
 const nativePlaybackLeaseRelease = vi.hoisted(() => vi.fn(async () => undefined));
+const nativePlaybackFactory = vi.hoisted(() => vi.fn<() => VoiceEncodedAudioPlayback | null>(() => null));
 
-vi.mock('@happier-dev/audio-stream-native', () => ({
+vi.mock('@happier-dev/audio-stream-native', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@happier-dev/audio-stream-native')>(),
+  createVoiceEncodedAudioPlayback: () => nativePlaybackFactory(),
   getSharedVoiceAudioSessionCoordinator: () => ({
     acquire: async () => Object.freeze({ release: nativePlaybackLeaseRelease }),
   }),
@@ -68,6 +72,8 @@ function stubBlobUrlHelpers(input: Readonly<{
 }
 
 afterEach(() => {
+    nativePlaybackFactory.mockReset();
+    nativePlaybackLeaseRelease.mockClear();
     resetWebAudioContextForTests();
     platformOsMock.value = 'web';
     (globalThis as typeof globalThis & { URL: typeof URL }).URL = realURL;
@@ -690,9 +696,21 @@ describe('playAudioBytesWithStopper (web)', () => {
 });
 
 describe('playAudioBytesWithStopper (native)', () => {
-  it('uses expo-audio playback on native platforms', async () => {
-    platformOsMock.value = 'ios';
+  it.each(['ios', 'android'] as const)('uses the %s playback boundary and releases its audio-session lease', async (platformOs) => {
+    platformOsMock.value = platformOs;
     vi.spyOn(Date, 'now').mockReturnValue(1234);
+    let nativeListener: Parameters<VoiceEncodedAudioPlayback['subscribe']>[0] | null = null;
+    const nativeStart = vi.fn(async (_uri: string) => {});
+    const nativeStop = vi.fn(async () => {});
+    nativePlaybackFactory.mockReturnValue({
+      start: nativeStart,
+      stop: nativeStop,
+      setPaused: vi.fn(async () => {}),
+      subscribe: (listener) => {
+        nativeListener = listener;
+        return () => { nativeListener = null; };
+      },
+    });
 
     const createAudioPlayer = vi.fn((source: string) => {
       let listener: ((status: any) => void) | null = null;
@@ -743,18 +761,26 @@ describe('playAudioBytesWithStopper (native)', () => {
       });
 
       await vi.waitFor(() => {
-        expect(createAudioPlayer).toHaveBeenCalledTimes(1);
+        expect(platformOs === 'ios' ? nativeStart : createAudioPlayer).toHaveBeenCalledTimes(1);
       });
       expect(typeof registeredStopper).toBe('function');
-      expect(createAudioPlayer).toHaveBeenCalledWith('file:///tmp/happier-voice-1234.wav');
-
-      (createAudioPlayer.mock.results[0]?.value as { __emit?: (status: any) => void } | undefined)?.__emit?.({
-        didJustFinish: true,
-      });
+      if (platformOs === 'ios') {
+        expect(nativeStart).toHaveBeenCalledWith('file:///tmp/happier-voice-1234.wav');
+        expect(createAudioPlayer).not.toHaveBeenCalled();
+        if (!nativeListener) throw new Error('Expected native playback subscription');
+        (nativeListener as Parameters<VoiceEncodedAudioPlayback['subscribe']>[0])({ playbackId: 'native-playback', status: 'finished' });
+      } else {
+        expect(createAudioPlayer).toHaveBeenCalledWith('file:///tmp/happier-voice-1234.wav', undefined);
+        expect(nativeStart).not.toHaveBeenCalled();
+        (createAudioPlayer.mock.results[0]?.value as { __emit?: (status: any) => void } | undefined)?.__emit?.({
+          didJustFinish: true,
+        });
+      }
 
       await promise;
 
       expect(fileDelete).toHaveBeenCalledTimes(1);
+      expect(nativePlaybackLeaseRelease).toHaveBeenCalledTimes(1);
     } finally {
       vi.restoreAllMocks();
     }

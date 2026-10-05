@@ -39,6 +39,7 @@ describe('useVoiceSurfaceStoreState', () => {
                 ...state.sessions,
                 'voice-conversation-1': {
                     id: 'voice-conversation-1',
+                    serverId: 'server-active',
                     metadata: {
                         path: '/tmp/voice-conversation-1',
                         host: 'localhost',

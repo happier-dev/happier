@@ -1,5 +1,5 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import type { VoiceRuntimeLevelWriter } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
@@ -15,12 +15,6 @@ function createHostComponentMock(type: string) {
 // `VoiceSurface` never observes child commits and is therefore not a render oracle.
 const renderCounter = { current: 0 };
 const broadAudioSubscriptionCanary = vi.hoisted(() => ({ enabled: false }));
-const voiceSettingState = vi.hoisted(() => ({
-    current: {
-        providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
-        ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
-    },
-}));
 
 installVoiceSurfaceCommonModuleMocks({
     reactNative: async () => {
@@ -37,15 +31,7 @@ installVoiceSurfaceCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            // The real surface fails closed for an absent Voice setting. The
-            // probe must mount an actual visible surface, not count a null
-            // return above it.
-            useSetting: (key: string) => key === 'voice' ? voiceSettingState.current : undefined,
-        });
-    },
+    storage: (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
@@ -104,14 +90,39 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] ?? true,
 }));
 
-describe('VoiceSurface audio-level render budget', () => {
+const { useVoiceSurfaceModel } = await import('./useVoiceSurfaceModel');
+const { VoiceSurfaceView } = await import('./VoiceSurfaceView');
+const { getStorage } = await import('@/sync/domains/state/storage');
+const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+const initialStorageState = getStorage().getState();
+
+function VoiceSurfaceModelProbe() {
+    const model = useVoiceSurfaceModel({ variant: 'sidebar' });
+    return model ? <VoiceSurfaceView model={model} /> : null;
+}
+
+describe('Voice surface model audio-level render budget', () => {
     beforeEach(() => {
+        getStorage().setState(initialStorageState, true);
+        getStorage().setState({
+            settings: {
+                ...initialStorageState.settings,
+                voice: voiceSettingsParse({
+                    providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+                    ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+                }),
+            },
+        });
         renderCounter.current = 0;
         broadAudioSubscriptionCanary.enabled = false;
         // Keep the mocked leaf and the driven store on one module instance.
         // `vi.resetModules()` clears the store used by the test while retaining
         // this mock's factory result, which makes a canary subscribe to an old
         // store and turns the negative control into a false pass.
+    });
+
+    afterEach(() => {
+        getStorage().setState(initialStorageState, true);
     });
 
     async function renderSurface() {
@@ -125,8 +136,7 @@ describe('VoiceSurface audio-level render budget', () => {
         });
 
         const { voiceRuntimeLevelStore } = await import('@/voice/runtime/levels/voiceRuntimeLevelStore');
-        const { VoiceSurface } = await import('./VoiceSurface');
-        const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+        const screen = await renderScreen(<VoiceSurfaceModelProbe />);
         return { screen, setVoiceSessionSnapshot, voiceRuntimeLevelStore };
     }
 

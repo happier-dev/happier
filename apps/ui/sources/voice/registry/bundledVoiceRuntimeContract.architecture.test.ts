@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -210,9 +210,14 @@ describe('bundled voice runtime contract ownership', () => {
       'apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts',
     );
     const nativeRuntimeEntries = [
-      source('apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ios.ts'),
-      source('apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.android.ts'),
-    ];
+      'ios',
+      'android',
+    ].map((platform) => {
+      const path = `apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.${platform}.ts`;
+      // The canonical generator removes byte-identical platform overrides;
+      // those platforms consume the common projection with package export conditions.
+      return existsSync(resolve(repoRoot, path)) ? source(path) : webRuntimeEntries;
+    });
     const registration = source(
       'apps/ui/sources/voice/adapters/registerBuiltinVoiceAdapters.ts',
     );
@@ -382,7 +387,10 @@ describe('bundled voice runtime contract ownership', () => {
 
   it('keeps bundled speech UI projection on one host invocation seam without Google-owned RPC selection', () => {
     const contract = source('apps/ui/sources/voice/registry/bundledConversationRuntimeContract.ts');
-    const googleVoice = source('packages/plugins/google/src/ui/voice/index.ts');
+    const googleVoice = [
+      source('packages/plugins/google/src/ui/voice/index.ts'),
+      source('packages/plugins/google/src/ui/voice/entries.ts'),
+    ].join('\n');
     const speechClient = source('apps/ui/sources/voice/credentials/bundledSpeechClient.ts');
     const speechRpc = source('apps/cli/src/api/machine/rpcHandlers.voiceSpeech.ts');
 
@@ -402,7 +410,10 @@ describe('bundled voice runtime contract ownership', () => {
   });
 
   it('keeps OpenAI-compatible speech owned by package declarations without a predecessor host entry', () => {
-    const openAiCompatVoice = source('packages/plugins/openai-compat/src/ui/voice/index.ts');
+    const openAiCompatVoice = [
+      source('packages/plugins/openai-compat/src/ui/voice/index.ts'),
+      source('packages/plugins/openai-compat/src/ui/voice/entries.ts'),
+    ].join('\n');
     const builtInEntries = source('apps/ui/sources/voice/registry/builtInEntries.ts');
     const credentialReadiness = source('apps/ui/sources/voice/registry/speechCredentialReadiness.ts');
 

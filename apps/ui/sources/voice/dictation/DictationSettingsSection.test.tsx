@@ -251,12 +251,21 @@ function findRenderedItem(tree: ReturnType<typeof create>, testID: string) {
   return item;
 }
 
-function findRenderedPressable(tree: ReturnType<typeof create>, testID: string) {
-  const pressable = tree.root
-    .findAllByType('Pressable' as any)
-    .find((node) => node.props.testID === testID);
-  if (!pressable) throw new Error(`Missing rendered Pressable: ${testID}`);
-  return pressable;
+// Load the real owner graph during collection, not inside a renderer's act/test budget.
+await import('./DictationSettingsSection');
+
+
+/** Dictation's readiness as the card shows it (the card is the one place the page reports it). */
+function dictationCardReadiness(tree: { root: { findAll: (predicate: (node: any) => boolean) => any[] } }) {
+  const card = tree.root.findAll((node) => node.props?.testID === 'settings.voice.dictation.pipeline' && node.props?.pipeline)[0];
+  return card?.props.pipeline.readiness ?? null;
+}
+
+function dictationRecoverActions(tree: { root: { findAll: (predicate: (node: any) => boolean) => any[] } }) {
+  return tree.root.findAll((node) => typeof node.props?.testID === 'string'
+    && node.props.testID.startsWith('settings.voice.dictation.pipeline')
+    && node.props.testID.endsWith('.recover')
+    && typeof node.props.onPress === 'function');
 }
 
 describe('DictationSettingsSection', () => {
@@ -274,11 +283,8 @@ describe('DictationSettingsSection', () => {
       />);
     });
 
-    const providerPicker = tree.root.findAllByType('DropdownMenu' as any)
-      .find((node) => node.props.itemTrigger?.title === 'settingsVoice.dictation.provider');
-    expect(providerPicker).toBeTruthy();
     await act(async () => {
-      providerPicker!.props.onSelect(EXTERNAL_DICTATION_STT_PROVIDER_ID);
+      findRenderedItem(tree, `settings.voice.dictation.engine.${encodeURIComponent(EXTERNAL_DICTATION_STT_PROVIDER_ID)}`).props.onPress();
     });
 
     expect(setVoice).toHaveBeenCalledOnce();
@@ -320,10 +326,8 @@ describe('DictationSettingsSection', () => {
       />);
     });
 
-    const providerPicker = tree.root.findAllByType('DropdownMenu' as any)
-      .find((node) => node.props.itemTrigger?.title === 'settingsVoice.dictation.provider');
     await act(async () => {
-      providerPicker!.props.onSelect(EXTERNAL_DICTATION_STT_PROVIDER_ID);
+      findRenderedItem(tree, `settings.voice.dictation.engine.${encodeURIComponent(EXTERNAL_DICTATION_STT_PROVIDER_ID)}`).props.onPress();
     });
 
     expect(setVoice).toHaveBeenCalledOnce();
@@ -368,10 +372,7 @@ describe('DictationSettingsSection', () => {
       />);
     });
 
-    const providerPicker = tree.root.findAllByType('DropdownMenu' as any)
-      .find((node) => node.props.itemTrigger?.title === 'settingsVoice.dictation.provider');
-    expect(providerPicker?.props.selectedId).toBe('same_as_local');
-    expect(providerPicker?.props.items.some((item: any) => item.id === 'same_as_local')).toBe(true);
+    expect(findRenderedItem(tree, 'settings.voice.dictation.engine.same_as_local').props.selected).toBe(true);
     const providerSettings = tree.root.findAllByType('ProviderSettings' as any);
     expect(providerSettings).toHaveLength(1);
     await act(async () => {
@@ -415,15 +416,42 @@ describe('DictationSettingsSection', () => {
     expect(providerSettings[0]?.props.voice).toBe(voice);
     expect(providerSettings[0]?.props.setVoice).toBe(setVoice);
     await act(async () => {
-      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
-    const readiness = tree.root.findByProps({ testID: 'settings.voice.dictation.readiness' });
-    expect(readiness.props.subtitle).toBe('settingsVoice.dictation.readiness.ready');
-    expect(readiness.props.detail).toBeUndefined();
+    expect(dictationCardReadiness(tree)?.status).toBe('ready');
+    expect(tree.root.findAll((node) => node.props.testID === 'settings.voice.dictation.readiness')).toHaveLength(0);
     expect(setVoice).not.toHaveBeenCalled();
   });
 
-  it('checks the exact selected native Local Neural pack once while the passive check is pending', async () => {
+  it('says which unselected engine needs you before it can be chosen, and stays quiet for ready ones', async () => {
+    const { DictationSettingsSection } = await import('./DictationSettingsSection');
+    const voice = {
+      ...voiceSettingsDefaults,
+      dictation: {
+        ...voiceSettingsDefaults.dictation,
+        sttBinding: 'explicit' as const,
+        stt: { ...voiceSettingsDefaults.dictation.stt, provider: 'device' as const },
+      },
+    };
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<DictationSettingsSection
+        voice={voice}
+        setVoice={vi.fn()}
+        executionMachineId={null}
+        localAvailability={localAvailability}
+      />);
+    });
+    const needs = (id: string) => tree.root.findAll((node) => typeof node.type === 'string'
+      && node.props.testID === `settings.voice.dictation.engine.${encodeURIComponent(id)}.needs`);
+    // The OpenAI-compatible endpoint has no address yet; the same readiness owner as the card says so.
+    expect(needs('happier.voice.openai-compat/stt')).toHaveLength(1);
+    const needsText = needs('happier.voice.openai-compat/stt')[0]!
+      .findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join(' ');
+    expect(needsText).toContain('voice.readiness.');
+    expect(needs('device')).toHaveLength(0);
+  });
+
+  it('checks the exact selected native Local Neural pack when the page opens, once while the passive check is pending', async () => {
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
     const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
     const localConversation = readLocalConversationVoiceSettings(voiceSettingsDefaults);
@@ -480,24 +508,27 @@ describe('DictationSettingsSection', () => {
       />);
     });
 
-    const checkSetup = findRenderedItem(tree, 'settings.voice.dictation.checkSetup');
-    await act(async () => {
-      checkSetup.props.onPress();
-      checkSetup.props.onPress();
-    });
-
+    // Always-on card readiness: opening the page runs the passive check; there is no "Check setup" row.
+    expect(tree.root.findAll((node) => node.props.testID === 'settings.voice.dictation.checkSetup')).toHaveLength(0);
     expect(nativeModelReadiness.read).toHaveBeenCalledTimes(1);
     expect(nativeModelReadiness.read).toHaveBeenCalledWith('selected-direct-pack');
-    expect(findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.disabled).toBe(true);
+    // A re-render while it is pending shares the check in flight.
+    await act(async () => {
+      tree.update(<DictationSettingsSection
+        voice={{ ...voice, dictation: { ...voice.dictation, sttBinding: 'same_as_local' } }}
+        setVoice={setVoice}
+        executionMachineId={null}
+        localAvailability={localAvailability}
+      />);
+    });
+    expect(nativeModelReadiness.read).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       settleModelReadiness('ready');
       await Promise.resolve();
     });
 
-    expect(tree.root.findByProps({
-      testID: 'settings.voice.dictation.readiness',
-    }).props.subtitle).toBe('settingsVoice.dictation.readiness.ready');
+    expect(dictationCardReadiness(tree)?.status).toBe('ready');
     expect(setVoice).not.toHaveBeenCalled();
   });
 
@@ -538,16 +569,11 @@ describe('DictationSettingsSection', () => {
     });
 
     await act(async () => {
-      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
 
-    expect(tree.root.findByProps({
-      testID: 'settings.voice.dictation.readiness',
-    }).props.subtitle).toBe(
-      'voice.readiness.device_stt_unavailable · voice.readiness.actions.switch_provider',
-    );
+    expect(dictationCardReadiness(tree)).toMatchObject({ reasonKey: 'voice.readiness.device_stt_unavailable', recoveryAction: 'switch_provider' });
     await act(async () => {
-      findRenderedPressable(tree, 'settings.voice.dictation.readiness').props.onPress();
+      dictationRecoverActions(tree)[0]!.props.onPress();
     });
     expect(onRecoveryAction).toHaveBeenCalledWith('switch_provider');
     expect(setVoice).not.toHaveBeenCalled();
@@ -566,9 +592,7 @@ describe('DictationSettingsSection', () => {
         }}
       />);
     });
-    expect(tree.root.findAllByType('Pressable' as any).filter(
-      (node) => node.props.testID === 'settings.voice.dictation.readiness',
-    )).toHaveLength(0);
+    expect(dictationRecoverActions(tree)).toHaveLength(0);
   });
 
   it('returns switch-provider recovery focus to the provider control on every activation', async () => {
@@ -608,10 +632,9 @@ describe('DictationSettingsSection', () => {
       />);
     });
     await act(async () => {
-      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
 
-    const recovery = findRenderedPressable(tree, 'settings.voice.dictation.readiness');
+    const recovery = dictationRecoverActions(tree)[0]!;
     await act(async () => {
       recovery.props.onPress();
       recovery.props.onPress();
@@ -661,14 +684,9 @@ describe('DictationSettingsSection', () => {
     });
 
     await act(async () => {
-      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
 
-    expect(tree.root.findByProps({
-      testID: 'settings.voice.dictation.readiness',
-    }).props.subtitle).toBe(
-      'voice.readiness.daemon_relay_disabled · voice.readiness.actions.switch_provider',
-    );
+    expect(dictationCardReadiness(tree)).toMatchObject({ reasonKey: 'voice.readiness.daemon_relay_disabled', recoveryAction: 'switch_provider' });
     expect(setVoice).not.toHaveBeenCalled();
   });
 
@@ -722,11 +740,8 @@ describe('DictationSettingsSection', () => {
       tree = create(render(ready.voice));
     });
     await act(async () => {
-      findRenderedItem(tree, 'settings.voice.dictation.checkSetup').props.onPress();
     });
-    expect(tree.root.findByProps({
-      testID: 'settings.voice.dictation.readiness',
-    }).props.subtitle).toBe('settingsVoice.dictation.readiness.ready');
+    expect(dictationCardReadiness(tree)?.status).toBe('ready');
 
     const removed = settingsParse({ ...ready, secrets: [] });
     storageBoundary.settings = removed;
@@ -734,11 +749,7 @@ describe('DictationSettingsSection', () => {
       tree.update(render(removed.voice));
     });
 
-    expect(tree.root.findByProps({
-      testID: 'settings.voice.dictation.readiness',
-    }).props.subtitle).toBe(
-      'voice.readiness.credential_missing · voice.readiness.actions.configure_credential',
-    );
+    expect(dictationCardReadiness(tree)).toMatchObject({ reasonKey: 'voice.readiness.credential_missing', recoveryAction: 'configure_credential' });
     expect(setVoice).not.toHaveBeenCalled();
   });
 });

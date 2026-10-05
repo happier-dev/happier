@@ -158,7 +158,7 @@ function createDefaultProviderEnvelopes(): Record<string, VoiceProviderSettingsE
   return providerSettingsCatalog.defaultEnvelopes();
 }
 
-const CanonicalVoiceSettingsSchema = z.object({
+export const CanonicalVoiceSettingsSchema = z.object({
   providerId: VoiceProviderIdSchema.nullable().default(null),
   assistantLanguage: z.string().nullable().default(null),
   dictation: VoiceDictationSettingsSchema.prefault({}),

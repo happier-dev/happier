@@ -6,6 +6,7 @@ import { prepareDaemonVoiceInferenceSttSource } from '@/voice/input/prepareDaemo
 import {
   parseLocalVoiceSttSettings,
   resolveLocalVoiceAdapterSettings,
+  resolveLocalVoiceRecognitionLanguage,
 } from '@/voice/local/localVoiceSettings';
 import { DaemonSttController } from '@/voice/runtime/daemonInference/DaemonSttController';
 import { resolveDaemonVoiceInferenceExecution } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
@@ -51,6 +52,7 @@ export type RecordedAudioTranscriptionRequest = Readonly<{
   webBlob?: Blob | null;
   executionMachineId?: string | null;
   settings: any;
+  capturePurpose?: 'dictation' | 'conversation';
   signal?: AbortSignal | null;
 }>;
 
@@ -67,17 +69,6 @@ type RecordedAudioSttProviderController = Readonly<{
   transcribe: (params: RecordedAudioTranscriptionContext) => Promise<string | null>;
 }>;
 
-function resolveRecordedAudioLanguage(params: Readonly<{
-  explicitLanguage: unknown;
-  settings: any;
-}>): string | null {
-  return typeof params.explicitLanguage === 'string' && params.explicitLanguage.trim()
-    ? params.explicitLanguage.trim()
-    : typeof params.settings?.voice?.assistantLanguage === 'string' && params.settings.voice.assistantLanguage.trim()
-      ? params.settings.voice.assistantLanguage.trim()
-      : null;
-}
-
 async function transcribeWithLocalNeuralRecordedAudio(params: RecordedAudioTranscriptionContext): Promise<string | null> {
   const localNeural = params.stt.localNeural;
   const execution = await resolveDaemonVoiceInferenceExecution({
@@ -90,10 +81,7 @@ async function transcribeWithLocalNeuralRecordedAudio(params: RecordedAudioTrans
   }
 
   const packId = typeof localNeural?.assetId === 'string' && localNeural.assetId.trim() ? localNeural.assetId.trim() : null;
-  const language = resolveRecordedAudioLanguage({
-    explicitLanguage: localNeural?.language,
-    settings: params.settings,
-  });
+  const language = resolveLocalVoiceRecognitionLanguage(params.settings, params.capturePurpose);
   const preparedSource = await prepareDaemonVoiceInferenceSttSource({
     uri: params.uri,
     webBlob: params.webBlob,
@@ -145,7 +133,7 @@ async function transcribeWithRegisteredSpeechProvider(input: Readonly<{
     return await input.runtime.transcribeRecordedAudio(input.providerId, {
       uri: input.params.uri,
       providerConfig,
-      fallbackLanguage: resolveRecordedAudioLanguage({ explicitLanguage: null, settings: input.params.settings }),
+      ...(input.params.capturePurpose ? { capturePurpose: input.params.capturePurpose } : {}),
       // The attempt already captured its daemon; the registered speech upload
       // must land on that same machine, exactly like the local-neural path.
       originMachineId: input.params.executionMachineId ?? null,

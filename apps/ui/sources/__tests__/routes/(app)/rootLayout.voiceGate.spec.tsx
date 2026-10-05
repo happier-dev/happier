@@ -1,6 +1,5 @@
 import React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -42,6 +41,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 installRootLayoutRouteCommonModuleMocks({
+    modal: async () => vi.importActual<typeof import('@/modal')>('@/modal'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -64,27 +64,6 @@ installRootLayoutRouteCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key: string) => key });
-    },
-    storage: async (importOriginal) => {
-        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            importOriginal,
-            storage: createStorageStoreMock({
-                settings: mockSettings,
-            }),
-            useProfile: () => ({ linkedProviders: [], username: null }),
-            useAllSessions: () => [],
-            useFriendRequests: () => [],
-            useLocalSettings: () => mockLocalSettings,
-            useLocalSetting: (<K extends keyof LocalSettings>(key: K): LocalSettings[K] =>
-                mockLocalSettings[key]) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
-            useLocalSettingMutable: (<K extends keyof LocalSettings>(key: K): [LocalSettings[K], (value: LocalSettings[K]) => void] => [
-                mockLocalSettings[key],
-                vi.fn(),
-            ]) as typeof import('@/sync/domains/state/storage')['useLocalSettingMutable'],
-            useSettings: () => mockSettings,
-            useSetting: (key: keyof typeof mockSettings) => mockSettings[key],
-        });
     },
 });
 
@@ -110,17 +89,6 @@ vi.mock('@/components/pets/runtime/PetAppShellCompanionMount', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => {
-    const storage = (
-        selector: (state: { profile: { linkedProviders: []; username: null }; localSettings: LocalSettings }) => unknown,
-    ) =>
-        selector({
-            profile: { linkedProviders: [], username: null },
-            localSettings: mockLocalSettings,
-        });
-    return { storage, getStorage: () => storage };
-});
-
 vi.mock('@/sync/sync', () => ({
     sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },
 }));
@@ -129,11 +97,16 @@ vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => happierVoiceSupportState.current,
 }));
 
+beforeEach(async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ settings: mockSettings, localSettings: mockLocalSettings });
+});
+
 describe('RootLayout voice gating', () => {
     it('mounts the in-window pet companion surface for ordinary web clients', async () => {
         const RootLayout = (await import('@/app/(app)/_layout')).default;
 
-        const screen = await renderScreen(React.createElement(RootLayout));
+        const screen = await renderRootLayout(React.createElement(RootLayout));
 
         expect(screen.findByTestId('pet-app-shell-companion-mount')).not.toBeNull();
     });
@@ -144,7 +117,7 @@ describe('RootLayout voice gating', () => {
 
         const RootLayout = (await import('@/app/(app)/_layout')).default;
 
-        await renderScreen(React.createElement(RootLayout));
+        await renderRootLayout(React.createElement(RootLayout));
 
         expect(applySettings).not.toHaveBeenCalled();
     });
@@ -155,7 +128,7 @@ describe('RootLayout voice gating', () => {
 
         const RootLayout = (await import('@/app/(app)/_layout')).default;
 
-        await renderScreen(React.createElement(RootLayout));
+        await renderRootLayout(React.createElement(RootLayout));
 
         expect(applySettings).not.toHaveBeenCalled();
     });
@@ -165,17 +138,20 @@ describe('RootLayout voice gating', () => {
         applySettings.mockClear();
 
         const RootLayout = (await import('@/app/(app)/_layout')).default;
-        let tree: renderer.ReactTestRenderer;
-
-        tree = (await renderScreen(React.createElement(RootLayout))).tree;
+        const screen = await renderRootLayout(React.createElement(RootLayout));
 
         expect(applySettings).not.toHaveBeenCalled();
 
         happierVoiceSupportState.current = false;
-        await act(async () => {
-            tree!.update(React.createElement(RootLayout));
-        });
+        await screen.update(React.createElement(RootLayout));
 
         expect(applySettings).not.toHaveBeenCalled();
     });
 });
+
+async function renderRootLayout(element: React.ReactElement) {
+    const { ModalProvider } = await import('@/modal');
+    return renderScreen(element, {
+        wrapper: ({ children }) => React.createElement(ModalProvider, { children }),
+    });
+}

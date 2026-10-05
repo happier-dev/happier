@@ -4,8 +4,7 @@ import {
   GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION,
 } from '@happier-dev/agents';
 
-import { flushHookEffects } from '@/dev/testkit';
-import { installVoiceAgentCommonModuleMocks } from '@/voice/agent/voiceAgentTestHelpers';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { buildVoiceSpawnUserAttemptId } from '@/voice/shared/voiceSpawnAttempt';
 
@@ -29,9 +28,9 @@ const state: any = {
   sessions: {},
   machines: {},
   machineListByServerId: {},
+  authoringMemory: { recentMachinePaths: [{ machineId: 'm1', path: '/tmp/repo' }] },
   settings: {
     lastUsedAgent: 'claude',
-    recentMachinePaths: [{ machineId: 'm1', path: '/tmp/repo' }],
     voice: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { agentSource: 'session' } } } } },
   },
 };
@@ -126,15 +125,20 @@ function installFreshVoiceHomeSpawn(sessionId = 'fresh_voice') {
   );
 }
 
-installVoiceAgentCommonModuleMocks({
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: () => state,
-            },
-        });
+vi.mock('@/sync/domains/state/storage', async () => {
+  const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+  return createStorageModuleStub({
+    storage: {
+      // This fixture mutates its partial state in place; publish a new snapshot
+      // so the canonical completion adapter observes each fixture update.
+      getState: () => ({ ...state }),
     },
+  });
+});
+
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock().module;
 });
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -185,7 +189,6 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
 
 describe('voiceConversationSession', () => {
   beforeEach(() => {
-    const now = Date.now();
     vi.resetModules();
     spawnSession.mockReset();
     spawnTrustedHiddenSystemSession.mockReset();
@@ -202,7 +205,7 @@ describe('voiceConversationSession', () => {
       const legacyOptions = {
         machineId: input.executionTarget.machineId,
         serverId: input.executionTarget.serverId,
-        directory: input.directory,
+        directory: input.directory.path,
         transcriptStorage: input.transcriptStorage,
         permissionMode: input.permissionMode,
         connectedServices: input.connectedServices,
@@ -253,14 +256,13 @@ describe('voiceConversationSession', () => {
       m1: {
         id: 'm1',
         active: true,
-        activeAt: now,
         metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/.happier', homeDir: '/home/u' },
       },
     };
     state.machineListByServerId = {};
+    state.authoringMemory = { recentMachinePaths: [{ machineId: 'm1', path: '/tmp/repo' }] };
     state.settings = {
       lastUsedAgent: 'claude',
-      recentMachinePaths: [{ machineId: 'm1', path: '/tmp/repo' }],
       voice: {
         executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
         providers: {
@@ -307,7 +309,7 @@ describe('voiceConversationSession', () => {
       expect.objectContaining({
         creationKey: expect.stringMatching(/^voice-session-attempt:/),
         executionTarget: { serverId: 'server-a', machineId: 'm1' },
-        directory: '/tmp/.happier/voice-agent',
+        directory: { kind: 'path', path: '/tmp/.happier/voice-agent' },
         agentTarget: expect.objectContaining({ kind: 'agent' }),
         transcriptStorage: 'persisted',
       }),
@@ -735,7 +737,7 @@ describe('voiceConversationSession', () => {
   it('waits briefly for a late-hydrated global spawn target before failing', async () => {
     const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
-    state.settings.recentMachinePaths = [];
+    state.authoringMemory.recentMachinePaths = [];
     state.sessions = {};
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
@@ -751,7 +753,7 @@ describe('voiceConversationSession', () => {
     });
 
     setTimeout(() => {
-      state.settings.recentMachinePaths = [{ machineId: 'm1', path: '/tmp/repo' }];
+      state.authoringMemory.recentMachinePaths = [{ machineId: 'm1', path: '/tmp/repo' }];
     }, 25);
 
     await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice');
@@ -773,7 +775,7 @@ describe('voiceConversationSession', () => {
       m_active: { id: 'm_active', active: true, metadata: { host: 'active', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/active', homeDir: '/home/u' } },
     };
     state.settings.voice.executionMachine = { mode: 'fixed', machineId: 'm_stale', autoMachineId: null };
-    state.settings.recentMachinePaths = [{ machineId: 'm_active', path: '/tmp/repo-active' }];
+    state.authoringMemory.recentMachinePaths = [{ machineId: 'm_active', path: '/tmp/repo-active' }];
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
     refreshSessions.mockImplementation(async () => {
@@ -804,7 +806,7 @@ describe('voiceConversationSession', () => {
 
     state.machines = {};
     state.settings.voice.executionMachine = { mode: 'fixed', machineId: 'm_fixed', autoMachineId: null };
-    state.settings.recentMachinePaths = [
+    state.authoringMemory.recentMachinePaths = [
       { machineId: 'm_fixed', path: '/tmp/fixed-repo' },
       { machineId: 'm_other', path: '/tmp/other-repo' },
     ];
@@ -846,7 +848,7 @@ describe('voiceConversationSession', () => {
         metadata: { host: 'active', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/active', homeDir: '/home/u' },
       },
     };
-    state.settings.recentMachinePaths = [{ machineId: 'm_stale', path: '/tmp/stale-repo' }];
+    state.authoringMemory.recentMachinePaths = [{ machineId: 'm_stale', path: '/tmp/stale-repo' }];
     state.sessions = {
       stale_session: {
         id: 'stale_session',
@@ -895,7 +897,7 @@ describe('voiceConversationSession', () => {
         metadata: { host: 'sticky', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/sticky', homeDir: '/home/u' },
       },
     };
-    state.settings.recentMachinePaths = [{ machineId: 'm_recent', path: '/tmp/recent-repo' }];
+    state.authoringMemory.recentMachinePaths = [{ machineId: 'm_recent', path: '/tmp/recent-repo' }];
     state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_sticky' };
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
@@ -940,7 +942,7 @@ describe('voiceConversationSession', () => {
         },
       };
       state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_sticky' };
-      state.settings.recentMachinePaths = [{ machineId: 'm_other', path: '/tmp/other-repo' }];
+      state.authoringMemory.recentMachinePaths = [{ machineId: 'm_other', path: '/tmp/other-repo' }];
 
       spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
       refreshSessions.mockImplementation(async () => {
@@ -985,7 +987,7 @@ describe('voiceConversationSession', () => {
         },
       ],
     };
-    state.settings.recentMachinePaths = [];
+    state.authoringMemory.recentMachinePaths = [];
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
     refreshSessions.mockImplementation(async () => {
@@ -1035,7 +1037,7 @@ describe('voiceConversationSession', () => {
       expect.objectContaining({
         creationKey: expect.stringMatching(/^voice-session-attempt:/),
         executionTarget: { serverId: 'server-a', machineId: 'm1' },
-        directory: '/tmp/repo',
+        directory: { kind: 'path', path: '/tmp/repo' },
         agentTarget: expect.objectContaining({ kind: 'agent' }),
         transcriptStorage: 'persisted',
       }),

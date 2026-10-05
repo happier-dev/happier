@@ -740,8 +740,9 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
       rowKind="item"
       itemTrigger={{
         title: props.title,
+        subtitle: detail,
         showSelectedSubtitle: false,
-        detailFormatter: () => detail,
+        itemProps: { subtitleLines: 0 },
       }}
       items={gestureItems}
       onSelect={(id) => {
@@ -753,7 +754,8 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
     : <Item
       testID={props.testID}
       title={props.title}
-      detail={detail}
+      subtitle={detail}
+      subtitleLines={0}
       onPress={() => runCredentialGesture('enterNew')}
     />;
 

@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AuthContextType } from '@/auth/context/AuthContext';
+import { getCurrentAuth, setCurrentAuth } from '@/auth/context/currentAuth';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 import type { ActiveServerSwitchResult } from '@/sync/domains/server/activeServerSwitch';
 
@@ -86,11 +88,16 @@ installVoiceToolActionImplCommonModuleMocks({
   },
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-  getCurrentAuth: () => ({
-    refreshFromActiveServer,
-  }),
-}));
+const authFixture = {
+  isAuthenticated: true,
+  credentials: { token: 'account-token' },
+  credentialAuthorityKind: 'account',
+  login: async () => ({ kind: 'completed' as const }),
+  loginWithCredentials: async () => ({ kind: 'completed' as const }),
+  logout: async () => ({ kind: 'completed' as const }),
+  refreshFromActiveServer,
+} satisfies AuthContextType;
+let previousAuth: AuthContextType | null;
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
   setActiveServerAndSwitch: (params: any) => setActiveServerAndSwitch(params),
@@ -106,11 +113,17 @@ vi.mock('./sessionTargets', () => ({
 
 describe('openSessionForVoiceTool', () => {
   beforeEach(() => {
+    previousAuth = getCurrentAuth();
+    setCurrentAuth(authFixture);
     setActiveServerAndSwitch.mockReset();
     setActiveServerAndSwitch.mockResolvedValue('switched');
     routerNavigate.mockClear();
     refreshFromActiveServer.mockClear();
     setPrimaryActionSessionForVoiceTool.mockClear();
+  });
+
+  afterEach(() => {
+    setCurrentAuth(previousAuth);
   });
 
   it('returns a human-readable session reference for cached cross-server sessions', async () => {

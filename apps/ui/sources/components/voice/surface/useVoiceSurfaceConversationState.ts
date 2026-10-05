@@ -11,10 +11,12 @@ import {
 } from '@/voice/transcript/voiceConversationTranscript';
 import { resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import type { CanonicalVoiceTranscriptItem } from '@/voice/transcript/canonicalProjector';
+import { getPreferredLanguage } from '@/text';
 
 import { useStoreSnapshot } from './useStoreSnapshot';
 import {
     mergeVoiceSurfaceTranscriptEntries,
+    resolveVoiceSurfaceLatestTranscriptText,
     type VoiceSurfaceTranscriptEntry,
 } from './mergeVoiceSurfaceTranscriptEntries';
 
@@ -25,14 +27,15 @@ const EMPTY_SESSIONS: Record<string, unknown> = {};
 /** Stable stand-in for "no slice to project", so the snapshot never churns. */
 const NO_SESSION_MESSAGES_SLICE: unknown = Object.freeze({});
 
-export function useVoiceSurfaceConversationState(params: Readonly<{
+type VoiceSurfaceConversationParams = Readonly<{
     providerId: string;
     activeControlSessionId: string | null;
     surfaceSessionId: string | null;
     transcriptEnabled: boolean;
     voiceSettings: unknown;
-}>) {
-    const transcriptEnabled = params.transcriptEnabled;
+}>;
+
+function useVoiceSurfaceConversationBinding(params: VoiceSurfaceConversationParams) {
     const surfaceCapabilities = resolveVoiceAdapterSurfaceCapabilities(
         params.providerId,
         params.voiceSettings,
@@ -78,7 +81,7 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
      * cannot change the answer costs one reference comparison.
      */
     const subscribeBindingSources = React.useCallback((notify: () => void) => {
-        const unsubscribeSessions = (storage as any).subscribe(notify);
+        const unsubscribeSessions = storage.subscribe(notify);
         const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
         return () => {
             unsubscribeSessions();
@@ -86,13 +89,14 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
         };
     }, []);
     const resolvedBindingCache = React.useRef<
-        { sessions: unknown; bindings: unknown; value: string | null } | null
+        { sessions: unknown; bindings: unknown; candidates: readonly string[]; providerId: string; value: string | null } | null
     >(null);
     const readOpenConversationSessionId = React.useCallback((): string | null => {
-        const sessions = (storage as any).getState()?.sessions ?? EMPTY_SESSIONS;
+        const sessions = storage.getState().sessions ?? EMPTY_SESSIONS;
         const bindings = voiceSessionBindingStore.getState();
         const cached = resolvedBindingCache.current;
-        if (cached && cached.sessions === sessions && cached.bindings === bindings) {
+        if (cached && cached.sessions === sessions && cached.bindings === bindings
+            && cached.candidates === controlSessionCandidates && cached.providerId === params.providerId) {
             return cached.value;
         }
 
@@ -110,7 +114,7 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
             }
         }
 
-        resolvedBindingCache.current = { sessions, bindings, value };
+        resolvedBindingCache.current = { sessions, bindings, candidates: controlSessionCandidates, providerId: params.providerId, value };
         return value;
     }, [
         controlSessionCandidates,
@@ -125,6 +129,43 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
         () => controlSessionCandidates[0] ?? null,
         [controlSessionCandidates],
     );
+    return { openConversationSessionId, fallbackOpenConversationControlSessionId };
+}
+
+/** Demanded by the compact line only; unchanged text is a stable external-store snapshot. */
+export function useVoiceSurfaceLatestTranscriptText(params: VoiceSurfaceConversationParams): string | null {
+    const { openConversationSessionId } = useVoiceSurfaceConversationBinding(params);
+    const language = getPreferredLanguage();
+    const subscribe = React.useCallback((notify: () => void) => {
+        if (!params.transcriptEnabled || !openConversationSessionId) return () => {};
+        const unsubscribeMessages = storage.subscribe(notify);
+        const unsubscribeCanonical = subscribeCanonicalVoiceTranscript(openConversationSessionId, notify);
+        return () => {
+            unsubscribeMessages();
+            unsubscribeCanonical();
+        };
+    }, [openConversationSessionId, params.transcriptEnabled]);
+    const read = React.useMemo(() => {
+        let cached: Readonly<{ slice: unknown; canonical: readonly CanonicalVoiceTranscriptItem[]; text: string | null }> | null = null;
+        return (): string | null => {
+            if (!params.transcriptEnabled || !openConversationSessionId) return null;
+            const state = storage.getState();
+            const slice = state.sessionMessages[openConversationSessionId];
+            const canonical = readCanonicalVoiceTranscriptSnapshot(openConversationSessionId);
+            if (cached && cached.slice === slice && cached.canonical === canonical) return cached.text;
+            const persisted = selectVoiceTranscriptEntriesForConversationSession(state, openConversationSessionId);
+            const text = resolveVoiceSurfaceLatestTranscriptText(persisted, canonical);
+            cached = { slice, canonical, text };
+            return text;
+        };
+    }, [openConversationSessionId, params.transcriptEnabled, language]);
+    return React.useSyncExternalStore(subscribe, read, read);
+}
+
+export function useVoiceSurfaceConversationState(params: VoiceSurfaceConversationParams) {
+    const { openConversationSessionId, fallbackOpenConversationControlSessionId } = useVoiceSurfaceConversationBinding(params);
+    const transcriptEnabled = params.transcriptEnabled;
+    const language = getPreferredLanguage();
     /*
      * Subscribe to the bound conversation's own message slice, not to the whole
      * `sessionMessages` map.
@@ -138,7 +179,7 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
      * stable constant keeps even that comparison out of the projection path.
      */
     const selectConversationMessagesSlice = React.useCallback(
-        (state: any): unknown => (
+        (state: ReturnType<typeof storage.getState>): unknown => (
             transcriptEnabled && openConversationSessionId
                 ? state?.sessionMessages?.[openConversationSessionId] ?? NO_SESSION_MESSAGES_SLICE
                 : NO_SESSION_MESSAGES_SLICE
@@ -146,7 +187,7 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
         [openConversationSessionId, transcriptEnabled],
     );
     const conversationMessagesSlice = useStoreSnapshot(
-        storage as any,
+        storage,
         selectConversationMessagesSlice,
     );
     const transcriptEntries = React.useMemo(() => {
@@ -155,18 +196,18 @@ export function useVoiceSurfaceConversationState(params: Readonly<{
             { sessionMessages: { [openConversationSessionId]: conversationMessagesSlice } },
             openConversationSessionId,
         );
-    }, [transcriptEnabled, openConversationSessionId, conversationMessagesSlice]);
+    }, [transcriptEnabled, openConversationSessionId, conversationMessagesSlice, language]);
     const subscribeCanonical = React.useCallback(
-        (listener: () => void) => openConversationSessionId
+        (listener: () => void) => transcriptEnabled && openConversationSessionId
             ? subscribeCanonicalVoiceTranscript(openConversationSessionId, listener)
             : () => {},
-        [openConversationSessionId],
+        [openConversationSessionId, transcriptEnabled],
     );
     const readCanonical = React.useCallback(
-        () => openConversationSessionId
+        () => transcriptEnabled && openConversationSessionId
             ? readCanonicalVoiceTranscriptSnapshot(openConversationSessionId)
             : EMPTY_CANONICAL_ENTRIES,
-        [openConversationSessionId],
+        [openConversationSessionId, transcriptEnabled],
     );
     const canonicalEntries = React.useSyncExternalStore(subscribeCanonical, readCanonical, readCanonical);
     const mergedTranscriptEntries: readonly VoiceSurfaceTranscriptEntry[] = React.useMemo(

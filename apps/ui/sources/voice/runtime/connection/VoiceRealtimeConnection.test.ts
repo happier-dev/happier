@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getActionSpec, zodSchemaToJsonSchemaObject, type VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import { describeActionForVoiceTool } from '@happier-dev/plugin-sdk/voice/client';
+import { createOpenAiToolSessionUpdate } from '../../../../../../packages/plugins/openai/src/ui/voice/protocol';
 
 import {
   createSdkHandleConnection,
@@ -123,6 +126,70 @@ function jsonObjectWithExactUtf8Bytes(totalBytes: number): Readonly<{ values: re
 }
 
 describe('VoiceRealtimeConnection implementations', () => {
+  it('admits a provider session.updated echo of generated session.spawn_new tool metadata', async () => {
+    const spec = getActionSpec('session.spawn_new');
+    const echoed = {
+      type: 'session.updated', event_id: 'updated-with-tools',
+      session: { type: 'realtime', tools: [{
+        type: 'function', name: String(spec.bindings?.voiceClientToolName),
+        description: describeActionForVoiceTool(spec),
+        parameters: zodSchemaToJsonSchemaObject(spec.inputSchema),
+      }] },
+    };
+    const peer = new FakeWebRtcPeer();
+    const connection = createWebRtcConnection({
+      micStream: { getAudioTracks: () => [] } as unknown as MediaStream,
+      duckGain: 0.18,
+      signaling: { exchangeOffer: async () => ({ answerSdp: 'answer-sdp' }) },
+      control: { label: 'oai-events', onOpen: () => undefined },
+      createPeerConnection: () => peer as unknown as RTCPeerConnection,
+    });
+    const connecting = connection.connect(new AbortController().signal);
+    await vi.waitFor(() => expect(peer.setRemoteDescription).toHaveBeenCalledTimes(1));
+    peer.channel.open();
+    await connecting;
+    peer.channel.message(JSON.stringify(echoed));
+    expect(connection.state()).toBe('open');
+    const controls = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
+    await expect(controls.next()).resolves.toEqual({ done: false, value: echoed });
+    await connection.close({ code: 'user_stop' });
+  });
+
+  it.each([new Date(), () => undefined, undefined, Number.NaN])('rejects non-JSON outgoing control values before the driver boundary (%s)', async (value) => {
+    const fixture = createDriver();
+    const connection = createSdkHandleConnection({ driver: fixture.driver });
+    await connection.connect(new AbortController().signal);
+    // Boundary fixture intentionally supplies a malformed runtime value.
+    await expect(connection.sendControl({ value } as unknown as VoiceRealtimeJsonValue)).rejects.toThrow();
+    expect(fixture.sendControl).not.toHaveBeenCalled();
+    await connection.close({ code: 'user_stop' });
+  });
+
+  it('sends generated session.spawn_new metadata through the initial WebRTC control barrier', async () => {
+    const spec = getActionSpec('session.spawn_new');
+    const update = createOpenAiToolSessionUpdate([{
+      name: String(spec.bindings?.voiceClientToolName),
+      description: describeActionForVoiceTool(spec),
+      parameters: zodSchemaToJsonSchemaObject(spec.inputSchema),
+    }]);
+    const peer = new FakeWebRtcPeer();
+    const connection = createWebRtcConnection({
+      micStream: { getAudioTracks: () => [] } as unknown as MediaStream,
+      duckGain: 0.18,
+      signaling: { exchangeOffer: async () => ({ answerSdp: 'answer-sdp' }) },
+      control: { label: 'oai-events', onOpen: async ({ sendJson }) => { await sendJson(update); } },
+      createPeerConnection: () => peer as unknown as RTCPeerConnection,
+    });
+    const connecting = connection.connect(new AbortController().signal);
+    const admitted = expect(connecting).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(peer.setRemoteDescription).toHaveBeenCalledTimes(1));
+    peer.channel.open();
+    await admitted;
+    expect(connection.state()).toBe('open');
+    expect(peer.channel.sent.map((value) => JSON.parse(value))).toEqual([update]);
+    await connection.close({ code: 'user_stop' });
+  });
+
   it.each([
     ['sdk_handle', createSdkHandleConnection],
   ] as const)('keeps %s lifecycle and control flow transport-specific but contract-identical', async (kind, create) => {

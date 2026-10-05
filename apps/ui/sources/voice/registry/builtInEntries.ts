@@ -22,6 +22,8 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     pluginId: 'happier.voice.builtin',
     providerId: 'local_conversation',
     settingsSectionId: 'voice.provider.local_conversation',
+    presentation: { providerId: 'local_conversation', settingsSectionId: 'voice.provider.local_conversation' },
+    mark: { kind: 'icon', name: 'desktop' },
     roles: ['conversation_stt', 'conversation_tts', 'vad', 'endpointing'],
     requirements: ['server_feature', 'runtime', 'model', 'execution_machine', 'endpoint', 'credential'],
     supportedPlatforms: ['web', 'ios', 'android'],
@@ -79,10 +81,20 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
       stt: {
         titleKey: 'settingsVoice.local.deviceStt',
         disclosureKey: 'settingsVoice.realtimeProviders.speechProcessing.deviceStt',
+        facts: {
+          audioDestination: { key: 'settingsVoice.pages.privacy.deviceAudio', fallback: 'Your device’s speech service' },
+          processor: { key: 'settingsVoice.pages.privacy.deviceProcessor', fallback: 'Your device or its speech service' },
+          retention: { key: 'settingsVoice.pages.privacy.devicePolicy', fallback: 'Follows your device’s speech settings and terms.' },
+        },
       },
       tts: {
         titleKey: 'settingsVoice.local.deviceTts',
         disclosureKey: 'settingsVoice.realtimeProviders.speechProcessing.deviceTts',
+        facts: {
+          audioDestination: { key: 'settingsVoice.pages.privacy.noMicrophoneAudio', fallback: 'No microphone audio; reply text only.' },
+          processor: { key: 'settingsVoice.pages.privacy.deviceProcessor', fallback: 'Your device or its speech service' },
+          retention: { key: 'settingsVoice.pages.privacy.devicePolicy', fallback: 'Follows your device’s speech settings and terms.' },
+        },
       },
     },
   } satisfies VoiceUiRuntimeContribution),
@@ -95,6 +107,26 @@ export const BUILT_IN_VOICE_UI_ENTRIES: readonly VoiceUiRuntimeContribution[] = 
     roles: ['dictation_stt', 'conversation_stt', 'conversation_tts'],
     requirements: ['runtime', 'model'],
     supportedPlatforms: ['web', 'ios', 'android'],
+    processingDisclosures: {
+      stt: {
+        titleKey: 'settingsVoice.local.localNeuralStt.title',
+        disclosureKey: 'settingsVoice.pages.privacy.localDisclosure',
+        facts: {
+          audioDestination: { key: 'settingsVoice.pages.privacy.localAudio', fallback: 'Your device or Voice computer' },
+          processor: { key: 'settingsVoice.pages.privacy.localProcessor', fallback: 'Your selected speech model' },
+          retention: { key: 'settingsVoice.pages.privacy.localRetention', fallback: 'Managed by your device/runtime. Diagnostics follow your recording settings.' },
+        },
+      },
+      tts: {
+        titleKey: 'settingsVoice.local.localNeuralTts.title',
+        disclosureKey: 'settingsVoice.pages.privacy.localDisclosure',
+        facts: {
+          audioDestination: { key: 'settingsVoice.pages.privacy.noMicrophoneAudio', fallback: 'No microphone audio; reply text only.' },
+          processor: { key: 'settingsVoice.pages.privacy.localProcessor', fallback: 'Your selected speech model' },
+          retention: { key: 'settingsVoice.pages.privacy.localRetention', fallback: 'Managed by your device/runtime. Diagnostics follow your recording settings.' },
+        },
+      },
+    },
   } satisfies VoiceUiRuntimeContribution),
   Object.freeze({
     kind: 'voice.turn-support.v1',

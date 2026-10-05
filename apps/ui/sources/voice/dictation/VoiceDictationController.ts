@@ -468,6 +468,7 @@ export function createVoiceDictationController(deps: Readonly<{
                         }
                         try {
                             rawText = await deps.transcribeRecordedAudio({
+                                capturePurpose: 'dictation',
                                 sessionId: attempt.transcriptionSessionId,
                                 uri: stopped.uri,
                                 executionMachineId: attempt.executionMachineId,

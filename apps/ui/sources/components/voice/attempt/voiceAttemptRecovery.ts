@@ -11,6 +11,7 @@ import {
     VOICE_SETTINGS_PROVIDER_FOCUS_TARGET,
 } from '@/voice/settings/voiceSettingsRouteFocus';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 
 /**
  * The Agent runtime a recovery would install, update or connect: the exact
@@ -22,6 +23,18 @@ export type VoiceAttemptRecoveryRuntimeTarget = Readonly<{
     machineId: string;
     serverIdentityId: string;
 }>;
+
+export function resolveVoiceAttemptRecoveryRuntimeTarget(input: Readonly<{
+    agentRuntime: Readonly<{ localId: string; pluginId: string }> | null;
+    serverId: unknown;
+    machineId: unknown;
+}>): VoiceAttemptRecoveryRuntimeTarget | null {
+    const agentId = normalizeNonEmptyString(input.agentRuntime?.localId);
+    const pluginId = normalizeNonEmptyString(input.agentRuntime?.pluginId);
+    const machineId = normalizeNonEmptyString(input.machineId);
+    const serverIdentityId = resolvePortableServerIdentityForRoutingId(normalizeNonEmptyString(input.serverId));
+    return agentId && pluginId && machineId && serverIdentityId ? { agentId, pluginId, machineId, serverIdentityId } : null;
+}
 
 export type VoiceAttemptRecoveryContext = Readonly<{
     connectRecoveryTarget: VoiceConnectRecoveryTarget;
@@ -72,7 +85,9 @@ export function resolveVoiceAttemptRecoveryAvailable(
  * conversation. Placement decides where the affordance is drawn, never what it
  * does.
  */
-export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
+export async function executeVoiceAttemptRecovery(params: Readonly<{
+    expectedAttempt?: string | null;
+    isCurrent?: () => boolean;
     recoveryAction: VoiceMachineRecoveryAction | null;
     /**
      * A provider the user selected but has not finished connecting: the same
@@ -82,11 +97,12 @@ export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
     setupIncomplete: boolean;
     context: VoiceAttemptRecoveryContext;
     navigate: (href: unknown) => void;
-}>): () => void {
+}>): Promise<boolean> {
     const { context, navigate, recoveryAction, setupIncomplete } = params;
-    return () => {
+    if (params.isCurrent?.() === false) return false;
+    if ('expectedAttempt' in params && !voiceSessionManager.matchesAttempt(params.expectedAttempt ?? null)) return false;
         if (recoveryAction === 'connect_agent') {
-            if (context.connectRecoveryTarget.kind === 'unavailable') return;
+            if (context.connectRecoveryTarget.kind === 'unavailable') return false;
             navigate(
                 context.connectRecoveryTarget.kind === 'exact'
                     ? context.connectRecoveryTarget.route
@@ -94,11 +110,11 @@ export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
                         ? VOICE_SETTINGS_PROVIDER_FOCUS_TARGET
                         : SETTINGS_ROUTES.connectedServices,
             );
-            return;
+            return true;
         }
         if (recoveryAction === 'install_agent_runtime' || recoveryAction === 'update_agent_runtime') {
             const runtimeRecoveryTarget = context.runtimeRecoveryTarget;
-            if (!runtimeRecoveryTarget) return;
+            if (!runtimeRecoveryTarget) return false;
             navigate({
                 pathname: '/(app)/settings/agents/[agentId]',
                 params: {
@@ -109,26 +125,25 @@ export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
                     installIntent: recoveryAction === 'update_agent_runtime' ? 'update' : 'install',
                 },
             });
-            return;
+            return true;
         }
         if (recoveryAction === 'review_credentials') {
             navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
-            return;
+            return true;
         }
         if (recoveryAction === 'select_execution_machine') {
             navigate(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
-            return;
+            return true;
         }
         if (recoveryAction === 'open_settings' || recoveryAction === 'open_settings_then_reconnect') {
             if (Platform.OS === 'web') {
                 navigate(SETTINGS_ROUTES.voice);
-                return;
+                return true;
             }
-            fireAndForget(
-                Linking.openSettings().catch(() => navigate(SETTINGS_ROUTES.voice)),
-                { tag: 'VoiceAttemptControl.openSettings' },
-            );
-            return;
+            await Linking.openSettings().catch(() => {
+                if (params.isCurrent?.() !== false) navigate(SETTINGS_ROUTES.voice);
+            });
+            return params.isCurrent?.() !== false;
         }
         if (recoveryAction === 'retry' || recoveryAction === 'reconnect') {
             /*
@@ -140,13 +155,17 @@ export function createVoiceAttemptRecoveryDispatch(params: Readonly<{
             const retrySessionId = normalizeNonEmptyString(context.attemptSessionId)
                 ?? normalizeNonEmptyString(context.startSessionId)
                 ?? (context.globalStartAuthorized ? '' : null);
-            if (retrySessionId === null) return;
-            fireAndForget(
-                voiceSessionManager.retry(retrySessionId),
-                { tag: 'VoiceAttemptControl.recover' },
-            );
-            return;
+            if (retrySessionId === null) return false;
+            await voiceSessionManager.retry(retrySessionId);
+            return true;
         }
-        if (setupIncomplete) navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
-    };
+        if (setupIncomplete) {
+            navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
+            return true;
+        }
+        return false;
+}
+
+export function createVoiceAttemptRecoveryDispatch(params: Parameters<typeof executeVoiceAttemptRecovery>[0]): () => void {
+    return () => fireAndForget(executeVoiceAttemptRecovery(params), { tag: 'VoiceAttemptControl.recover' });
 }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceAdapterController } from '@/voice/session/types';
+import { useVoiceSurfaceConversationState } from './useVoiceSurfaceConversationState';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -70,7 +71,6 @@ afterEach(() => {
 
 describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
     it('does not project transcript entries when the activity feed is disabled', async () => {
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
                 providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -89,7 +89,6 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
     });
 
     it('projects transcript entries when the activity feed is enabled', async () => {
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
                 providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -106,7 +105,6 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
     });
 
     it('ignores sessionMessages changes while the feed is disabled (no re-projection)', async () => {
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
                 providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -136,7 +134,6 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
 
     it('uses a fake second realtime provider global control scope without host edits', async () => {
         registerVoiceAdapters([createSurfaceAdapter('realtime_second_provider', 'global')]);
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
                 providerId: 'realtime_second_provider',
@@ -155,7 +152,6 @@ describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
     });
 
     it('does not invent a global control session for a disabled provider', async () => {
-        const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         const { getCurrent } = await renderHook(() =>
             useVoiceSurfaceConversationState({
                 providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',

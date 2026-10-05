@@ -1,5 +1,5 @@
 import {
-  VoiceRealtimeJsonValueSchema,
+  StrictJsonValueSchema,
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type {
@@ -11,6 +11,7 @@ import type {
   VoicePlaybackInterruptionMode,
   VoicePlaybackInterruptionResolution,
 } from '@/voice/runtime/playback/VoicePlaybackController';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type AsyncIterableValue<Value> = Value extends AsyncIterable<infer Item> ? Item : never;
 
@@ -111,7 +112,9 @@ function serializeControl(
   serialized: string;
   byteLength: number;
 }> {
-  const value = VoiceRealtimeJsonValueSchema.parse(raw);
+  // Transport envelopes include generated schema metadata. Live tool values
+  // are bounded by their canonical schemas; transport owns serialized bytes.
+  const value = StrictJsonValueSchema.parse(raw);
   const serialized = JSON.stringify(value);
   const byteLength = controlTextEncoder.encode(serialized).byteLength;
   if (byteLength > maxBytes) {
@@ -295,14 +298,17 @@ function createConnection(input: Readonly<{
       // unsettled startup — retain the transport it no longer feeds.
       await Promise.all([
         input.pcm?.stop().catch(() => {}),
-        input.driver.close(reason).catch(() => {}),
+        input.driver.close(reason),
       ]);
-    })();
+    })().catch((error: unknown) => {
+      closePromise = null;
+      throw error;
+    });
     await closePromise;
   };
 
   const closeForOverflow = (): void => {
-    void close({ code: 'error', detail: 'voice_connection_inbound_overflow' });
+    fireAndForget(close({ code: 'error', detail: 'voice_connection_inbound_overflow' }), { tag: 'VoiceConnection.close' });
   };
   controlQueue = createEventQueue({
     maxQueuedEvents: maxQueuedControlEvents,
@@ -315,7 +321,7 @@ function createConnection(input: Readonly<{
 
   const publishControl = (raw: unknown): void => {
     if (currentState === 'closed') return;
-    const parsed = VoiceRealtimeJsonValueSchema.safeParse(raw);
+    const parsed = StrictJsonValueSchema.safeParse(raw);
     if (!parsed.success) return;
     controlQueue.publish(parsed.data);
   };
@@ -356,7 +362,7 @@ function createConnection(input: Readonly<{
       currentState = 'connecting';
       pcmTerminalSubscription = input.pcm?.subscribeTerminal?.((error) => {
         terminalSendFailure ??= error;
-        void close({ code: 'error', detail: error.message });
+        fireAndForget(close({ code: 'error', detail: error.message }), { tag: 'VoiceConnection.close' });
       }) ?? null;
       const abortLifecycle = (): void => lifecycleController.abort();
       signal.addEventListener('abort', abortLifecycle, { once: true });
@@ -369,7 +375,7 @@ function createConnection(input: Readonly<{
           onControl: publishControl,
           onTransport: publishTransport,
           onRemoteClose: (reason) => {
-            void close({ code: 'remote_close', detail: reason });
+            fireAndForget(close({ code: 'remote_close', detail: reason }), { tag: 'VoiceConnection.close' });
           },
         });
         const startPcm = input.pcm?.start(lifecycleController.signal) ?? Promise.resolve();
@@ -398,7 +404,7 @@ function createConnection(input: Readonly<{
       ) {
         const overflow = connectionError('voice_connection_outbound_overflow');
         terminalSendFailure ??= overflow;
-        void close({ code: 'error', detail: overflow.message });
+        fireAndForget(close({ code: 'error', detail: overflow.message }), { tag: 'VoiceConnection.close' });
         throw overflow;
       }
       retainedSendCount += 1;
@@ -873,7 +879,9 @@ export function createWebRtcConnection(input: Readonly<{
             fail('voice_webrtc_control_malformed');
             return;
           }
-          const parsed = VoiceRealtimeJsonValueSchema.safeParse(raw);
+          // Providers can echo full session configuration, including the same
+          // generated tool metadata admitted on outbound control frames.
+          const parsed = StrictJsonValueSchema.safeParse(raw);
           if (!parsed.success) {
             fail('voice_webrtc_control_invalid_json');
             return;

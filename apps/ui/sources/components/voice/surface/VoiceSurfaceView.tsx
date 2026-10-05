@@ -1,23 +1,21 @@
 import * as React from 'react';
 
-import { VoiceHorizon } from './presentations/VoiceHorizon';
+import { VoiceGlance } from '@/components/voice/presence/VoiceGlance';
+
 import type { VoiceSurfaceViewModel } from './useVoiceSurfaceModel';
 
 /**
  * The Voice surface's presentation seam.
  *
- * `React.memo` over one `model` prop — and, since M2, a memo that actually does
- * something: `useVoiceSurfaceModel` now returns a stable object for unchanged
- * inputs, so an unrelated parent render no longer repaints the planet, the meter
- * and the transcript.
+ * `React.memo` over one `model` prop; `useVoiceSurfaceModel` returns a stable object for unchanged
+ * inputs, so an unrelated parent render does not repaint the mark or the transcript.
  *
- * The four host call sites and `VoiceSurface.tsx` are untouched (§5.1); the
- * presentation is swapped **behind** this seam. Horizon owns the whole surface —
- * vessel, sky, status line, transport, transcript and recovery — so there is one
- * presentation here, not a switch between two.
+ * The presentation is the Voice section (lab `voice-presence`): the same component the Companion,
+ * the container popovers and the phone sheet host. The retired Horizon vessel is gone; placement
+ * belongs to the presence containers, never to this seam.
  */
 export const VoiceSurfaceView = React.memo(function VoiceSurfaceView(props: Readonly<{
     model: VoiceSurfaceViewModel;
 }>) {
-    return <VoiceHorizon model={props.model} />;
+    return <VoiceGlance model={props.model} presentation="companion" />;
 });

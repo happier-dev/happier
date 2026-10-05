@@ -35,9 +35,18 @@ function isCurrentWebFocusTarget(target: FocusReturnTarget): boolean {
   return activeElement === target;
 }
 
+function DiagnosticsActionAnchor(props: Readonly<{
+  wrap?: (action: React.ReactElement, operation: 'retry_shutdown' | 'session_opt_out') => React.ReactElement;
+  shutdown: boolean;
+  children: React.ReactElement;
+}>) {
+  return props.wrap?.(props.children, props.shutdown ? 'retry_shutdown' : 'session_opt_out') ?? props.children;
+}
+
 export function VoiceDiagnosticsIndicator(props: Readonly<{
   focusFallbackRef?: FocusReturnRef;
   sessionId?: string | null;
+  wrapAction?: (action: React.ReactElement, operation: 'retry_shutdown' | 'session_opt_out') => React.ReactElement;
 }>) {
   const { theme } = useUnistyles();
   const rawVoice = useSetting('voice');
@@ -147,6 +156,7 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
         </Text>
       </View>
       {showsAction ? (
+        <DiagnosticsActionAnchor wrap={props.wrapAction} shutdown={Boolean(obligation)}>
         <Pressable
           ref={actionRef as any}
           accessibilityRole="button"
@@ -229,6 +239,7 @@ export function VoiceDiagnosticsIndicator(props: Readonly<{
               : 'settingsVoice.diagnostics.sessionOptOut')}
           </Text>
         </Pressable>
+        </DiagnosticsActionAnchor>
       ) : null}
     </View>
   );

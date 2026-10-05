@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname } from 'expo-router';
 import { Platform } from 'react-native';
 
 import { useSetting } from '@/sync/domains/state/storage';
@@ -34,7 +34,6 @@ import {
 } from './voiceActivityFeedExpansionStore';
 import { voiceSurfaceHaptics } from './voiceSurfaceHaptics';
 import { voiceOutputStatusStore } from '@/voice/runtime/outputStatus/voiceOutputStatusStore';
-import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import {
     resolveCurrentVoiceRuntimePlatform,
@@ -82,6 +81,8 @@ export type VoiceSurfaceViewModel = Readonly<{
     startStopLabel: string;
     status: 'connecting' | 'connected' | 'error' | 'disconnected';
     subtitle: string | null;
+    /** The conversation's target as a name ("Fix settings modal remount"), or null for Global Voice. */
+    targetLabel: string | null;
     toggleActivityLabel: string;
     transcriptEntries: readonly VoiceSurfaceTranscriptEntry[];
     variant: VoiceSurfaceProps['variant'];
@@ -95,11 +96,9 @@ export type VoiceSurfaceViewModel = Readonly<{
 }>;
 
 export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceViewModel | null {
-    const router = useRouter();
-    const navigateWithFocusReturn = useNavigationFocusReturn();
     const pathname = usePathname();
     const snap = useVoiceSessionSnapshot();
-    const voice: any = useSetting('voice');
+    const voice = useSetting('voice');
     /*
      * Two full schema parses of the same setting, both memoized on the setting's
      * identity.
@@ -140,8 +139,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
     const {
         activeControlSession,
         currentSession,
-        fallbackOpenConversationControlSessionId,
-        openConversationSessionId,
         transcriptEntries,
         visibleTranscriptEntries,
     } = useVoiceSurfaceStoreState({
@@ -158,8 +155,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         cancelResponseSupported,
         canTeleportToSessionRoot,
         daemonLocalVoiceUnavailable,
-        locationAllowsVariant,
-        routeSessionId,
         startSessionAddress,
         startSessionId,
         targetLabel,
@@ -199,12 +194,11 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
 
     const showSurface =
         providerId !== 'off'
-        && locationAllowsVariant
         && !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionOwnerMetadata }));
 
     const globalStartAuthorized = bindingScope === 'global';
     // Admission has one owner, shared with every other surface that can start a conversation
-    // (§5.6). Horizon composes its placement policy *over* that answer; it does not re-derive it.
+    // (§5.6). The shared idle policy resolves scope before admission; placement decides nothing.
     const startAdmission = resolveVoiceStartAdmission({
         bindingScope,
         daemonLocalVoiceUnavailable,
@@ -285,29 +279,12 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         && (snap.mode === 'thinking' || snap.mode === 'speaking');
     const handlers = React.useMemo(
         () => createVoiceSurfaceActionHandlers({
-            activeAdapterId: snap.adapterId ?? null,
-            fallbackOpenConversationControlSessionId,
-            openConversationSessionId,
-            providerId,
-            routeSessionId,
-            router,
-            captureNavigationFocusReturn: navigateWithFocusReturn.capture,
-            navigateWithFocusReturn,
             sessionId: props.sessionId ?? null,
             snapSessionId: snap.sessionId ?? null,
-            variant: props.variant,
         }),
         [
-            snap.adapterId,
-            fallbackOpenConversationControlSessionId,
-            openConversationSessionId,
-            providerId,
-            routeSessionId,
-            router,
-            navigateWithFocusReturn,
             props.sessionId,
             snap.sessionId,
-            props.variant,
         ],
     );
 
@@ -324,7 +301,7 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         activityFeedEnabled,
         canBargeIn,
         canCancelTurn,
-        canOpenConversation: Boolean(openConversationSessionId),
+        canOpenConversation: baseAttemptControl.canOpenConversation,
         canTeleportToSessionRoot,
         controlsDisabled,
         controlsLoading,
@@ -339,13 +316,14 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         status: snap.status,
         style: props.style,
         subtitle,
+        targetLabel: targetLabel ?? null,
         toggleActivityLabel: t('voiceSurface.a11y.toggleActivity'),
         transcriptEntries,
         variant: props.variant,
         visibleTranscriptEntries,
         onBargeIn: handlers.onBargeIn,
         onCancelTurn: handlers.onCancelTurn,
-        onOpenConversation: handlers.onOpenConversation,
+        onOpenConversation: baseAttemptControl.onOpenConversation,
         onTeleport: handlers.onTeleport,
         onToggleExpanded,
     }), [
@@ -353,7 +331,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         activityFeedEnabled,
         canBargeIn,
         canCancelTurn,
-        openConversationSessionId,
         canTeleportToSessionRoot,
         snap.status,
         snap.mode,
@@ -367,6 +344,7 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         isMicCaptureActive,
         props.style,
         subtitle,
+        targetLabel,
         transcriptEntries,
         props.variant,
         props.sessionId,

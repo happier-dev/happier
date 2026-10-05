@@ -24,9 +24,14 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: (...args: any[]) => readMachineTargetForSessionMock(...args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-  machineRpcWithServerScope: (...args: any[]) => machineRpcWithServerScopeMock(...args),
-}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')>();
+  return {
+    ...actual,
+    machineRpcWithServerScope: (...args: Parameters<typeof actual.machineRpcWithServerScope>) =>
+      machineRpcWithServerScopeMock(...args),
+  };
+});
 
 vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
   isRuntimeFeatureEnabled: (...args: any[]) => isRuntimeFeatureEnabledMock(...args),
@@ -43,9 +48,13 @@ vi.mock('./DaemonSpeechStreamProductionTunnelTransport', () => ({
 
 const DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS = 30_000;
 
+// Load the shared real owner graph during collection. Each test creates its
+// own client and resets its boundary functions; rebuilding Sync per case is
+// neither required isolation nor part of the inference contract.
+await import('./DaemonVoiceInferenceClient');
+
 describe('DaemonVoiceInferenceClient', () => {
   beforeEach(() => {
-    vi.resetModules();
     ensureVoiceConversationSessionForVoiceHomeMock.mockReset();
     resolveVoiceHomeDaemonMachineIdMock.mockReset();
     readMachineTargetForSessionMock.mockReset();

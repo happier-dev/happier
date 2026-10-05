@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ReactTestInstance } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
@@ -10,6 +10,7 @@ import { listModelPackCatalogEntries, type DaemonVoiceInferenceModelStatus } fro
 import { DaemonModelPackRow, SelectedDaemonModelPackRow } from './DaemonModelPackRow';
 import type { ModelCatalogRow } from './buildModelCatalogRows';
 import { DaemonVoiceModelCatalogProvider } from './DaemonVoiceModelCatalogContext';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
 function hasAncestor(
     node: ReactTestInstance,
@@ -228,15 +229,26 @@ describe('DaemonModelPackRow', () => {
             cancel: vi.fn(),
         };
 
-        const { tree } = await renderScreen(
+        const screen = await renderScreen(
             <DaemonVoiceModelCatalogProvider value={controller}>
                 <SelectedDaemonModelPackRow
                     packId="kokoro-82m-v1.0-onnx-q8-wasm"
                     kind="tts_sherpa"
+                    setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId}
                 />
             </DaemonVoiceModelCatalogProvider>,
         );
 
-        expect(tree.root.findByProps({ testID: `voice-model-row-${canonicalPackId}` })).toBeTruthy();
+        expect(screen.tree.root.findByProps({ testID: `voice-model-row-${canonicalPackId}` })).toBeTruthy();
+        const anchor = `setting-${VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId.anchor}`;
+        expect(screen.tree.root.findAllByProps({ nativeID: anchor }).length).toBeGreaterThan(0);
+
+        await act(async () => screen.update(
+            <DaemonVoiceModelCatalogProvider value={null}>
+                <SelectedDaemonModelPackRow packId={canonicalPackId} kind="tts_sherpa"
+                    setting={VOICE_CONVERSATIONS_SETTINGS.settings.ttsAssetId} />
+            </DaemonVoiceModelCatalogProvider>,
+        ));
+        expect(screen.tree.root.findAllByProps({ nativeID: anchor })).toHaveLength(0);
     });
 });

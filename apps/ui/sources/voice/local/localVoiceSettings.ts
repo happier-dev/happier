@@ -14,9 +14,11 @@ import {
 import {
   readLocalConversationVoiceSettings,
   readLocalDirectVoiceSettings,
+  readVoiceProviderSettingsConfig,
   voiceSettingsParse,
 } from '@/sync/domains/settings/voiceSettings';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 export function resolveLocalVoiceAdapterSettings(settings: any): {
   adapterId: 'local_direct' | 'local_conversation';
@@ -60,6 +62,23 @@ export function parseLocalVoiceTtsSettings(value: unknown): VoiceLocalTtsSetting
 export function resolveLocalSttProvider(settings: any): VoiceLocalSttSettings['provider'] {
   const { config } = resolveLocalVoiceAdapterSettings(settings);
   return parseLocalVoiceSttSettings(config?.stt).provider;
+}
+
+/** Recognition is an STT fact. Reply language never supplies a recognition default. */
+export function resolveLocalVoiceRecognitionLanguage(
+  settings: unknown,
+  capturePurpose: 'dictation' | 'conversation' = 'conversation',
+): string | null {
+  const voice = voiceSettingsParse(settings && typeof settings === 'object' && 'voice' in settings ? settings.voice : undefined);
+  // Null explicitly requests this engine's default, not the conversation's language.
+  if (capturePurpose === 'dictation') return normalizeNonEmptyString(voice.dictation.language);
+  const { config } = resolveLocalVoiceAdapterSettings({ voice });
+  const stt = parseLocalVoiceSttSettings(config?.stt);
+  if (stt.provider === 'device') return null;
+  const language = stt.provider === 'local_neural'
+    ? stt.localNeural.language
+    : readVoiceProviderSettingsConfig(voice, stt.provider)?.language;
+  return typeof language === 'string' ? normalizeNonEmptyString(language) : null;
 }
 
 export function isHandsFreeDeviceSttEnabled(settings: any): boolean {

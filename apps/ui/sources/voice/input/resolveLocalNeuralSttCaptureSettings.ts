@@ -1,5 +1,5 @@
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
-import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
+import { resolveLocalVoiceAdapterSettings, resolveLocalVoiceRecognitionLanguage } from '@/voice/local/localVoiceSettings';
 
 export type LocalNeuralSttCaptureSettings = Readonly<{
   packId: string;
@@ -16,7 +16,10 @@ function resolveAdapterSettings(settings: any): unknown {
   return resolveLocalVoiceAdapterSettings(settings).config?.stt;
 }
 
-export function resolveLocalNeuralSttCaptureSettings(settings: unknown): LocalNeuralSttCaptureSettings {
+export function resolveLocalNeuralSttCaptureSettings(
+  settings: unknown,
+  capturePurpose: 'dictation' | 'conversation' = 'conversation',
+): LocalNeuralSttCaptureSettings {
   let parsed: ReturnType<typeof VoiceLocalSttSchema.parse>;
   try {
     parsed = VoiceLocalSttSchema.parse(resolveAdapterSettings(settings) ?? {});
@@ -29,6 +32,6 @@ export function resolveLocalNeuralSttCaptureSettings(settings: unknown): LocalNe
     normalizeNonEmpty(parsed.localNeural?.assetId)
     ?? normalizeNonEmpty(defaults.localNeural?.assetId)
     ?? '';
-  const language = normalizeNonEmpty(parsed.localNeural?.language);
+  const language = resolveLocalVoiceRecognitionLanguage(settings, capturePurpose);
   return { packId, language };
 }

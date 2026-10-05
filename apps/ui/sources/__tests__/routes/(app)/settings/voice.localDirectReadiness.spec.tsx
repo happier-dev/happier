@@ -48,7 +48,9 @@ installVoiceSettingsRouteModuleMocks({
     storageModule: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSetting: () => null,
+            useSetting: (key: keyof Settings) => (
+                routeState.accountSettings ?? settingsParse({ voice: routeState.voice })
+            )[key],
             useSettings: () => routeState.accountSettings ?? settingsParse({ voice: routeState.voice }),
         });
     },
@@ -267,6 +269,10 @@ function createVoice(providerId: VoiceSettings['providerId']): VoiceSettings {
     return voiceSettingsParse({ ...withLocalConversation, providerId });
 }
 
+// Module loading is collection setup; the assertions below measure screen-mount work.
+await import('@/voice/settings/screens/VoicePrivacySettingsScreen');
+await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
+
 beforeEach(() => {
     routeState.voice = createVoice('local_direct');
     routeState.accountSettings = null;
@@ -366,16 +372,14 @@ describe('VoiceSettingsScreen local_direct daemon readiness', () => {
         const VoiceSettingsScreen = (await import('@/voice/settings/screens/VoiceConversationsSettingsScreen')).VoiceConversationsSettingsScreen;
 
         const screen = await renderSettingsView(<VoiceSettingsScreen />);
-        const dropdown = screen.findAll((node) => (
-            String(node.type) === 'DropdownMenu'
-            && node.props?.itemTrigger?.title === 'settingsVoice.local.executionMachine.title'
-        ))[0];
+        // The page header's "Runs on" chip is the Voice computer selector on this page.
+        const chip = screen.findAll((node) => node.props?.filter?.id === 'voiceComputer')[0];
 
-        expect(dropdown?.props.items).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'machine-1', title: 'Primary Mac' }),
+        expect(chip?.props.filter.options).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'machine-1', label: 'Primary Mac' }),
         ]));
         await act(async () => {
-            dropdown?.props.onSelect('machine-1');
+            chip?.props.filter.onChange('machine-1');
         });
         expect(routeState.setVoice).toHaveBeenCalledWith(expect.objectContaining({
             executionMachine: expect.objectContaining({ mode: 'fixed', machineId: 'machine-1' }),

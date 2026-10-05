@@ -1,21 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getStorage,
+  installLocalVoiceActionHomeForTests,
   registerLocalVoiceEngineHarnessHooks,
   sessionRpcWithServerScope,
 } from './localVoiceEngine.testHarness';
-import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import {
+const actionHome = await installLocalVoiceActionHomeForTests();
+const currentToolSessionAddress = { serverId: actionHome.homes.voice!.id, sessionId: 's1' };
+const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+const {
   resolveDirectUserActionShortcutAssistantText,
   runVoiceAgentTurnWithTools,
-} from './runVoiceAgentTurnWithTools';
+} = await import('./runVoiceAgentTurnWithTools');
+afterAll(() => actionHome.dispose());
 
 describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
   // This owner is stateless; retaining its module graph avoids charging the
   // large shared Voice harness import to every individual permission assertion.
   registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
+  beforeEach(() => actionHome.restore());
 
   it('reports deferred approval truthfully without claiming the user action executed', () => {
     expect(resolveDirectUserActionShortcutAssistantText('allow', {
@@ -46,6 +50,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         ...storage.getState().sessions,
         s1: {
           id: 's1',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -84,11 +89,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
       },
       concurrentSessionListCacheByServerId: {
-        'server-a': {
+        [currentToolSessionAddress.serverId]: {
           serverName: null,
           sessions: {
             s1: {
               id: 's1',
+          serverId: currentToolSessionAddress.serverId,
               presence: 'online',
               active: true,
             },
@@ -107,7 +113,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       sessionId: 'voice-hidden-s1',
       userText: 'Describe the pending permission request and ask me to approve or deny it.',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
@@ -127,6 +133,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         ...storage.getState().sessions,
         s1: {
           id: 's1',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -165,11 +172,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
       },
       concurrentSessionListCacheByServerId: {
-        'server-a': {
+        [currentToolSessionAddress.serverId]: {
           serverName: null,
           sessions: {
             s1: {
               id: 's1',
+          serverId: currentToolSessionAddress.serverId,
               presence: 'online',
               active: true,
             },
@@ -188,7 +196,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       sessionId: 'voice-hidden-s1',
       userText: 'Approve the pending write permission request.',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
@@ -213,7 +221,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       sessionId: 'voice-hidden-s1',
       userText: 'Approve it.',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
@@ -224,7 +232,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
   });
 
-  it('falls back to answering a permission-labeled AskUserQuestion when no true permission request exists', async () => {
+  it('cannot advance a permission-labeled AskUserQuestion from a spoken denial and preserves the committed transcript on fallback', async () => {
     const storage = await getStorage();
     storage.__setState({
       settings: {
@@ -240,6 +248,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         ...storage.getState().sessions,
         s1: {
           id: 's1',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -272,11 +281,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
       },
       concurrentSessionListCacheByServerId: {
-        'server-a': {
+        [currentToolSessionAddress.serverId]: {
           serverName: null,
           sessions: {
             s1: {
               id: 's1',
+          serverId: currentToolSessionAddress.serverId,
               presence: 'online',
               active: true,
             },
@@ -287,61 +297,38 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
 
     sessionRpcWithServerScope.mockResolvedValue({ ok: true });
     const sendTurn = vi.fn(async () => ({
-      assistantText: 'model fallback should not run',
+      assistantText: 'Review this request in the session.',
       actions: [],
     }));
     const commitUserTranscript = vi.fn(async () => {});
+
+    const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
+    const tools = createVoiceToolHandlers({ currentSessionAddress: currentToolSessionAddress, resolveSessionId: () => 's1' });
+    const refusal = await tools.answerUserActionRequest({ decision: 'reject', currentSessionOnly: true });
+    expect(JSON.parse(refusal), refusal).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question' });
 
     const result = await runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
       userText: 'Deny the pending permission request.',
       durableLocalId: ' opaque-permission-id ',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: { sendTurn, commitUserTranscript },
     });
 
-    expect(sendTurn).not.toHaveBeenCalled();
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
     expect(commitUserTranscript).toHaveBeenCalledWith(
       'voice-hidden-s1',
       'Deny the pending permission request.',
       ' opaque-permission-id ',
     );
-    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 's1',
-        method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-        payload: {
-          id: 'req_question',
-          approved: false,
-          answers: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
-        },
-      }),
-    );
-    expect(commitUserTranscript.mock.invocationCallOrder[0]).toBeLessThan(
-      sessionRpcWithServerScope.mock.invocationCallOrder[0]!,
-    );
-    expect(result.totalActions).toBe(1);
-    expect(result.assistantTurns).toEqual(['Denied the pending request.']);
-    expect(result.toolResultBatches[0]?.[0]).toMatchObject({
-      t: 'answerUserActionRequest',
-      result: { ok: true, status: 'done', sessionId: 's1', requestId: 'req_question' },
-    });
-
-    commitUserTranscript.mockClear();
-    sendTurn.mockClear();
-    sessionRpcWithServerScope.mockResolvedValue({ ok: false, errorCode: 'network_error' });
-    await runVoiceAgentTurnWithTools({
-      sessionId: 'voice-hidden-s1',
-      userText: 'Deny the pending permission request.',
-      durableLocalId: 'fallback-committed-id',
-      currentToolSessionId: 's1',
-      voiceAgentSessions: { sendTurn, commitUserTranscript },
-    });
+    expect(result.totalActions).toBe(0);
+    expect(result.assistantTurns).toEqual(['Review this request in the session.']);
+    expect(result.toolResultBatches).toEqual([]);
     expect(commitUserTranscript).toHaveBeenCalledTimes(1);
     expect(sendTurn).toHaveBeenCalledWith(
       'voice-hidden-s1',
       'Deny the pending permission request.',
-      expect.objectContaining({ userTranscript: { mode: 'suppress', localId: 'fallback-committed-id' } }),
+      expect.objectContaining({ userTranscript: { mode: 'suppress', localId: ' opaque-permission-id ' } }),
     );
   });
 
@@ -355,6 +342,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         ...storage.getState().sessions,
         sys_voice: {
           id: 'sys_voice',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -363,6 +351,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
         s_other: {
           id: 's_other',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -402,7 +391,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
       },
       concurrentSessionListCacheByServerId: {
-        'server-a': {
+        [currentToolSessionAddress.serverId]: {
           serverName: null,
           sessions: {
             sys_voice: { id: 'sys_voice', presence: 'online', active: true },
@@ -422,6 +411,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       userText: 'Approve the pending write permission request.',
       durableLocalId: 'test-durable-local-id',
       currentToolSessionId: 'sys_voice',
+      currentToolSessionAddress: { ...currentToolSessionAddress, sessionId: 'sys_voice' },
       voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 
@@ -441,6 +431,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         ...storage.getState().sessions,
         s1: {
           id: 's1',
+          serverId: currentToolSessionAddress.serverId,
           presence: 'online',
           active: true,
           updatedAt: 1,
@@ -479,11 +470,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
         },
       },
       concurrentSessionListCacheByServerId: {
-        'server-a': {
+        [currentToolSessionAddress.serverId]: {
           serverName: null,
           sessions: {
             s1: {
               id: 's1',
+          serverId: currentToolSessionAddress.serverId,
               presence: 'online',
               active: true,
             },
@@ -501,7 +493,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
       sessionId: 'voice-hidden-s1',
       userText: 'Approve the pending write permission request and then summarize it.',
       durableLocalId: 'test-durable-local-id',
-      currentToolSessionId: 's1',
+      currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: { sendTurn, commitUserTranscript: vi.fn(async () => {}) },
     });
 

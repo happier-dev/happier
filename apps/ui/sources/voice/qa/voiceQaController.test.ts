@@ -3,15 +3,20 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 const qaAddress = (sessionId: string): SessionAddress => ({ serverId: getActiveServerSnapshot().serverId, sessionId });
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { sync } from '@/sync/sync';
-import { storage } from '@/sync/domains/state/storage';
 import { RPC_ERROR_CODES, VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
 import { createVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
+import {
+  installDisconnectedServerSocketBoundary,
+  restoreServerAccountForTest,
+} from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { resetVoiceQaStoreForTests, useVoiceQaStore } from './voiceQaStore';
-import { createVoiceQaController } from './voiceQaController';
+installDisconnectedServerSocketBoundary();
+const { sync } = await import('@/sync/syncEngine');
+const { storage } = await import('@/sync/domains/state/storage');
+const { createVoiceQaController } = await import('./voiceQaController');
 
 function createAcceptedPendingPort() {
   return {
@@ -97,11 +102,8 @@ describe('voiceQaController', () => {
       controlSessionId: '__voice_agent__',
       requestedTargetSessionAddress: qaAddress('s1'),
     });
-    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
-      's1',
-      expect.objectContaining({ serverId: qaAddress('s1').serverId }),
-    );
-    expect(refreshSessionMessages).toHaveBeenCalledWith('s1');
+    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(qaAddress('s1'));
+    expect(refreshSessionMessages).toHaveBeenCalledWith(qaAddress('s1'));
     expect(ensureLocalRunningAndMaybeWelcome).toHaveBeenCalledWith('voice-hidden-s1');
     expect(useVoiceQaStore.getState().status).toBe('running');
     expect(useVoiceQaStore.getState().entries.some((entry) => entry.kind === 'assistant' && entry.text.includes('What are we working on'))).toBe(true);
@@ -856,6 +858,17 @@ describe('voiceQaController', () => {
   });
 
   it('sends text prompts through the bound hidden voice conversation for native-session local voice agent bindings, executes tool rounds, and appends the follow-up answer', async () => {
+    const settings = storage.getState().settings;
+    const account = await restoreServerAccountForTest({ serverUrl: getActiveServerSnapshot().serverUrl });
+    storage.setState({
+      settings: {
+        ...settings,
+        voice: {
+          ...settings.voice,
+          privacy: { ...settings.voice.privacy, shareDeviceInventory: true },
+        },
+      },
+    });
     const pendingPort = {
       enqueuePendingMessage: vi.fn(async ({ localId }: Readonly<{ localId: string }>) => ({
         localId,
@@ -913,7 +926,12 @@ describe('voiceQaController', () => {
       qaStore: useVoiceQaStore,
     });
 
-    await controller.sendPrompt({ sessionAddress: qaAddress('s1'), prompt: 'List the available backends.' });
+    try {
+      await controller.sendPrompt({ sessionAddress: qaAddress('s1'), prompt: 'List the available backends.' });
+    } finally {
+      await account.dispose();
+      storage.setState({ settings });
+    }
 
     expect(ensureLocalBinding).toHaveBeenCalledWith({
       controlSessionId: '__voice_agent__',
@@ -931,6 +949,7 @@ describe('voiceQaController', () => {
       expect.stringContaining(VOICE_TOOL_RESULTS_JSON_PREFIX),
       { userTranscript: { mode: 'suppress' } },
     );
+    expect(sendLocalTurn.mock.calls[1]?.[1]).toMatch(/"ok"\s*:\s*true/);
     expect(useVoiceQaStore.getState().entries.some((entry) => entry.kind === 'user' && entry.text.includes('List the available backends.'))).toBe(true);
     expect(useVoiceQaStore.getState().entries.some((entry) => entry.kind === 'assistant' && entry.text === 'I checked the tools.')).toBe(true);
     expect(
@@ -1088,8 +1107,11 @@ describe('voiceQaController', () => {
 
     await controller.sendPrompt({ sessionAddress: qaAddress('s1'), prompt: 'Answer the pending question with: Implement a feature.' });
 
-    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(qaAddress('s1'));
-    expect(refreshSessionMessages).toHaveBeenCalledWith(qaAddress('s1'));
+    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ serverId: qaAddress('s1').serverId }),
+    );
+    expect(refreshSessionMessages).toHaveBeenCalledWith('s1');
     expect(sendLocalTurn).toHaveBeenNthCalledWith(
       2,
       'voice-hidden-s1',

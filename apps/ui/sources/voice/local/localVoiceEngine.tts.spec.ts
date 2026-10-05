@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -30,6 +32,9 @@ async function expectPromiseToStayPending(promise: Promise<unknown>) {
         expect(settled).toBe(false);
     });
 }
+
+const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
+afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine TTS behavior', () => {
     registerLocalVoiceEngineHarnessHooks();
@@ -96,12 +101,15 @@ describe('local voice engine TTS behavior', () => {
 
         await waitForVoiceStatus(() => getLocalVoiceState().status, 'speaking');
         expect(getLocalVoiceState().status).toBe('speaking');
+        // Initial transcription and playback interruption monitoring each own
+        // a native recognition start before the manual barge-in rearms it.
+        expect(speechRecStart).toHaveBeenCalledTimes(2);
 
         await toggleLocalVoiceTurn('s1');
         await sendTurnPromise;
 
         expect(expoSpeechStop).toHaveBeenCalledTimes(1);
-        expect(speechRecStart).toHaveBeenCalledTimes(2);
+        expect(speechRecStart).toHaveBeenCalledTimes(3);
         expect(getLocalVoiceState().status).toBe('recording');
     });
 

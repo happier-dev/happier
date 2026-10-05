@@ -1,4 +1,4 @@
-import { getCurrentAuth } from '@/auth/context/AuthContext';
+import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { storage } from '@/sync/domains/state/storage';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -16,6 +16,7 @@ export async function openSessionForVoiceTool(params: Readonly<{
   sessionId?: string | null;
   serverId?: string | null;
   sessionTitle?: string | null;
+  query?: Readonly<Record<string, string>>;
   corpus?: VoiceSessionCorpusOptions;
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
@@ -133,7 +134,7 @@ export async function openSessionForVoiceTool(params: Readonly<{
   await setPrimaryActionSessionId({ sessionId, serverId: address.serverId, updateLastFocused: true });
 
   try {
-    router.navigate(buildScopedSessionRouteHref(address) as any, {
+    router.navigate(buildScopedSessionRouteHref({ ...address, query: params.query }) as any, {
       dangerouslySingular() {
         return 'session';
       },

@@ -16,7 +16,7 @@ const expectedByState = {
   transcribing: { tone: 'pending', labelKey: 'voiceAssistant.transcribing' },
   thinking: { tone: 'pending', labelKey: 'voiceAssistant.thinking' },
   speaking: { tone: 'active', labelKey: 'voiceAssistant.speaking' },
-  permission_required: { tone: 'error', labelKey: 'voiceAssistant.microphonePermissionRequired' },
+  permission_required: { tone: 'error', labelKey: 'voiceAssistant.microphonePermissionRequired', wordKey: 'voiceAssistant.microphoneBlocked' },
   interrupted: { tone: 'pending', labelKey: 'voiceAssistant.interrupted' },
   error: { tone: 'error', labelKey: 'voiceAssistant.connectionError' },
 } satisfies Record<VoiceSurfaceState, VoiceSurfaceStatusPresentation>;
