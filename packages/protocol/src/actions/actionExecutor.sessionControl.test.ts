@@ -97,8 +97,11 @@ describe('createActionExecutor (session control)', () => {
     const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
     const executor = createExecutor({ sessionOpen, workspaceAction: async () => ({ ok: true }), isActionApprovalRequired: undefined });
     for (const surface of ['ui', 'agent', 'mcp'] as const) {
-      const result = await executor.execute('session.open', { sessionId: 's1', destination }, { surface, serverId: 'home' });
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+      // Agent navigation stays within the Session corpus admitted by its host.
+      const result = await executor.execute('session.open', { sessionId: 's1', destination }, {
+        surface, serverId: 'home', defaultSessionId: 's1', sessionListAccess: 'current_session',
+      });
+      expect(result, JSON.stringify({ surface, result })).toMatchObject({ ok: true });
       expect(sessionOpen).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 's1', destination }));
     }
   });
