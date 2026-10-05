@@ -11,6 +11,7 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { PluginContributionIdentityV1Schema, parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
+import { WidgetInstanceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 
 const Id = z.string().trim().min(1);
 
@@ -38,6 +39,7 @@ export const EntityDragItemV1Schema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('work-board-item'), scope, boardId: Id, item: BoardItemRefV1Schema }).strict(),
     // A configured widget placed on a WorkBoard: its qualified instance ref is `scope` + this Board + id.
     z.object({ kind: z.literal('work-board-widget'), scope, boardId: Id, instanceId: Id }).strict(),
+    z.object({ kind: z.literal('widget-area-instance'), scope, ref: WidgetInstanceRefV1Schema }).strict(),
     z.object({ kind: z.literal('companion-item'), scope, address, item: SessionCompanionPresentationItemRefV1Schema }).strict(),
     z.object({ kind: z.literal('home-section'), scope, sectionId: Id }).strict(),
     z.object({ kind: z.literal('pool-member'), scope, pool: QualifiedConnectedAccountGroupRefSchema, member: asProtocolZod(QualifiedConnectedAccountRefSchema) }).strict(),
@@ -49,6 +51,14 @@ export const EntityDragItemV1Schema = z.discriminatedUnion('kind', [
 ]).superRefine((item, context) => {
     if ('address' in item && item.address.serverId !== item.scope.serverId) {
         context.addIssue({ code: 'custom', path: ['address', 'serverId'], message: 'Session address must belong to the carried Home.' });
+    }
+    if (item.kind === 'widget-area-instance') {
+        if (item.ref.surface.owner.kind !== 'project' && item.ref.surface.owner.kind !== 'pluginArea') {
+            context.addIssue({ code: 'custom', path: ['ref', 'surface', 'owner'], message: 'Widget area reference required.' });
+        }
+        if (item.ref.surface.serverId !== item.scope.serverId || item.ref.surface.accountId !== item.scope.accountId) {
+            context.addIssue({ code: 'custom', path: ['ref', 'surface'], message: 'Widget reference must belong to the carried Account.' });
+        }
     }
     // A WorkBoard placement belongs to scope; its live-work reference may name another Home.
     // BoardItemRef's qualified identity remains intact and does not select the Board's writer.

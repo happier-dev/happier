@@ -13,11 +13,15 @@ describe('entity client activation rights', () => {
       rights: [{ family: 'dragSources', localId: 'issue', target: { realm: 'client', ...client, platforms: ['web'] } }] });
     const denied = createPluginRegistrationScope({ pluginId: 'com.acme.entities', target: { realm: 'client', ...client, platform: 'web' }, rights: [] });
     expect(() => denied.api.dragSources.register('undeclared', { describe: () => ({ title: 'Wrong' }) })).toThrow();
-    scope.api.dragSources.register('issue', { describe: reference => ({ title: String(reference) }) });
+    const runtime = { describe: (reference: unknown) => ({ title: String(reference) }),
+      toComposerAttachment: () => ({ key: 'issue-1', value: { issueId: '1' }, presentation: { label: 'Issue 1' } }) };
+    scope.api.dragSources.register('issue', runtime);
     const registrations = scope.commit();
     const source = registrations.find(entry => entry.family === 'dragSources');
     if (source?.family !== 'dragSources') throw new Error('Missing admitted source');
     expect(source.value.describe('Issue 1')).toEqual({ title: 'Issue 1' });
+    runtime.toComposerAttachment = () => ({ key: 'changed', value: { issueId: '2' }, presentation: { label: 'Changed' } });
+    expect(source.value.toComposerAttachment?.('Issue 1')).toMatchObject({ key: 'issue-1', value: { issueId: '1' } });
     await scope.dispose();
     expect(scope.registrations()).toEqual([]);
     expect(() => scope.api.dragSources.register('issue', { describe: () => null })).toThrow();

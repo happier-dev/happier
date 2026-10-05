@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { EntityDragScopeV1Schema } from '../plugins/ui/entityDragDrop.js';
 import { ComposerRefV1Schema, ComposerTransactionV1Schema, ComposerTransactionResultV1Schema } from '../plugins/ui/composer.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
 const composerAddress = { scope: EntityDragScopeV1Schema, ref: asProtocolZod(ComposerRefV1Schema) };
 export const ComposerTransactionApplyInputV1Schema = z.object({
   ...composerAddress, transaction: ComposerTransactionV1Schema,
+  attachmentContributor: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
 }).strict();
 export const ComposerAttachmentsPickInputV1Schema = z.object(composerAddress).strict();
 export const ComposerAttachmentsPickResultV1Schema = z.object({
@@ -35,11 +37,12 @@ const addressHints = [
 ] as const;
 export const COMPOSER_INGRESS_ACTION_SPECS = [{
   ...client, id: 'composer.transaction.apply', title: 'Apply composer transaction',
-  description: 'Apply a revision-bound text/reference transaction to the exact mounted editable composer. Preserves the existing document owner; never submits input or grants attachment custody.',
+  description: 'Apply a revision-bound transaction to the exact mounted editable composer. Attachment selection is validated against its current composition; never submits input or grants staged-media custody.',
   safety: 'safe', sideEffectClass: 'external', bindings: { mcpToolName: 'composer_transaction_apply' },
   inputSchema: ComposerTransactionApplyInputV1Schema, outputSchema: ComposerTransactionResultV1Schema,
   inputHints: { title: 'Apply composer transaction', fields: [...addressHints,
-    { path: 'transaction', title: 'Revision-bound transaction', widget: 'json', required: true }] },
+    { path: 'transaction', title: 'Revision-bound transaction', widget: 'json', required: true },
+    { path: 'attachmentContributor', title: 'Current attachment selection', widget: 'json', required: false }] },
   examples: { mcp: { argsExample: '{"scope":{"serverId":"home-a","accountId":"account-a"},"ref":{"kind":"newSession","instanceId":"composer-a"},"transaction":{"expectedRevision":1,"operations":[{"kind":"text.insert","position":{"offset":0},"text":"Context"}]}}' } },
 }, {
   ...client, id: 'composer.attachments.pick', title: 'Pick composer attachments',

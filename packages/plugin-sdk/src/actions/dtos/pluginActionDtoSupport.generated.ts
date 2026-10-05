@@ -3983,6 +3983,39 @@ export type EntityDragItemV1 = Readonly<{
     boardId: string;
     instanceId: string;
 }> | Readonly<{
+    kind: 'widget-area-instance';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    ref: {
+        surface: {
+            serverId: string;
+            accountId: string;
+            owner: {
+                kind: 'home';
+            } | {
+                kind: 'sessionBoard';
+                sessionId: string;
+            } | {
+                kind: 'companion';
+                sessionId: string;
+            } | {
+                kind: 'workBoard';
+                boardId: string;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'pluginArea';
+                pluginId: string;
+                pageId: string;
+                area: string;
+            };
+        };
+        instanceId: string;
+    };
+}> | Readonly<{
     kind: 'companion-item';
     scope: {
         serverId: string;
@@ -4927,7 +4960,7 @@ export type EntityDragScopeV1 = {
     readonly serverId: string;
     readonly accountId: string;
 };
-export type EntityDragKindV1 = 'session' | 'session-folder' | 'session-workspace' | 'workspace-tab' | 'destination' | 'repository-file' | 'session-board-item' | 'work-board-item' | 'work-board-widget' | 'companion-item' | 'home-section' | 'pool-member' | 'pending-input' | 'todo' | `plugin:${string}/${string}`;
+export type EntityDragKindV1 = 'session' | 'session-folder' | 'session-workspace' | 'workspace-tab' | 'destination' | 'repository-file' | 'session-board-item' | 'work-board-item' | 'work-board-widget' | 'widget-area-instance' | 'companion-item' | 'home-section' | 'pool-member' | 'pending-input' | 'todo' | `plugin:${string}/${string}`;
 export type EntityDropAdmissionV1 = Readonly<{
     status: 'allowed';
     effect: {

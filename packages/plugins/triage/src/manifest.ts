@@ -190,6 +190,7 @@ function createTriagePlugin() {
     dragSources: {
       [TRIAGE_ENTRY_DRAG_SOURCE_ID_V1]: {
         title: { key: 'plugins.triage.surface.column.entry', fallback: 'Entry' },
+        composerAttachment: TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1,
         referenceSchema: TriageEntryDragReferenceV1Schema.jsonSchema,
         client: { artifactId: TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1, exportName: 'activate' },
         platforms: ['web', 'ios', 'android'],

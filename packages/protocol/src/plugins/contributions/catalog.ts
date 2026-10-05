@@ -256,6 +256,7 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     const kinds = Array.isArray(value.acceptedKinds) ? value.acceptedKinds : [];
     return [
       ...(client?.artifactId === undefined ? [] : [{ targetFamily: 'generated.uiArtifacts', reference: client.artifactId, path: ['client', 'artifactId'] }]),
+      ...(family !== 'dragSources' || value.composerAttachment === undefined ? [] : [{ targetFamily: 'composerAttachments', reference: value.composerAttachment, path: ['composerAttachment'] }]),
       ...actions.flatMap((action, index) => action?.kind === 'plugin' ? [{ targetFamily: 'actions', reference: action.action, path: ['actions', index, 'action'] }] : []),
       ...kinds.flatMap((kind, index) => {
         const reference = typeof kind === 'string' && kind.startsWith('plugin:') ? parseQualifiedPluginContributionKey(kind.slice(7)) : null;
