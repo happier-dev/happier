@@ -2822,7 +2822,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "displayName": "Pi Coding Agent CLI",
     "executable": {
       "binaryName": "pi",
-      "knownUserBinDirSuffixes": null,
+      "knownEnvironmentBinDirs": [
+        {
+          "envVar": "PI_CODING_AGENT_DIR",
+          "relativeDir": "bin"
+        }
+      ],
+      "knownUserBinDirSuffixes": [
+        ".pi/agent/bin"
+      ],
       "sourcePreference": "system-first"
     },
     "install": {
