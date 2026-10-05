@@ -27,7 +27,6 @@ export type ActionSpecRpcException = Readonly<{
 const SCM_PULL_REQUEST_PACKET_OWNER = 'SCM pull-request packet chain';
 const SCM_REPOSITORY_PACKET_OWNER = 'SCM repository coordination lane';
 const SCM_HOSTING_PACKET_OWNER = 'SCM hosting-provider packet chain';
-const SCM_DIFF_SUMMARY_PACKET_OWNER = 'SCM diff-summary packet chain';
 const A12_VOICE_CLEANUP_PACKET_OWNER = 'A.12-voice-cleanup';
 const SESSION_RUNTIME_CONTROL_PACKET_OWNER = 'session runtime-control RPC packet';
 
@@ -37,8 +36,6 @@ const SCM_REPOSITORY_RETIREMENT =
     'Retire when the SCM repository packet exposes this action through the generic registrar.';
 const SCM_HOSTING_RETIREMENT =
     'Retire when SCM hosting-provider write flows land and register this ActionSpec RPC method through the generic registrar.';
-const SCM_DIFF_SUMMARY_RETIREMENT =
-    'Retire when the SCM diff-summary implementation packet registers this ActionSpec RPC method through the generic registrar.';
 
 const A12_VOICE_TARGETED_STATUS_METHODS = Object.freeze([
     RPC_METHODS.DAEMON_MEMORY_STATUS,
@@ -244,14 +241,6 @@ export const ACTION_SPEC_RPC_EXCEPTIONS = Object.freeze([
         ownerPacket: SCM_HOSTING_PACKET_OWNER,
         rationale: 'SCM hosting-provider RPC implementation is owned by the SCM hosting-provider packet chain during registrar convergence.',
         retirement: SCM_HOSTING_RETIREMENT,
-    },
-    {
-        method: RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE,
-        actionId: 'scm.diffSummary.generate',
-        reason: 'packet_owned_coordination',
-        ownerPacket: SCM_DIFF_SUMMARY_PACKET_OWNER,
-        rationale: 'SCM diff-summary RPC implementation is not present in the CLI handler tree yet and is owned by the SCM diff-summary implementation packet.',
-        retirement: SCM_DIFF_SUMMARY_RETIREMENT,
     },
     {
         method: SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,

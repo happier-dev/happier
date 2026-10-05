@@ -7,6 +7,25 @@ import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInH
 import { HAPPIER_MCP_TOOL_CATALOG, HAPPIER_MCP_TOOL_CATALOG_NAMES } from './happierMcpToolCatalog';
 
 describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
+  it('exposes the landed change-explanation operations with their canonical input contracts', () => {
+    const catalog = new Map(HAPPIER_MCP_TOOL_CATALOG.map((tool) => [tool.name, tool]));
+    for (const [id, name] of [
+      ['scm.diffSummary.capture', 'scm_diff_summary_capture'],
+      ['scm.diffSummary.generate', 'scm_diff_summary_generate'],
+      ['scm.diffSummary.result.read', 'scm_diff_summary_result_read'],
+      ['scm.diffSummary.result.edit', 'scm_diff_summary_result_edit'],
+      ['scm.diffSummary.result.undo', 'scm_diff_summary_result_undo'],
+      ['scm.diffSummary.result.delete', 'scm_diff_summary_result_delete'],
+      ['scm.diffSummary.refine', 'scm_diff_summary_refine'],
+      ['scm.diffSummary.addOutputs', 'scm_diff_summary_add_outputs'],
+      ['scm.diffSummary.discuss', 'scm_diff_summary_discuss'],
+      ['scm.diffSummary.reviewed.mark', 'scm_diff_summary_reviewed_mark'],
+      ['scm.diffSummary.reviewed.unmark', 'scm_diff_summary_reviewed_unmark'],
+    ] as const) {
+      expect(catalog.get(name)?.inputSchema, id).toBe(getActionSpec(id).inputSchema);
+    }
+  });
+
   it('deduplicates overlapping manual and action-backed MCP tool names', () => {
     expect(new Set(HAPPIER_MCP_TOOL_CATALOG_NAMES).size).toBe(HAPPIER_MCP_TOOL_CATALOG_NAMES.length);
   });
