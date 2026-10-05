@@ -385,7 +385,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
             retainedAgent: authority.document.retainedAgent,
             invocationContext: tracked.runnerAgentInvocationContext!,
             trackedSession: tracked,
-            isCurrent: () => pidToTrackedSession.get(tracked.pid) === tracked,
+            isCurrent: async () => pidToTrackedSession.get(tracked.pid) === tracked,
             signal: init?.signal ?? undefined,
         });
         return new Response(JSON.stringify(response), {
