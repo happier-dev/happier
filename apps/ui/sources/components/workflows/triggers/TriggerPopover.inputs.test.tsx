@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { getStorage } from '@/sync/domains/state/storageStore';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -77,7 +78,11 @@ describe('Run a workflow trigger inputs', () => {
             inputs: { engines: ['codex'], maxRounds: 5, apply: 'report', useJudge: false } });
     });
 
-    it('keeps JSON drafts distinct from string values and preserves an explicit false input on reopen', async () => {
+    it('keeps JSON drafts distinct from string values and preserves an explicit false input on reopen', async ({ onTestFinished }) => {
+        // Plugin definition content is Account-scoped; this fixture must establish its disclosure scope.
+        const previousScope = getStorage().getState().profileScope;
+        getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+        onTestFinished(async () => { await act(async () => { getStorage().setState({ profileScope: previousScope }); }); });
         const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [
             { name: 'payload', valueType: 'json', required: true },
             { name: 'announce', valueType: 'boolean', required: false, default: true },
