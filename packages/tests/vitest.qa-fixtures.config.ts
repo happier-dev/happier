@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +17,7 @@ export default defineConfig({
     },
   ], 'happier-qa-fixtures-workspace-package-sources')],
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     globals: false,
   },

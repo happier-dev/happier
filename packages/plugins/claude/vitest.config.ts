@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { resolve } from 'node:path';
 
 import { defineConfig } from 'vitest/config';
@@ -10,6 +11,7 @@ export default defineConfig({
     __DEV__: false,
   },
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     hookTimeout: 60_000,
     setupFiles: [uiDev('vitestSetup.ts')],

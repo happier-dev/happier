@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +31,7 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
 export default defineConfig({
   plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: ['src/**/*.test.ts'],
     exclude: ['node_modules/**', 'dist/**'],

@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { defineConfig, mergeConfig } from 'vitest/config';
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
@@ -10,11 +11,11 @@ import { createUiProductionHooksVitestConfig } from './vitest.uiProductionHooks'
 // at module load with `Cannot find package '@/...'`.
 export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     include: ['suites/agents/**/*.test.ts'],
     testTimeout: 600_000,
     hookTimeout: 600_000,
-    maxWorkers: 6,
     // NOTE: In some sandboxed environments, worker_threads cannot bind/listen on localhost (EPERM).
     // Provider E2E contract tests start real local servers, so prefer process-based isolation.
     pool: 'forks',

@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../scripts/testing/vitestWorkers';
 import { resolve } from 'node:path';
 
 import { defineConfig } from 'vitest/config';
@@ -21,6 +22,7 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
 
 export default defineConfig({
     test: {
+        ...resolveVitestWorkers(),
         globals: false,
         environment: 'node',
         env: {

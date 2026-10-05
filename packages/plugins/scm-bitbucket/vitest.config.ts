@@ -1,3 +1,4 @@
+import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -59,6 +60,7 @@ export default defineConfig({
   resolve: { alias: reactNativeWebAliases, dedupe: ['react', 'react-dom'] },
   plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   test: {
+    ...resolveVitestWorkers(),
     environment: 'node',
     // Resolving the SDK, host protocol and Triage protocol from source is deliberate (above), and
     // it makes a cold worker transform a large first-party graph before the first assertion runs.
