@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -22,6 +22,17 @@ afterEach(() => {
 });
 
 describe('resolveWorkspaceFileDownloadSource', () => {
+    it('confines a publication download despite a broader OS-user policy, including symlink escapes', async () => {
+        const root = createWorkspace();
+        mkdirSync(join(root, 'workspace'));
+        writeFileSync(join(root, 'private.txt'), 'private');
+        symlinkSync(join(root, 'private.txt'), join(root, 'workspace', 'escape.txt'));
+        for (const path of ['../private.txt', 'escape.txt']) {
+            const request = { workingDirectory: join(root, 'workspace'), path, asZip: false,
+                confinedToWorkingDirectory: true };
+            await expect(resolveWorkspaceFileDownloadSource(request)).resolves.toMatchObject({ success: false });
+        }
+    });
     it('allows sources outside the default directory by default', async () => {
         const workspace = createWorkspace();
         const externalRoot = createWorkspace();

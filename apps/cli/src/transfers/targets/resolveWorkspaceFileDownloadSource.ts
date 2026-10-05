@@ -14,7 +14,7 @@ import {
     type ExactAllowedReadFile,
 } from '@/rpc/handlers/fileSystem/accessPolicy/exactAllowedReadFile';
 
-import type { DownloadTransferSource } from './downloadTransferSource';
+import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 import { buildZipArchive } from '../download/buildZipArchive';
 import {
     isServerRoutedTransferOverSizeLimit,
@@ -39,6 +39,8 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
     additionalAllowedReadDirs?: readonly string[];
     additionalAllowedReadFiles?: readonly ExactAllowedReadFile[];
     sessionRpcTransferMaxBytes?: number | null;
+    /** Publication narrows an otherwise OS-user-scoped read to the proven Session root. */
+    confinedToWorkingDirectory?: boolean;
 }>): Promise<WorkspaceFileDownloadSourceResult> {
     const path = typeof input.path === 'string' ? input.path : '';
     const asZip = Boolean(input.asZip);
@@ -49,8 +51,9 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
     const directoryValidation = validatePath(
         path,
         input.workingDirectory,
-        input.additionalAllowedReadDirs,
-        input.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY,
+        input.confinedToWorkingDirectory ? [] : input.additionalAllowedReadDirs,
+        input.confinedToWorkingDirectory ? { kind: 'restrictedRoots', roots: [input.workingDirectory] }
+            : input.accessPolicy ?? OS_USER_FILESYSTEM_ACCESS_POLICY,
     );
     let resolvedPath: string;
     if (directoryValidation.valid && directoryValidation.resolvedPath) {
@@ -59,7 +62,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
         const exactFileValidation = authorizeExactAllowedReadFile({
             targetPath: path,
             workingDirectory: input.workingDirectory,
-            allowedFiles: input.additionalAllowedReadFiles,
+            allowedFiles: input.confinedToWorkingDirectory ? [] : input.additionalAllowedReadFiles,
         });
         if (!exactFileValidation.valid) {
             return {
