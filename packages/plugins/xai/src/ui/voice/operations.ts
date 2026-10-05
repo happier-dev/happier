@@ -12,7 +12,6 @@ import { z } from 'zod';
 const DEFAULT_API_BASE_URL = 'https://api.x.ai/v1';
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MIN_CLIENT_AUTH_FRESHNESS_MS = 1_000;
-const MAX_CLIENT_AUTH_LIFETIME_MS = 10 * 60_000;
 const AudienceSchema = z.object({ platform: z.enum(['web', 'native']) }).strict();
 
 function providerError(
@@ -30,7 +29,7 @@ function assertProviderHttpSuccess(status: number): void {
  * The xAI client-secret contract (docs.x.ai REST API reference, Voice, verified
  * 2026-08-23) makes `expires_at` a required integer Unix timestamp in SECONDS.
  * It is a provider claim about the artifact's usable life, so an absent,
- * differently-encoded, or implausible claim makes the artifact untrustworthy:
+ * differently-encoded, or expired claim makes the artifact untrustworthy:
  * this fails closed rather than coercing another unit or inventing a lifetime.
  * Unrelated extra response fields are ignored, not rejected.
  */
@@ -40,7 +39,8 @@ function readExpiryMs(record: Record<string, unknown>, now: number): number {
     throw providerError('provider_response_invalid');
   }
   const value = seconds * 1_000;
-  if (value <= now + MIN_CLIENT_AUTH_FRESHNESS_MS || value > now + MAX_CLIENT_AUTH_LIFETIME_MS) {
+  // The provider expiry is authoritative; a receiving device clock may lag it.
+  if (value <= now + MIN_CLIENT_AUTH_FRESHNESS_MS) {
     throw providerError('provider_response_invalid');
   }
   return value;

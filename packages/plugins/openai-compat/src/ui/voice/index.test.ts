@@ -32,6 +32,7 @@ describe('OpenAI-compatible bundled voice UI contribution', () => {
     ]);
     expect(ttsSettings?.fields?.map((field) => field.fieldId)).toEqual([
       'baseUrl',
+      'maxInputCharacters',
       'model',
       'voiceName',
       'format',

@@ -57,6 +57,8 @@ describe('OpenAI Voice plugin manifest', () => {
   });
 
   it('advertises the shared realtime provider on every Voice client platform', () => {
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.mark)
+      .toEqual({ kind: 'connected_service', serviceId: 'openai' });
     expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.platforms).toEqual([
       'web',
       'ios',

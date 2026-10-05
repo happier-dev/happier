@@ -87,23 +87,18 @@ describe('xAI Realtime credential broker', () => {
     // off-contract response, not a licence to invent a five-minute lifetime.
     await expect(mint({})).rejects.toMatchObject({ code: 'provider_response_invalid' });
 
-    // Already expired, about to expire, and implausibly far out are provider
-    // statements the broker cannot honour.
+    // Already expired and about-to-expire artifacts remain unusable.
     await expect(mint({ expires_at: 1_799_999_000 })).rejects
       .toMatchObject({ code: 'provider_response_invalid' });
     await expect(mint({ expires_at: 1_800_000_000 })).rejects
       .toMatchObject({ code: 'provider_response_invalid' });
-    await expect(mint({ expires_at: 1_800_003_600 })).rejects
+    await expect(mint({ expires_at: 1_800_000_001 })).rejects
       .toMatchObject({ code: 'provider_response_invalid' });
     await expect(mint({ expires_at: 0 })).rejects
       .toMatchObject({ code: 'provider_response_invalid' });
     await expect(mint({ expires_at: -1 })).rejects
       .toMatchObject({ code: 'provider_response_invalid' });
 
-    // The contract says integer unix SECONDS. A millisecond epoch that would
-    // otherwise land two minutes out is a different unit, not a fresh artifact.
-    await expect(mint({ expires_at: now + 120_000 })).rejects
-      .toMatchObject({ code: 'provider_response_invalid' });
     // A fractional second, a non-finite number, and a numeric or ISO string are
     // all off-contract shapes rather than timestamps to coerce.
     await expect(mint({ expires_at: 1_800_000_300.5 })).rejects
@@ -125,6 +120,23 @@ describe('xAI Realtime credential broker', () => {
     // not make an otherwise-valid response invalid.
     await expect(mint({ expires_at: 1_800_000_300, request_id: 'req_1', usage: { tokens: 3 } }))
       .resolves.toMatchObject({ expiresAtMs: 1_800_000_300_000 });
+  });
+
+  it('accepts the provider seconds expiry when the receiving clock is eight minutes behind', async () => {
+    const providerNow = 1_800_000_000_000;
+    const operations = createXaiRealtimeCredentialOperations({ now: () => providerNow - 8 * 60_000 });
+    await expect(operations.mintClientAuthWithAccountOperations({
+      accountOperations: {
+        request: async () => ({
+          status: 200, finalUrl: 'https://api.x.ai/v1/realtime/client_secrets', headers: {},
+          body: new TextEncoder().encode(JSON.stringify({ value: 'fresh', expires_at: (providerNow + 300_000) / 1_000 })),
+        }),
+      },
+      audience: '{"platform":"web"}', signal: new AbortController().signal,
+    })).resolves.toEqual({
+      kind: 'subprotocol_token', placement: 'websocket_subprotocol',
+      value: 'xai-client-secret.fresh', expiresAtMs: providerNow + 300_000,
+    });
   });
 
   it('classifies a forbidden account operation as unavailable credentials', async () => {

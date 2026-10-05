@@ -1,4 +1,6 @@
-const SUPPORTED_LANGUAGE_CODES = new Set([
+import { resolveVoiceProviderLanguagePreference } from '@happier-dev/plugin-sdk/voice';
+
+export const ELEVENLABS_SUPPORTED_LANGUAGE_CODES = Object.freeze([
   'ar', 'bg', 'cs', 'da', 'de', 'el', 'en', 'es', 'fi', 'fr', 'hi', 'hr',
   'hu', 'id', 'it', 'ja', 'ko', 'ms', 'nl', 'no', 'pl', 'pt', 'pt-br', 'ro',
   'ru', 'sk', 'sv', 'ta', 'tr', 'uk', 'vi', 'zh',
@@ -8,9 +10,5 @@ const SUPPORTED_LANGUAGE_CODES = new Set([
 export function resolveElevenLabsLanguageCode(
   preference: string | null,
 ): string | null {
-  const normalized = typeof preference === 'string' ? preference.trim().toLowerCase() : '';
-  if (!normalized) return null;
-  if (normalized === 'pt-br') return normalized;
-  const base = normalized.split(/[-_]/u, 1)[0] ?? '';
-  return SUPPORTED_LANGUAGE_CODES.has(base) ? base : null;
+  return resolveVoiceProviderLanguagePreference(preference, ELEVENLABS_SUPPORTED_LANGUAGE_CODES);
 }

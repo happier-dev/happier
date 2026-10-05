@@ -1,8 +1,11 @@
+import { ELEVENLABS_SUPPORTED_LANGUAGE_CODES } from './ui/voice/runtime/resolveLanguageCode.js';
+
 export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
   kind: 'voice.provider-settings.v1' as const,
   modes: Object.freeze(['happier', 'byo'] as const),
+  language: Object.freeze({ kind: 'single_language' as const, supportedLanguageCodes: ELEVENLABS_SUPPORTED_LANGUAGE_CODES }),
   titleKey: 'settingsVoice.byo.title',
-  footerKey: 'settingsVoice.byo.provisioningGroupFooter',
+  footerKey: 'settingsVoice.realtimeProviders.elevenLabs.accountFooter',
   credential: Object.freeze({
     kind: 'api_key' as const,
     credentialPurpose: 'voice.client-auth.elevenlabs' as const,
@@ -15,10 +18,16 @@ export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
     account: 'https://elevenlabs.io',
     apiKeys: 'https://elevenlabs.io/app/settings/api-keys',
   }),
+  groups: Object.freeze([
+    Object.freeze({ id: 'account', titleKey: 'settingsVoice.realtimeProviders.elevenLabs.groups.account', includeCredentials: true, fieldPaths: Object.freeze(['agentId']) }),
+    Object.freeze({ id: 'voice', titleKey: 'settingsVoice.realtimeProviders.elevenLabs.groups.voice', fieldPaths: Object.freeze(['tts.voiceId', 'tts.modelId', 'tts.voiceSettings.stability', 'tts.voiceSettings.similarityBoost', 'tts.voiceSettings.speed']) }),
+    Object.freeze({ id: 'conversation', titleKey: 'settingsVoice.realtimeProviders.elevenLabs.groups.conversation', fieldPaths: Object.freeze(['welcome']) }),
+  ]),
   fields: Object.freeze([
     Object.freeze({
       kind: 'welcome' as const,
       path: 'welcome',
+      immediateRequiresLiteral: true,
       titleKey: 'settingsVoice.byo.realtime.call.welcome.title',
       subtitleKey: 'settingsVoice.byo.realtime.call.welcome.subtitle',
     }),
@@ -26,9 +35,9 @@ export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
       kind: 'text' as const,
       path: 'agentId',
       titleKey: 'settingsVoice.byo.agentIdTitle',
-      subtitleKey: 'settingsVoice.byo.agentIdDescription',
+      subtitleKey: 'settingsVoice.realtimeProviders.elevenLabs.agentIdDescription',
       promptTitleKey: 'settingsVoice.byo.agentIdTitle',
-      promptBodyKey: 'settingsVoice.byo.agentIdDescription',
+      promptBodyKey: 'settingsVoice.realtimeProviders.elevenLabs.agentIdDescription',
     }),
     Object.freeze({
       kind: 'remote_voice' as const,
@@ -40,9 +49,9 @@ export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
     }),
     Object.freeze({ kind: 'select' as const, path: 'tts.modelId',
       titleKey: 'settingsVoice.byo.realtime.modelPicker.title',
-      subtitleKey: 'settingsVoice.byo.realtime.modelPicker.subtitle',
+      subtitleKey: 'settingsVoice.realtimeProviders.elevenLabs.modelDescription',
       promptTitleKey: 'settingsVoice.byo.realtime.modelPicker.prompt.title',
-      promptBodyKey: 'settingsVoice.byo.realtime.modelPicker.prompt.body',
+      promptBodyKey: 'settingsVoice.realtimeProviders.elevenLabs.modelDescription',
       options: Object.freeze([
       Object.freeze({ id: '', titleKey: 'settingsVoice.byo.realtime.modelPicker.options.autoTitle', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.autoSubtitle' }),
       Object.freeze({ id: 'eleven_multilingual_v2', title: 'eleven_multilingual_v2', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.multilingualV2Subtitle' }),
@@ -50,14 +59,14 @@ export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
       Object.freeze({ id: 'eleven_turbo_v2_5', title: 'eleven_turbo_v2_5', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.turboV25Subtitle' }),
       Object.freeze({ id: 'custom', titleKey: 'settingsVoice.byo.realtime.modelPicker.options.customTitle', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.customSubtitle' }),
     ]) }),
-    Object.freeze({ kind: 'number' as const, path: 'tts.voiceSettings.stability', min: 0, max: 1,
-      titleKey: 'settingsVoice.byo.realtime.voiceSettings.stability.title', subtitleKey: 'settingsVoice.byo.realtime.voiceSettings.stability.subtitle',
+    Object.freeze({ kind: 'range' as const, path: 'tts.voiceSettings.stability', min: 0, max: 1, step: 0.01, nullable: true, defaultValue: 0.5,
+      titleKey: 'settingsVoice.byo.realtime.voiceSettings.stability.title', subtitleKey: 'settingsVoice.realtimeProviders.elevenLabs.stabilityDescription',
       promptTitleKey: 'settingsVoice.byo.realtime.voiceSettings.stability.promptTitle', promptBodyKey: 'settingsVoice.byo.realtime.voiceSettings.stability.promptBody' }),
-    Object.freeze({ kind: 'number' as const, path: 'tts.voiceSettings.similarityBoost', min: 0, max: 1,
-      titleKey: 'settingsVoice.byo.realtime.voiceSettings.similarityBoost.title', subtitleKey: 'settingsVoice.byo.realtime.voiceSettings.similarityBoost.subtitle',
+    Object.freeze({ kind: 'range' as const, path: 'tts.voiceSettings.similarityBoost', min: 0, max: 1, step: 0.01, nullable: true, defaultValue: 0.75,
+      titleKey: 'settingsVoice.byo.realtime.voiceSettings.similarityBoost.title', subtitleKey: 'settingsVoice.realtimeProviders.elevenLabs.similarityDescription',
       promptTitleKey: 'settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptTitle', promptBodyKey: 'settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptBody' }),
-    Object.freeze({ kind: 'number' as const, path: 'tts.voiceSettings.speed', min: 0.7, max: 1.2,
-      titleKey: 'settingsVoice.byo.realtime.voiceSettings.speed.title', subtitleKey: 'settingsVoice.byo.realtime.voiceSettings.speed.subtitle',
+    Object.freeze({ kind: 'range' as const, path: 'tts.voiceSettings.speed', min: 0.7, max: 1.2, step: 0.1, nullable: true, defaultValue: 1, valueSuffix: '×', fractionDigits: 1,
+      titleKey: 'settingsVoice.byo.realtime.voiceSettings.speed.title', subtitleKey: 'settingsVoice.realtimeProviders.elevenLabs.speedDescription',
       promptTitleKey: 'settingsVoice.byo.realtime.voiceSettings.speed.promptTitle', promptBodyKey: 'settingsVoice.byo.realtime.voiceSettings.speed.promptBody' }),
   ]),
 });

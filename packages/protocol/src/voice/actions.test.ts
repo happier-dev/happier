@@ -122,6 +122,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
           base: { kind: 'none' },
           engines: {},
           permissionMode: 'read_only',
+          reviewCommentAuthorIntent: 'propose',
         },
       },
     ]);
@@ -133,7 +134,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
         serverId: 'server-a',
         machineId: 'machine-1',
       },
-      directory: '/workspace/project',
+      directory: { kind: 'path', path: '/workspace/project' },
       agentTarget: {
         kind: 'agent',
         identity: {

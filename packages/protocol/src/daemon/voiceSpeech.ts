@@ -159,6 +159,7 @@ export const DaemonVoiceSpeechTranscribeRequestSchema = z.object({
   requestId: VoiceSpeechRequestIdSchema,
   mimeType: VoiceSpeechInputMimeTypeSchema,
   uploadId: TransferSessionIdSchema,
+  capturePurpose: z.enum(['conversation', 'dictation']).optional(),
 }).strict();
 export type DaemonVoiceSpeechTranscribeRequest = z.infer<
   typeof DaemonVoiceSpeechTranscribeRequestSchema

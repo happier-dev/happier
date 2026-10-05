@@ -3,6 +3,7 @@ import {
   describeActionForVoiceTool,
 } from '@happier-dev/plugin-sdk/voice/client';
 import {
+  getActionSpec,
   listVoiceSdkSafeToolActionSpecs,
   zodSchemaToJsonSchemaObject,
 } from '@happier-dev/protocol';
@@ -10,6 +11,25 @@ import {
 import { createXaiRealtimeProtocolAdapter, createXaiSessionUpdate, encodeXaiToolResult } from './protocol.js';
 
 describe('xAI Realtime protocol adapter', () => {
+  it('preserves generated session.spawn_new tool metadata without a live-value depth quota', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parameters = zodSchemaToJsonSchemaObject(spec.inputSchema);
+    const tool = {
+      name: String(spec.bindings?.voiceClientToolName),
+      description: describeActionForVoiceTool(spec),
+      parameters,
+    };
+    expect(createXaiSessionUpdate({
+      voice: { kind: 'catalog', id: 'eve' }, instructions: null, reasoningEffort: 'none', outputSpeed: 1,
+      transcription: { languageHint: null, keyterms: [] },
+      turnDetection: { mode: 'server_vad', threshold: null, silenceDurationMs: null, prefixPaddingMs: null, idleTimeoutMs: null },
+      resumptionEnabled: false,
+      model: { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
+    }, [tool])).toMatchObject({
+      type: 'session.update', session: { tools: [{ type: 'function', ...tool }] },
+    });
+  });
+
   it('writes only the documented nested session configuration', () => {
     expect(createXaiSessionUpdate({
       voice: { kind: 'catalog', id: 'eve' },

@@ -1,4 +1,4 @@
 <resources>
   <string name="happier_voice_foreground_notification_channel">語音對話</string>
-  <string name="happier_voice_foreground_notification_text">語音對話進行中</string>
+  <string name="happier_voice_foreground_notification_text">語音功能正在使用麥克風。點按以開啟 Happier。</string>
 </resources>
