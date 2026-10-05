@@ -2,6 +2,23 @@ import type { WindowBounds } from '../treeDragDropTypes';
 import type { TreeDropMeasurableRef } from './treeDropRegistryTypes';
 import { isFiniteRect } from '../geometry/treeDropCoordinateSpace';
 
+/** Narrow RN, DOM and ScrollView hosts at the single platform measurement boundary. */
+export function toTreeDropMeasurableRef(node: unknown): TreeDropMeasurableRef | null {
+    const visited = new Set<object>();
+    let nativeRef: TreeDropMeasurableRef | null = null;
+    while (node && typeof node === 'object' && !visited.has(node)) {
+        visited.add(node);
+        const host = node as TreeDropMeasurableRef & { getNativeScrollRef?: () => unknown; getBoundingClientRect?: () => WindowBounds };
+        // RN Web decorates the DOM scroll node with getNativeScrollRef returning itself.
+        // Measure that node before unwrapping; a cycle must not discard usable geometry.
+        if (typeof host.getBoundingClientRect === 'function') return { getBoundingClientRectFn: () => host.getBoundingClientRect!() };
+        if (typeof host.getBoundingClientRectFn === 'function') return host;
+        if (typeof host.measureInWindow === 'function') nativeRef = { measureInWindow: callback => host.measureInWindow!(callback) };
+        node = typeof host.getNativeScrollRef === 'function' ? host.getNativeScrollRef() : null;
+    }
+    return nativeRef;
+}
+
 /**
  * Platform measurement boundary for tree drag/drop geometry.
  *
@@ -16,7 +33,8 @@ import { isFiniteRect } from '../geometry/treeDropCoordinateSpace';
  * Window bounds are a boundary type only — callers immediately convert them to
  * content coordinates via `treeDropCoordinateSpace` and never store them.
  */
-export function measureWindowBounds(ref: TreeDropMeasurableRef | null): Promise<WindowBounds | null> {
+export function measureWindowBounds(node: unknown): Promise<WindowBounds | null> {
+    const ref = toTreeDropMeasurableRef(node);
     if (!ref) return Promise.resolve(null);
 
     if (typeof ref.getBoundingClientRectFn === 'function') {
@@ -32,4 +50,13 @@ export function measureWindowBounds(ref: TreeDropMeasurableRef | null): Promise<
             resolve(isFiniteRect(bounds) ? bounds : null);
         });
     });
+}
+
+/** Runtime hit-testing shares the DOM clock with scrolling; native callers use the async boundary. */
+export function readWindowBounds(node: unknown): WindowBounds | null {
+    const ref = toTreeDropMeasurableRef(node);
+    if (!ref?.getBoundingClientRectFn) return null;
+    const rect = ref.getBoundingClientRectFn();
+    const bounds = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    return isFiniteRect(bounds) ? bounds : null;
 }

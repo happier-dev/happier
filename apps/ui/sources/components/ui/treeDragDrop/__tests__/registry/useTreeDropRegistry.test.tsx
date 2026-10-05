@@ -27,6 +27,18 @@ function folderRow(): TreeContentRow {
 }
 
 describe('useTreeDropRegistry', () => {
+    it('refreshes the shared owner on mounted geometry changes without notifying on unchanged bounds', async () => {
+        const mutableObservations: TreeContentRow[][] = [];
+        let registry: ReturnType<typeof useTreeDropRegistry>;
+        const hook = await renderHook(() => useTreeDropRegistry(() => mutableObservations.push([...registry.getContentGeometry().rows])));
+        registry = hook.getCurrent();
+        const row = folderRow();
+        registry.registerRow(row);
+        registry.registerRow({ ...row, bounds: { ...row.bounds } });
+        registry.unregisterRow(row.id);
+        registry.unregisterRow(row.id);
+        expect(mutableObservations).toEqual([[row], []]);
+    });
     it('stores rows and drop zones as content-coordinate geometry', async () => {
         expect(useTreeDropRegistry).toEqual(expect.any(Function));
 

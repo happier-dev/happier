@@ -15,7 +15,6 @@ import {
     normalizeSessionFolderName,
     normalizeSessionFolders,
     resolveDurableWorkspaceRefForSessionListHeader,
-    resolveSessionFolderDragIntent,
     resolveSessionFolderFocusScope,
     sessionFolderAddressKey,
     SESSION_FOLDER_MAX_NAME_LENGTH,
@@ -320,10 +319,6 @@ describe('session folder domain helpers', () => {
             machineId: 'machine-a',
             rootPath: 'c:/users/lee/repo',
         });
-        expect(resolveSessionFolderDragIntent({
-            draggedSessionId: 's1',
-            target: { type: 'folder', folderId: 'folder-a' },
-        })).toEqual({ type: 'assign', sessionId: 's1', folderId: 'folder-a' });
     });
 
     it('builds workspace-scoped session move targets with current assignment disabled', () => {

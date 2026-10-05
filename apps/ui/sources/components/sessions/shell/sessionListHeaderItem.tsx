@@ -28,6 +28,8 @@ import {
     type UseSessionInlineDragResolvedDrop,
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
+import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
+import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
 import {
@@ -243,7 +245,9 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
     onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
     children: React.ReactNode;
 }>) {
-    const enabled = Boolean(props.onDropResult);
+    // Desktop headers carry themselves; a phone header carries only in Organize mode (K1).
+    const organize = useSessionListOrganizeMode();
+    const enabled = Boolean(props.onDropResult) && (!isTouchPrimaryPointer() || organize.active);
     const { gesture, animatedStyle } = useSessionInlineDrag({
         enabled,
         sessionKey: props.sessionKey,

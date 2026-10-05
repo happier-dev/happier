@@ -1,5 +1,7 @@
 import type {
     PluginHostedWebBridgeEnvelopeV1,
+    PluginHostedWebBridgeHostMessageEnvelopeV1,
+    PluginUiEntityDragDropStateV1,
     PluginUiHostMethodV1,
     PluginUiJsonValueV1,
     PluginUiSurfaceContextV1,
@@ -15,6 +17,9 @@ import {
     type PluginSurfaceOpenHandler,
 } from '@/components/plugins/surfaces/openPluginSurface';
 import type { PluginSurfaceHostApiHandlers } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
+import { createPluginEntityDragDropBinding } from '../surfaces/entityDragDrop/pluginEntityDragDropBinding';
+import { createHostedEntityDragDropHandlers } from './hostedEntityDragDrop';
 
 /**
  * One settlement rule, two physical carriers.
@@ -148,7 +153,7 @@ function createHostedEnvelope(
     };
 }
 
-async function createHostedCarrier(mount: MountFixture, methods: readonly PluginUiHostMethodV1[]) {
+async function createHostedCarrier(mount: MountFixture, methods: readonly PluginUiHostMethodV1[], postToFrame?: (envelope: PluginHostedWebBridgeHostMessageEnvelopeV1) => void) {
     const handler = createPluginHostedWebHostApiBridgeHandler({
         surface,
         requestIdPrefix: 'hosted-settlement',
@@ -160,6 +165,7 @@ async function createHostedCarrier(mount: MountFixture, methods: readonly Plugin
         },
         handleRequest: mount.host.handleRequest,
         isCurrent: mount.isCurrent,
+        ...(postToFrame ? { postToFrame } : {}),
     });
     await handler(createHostedEnvelope('ready', { ready: true }));
     await handler(createHostedEnvelope('hostApi', {
@@ -186,6 +192,55 @@ function hostedRequest(
 }
 
 describe('outward-effect settlement across the React Native and hosted-web carriers', () => {
+    it('projects exact-source semantic feedback through both real carriers and retires their existing subscription leases', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        const sourceDefinition = { id: 'issue', title: 'Issue', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web' as const], referenceSchema: { type: 'string' as const } };
+        const source = { descriptor: sourceDefinition, describe: () => ({ title: 'Issue' }), isCurrent: () => true };
+        const target = { descriptor: { id: 'board', title: 'Board', client: sourceDefinition.client, platforms: sourceDefinition.platforms, acceptedKinds: ['plugin:acme.preview/issue' as const], actions: [{ kind: 'plugin' as const, action: 'add' }] }, resolve: () => ({ status: 'allowed' as const, effect: { actionId: 'plugin:acme.preview/add', input: {}, preview: { verb: 'Add', target: 'Board' } } }), isCurrent: () => true };
+        const writes: unknown[] = [];
+        const binding = createPluginEntityDragDropBinding({ runtime, pluginId: 'acme.preview', mountKey: 'carrier', scope, isCurrent: () => true, readSource: () => source, readTarget: () => target, executeAction: async (_action, input) => { writes.push(input); return { status: 'applied' }; } });
+        const hostedOwner = createHostedEntityDragDropHandlers({ binding, isCurrent: () => true, readSessionItem: () => null });
+        const mount = createMount({ handlers: hostedOwner.handlers });
+        const native = createNativeCarrier(mount);
+        await native.api.updateEntityDragDrop({ kind: 'mountSource', mountId: 'first', sourceId: 'issue', reference: 'first' });
+        await native.api.updateEntityDragDrop({ kind: 'mountSource', mountId: 'second', sourceId: 'issue', reference: 'second' });
+        const targetMount = binding.mountTarget({ mountId: 'target', targetId: 'board', getBounds: () => null })!;
+        const nativeStates: PluginUiEntityDragDropStateV1[] = [];
+        const subscription = await native.api.watchEntityDragDrop({ mountId: 'first' }, state => { nativeStates.push(state); });
+        const frames: PluginHostedWebBridgeHostMessageEnvelopeV1[] = [];
+        const hosted = await createHostedCarrier(mount, mount.installedMethods, frame => { frames.push(frame); });
+        await hosted(createHostedEnvelope('hostApi', { wireVersion: 1, kind: 'subscribe', identity: canonicalIdentity, requestId: 'watch', subscriptionId: 'second-watch', method: 'watchEntityDragDrop', payload: { mountId: 'second' } }));
+        const hostedState = () => {
+            const payload = frames.at(-1)?.payload;
+            return payload && typeof payload === 'object' && !Array.isArray(payload) && 'event' in payload ? payload.event : null;
+        };
+        await native.api.updateEntityDragDrop({ kind: 'begin', mountId: 'first', input: 'keyboard', pointer: { x: 0, y: 0 }, viewport: { width: 100, height: 100 } });
+        await native.api.updateEntityDragDrop({ kind: 'choose', mountId: 'first', targetId: targetMount.id });
+        expect(nativeStates.at(-1)).toMatchObject({ phase: 'carrying', admission: { status: 'allowed' } });
+        expect(hostedState()).toMatchObject({ phase: 'idle', admission: null, outcome: null });
+        await hostedRequest(hosted, { requestId: 'second-begin', method: 'updateEntityDragDrop', payload: { kind: 'begin', mountId: 'second', input: 'keyboard', pointer: { x: 0, y: 0 }, viewport: { width: 100, height: 100 } } });
+        await hostedRequest(hosted, { requestId: 'second-choose', method: 'updateEntityDragDrop', payload: { kind: 'choose', mountId: 'second', targetId: targetMount.id } });
+        expect(nativeStates.at(-1)).toMatchObject({ phase: 'idle', admission: null });
+        expect(hostedState()).toMatchObject({ phase: 'carrying', admission: { status: 'allowed' } });
+        targetMount.dispose();
+        expect(hostedState()).toMatchObject({ admission: null, destinations: [] });
+        await hostedRequest(hosted, { requestId: 'second-retire', method: 'updateEntityDragDrop', payload: { kind: 'unmount', mountId: 'second' } });
+        expect(hostedState()).toMatchObject({ current: false, phase: 'idle', admission: null });
+        await subscription.dispose();
+        const count = nativeStates.length;
+        runtime.begin(binding.runtimeMountId('first'));
+        expect(nativeStates).toHaveLength(count);
+        expect(writes).toEqual([]);
+        hosted.dispose(); native.dispose(); hostedOwner.dispose(); binding.dispose();
+    });
+    it('preserves an applied entity-drop settlement when its Action retires the surface', async () => {
+        const nativeMount = createMount({ handlers: { updateEntityDragDrop: () => { nativeMount.retire(); return { accepted: true, outcome: { status: 'applied' } }; } } });
+        await expect(createNativeCarrier(nativeMount).api.updateEntityDragDrop({ kind: 'commit', mountId: 'source' })).resolves.toEqual({ accepted: true, outcome: { status: 'applied' } });
+        const hostedMount = createMount({ handlers: { updateEntityDragDrop: () => { hostedMount.retire(); return { accepted: true, outcome: { status: 'applied' } }; } } });
+        const hosted = await createHostedCarrier(hostedMount, ['updateEntityDragDrop']);
+        await expect(hostedRequest(hosted, { requestId: 'drop-settled', method: 'updateEntityDragDrop', payload: { kind: 'commit', mountId: 'source' } })).resolves.toMatchObject({ kind: 'result', payload: { kind: 'result', result: { accepted: true, outcome: { status: 'applied' } } } });
+    });
     // Scenario: contributor retirement AFTER success / disconnect AFTER a known
     // settlement. These are the same transport fact — currentness read after the
     // owner settled — and `openSurface` produces it by construction.

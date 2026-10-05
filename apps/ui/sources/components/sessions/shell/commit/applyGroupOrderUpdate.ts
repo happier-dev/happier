@@ -4,6 +4,13 @@ import { buildOrderMapAfterMove } from './orderMapUpdate';
 type GroupOrderMap = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 export type SessionListGroupOrderChildKind = 'sessionsOnly' | 'foldersOnly' | 'mixed';
 
+export function resolveSessionListGroupOrderChildKind(
+    sourceKind: 'session' | 'folder', folderSortMode: 'foldersFirst' | 'mixed' | undefined,
+): SessionListGroupOrderChildKind {
+    if (folderSortMode === 'mixed') return 'mixed';
+    return sourceKind === 'session' ? 'sessionsOnly' : 'foldersOnly';
+}
+
 function shouldIncludeOrderKey(
     kind: SessionListGroupOrderChildKind,
     rowKind: string,
@@ -71,7 +78,7 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
     };
 }
 
-export function applyGroupOrderUpdate(params: Readonly<{
+export async function applyGroupOrderUpdate(params: Readonly<{
     tree: SessionListTreeModel;
     currentMap: GroupOrderMap;
     movedRowId: string;
@@ -79,10 +86,10 @@ export function applyGroupOrderUpdate(params: Readonly<{
     beforeRowId?: string | null;
     afterRowId?: string | null;
     childKind?: SessionListGroupOrderChildKind;
-    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void;
-}>): boolean {
+    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void | Promise<void>;
+}>): Promise<boolean> {
     const next = buildSessionListGroupOrderAfterTreeDrop(params);
     if (!next) return false;
-    params.setSessionListGroupOrderV1(next);
+    await params.setSessionListGroupOrderV1(next);
     return true;
 }

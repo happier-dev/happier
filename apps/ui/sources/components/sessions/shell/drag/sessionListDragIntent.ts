@@ -19,6 +19,7 @@ import type { TreeDropResult, TreeRowKind } from '@/components/ui/treeDragDrop';
 import type { SessionListDragIntent } from './_types';
 
 export type BuildSessionListDragIntentParams = Readonly<{
+    scope?: SessionListDragIntent['scope'];
     /** The final resolved drop result at drop time. */
     result: TreeDropResult;
     /** Stable tree row id of the dragged source. */
@@ -37,6 +38,7 @@ export function buildSessionListDragIntent(params: BuildSessionListDragIntentPar
     const hasContainer = hasTarget || instruction.kind === 'move-to-root';
 
     return {
+        ...(params.scope ? { scope: params.scope } : {}),
         sourceRowId: params.sourceRowId,
         sourceKind: params.sourceKind,
         instructionKind: instruction.kind,

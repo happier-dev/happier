@@ -5,15 +5,12 @@ const noopDropZoneHandlers = {
     onDrop: () => {},
 };
 
-export function useWebFileDropZone(_params: Readonly<{
-    enabled: boolean;
-    onFilesDropped: (event: any) => void | Promise<void>;
-    onFileDragActiveChange?: ((active: boolean) => void) | null;
-}>): Readonly<{
-    onDragEnter: (event: any) => void;
-    onDragLeave: (event: any) => void;
-    onDragOver: (event: any) => void;
-    onDrop: (event: any) => void;
+export function useWebFileDropZone(_params: ExternalFileDropTarget): Readonly<{
+    onDragEnter: (event: WebFileDragEvent) => void;
+    onDragLeave: (event: WebFileDragEvent) => void;
+    onDragOver: (event: WebFileDragEvent) => void;
+    onDrop: (event: WebFileDragEvent) => void;
 }> {
     return noopDropZoneHandlers;
 }
+import type { ExternalFileDropTarget, WebFileDragEvent } from '@/components/ui/treeDragDrop/externalFileDropAdapter';

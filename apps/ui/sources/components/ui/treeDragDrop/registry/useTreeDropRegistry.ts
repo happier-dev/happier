@@ -43,20 +43,28 @@ function dropZoneKey(dropZone: Pick<TreeContentDropZone, 'containerId' | 'role' 
     return JSON.stringify([dropZone.role, dropZone.containerId, dropZone.targetId ?? null]);
 }
 
-export function useTreeDropRegistry(): TreeDropGeometryRegistry {
+export function useTreeDropRegistry(onGeometryChange?: () => void): TreeDropGeometryRegistry {
     const rowsRef = React.useRef(new Map<string, TreeContentRow>());
     const dropZonesRef = React.useRef(new Map<string, TreeContentDropZone>());
+    const onGeometryChangeRef = React.useRef(onGeometryChange);
+    onGeometryChangeRef.current = onGeometryChange;
 
     const registerRow = React.useCallback((row: TreeContentRow) => {
+        const previous = rowsRef.current.get(row.id);
+        if (previous && JSON.stringify(previous) === JSON.stringify(row)) return;
         rowsRef.current.set(row.id, row);
+        onGeometryChangeRef.current?.();
     }, []);
 
     const unregisterRow = React.useCallback((rowId: string) => {
-        rowsRef.current.delete(rowId);
+        if (rowsRef.current.delete(rowId)) onGeometryChangeRef.current?.();
     }, []);
 
     const registerDropZone = React.useCallback((dropZone: TreeContentDropZone) => {
+        const previous = dropZonesRef.current.get(dropZoneKey(dropZone));
+        if (previous && JSON.stringify(previous) === JSON.stringify(dropZone)) return;
         dropZonesRef.current.set(dropZoneKey(dropZone), dropZone);
+        onGeometryChangeRef.current?.();
     }, []);
 
     const unregisterDropZone = React.useCallback((
@@ -64,6 +72,7 @@ export function useTreeDropRegistry(): TreeDropGeometryRegistry {
         role?: TreeContentDropZone['role'],
         targetId?: string,
     ) => {
+        let changed = false;
         for (const [key, dropZone] of dropZonesRef.current) {
             if (
                 dropZone.containerId === containerId
@@ -71,8 +80,10 @@ export function useTreeDropRegistry(): TreeDropGeometryRegistry {
                 && (targetId === undefined || dropZone.targetId === targetId)
             ) {
                 dropZonesRef.current.delete(key);
+                changed = true;
             }
         }
+        if (changed) onGeometryChangeRef.current?.();
     }, []);
 
     const queryRowAtContentPointer = React.useCallback((pointer: TreeContentPointer): string | null => {

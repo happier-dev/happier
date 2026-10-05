@@ -14,7 +14,7 @@ import {
 
 import { applyFolderAssignmentChange } from './applyFolderAssignmentChange';
 import { applyFolderTreeMove } from './applyFolderTreeMove';
-import { applyGroupOrderUpdate, type SessionListGroupOrderChildKind } from './applyGroupOrderUpdate';
+import { applyGroupOrderUpdate, resolveSessionListGroupOrderChildKind } from './applyGroupOrderUpdate';
 import { applyWorkspaceOrderUpdate } from './applyWorkspaceOrderUpdate';
 import type {
     SessionListTreeContainerMetadata,
@@ -51,11 +51,11 @@ export type ApplySessionListTreeDropOperationContext = Readonly<{
     sessionListOrderingModeV1?: SessionListOrderingModeV1;
     sessionListSectionModeV1?: SessionListOrderingSectionMode;
     manualSessionOrderingEnabled?: boolean;
-    isFolderOrganizationEnabled?: () => boolean;
+    isFolderOrganizationEnabled?: (serverId: string | null) => boolean;
     now: () => number;
-    setSessionFoldersV1: (next: SessionFoldersV1) => void;
-    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void;
-    setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => void;
+    setSessionFoldersV1: (next: SessionFoldersV1) => void | Promise<void>;
+    setSessionListGroupOrderV1: (next: Record<string, string[]>) => void | Promise<void>;
+    setSessionWorkspaceOrderV1?: (next: Record<string, string[]>) => void | Promise<void>;
     setSessionFolderAssignment: SetSessionFolderAssignment;
 }>;
 
@@ -218,14 +218,6 @@ function classifyDropOperation(params: Readonly<{
     return 'invalid';
 }
 
-function resolveGroupOrderChildKind(
-    sourceKind: 'session' | 'folder',
-    folderSortMode: SessionListFolderSortModeV1 | undefined,
-): SessionListGroupOrderChildKind {
-    if (folderSortMode === 'mixed') return 'mixed';
-    return sourceKind === 'session' ? 'sessionsOnly' : 'foldersOnly';
-}
-
 function resolveEffectiveFolderSortModeForDropContext(
     context: ApplySessionListTreeDropOperationContext,
 ): SessionListFolderSortModeV1 {
@@ -266,7 +258,7 @@ async function applySessionDrop(params: Readonly<{
         containerId: destination.container.containerId,
         beforeRowId: destination.beforeRowId,
         afterRowId: destination.afterRowId,
-        childKind: resolveGroupOrderChildKind('session', resolveEffectiveFolderSortModeForDropContext(context)),
+        childKind: resolveSessionListGroupOrderChildKind('session', resolveEffectiveFolderSortModeForDropContext(context)),
         setSessionListGroupOrderV1: context.setSessionListGroupOrderV1,
     });
 }
@@ -302,7 +294,7 @@ async function applyFolderDrop(params: Readonly<{
         || Boolean(afterFolderId);
 
     if (shouldMoveFolderTree) {
-        applyFolderTreeMove({
+        await applyFolderTreeMove({
             current: context.sessionFoldersV1,
             serverId,
             folderId,
@@ -314,26 +306,26 @@ async function applyFolderDrop(params: Readonly<{
         });
     }
 
-    const orderUpdated = applyGroupOrderUpdate({
+    const orderUpdated = await applyGroupOrderUpdate({
         tree: params.tree,
         currentMap: context.sessionListGroupOrderV1,
         movedRowId: source.metadata.rowId,
         containerId: destination.container.containerId,
         beforeRowId: destination.beforeRowId,
         afterRowId: destination.afterRowId,
-        childKind: resolveGroupOrderChildKind('folder', resolveEffectiveFolderSortModeForDropContext(context)),
+        childKind: resolveSessionListGroupOrderChildKind('folder', resolveEffectiveFolderSortModeForDropContext(context)),
         setSessionListGroupOrderV1: context.setSessionListGroupOrderV1,
     });
 
     return shouldMoveFolderTree || orderUpdated;
 }
 
-function applyWorkspaceDrop(params: Readonly<{
+async function applyWorkspaceDrop(params: Readonly<{
     tree: SessionListTreeModel;
     source: SessionListTreeDragSource;
     destination: Destination;
     context: ApplySessionListTreeDropOperationContext;
-}>): boolean {
+}>): Promise<boolean> {
     const setSessionWorkspaceOrderV1 = params.context.setSessionWorkspaceOrderV1;
     if (!setSessionWorkspaceOrderV1) return false;
     return applyWorkspaceOrderUpdate({
@@ -378,7 +370,7 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
         || operationKind === 'folderNestingMove';
     if (
         requiresFolderOrganization
-        && params.context.isFolderOrganizationEnabled?.() === false
+        && params.context.isFolderOrganizationEnabled?.(params.source.metadata.serverId) === false
     ) {
         return { ok: false, reason: 'feature-disabled' };
     }
@@ -418,7 +410,7 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
 
     if (params.source.metadata.kind === 'workspace-root') {
         return {
-            ok: applyWorkspaceDrop({
+            ok: await applyWorkspaceDrop({
                 tree: params.tree,
                 source: params.source,
                 destination,
