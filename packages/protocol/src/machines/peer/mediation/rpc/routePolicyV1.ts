@@ -281,6 +281,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_BROWSER_RECORDING_CLEANUP, 'Daemon-local browser recording retention cleanup trigger with typed runtime validation and no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME, 'Reverse daemon->UI native-view recording frame capture request: the daemon asks the connected desktop UI to write one reference-only PNG frame from the Wry WebView it owns, bounded by the recording byte cap, with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.UI_BROWSER_AUTOMATION_DISPATCH, 'Authenticated reverse daemon-to-UI execution of an approved automation action on the exact mounted browser view, with no server persistence.'),
+  directEphemeral(RPC_METHODS.UI_ACTION_EXECUTE, 'Exact-Machine reverse delivery of an already admitted client Action to one connected app, with no server persistence or fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT, 'Daemon-local simulator preview snapshot read with no server persistence or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_ACTION, 'Daemon-local simulator preview action dispatch with typed adapter validation and no durable server mutation.'),
   directEphemeral(RPC_METHODS.DAEMON_PROMPT_ASSETS_LIST_TYPES, 'Daemon-local prompt asset type catalog read.'),

@@ -284,8 +284,11 @@ describe("registerSocketRpcHandlers", () => {
         expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
     });
-    it("admits UI browser automation only from the authenticated exact Machine", async () => {
-        const method = `machine-1:${uiBrowserAutomationDispatchMethod({ browserSessionId: 'visible-session', viewId: 'visible-view' })}`;
+    it.each([
+        uiBrowserAutomationDispatchMethod({ browserSessionId: 'visible-session', viewId: 'visible-view' }),
+        RPC_METHODS.UI_ACTION_EXECUTE,
+    ])("admits UI Action continuation %s only from the authenticated exact Machine", async (rpcMethod) => {
+        const method = `machine-1:${rpcMethod}`;
         const effect = vi.fn(async () => 'encrypted-page-result');
         const target = { id: 'ui-view', data: { clientType: 'user-scoped' }, timeout: () => ({ emitWithAck: effect }) };
         const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });

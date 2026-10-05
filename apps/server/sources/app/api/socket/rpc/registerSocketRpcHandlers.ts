@@ -82,6 +82,7 @@ const RPC_REGISTERED_METHODS_SOCKET_DATA_KEY = "rpcRegisteredMethods";
 const MACHINE_VISIBLE_CLIENT_RPC_METHODS = new Set<string>([
     RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
     RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE,
+    RPC_METHODS.UI_ACTION_EXECUTE,
 ]);
 
 type SessionPublisherPresenceForRpc = Pick<
@@ -992,7 +993,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const rawTransferRouting = (data as { transferRouting?: unknown } | undefined)?.transferRouting;
             const reverseAutomationSeparator = method.indexOf(':');
             if (reverseAutomationSeparator > 0
-                && isUiBrowserAutomationDispatchMethod(method.slice(reverseAutomationSeparator + 1))
+                && (method.slice(reverseAutomationSeparator + 1) === RPC_METHODS.UI_ACTION_EXECUTE
+                    || isUiBrowserAutomationDispatchMethod(method.slice(reverseAutomationSeparator + 1)))
                 && (readMachineScopedSocketMachineId(params.socket) !== method.slice(0, reverseAutomationSeparator)
                     || !await isMachineScopedRpcMethodAvailable({ userId: params.userId, method }))) {
                 // Continue only an Action admitted by the exact daemon. An Account

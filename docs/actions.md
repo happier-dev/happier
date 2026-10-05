@@ -22,6 +22,7 @@ host is in [cli-architecture.md](cli-architecture.md#action-derived-command-argu
 | Surface-independent metadata vocabulary (surfaces, authority, placement, tool exposure) | `packages/protocol/src/actions/metadata.ts` |
 | Discovery projection and serialization for external consumers | `packages/protocol/src/actions/actionCatalog.ts`, `.../actionDefinitionV1.ts` |
 | Execution: input parse, authority admission, approval routing, output settlement | `packages/protocol/src/actions/actionExecutor.ts` |
+| Admitted client-Action delivery | `apps/cli/src/session/actions/clientActionReverseDispatch.ts` through the existing connected-client reverse RPC |
 | Waiting-host completion after launched runs (development) | `packages/protocol/src/actions/actionCompletion.ts` |
 | Whether an invocation needs approval, and which approval flow | `packages/protocol/src/actions/actionApprovalPolicy.ts` |
 | Effective invocation authority and terminal policy composition | `packages/protocol/src/actions/invocationAuthority.ts` |
@@ -429,15 +430,36 @@ available in the reviewer result.
 ## Client configuration controls (0.3 development source)
 
 Client-placed Actions operate on the answering client's current owners, not an
-arbitrary remote window. A headless host without the required client owner
-returns a typed unavailable/unsupported result. Declaring Agent or MCP
-exposure does not supply a transport to a different client. The registry's
-surface normalizer excludes client-placed Actions from CLI availability and
-friendly command generation. Agent and MCP declarations remain available to
-hosts with the required client owner; headless invocation still cannot execute
-them. Opening another UI device does not make these Actions routable from CLI.
-The catalog's `placements` field lists UI locations such as command palettes
-and menus; it does not report connected clients.
+arbitrary remote window. In 0.3 development, an admitted Agent, MCP or other
+daemon-hosted invocation reaches a connected app through the existing
+machine-scoped reverse-RPC channel, using `ui.actions.execute.v1`. The Protocol
+executor validates input, caller authority, surface policy and required approval
+before delivery. The answering app uses its canonical UI Action executor with
+the admitted surface and authority; the trusted continuation skips only the
+already-satisfied approval step, and cannot grant additional authority.
+
+The existing server routing selects the lexicographically first eligible socket
+id advertising the method in that Account's machine/method room, excluding the
+calling socket. Action inputs still address their exact Session, composer or
+mounted surface where supported; delivery does not elect a device or retarget
+an absent view. Browser automation retains its separate exact-view controller
+custody and interrupted-completion contract. Contributed plugin client Actions
+retain their own artifact/schema and plugin-occurrence lifecycle dispatch.
+
+When no handler is advertised, including by an older app without this method,
+delivery returns typed unavailable: Find and the prompt picker return `reason: 'noClient'`, Next
+returns `status: 'unavailable'`, and other Actions return an `unavailable`
+failure. Missing required mounted owners remain distinct domain results. A lost
+or invalid response after issuance reports `outcome_uncertain`; delivery never
+retries an issued invocation. These are current development contracts, not
+released availability or a completed loaded-runtime validation claim.
+
+Standalone CLI execution has no bound answering app, so the registry's surface
+normalizer still excludes client-placed Actions from CLI availability and
+friendly command generation. The catalog's `placements` field lists UI
+locations such as command palettes and menus; it does not report connected
+clients. Tool exposure remains a separate policy: removing a transport-gap
+override does not change the default Agent discovery budget.
 
 `ui.command_palette.list` and `ui.command_palette.invoke` use the mounted
 `CommandPaletteProvider`'s current command builder. Removed commands and retired
@@ -805,8 +827,9 @@ A disallowed CLI also sends an authority ceiling, which can only lower authority
 
 **`executionPlacement`** — `account`, `machine`, `session`, or `client`. External ingress resolves
 an Action's execution target from this registry fact rather than from the id's prefix, so a new
-Action cannot silently inherit a Machine route by being added next to one. `client` deliberately
-reports placement unavailable to remote APIs.
+Action cannot silently inherit a Machine route by being added next to one. In 0.3 development,
+`client` executes on the answering app through admitted daemon reverse dispatch where that
+host has a machine client; absence is typed unavailable. Standalone CLI remains unsupported.
 
 **`serverTransport`** — an optional `{ method, path }` pair naming the Home route that carries a
 server-owned Action. It is a local declaration only: the domain route still owns wire validation
