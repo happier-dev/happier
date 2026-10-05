@@ -9,6 +9,7 @@
     { "path": "./tsconfig.source.json" }
   ],
   "files": [
+    "../../packages/protocol/src/auth/tr46.d.ts",
     "vitest.config.ts",
     "vitest.integration.config.ts",
     "vitest.legend-native.config.ts",

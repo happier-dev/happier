@@ -88,6 +88,27 @@ test('native UI source emission leaves test-only Protocol and SDK fixtures in th
     'each original test/configuration root must still be checked');
   assert.ok(testInputs.some((file) => file.startsWith(protocolDir)));
   assert.ok(testInputs.some((file) => authorFixtureDirs.some((dir) => file.startsWith(dir))));
+  const verifiedEmail = resolve('packages/protocol/src/auth/verifiedEmail.ts');
+  assert.ok(testInputs.includes(verifiedEmail),
+    'the retained Board testkit imports must still check verified-mailbox normalization');
+  const ambientRoots = readProject('tsconfig.test.json').fileNames
+    .filter((file) => file.startsWith(protocolDir) && isSharedDeclaration(file));
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-ui-test-protocol-ambient-'));
+  try {
+    const config = join(fixtureDir, 'tsconfig.json');
+    writeFileSync(config, JSON.stringify({
+      extends: join(uiDir, 'tsconfig.test.json'),
+      compilerOptions: { tsBuildInfoFile: join(fixtureDir, 'types.tsbuildinfo') },
+      references: [], include: [], files: [verifiedEmail, ...ambientRoots],
+    }));
+    // Check the real reachable owner with the test project's canonical ambient roots,
+    // without declaration emission or the app's full semantic graph.
+    const semantic = spawnSync(invocation.command, [...invocation.argsPrefix,
+      '--noEmit', '--project', config, '--pretty', 'false'], { encoding: 'utf8' });
+    assert.equal(semantic.status, 0, semantic.stdout + semantic.stderr);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });
 
 for (const name of ['foundation', 'core']) {
