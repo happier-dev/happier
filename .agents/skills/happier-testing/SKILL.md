@@ -154,12 +154,22 @@ Host-test green alone is not shippable for user-visible behavior; this skill own
 - Reuse an applicable successful full-suite result; release use alone does not require running it twice. Repeat the affected lane when investigating nondeterminism, shared-state leakage, order dependence, or when an explicit release protocol requires independent execution. Two passes are evidence, not proof of determinism.
 - If a documented memory-heavy UI host suite OOMs at the default heap, rerun with `NODE_OPTIONS=--max-old-space-size=8192` instead of silently narrowing the lane.
 - Device QA must pin bundle identity when stale Metro state could invalidate the result: full Metro reload, Fast Refresh off, and a module probe.
+- Close what you open. At the end of a browser QA lane, close every browser you launched: persistent Playwright/Chromium contexts, agent-browser sessions, and their temporary profile directories. An abandoned headless renderer keeps consuming CPU and memory on the shared machine for hours. Leave only a browser the human explicitly asked to keep, and never close another session's browser.
 
 ### Dedicated controlled-stack routing
 
 Do not create a dedicated QA stack merely because testing or QA is requested. When a human explicitly requests a dedicated, isolated, stable, controlled, snapshot-backed, or manual-restart QA stack, invoke `.agents/skills/happier-controlled-stack-qa` and let it own provisioning, reuse, runtime identity, reload boundaries, borrowed Expo, and teardown. That skill requires one remembered stack per agent session unless the human explicitly requests multiple stacks.
 
 Do not mark a validation step complete merely because wiring is registered, a command reached a compiler/test runner, or a background process remains running. Record the terminal exit/result and decisive product evidence. If the live recipe cannot run, mark it `BLOCKED` with the missing prerequisite and next action; do not substitute more host tests and call the behavior shipped.
+
+### Blank development web startup
+
+- Separate HTML delivery, bundle delivery/evaluation, React commit, rendered app content, and authenticated Home connectivity. Require the expected origin/path, nonempty app content, and a screenshot; root children alone can be Expo development chrome. A successful `open`, HTTP 200, or `main` console message does not close readiness.
+- Install error/unhandled-rejection capture and a React commit hook before navigation. Keep the browser handle and target identity through the readiness wait and subsequent probes. If an automation daemon exits, its replacement `about:blank` page is a lost diagnostic target, not the application's rendered output.
+- If native browser automation loses its target or CDP responsiveness, compare once with a persistent context using the repository's existing Playwright dependency and the same Chrome executable, URL, and read-only authentication state. Attach later CLI probes to that browser's explicit CDP endpoint and page target rather than launching another browser. Do not save or print the supplied credential state.
+- Wait for the required app surface, not `networkidle`: Home/socket traffic and background workers may continue after first paint. Preserve request failures with URL paths, timestamps, console errors, and the loaded bundle response. Record authentication separately from rendering; an authenticated shell can render while its Home is unreachable.
+- For `ERR_EMPTY_RESPONSE`, connection resets, or failed lazy-route chunks, correlate the exact request time with the stack's remote Expo log and the forward's listening process. Metro heap exhaustion can leave the SSH listener alive while its upstream is down; an app recovery boundary then reports the failed chunk fetch. Stack health and an earlier successful bundle do not refute that failure.
+- Inspect `apps/stack/scripts/utils/expo/expoNodeHeapEnv.mjs` before proposing a heap change. It owns the Expo heap policy and its existing override. Do not replace an out-of-memory diagnosis with a guessed larger limit or longer readiness timeout; distinguish the verified crash from an unmeasured allocation/retention cause, and respect the task's lifecycle authority.
 
 ## Output Expectations
 
