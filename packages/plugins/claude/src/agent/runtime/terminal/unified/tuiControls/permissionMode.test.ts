@@ -45,6 +45,31 @@ describe('resolveTargetModeMarker', () => {
 });
 
 describe('applyPermissionModeControl — verified ShiftTab cycling (B11)', () => {
+  it.each(['safe-yolo', 'default'])('waits for a visible mode footer before applying %s, then recovers', async (permissionMode) => {
+    // Claude Code 2.1.289, 142x10 tmux pane: the custom statusline fits but the
+    // permission footer is clipped, even while acceptEdits is actually active.
+    const cropped = ['────────────────────', '❯ ', '────────────────────', '  Opus 5.5'].join('\n');
+    const port = createFakeControlPort({ captures: [cropped, ACCEPT] });
+
+    expect(await applyPermissionModeControl(ctxFor(port), { permissionMode })).toMatchObject({
+      kind: 'scheduled', reason: 'permission_mode_not_visible',
+    });
+    expect(port.sentKeys).toEqual([]);
+    expect(await applyPermissionModeControl(ctxFor(port), { permissionMode: 'acceptEdits' })).toMatchObject({
+      kind: 'already_effective', effective: 'acceptEdits',
+    });
+    expect(port.sentKeys).toEqual([]);
+  });
+
+  it('does not infer default or continue cycling when the footer disappears after a press', async () => {
+    const cropped = ['────────────────────', '❯ ', '────────────────────', '  Opus 5.5'].join('\n');
+    const port = createFakeControlPort({ captures: [DEFAULT, cropped] });
+
+    expect(await applyPermissionModeControl(ctxFor(port), { permissionMode: 'acceptEdits' })).toMatchObject({
+      kind: 'scheduled', reason: 'permission_mode_not_visible',
+    });
+    expect(port.sentKeys).toEqual(['ShiftTab']);
+  });
   it('cycles with raw ShiftTab until the target marker, verifying after each press (B4)', async () => {
     const port = createFakeControlPort({ captures: [DEFAULT, ACCEPT, PLAN] });
 
@@ -117,7 +142,7 @@ describe('applyPermissionModeControl — verified ShiftTab cycling (B11)', () =>
 describe('applyPermissionModeControl — in_flight_steer window (lane Q, probe Q-A)', () => {
   // Probe Q-A (2.1.173): raw ShiftTab registers LIVE during generation and the footer marker
   // renders mid-generation, so verified cycling is safe in the steer-safe generating window.
-  const GENERATING_DEFAULT = ['● working', '✶ Forging… (10s · esc to interrupt)', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
+  const GENERATING_DEFAULT = ['● working', '✶ Forging… (10s · esc to interrupt)', '╭─────╮', '│ >   │', '╰─────╯', '  ⏸ manual'].join('\n');
   const GENERATING_ACCEPT = [
     '● working',
     '✶ Forging… (12s · esc to interrupt)',

@@ -1195,6 +1195,14 @@ package scripts. Terminal URL discovery reuses the existing output detector and
 `terminal_url` inventory. These are development-source contracts; the redesigned
 strip, list, Jump and phone controls require the terminal UI integration.
 
+The development permission-mode controller verifies the current composer footer
+before cycling modes. A clipped footer is unknown, rather than evidence of default
+mode; historical mode text above the composer is not authoritative. Legacy mode
+labels and compact HUD labels share that parser. If the footer is hidden by a short
+terminal, control waits without cycling blindly; enlarging the terminal restores
+verification through the existing retry path. Pending prompts still wait for their
+required runtime configuration to be verified.
+
 The development parser distinguishes Claude's automatic usage-limit wait footer
 from the interactive usage-limit chooser. An empty composer still accepts a new
 prompt, as Claude permits during the wait. Clearing an owned leftover draft with

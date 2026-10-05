@@ -36,8 +36,9 @@ export type ClaudeUnifiedTuiRuntimeControlFeatureId =
 export type { ClaudeTuiModeMarker } from '../screenState.js';
 
 /**
- * Probe-verified Claude TUI permission/plan mode cycle members. `default` is detected by the ABSENCE
- * of a status-bar marker. `auto`/`bypassPermissions` are model/account-gated and may be unreachable;
+ * Probe-verified Claude TUI permission/plan mode cycle members. A hidden footer is unknown;
+ * default requires its legacy shortcuts footer or explicit manual marker.
+ * `auto`/`bypassPermissions` are model/account-gated and may be unreachable;
  * the controller must verify the marker after each cycle press rather than counting presses.
  */
 export const CLAUDE_TUI_MODE_MARKERS: readonly ClaudeTuiModeMarker[] = Object.freeze([

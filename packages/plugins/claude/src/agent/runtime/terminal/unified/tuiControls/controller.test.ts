@@ -38,7 +38,7 @@ const IDLE = ['╭─────╮', '│ >   │', '╰─────╯', '
 const ACCEPT = ['╭─────╮', '│ >   │', '╰─────╯', '  ⏵⏵ accept edits on (shift+tab to cycle)'].join('\n');
 const MODEL_OK = ['Set model to Sonnet 4.6 and saved as your default', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
 const EFFORT_OK = ['Set reasoning effort to high', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
-const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)'].join('\n');
+const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)', '  ⏸ manual'].join('\n');
 
 describe('createClaudeUnifiedTuiControlController — ordering and aggregation', () => {
   it('applies model → effort → permission mode in order and lets the prompt proceed', async () => {
@@ -210,6 +210,22 @@ describe('createClaudeUnifiedTuiControlController — ultracode (session-only se
 });
 
 describe('createClaudeUnifiedTuiControlController — prompt gating', () => {
+  it('keeps mode-dependent prompts gated while the footer is clipped and retries the pending control when visible', async () => {
+    const cropped = ['────────────────────', '❯ ', '────────────────────', '  Opus 5.5'].join('\n');
+    const port = createFakeControlPort({ captures: [cropped, ACCEPT] });
+    const controller = await controllerFor(port);
+
+    const blocked = await controller.applyDesiredRuntimeConfig({ desired: { permissionMode: 'acceptEdits' }, reason: 'before_prompt' });
+    expect(blocked.promptMayProceed).toBe(false);
+    expect(blocked.changes[0]).toMatchObject({ reason: 'permission_mode_not_visible', timing: 'queued_until_safe_window' });
+    expect(port.sentKeys).toEqual([]);
+
+    const retry = await controller.applyDesiredRuntimeConfig({ desired: {}, reason: 'before_prompt' });
+    expect(retry.promptMayProceed).toBe(true);
+    expect(retry.changes[0]).toMatchObject({ key: 'permissionMode', status: 'applied', effective: 'acceptEdits' });
+    expect(port.sentKeys).toEqual([]);
+  });
+
   it('blocks the prompt when a required control fails (B7, C7)', async () => {
     // The command never leaves the slash picker (genuinely not delivered). A clean composer with a
     // missing confirmation is no longer a definitive failure (L2: delivered-but-unverified).

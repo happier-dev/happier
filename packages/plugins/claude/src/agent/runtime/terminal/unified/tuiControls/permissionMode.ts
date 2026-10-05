@@ -124,6 +124,9 @@ export async function applyPermissionModeControl(
     return { kind: 'failed', reason: 'unsafe_or_unknown_screen' };
   }
 
+  if (state.modeMarker === null) {
+    return { kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'permission_mode_not_visible' };
+  }
   if (state.modeMarker === target.marker) {
     return { kind: 'already_effective', effective: target.marker };
   }
@@ -146,6 +149,9 @@ export async function applyPermissionModeControl(
     if (captured.kind !== 'state') return captureFailureToResult(captured);
     state = captured.state;
 
+    if (state.modeMarker === null) {
+      return { kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'permission_mode_not_visible' };
+    }
     if (state.modeMarker === target.marker) {
       return { kind: 'applied', effective: target.marker, timing: 'current_window' };
     }
