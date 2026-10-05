@@ -158,6 +158,9 @@ and component compilation inside that same admitted flight to a dedicated dev-ta
 It captures the flight's source before dispatch, reuses the install-freshness owner, and keeps worker
 dependencies/dist separate from the moving mirror and live outputs. Source identity labels retain
 the producer checkout origin so relocation alone does not change an input fingerprint. Component
+and workspace-package identity readers share those origin labels. The shared workspace input-path
+owner includes relative extended tsconfigs even when the referenced config is excluded as a
+test-only root, so capture and package admission consume one complete config closure. Component
 and support manifests carry the explicit platform/architecture target; component identities also
 separate targets (including web). The worker must match the producer target because native support
 construction remains host-native. Finished payloads return through the shared runtime artifact closure
