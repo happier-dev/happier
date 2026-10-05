@@ -30,6 +30,5 @@ export const FIND_ACTION_SPECS = [{
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
   bindings: { voiceClientToolName: 'findInSurface', mcpToolName: 'ui_find' },
-  toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
   inputSchema: UiFindInputSchema, outputSchema: UiFindOutputSchema,
 }] as const satisfies readonly PreNormalizedActionSpec[];

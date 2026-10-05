@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionSurfaceSchema, getActionSpec } from './actionSpecs.js';
 import type { ActionExecuteResult } from './executor/types.js';
+import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 
 /** Private continuation of an Action admitted by the authenticated Machine host. */
 export const UiActionDispatchRequestV1Schema = z.object({
@@ -17,7 +18,7 @@ export const UiActionDispatchRequestV1Schema = z.object({
   }).strict(),
 }).strict().superRefine((request, ctx) => {
   const spec = getActionSpec(request.actionId);
-  if (spec.executionPlacement !== 'client' || !spec.inputSchema.safeParse(request.input).success) {
+  if (!Object.hasOwn(request, 'input') || spec.executionPlacement !== 'client' || !spec.inputSchema.safeParse(request.input).success) {
     ctx.addIssue({ code: 'custom', message: 'Invalid client Action', path: ['input'] });
   }
 });
@@ -27,7 +28,7 @@ export const UiActionDispatchResultV1Schema = z.object({
   v: z.literal(1),
   execution: z.discriminatedUnion('ok', [
     z.object({ ok: z.literal(true), result: z.unknown() }).strict(),
-    z.object({ ok: z.literal(false), errorCode: z.string().min(1), error: z.string().min(1), details: z.unknown().optional() }).strict(),
+    ActionExecuteFailureSchema,
   ]),
 }).strict();
 

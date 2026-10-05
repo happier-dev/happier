@@ -452,6 +452,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   function buildDefaultActionExecutor(opts?: Readonly<{
   /** An explicitly admitted API-token transport; Home owns grants and approvals. */
   apiTokenAction?: ApiTokenActionTransport;
+  /** Private Machine reverse-RPC continuation: admission/approval happened in the daemon. */
+  admittedClientAction?: true;
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string, options?: OpenSessionOptions) => void | Promise<void>;
@@ -2152,7 +2154,9 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   const resolveContext = (context: Parameters<typeof executor.execute>[2], input: unknown): ActionExecutorContext => {
     const surface = context?.surface ?? 'ui';
     const credential = accountContext?.credentialAuthorityKind ?? getCurrentAuth()?.credentialAuthorityKind ?? 'none';
-    const authority = resolveInvocationAuthority({ credential, surface });
+    const authority = opts?.admittedClientAction
+      ? context?.authority ?? 'account_automation'
+      : resolveInvocationAuthority({ credential, surface });
     // Ordinary UI callers do not author approval provenance. Retain stronger
     // invocation identities, otherwise bind one attempt at this host before
     // execute/prepare reaches the strict approval-origin owner.
@@ -2162,6 +2166,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       ...(context ?? {}),
       surface,
       authority,
+      ...(opts?.admittedClientAction ? { bypassApprovals: true } : {}),
       ...(surface === 'ui' && (credential === 'account' || credential === 'terminal')
         ? { actionRequestId: context?.actionRequestId ?? (creationKey || randomUUID()) }
         : {}),

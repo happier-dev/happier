@@ -37,7 +37,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     const executor = params.createExecutor((turnId) =>
       !turnId || turnId === witness.turnId ? witness.workDepth : undefined, () => authority.isCurrent());
     return await executor.execute(operation.actionId, operation.input, {
-      surface: 'agent', authority: 'account_automation', serverId: params.serverId,
+      surface: operation.surface ?? 'agent', authority: 'account_automation', serverId: params.serverId,
       actionCaller: caller.data,
       defaultSessionId: authority.sessionId, actionRequestId: operation.requestId,
       callerPermissionMode: witness.callerPermissionMode ?? null,

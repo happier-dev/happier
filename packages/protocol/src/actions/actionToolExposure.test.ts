@@ -37,6 +37,15 @@ import {
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
+  it('exposes relayed Find and Next as direct MCP tools while retaining the default Agent discovery budget', () => {
+    for (const id of ['ui.find', 'session.pending.next'] as const) {
+      const spec = getActionSpec(id);
+      expect(isActionDirectToolExposedOn(spec, 'mcp'), id).toBe(true);
+      expect(isActionDiscoverableOnToolSurface(spec, 'agent'), id).toBe(true);
+      expect(resolveActionToolExposureMode(spec, 'agent'), id).toBe('discoverable_only');
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }).available, id).toBe(false);
+    }
+  });
   it('makes landed explanation Actions reachable through the existing UI and Voice catalogs', () => {
     const voiceIds = new Set(listVoiceToolActionSpecs().map((spec) => spec.id));
     for (const actionId of ['scm.diffSummary.capture', 'scm.diffSummary.generate', 'scm.diffSummary.result.read',

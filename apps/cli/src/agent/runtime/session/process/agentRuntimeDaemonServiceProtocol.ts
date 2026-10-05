@@ -128,6 +128,7 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.object({
     ...RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS,
     z.object({
       kind: z.literal('action.execute'),
+      surface: z.enum(['agent', 'mcp']).optional(),
       requestId: OpaqueIdSchema,
       actionId: ActionIdSchema,
       input: z.unknown(),

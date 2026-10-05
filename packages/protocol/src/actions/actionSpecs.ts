@@ -11702,9 +11702,9 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     ...ACTION_ID_FAMILIES_V1.workflows.filter((actionId) => actionId !== 'workflow.run.start'),
   ]);
 
-  // These actions require the invoking client/runtime. Public and trusted-plugin
-  // discovery remains placement-neutral; a non-client executor returns the
-  // canonical typed placement-unavailable outcome instead of hiding the Action.
+  // These actions require an answering app's runtime. Discovery remains
+  // placement-neutral; admitted daemon hosts deliver through reverse RPC,
+  // while absent client custody returns the canonical typed unavailable result.
   register('client', CLIENT_EXECUTION_PLACEMENT_ACTION_IDS);
   register('client', ACTION_ID_FAMILIES_V1.capture_viewing);
   register('client', ACTION_ID_FAMILIES_V1.scope);
@@ -11833,8 +11833,8 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
     cli: executionPlacement === 'client' ? undefined : spec.cli,
     surfaces: {
       ...spec.surfaces,
-      // The CLI has no client owner or transport to another app's owners.
-      // Agent/MCP exposure remains host-dependent; it can run in a UI executor.
+      // Standalone CLI has no bound answering app. Daemon-hosted Agent/MCP
+      // invocations can use the admitted client's existing reverse-RPC channel.
       cli: executionPlacement !== 'client' && spec.surfaces.cli,
       mcp: spec.surfaces.mcp || isAgentRequestablePresentUserActionId(spec.id)
         || spec.id === 'account.apiTokens.list' || spec.id === 'account.security.get',

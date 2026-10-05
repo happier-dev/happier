@@ -20,7 +20,7 @@ import {
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
 import { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
-import type { ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
+import { clientActionUnavailable, type ActionExecutorContext, type ActionExecutorDeps, type RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -119,7 +119,7 @@ export function createCliActionExecutor(
     },
     {
       ...(params.sessionActionConfirmation ? { sessionActionConfirmation: params.sessionActionConfirmation } : {}),
-      ...(params.clientActionExecute ? { clientActionExecute: params.clientActionExecute } : {}),
+      clientActionExecute: params.clientActionExecute ?? (async ({ actionId }) => clientActionUnavailable(actionId)),
       ...(params.runtimeActionExecute
         ? { runtimeActionExecute: params.runtimeActionExecute }
         : {}),

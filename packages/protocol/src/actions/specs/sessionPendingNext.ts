@@ -17,7 +17,6 @@ export const SESSION_PENDING_NEXT_ACTION_SPECS = [{
   placements: ['command_palette'],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
   bindings: { voiceClientToolName: 'nextPendingRequest', mcpToolName: 'session_pending_next' },
-  toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
   inputSchema: SessionPendingNextInputSchema,
   outputSchema: SessionPendingNextOutputSchema,
 }] as const satisfies readonly PreNormalizedActionSpec[];

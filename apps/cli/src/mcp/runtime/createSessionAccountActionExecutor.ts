@@ -67,6 +67,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
           createRequest: (capability) => ({ v: 1,
             context: { token: capability, sessionId: params.client.sessionId },
             operation: { kind: 'action.execute', requestId, actionId, input, witness,
+              surface: context?.surface === 'mcp' ? 'mcp' : 'agent',
               ...(toolCallId ? { toolCallId } : {}) },
           }),
         });

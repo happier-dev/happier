@@ -22,6 +22,7 @@ import { CurrentSessionPresentationRuntime } from '@/components/sessions/present
 import { ActionOperationRuntime } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { UpdateFactsBackgroundRuntime } from '@/updates/UpdateFactsBackgroundRuntime';
 import { EntityDragRealmPreview } from './EntityDragRealmPreview';
+import { ClientActionReverseRuntime } from './ClientActionReverseRuntime';
 
 type ActivitySurfacesRuntimeComponent = React.ComponentType;
 
@@ -95,6 +96,7 @@ export const AuthenticatedAppRuntimeMounts = React.memo(function AuthenticatedAp
             <ActivityLocalNotificationRuntime />
             <OnboardingShowcaseAutoShowMount />
             {props.isAuthenticated ? <ActionOperationRuntime /> : null}
+            {props.isAuthenticated ? <ClientActionReverseRuntime /> : null}
             {/* Keeps the Updates summary's coverage of agent CLIs and helpers (no timer of its own). */}
             <UpdateFactsBackgroundRuntime enabled={props.isAuthenticated} />
             {props.isAuthenticated ? <PushNotificationPermissionPrimingRuntime /> : null}

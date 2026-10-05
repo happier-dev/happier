@@ -68,7 +68,7 @@ describe('Session MCP Account routing', () => {
       const body: unknown = JSON.parse(String(init?.body));
       requests.push(body);
       expect(body).toEqual({ v: 1, context: { token: 'A'.repeat(43), sessionId: 'caller-session' },
-        operation: { kind: 'action.execute', requestId: 'request-1', actionId,
+        operation: { kind: 'action.execute', surface: 'agent', requestId: 'request-1', actionId,
           input, witness: { ...witness, workDepth: 6 }, toolCallId: 'tool-1' } });
       if (uncertain) return new Response(JSON.stringify({ ok: false, error: {
         code: NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE, message: 'Connection lost after dispatch',
