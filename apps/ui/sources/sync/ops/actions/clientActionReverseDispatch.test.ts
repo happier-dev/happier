@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps, RPC_METHODS, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -10,6 +12,9 @@ import { registerMountedWorkspaceAction } from '@/components/appShell/workspace/
 import { createWorkspaceState, createWorkspaceEmptyTab } from '@/components/appShell/workspace/workspaceState';
 import { projectWorkspaceTabsList } from '@/components/appShell/workspace/workspaceActions';
 import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
+import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { apiSocket } from '@/sync/api/session/apiSocket';
 
 installDisconnectedServerSocketBoundary();
 const homes = createHomeGovernanceHarness();
@@ -21,7 +26,7 @@ beforeEach(async () => {
   await homes.reset();
   serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://relay.test', accountId: 'relay-account' });
 });
-afterEach(() => { for (const release of releases.splice(0)) release(); standardCleanup(); });
+afterEach(() => { for (const release of releases.splice(0)) release(); standardCleanup(); vi.restoreAllMocks(); });
 
 describe('admitted daemon-to-app Action continuation', () => {
   it.each(['agent', 'mcp'] as const)('executes Find, Next and workspace list through the real app executor on %s', async surface => {
@@ -81,5 +86,33 @@ describe('admitted daemon-to-app Action continuation', () => {
       .toMatchObject({ execution: { ok: false, errorCode: 'invalid_action_input' } });
     expect(await receive(request, { signal: new AbortController().signal }))
       .toMatchObject({ execution: { ok: false, errorCode: 'action_account_scope_changed' } });
+  });
+
+  it('keeps a mounted Machine continuation current when another Machine appears, and retires it on unmount', async () => {
+    const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
+    const machine = createMachineFixture({ id: 'machine-one' });
+    const another = createMachineFixture({ id: 'machine-two' });
+    await act(async () => {
+      storage.setState(state => ({ ...state, profile: { ...(state.profile ?? {}), id: 'relay-account' },
+        machines: { [machine.id]: machine }, machineListByServerId: {} }));
+    });
+    // Observe the real registry, not a replacement for its retirement behavior.
+    const registered = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');
+    const screen = await renderScreen(React.createElement(ClientActionReverseRuntime));
+    const initial = registered.mock.calls.find(([id, method]) => id === machine.id && method === RPC_METHODS.UI_ACTION_EXECUTE);
+    if (!initial) throw new Error('Mounted client did not register its Action handler');
+    const receive = initial[2];
+    const request = { v: 1, actionId: 'ui.find', input: { op: 'read' }, context: { surface: 'agent', authority: 'account_automation' } };
+    expect(await receive(request, { signal: new AbortController().signal }))
+      .toEqual({ v: 1, execution: { ok: true, result: { status: 'noMountedSurface' } } });
+    await act(async () => {
+      storage.setState(state => ({ ...state, machines: { [machine.id]: machine, [another.id]: another } }));
+    });
+    expect(await receive(request, { signal: new AbortController().signal }))
+      .toMatchObject({ execution: { ok: true, result: { status: 'noMountedSurface' } } });
+    await screen.unmount();
+    expect(await receive(request, { signal: new AbortController().signal }))
+      .toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
+    registered.mockRestore();
   });
 });

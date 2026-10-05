@@ -828,15 +828,26 @@ describe('withDefaultActionExecuteContext', () => {
         expect(lifetime.disposed).toBe(1);
     });
 
-    it('refuses a completed effect result when the captured Account was replaced', async () => {
+    it('retains a completed effect result for its invoker when the captured Account was replaced', async () => {
         const serverId = await addHome();
         const { withDefaultActionExecuteContext } = await loadExecutor();
         const caller = new AbortController();
+        const completed = { ok: true, result: { status: 'accepted' } };
         await expect(withDefaultActionExecuteContext(undefined, { serverId, signal: caller.signal }, async () => {
             await harness.switchAccount(serverId, 'replacement-account');
             caller.abort();
-            return { ok: true, result: { status: 'accepted' } };
-        }, 'session.message.send')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+            return completed;
+        }, 'session.message.send')).resolves.toBe(completed);
+        expect(lifetime.disposed).toBe(1);
+    });
+
+    it('does not disclose a completed read after its Account was replaced', async () => {
+        const serverId = await addHome();
+        const { withDefaultActionExecuteContext } = await loadExecutor();
+        await expect(withDefaultActionExecuteContext(undefined, { serverId }, async () => {
+            await harness.switchAccount(serverId, 'replacement-account');
+            return { ok: true, result: { id: 'action.spec.get' } };
+        }, 'action.spec.get')).rejects.toMatchObject({ code: 'action_account_scope_changed' });
         expect(lifetime.disposed).toBe(1);
     });
 
